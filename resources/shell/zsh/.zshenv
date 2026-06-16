@@ -1,0 +1,9 @@
+export STARSHIP_DISABLE=1
+export POWERLEVEL9K_DISABLE_CONFIGURATION=true
+export POWERLEVEL9K_INSTANT_PROMPT=off
+export DISABLE_UPDATE_PROMPT=true
+export OMZ_DISABLE_PROMPT_FIX=true
+export ZSH_THEME=''
+
+typeset -g PROMPT='%~ %# '
+typeset -g RPROMPT=''

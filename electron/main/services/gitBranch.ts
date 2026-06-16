@@ -1,0 +1,1 @@
+export { getGitBranch } from './git';

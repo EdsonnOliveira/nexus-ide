@@ -1,0 +1,19 @@
+---
+description: Sempre executar o Nexus IDE após alterações no código
+alwaysApply: true
+---
+
+# Executar app após alterações
+
+Após qualquer alteração no código do Nexus IDE, sempre reinicie ou execute o app para validar:
+
+```bash
+cd ~/DEV/DESKTOP/nexus-ide
+nvm use
+npm run dev
+```
+
+- Use Node 22+ (`.nvmrc`)
+- Mate processos anteriores de `vite`/`electron` do projeto antes de subir de novo, se necessário
+- Não faça build (`npm run build`) a menos que o usuário peça
+- Confirme que o app abriu sem erro de preload ou crash no terminal

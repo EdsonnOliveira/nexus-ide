@@ -1,0 +1,14 @@
+#!/usr/bin/env zsh
+NEXUS_ZDOTDIR="${0:A:h}"
+export ZDOTDIR="${NEXUS_ZDOTDIR}"
+export NEXUS_IDE=1
+export NEXUS_SHELL_DIR="${NEXUS_ZDOTDIR:h}"
+export STARSHIP_DISABLE=1
+export POWERLEVEL9K_DISABLE_CONFIGURATION=true
+export POWERLEVEL9K_INSTANT_PROMPT=off
+export DISABLE_UPDATE_PROMPT=true
+export OMZ_DISABLE_PROMPT_FIX=true
+export ZSH_THEME=''
+export PROMPT='%~ %# '
+export RPROMPT=''
+exec /bin/zsh --no-global-rcs -i "$@"

@@ -1,0 +1,47 @@
+---
+description: Botões interativos precisam de hover e animações IN/OUT
+globs: src/**/*.{tsx,css}
+alwaysApply: true
+---
+
+# Interações de botões
+
+Todo botão interativo do Nexus IDE deve ter:
+
+1. **Hover** — feedback visual com `background`, `color` ou `filter`
+2. **Animação IN** — ao aparecer ou ativar (`app-button--enter` ou equivalente)
+3. **Animação OUT** — ao sair ou desativar (transição CSS ou `app-button--exit`)
+
+## Classes base
+
+Use as classes compartilhadas em `globals.css`:
+
+- `app-button` — transições de hover, active e propriedades visuais
+- `app-button--enter` — entrada com `app-button-in`
+- `app-button--exit` — saída com `app-button-out`
+- `app-button__label` — texto com animação IN/OUT ao colapsar sidebar
+
+## Tokens de motion
+
+Use os tokens de `tokens.css`:
+
+- `--motion-in`, `--motion-out`
+- `--motion-ease-in`, `--motion-ease-out`
+
+## Exemplo
+
+```tsx
+<button type='button' className='sidebar__add app-button app-button--enter' onClick={handleClick}>
+  <Plus size={14} />
+  <span className='app-button__label'>Adicionar projeto</span>
+</button>
+```
+
+## Regras
+
+- Não criar botão clicável sem `:hover:not(:disabled)`
+- Estados selecionados/ativos devem animar IN ao entrar e OUT ao sair
+- Respeitar `prefers-reduced-motion: reduce`
+- Reutilizar `app-button` antes de inventar animação nova
+- Painéis e seções colapsáveis (explorador, busca, pastas) devem animar IN/OUT com `--motion-in` / `--motion-out`
+- Dropdowns e context menus devem usar `useAnchoredDropdownMenu` + classes `overlay-popup--in` / `overlay-popup--out`
