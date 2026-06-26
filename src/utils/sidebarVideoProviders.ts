@@ -5,6 +5,12 @@ export interface SidebarVideoSession {
   sourceUrl: string;
   playbackUrl: string;
   useEmbed: boolean;
+  title: string;
+}
+
+export interface PersistedSidebarVideoSession {
+  sourceUrl: string;
+  title: string;
 }
 
 export const SIDEBAR_VIDEO_PROVIDER_LABELS: Record<SidebarVideoProvider, string> = {
@@ -39,6 +45,16 @@ function matchesHost(hostname: string, hosts: readonly string[]): boolean {
   const normalized = hostname.toLowerCase();
 
   return hosts.some((host) => normalized === host || normalized.endsWith(`.${host}`));
+}
+
+export function detectSidebarVideoProvider(raw: string): SidebarVideoProvider | null {
+  const url = normalizeInputUrl(raw);
+
+  if (!url) {
+    return null;
+  }
+
+  return detectProvider(url);
 }
 
 function detectProvider(url: URL): SidebarVideoProvider | null {
@@ -92,9 +108,9 @@ function extractYouTubeVideoId(url: URL): string | null {
   return null;
 }
 
-function buildYouTubePlaybackUrl(videoId: string): string {
+function buildYouTubePlaybackUrl(videoId: string, autoplay = true): string {
   const params = new URLSearchParams({
-    autoplay: '1',
+    autoplay: autoplay ? '1' : '0',
     rel: '0',
     modestbranding: '1',
   });
@@ -102,7 +118,58 @@ function buildYouTubePlaybackUrl(videoId: string): string {
   return `https://www.youtube.com/embed/${videoId}?${params.toString()}`;
 }
 
-export function parseSidebarVideoLink(raw: string): SidebarVideoSession | null {
+export async function fetchSidebarVideoTitle(
+  sourceUrl: string,
+  provider: SidebarVideoProvider,
+): Promise<string> {
+  try {
+    const response = await fetch(
+      `https://noembed.com/embed?url=${encodeURIComponent(sourceUrl)}`,
+    );
+
+    if (response.ok) {
+      const data = (await response.json()) as { title?: string };
+      const title = data.title?.trim();
+
+      if (title) {
+        return title;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return SIDEBAR_VIDEO_PROVIDER_LABELS[provider];
+}
+
+export function restoreSidebarVideoSession(
+  persisted: PersistedSidebarVideoSession,
+): SidebarVideoSession | null {
+  const session = parseSidebarVideoLink(persisted.sourceUrl, { autoplay: false });
+
+  if (!session) {
+    return null;
+  }
+
+  return {
+    ...session,
+    title: persisted.title,
+  };
+}
+
+export function toPersistedSidebarVideoSession(
+  session: SidebarVideoSession,
+): PersistedSidebarVideoSession {
+  return {
+    sourceUrl: session.sourceUrl,
+    title: session.title,
+  };
+}
+
+export function parseSidebarVideoLink(
+  raw: string,
+  options?: { autoplay?: boolean },
+): SidebarVideoSession | null {
   const url = normalizeInputUrl(raw);
 
   if (!url) {
@@ -125,8 +192,9 @@ export function parseSidebarVideoLink(raw: string): SidebarVideoSession | null {
     return {
       provider,
       sourceUrl: url.toString(),
-      playbackUrl: buildYouTubePlaybackUrl(videoId),
+      playbackUrl: buildYouTubePlaybackUrl(videoId, options?.autoplay ?? true),
       useEmbed: true,
+      title: '',
     };
   }
 
@@ -151,5 +219,6 @@ export function parseSidebarVideoLink(raw: string): SidebarVideoSession | null {
     sourceUrl: url.toString(),
     playbackUrl: url.toString(),
     useEmbed: false,
+    title: '',
   };
 }

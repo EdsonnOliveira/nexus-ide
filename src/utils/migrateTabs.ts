@@ -1,6 +1,7 @@
 import type { SplitLayoutNode, SplitTab, Tab, TabBarItem } from '@/types';
 import { getVisibleTabIds } from '@/utils/splitLayout';
 import { ensureTabBarBadgeColorIndexes } from '@/utils/tabBadge';
+import { reconcileSplitLayout } from '@/utils/tabGroups';
 
 export function migrateLegacyProjectTabs(
   tabs: TabBarItem[],
@@ -33,7 +34,13 @@ export function migrateLegacyProjectTabs(
   const remaining: TabBarItem[] = [];
 
   for (const item of normalizedTabs) {
-    if ((item.type === 'terminal' || item.type === 'browser') && paneIds.includes(item.id)) {
+    if (
+      (item.type === 'terminal' ||
+        item.type === 'browser' ||
+        item.type === 'emulator' ||
+        item.type === 'api') &&
+      paneIds.includes(item.id)
+    ) {
       panes.push(item);
       continue;
     }
@@ -69,14 +76,18 @@ export function migrateLegacyProjectTabs(
 
 function normalizeTabBarItem(tab: TabBarItem): TabBarItem {
   if (tab.type === 'split') {
+    const panes = tab.panes.map((pane) => normalizePane(pane));
+    const layout = reconcileSplitLayout(panes, tab.layout);
+
     return {
       ...tab,
-      panes: tab.panes.map((pane) => normalizePane(pane)),
-      activePaneId: tab.activePaneId ?? tab.panes[0]?.id ?? null,
+      panes,
+      layout,
+      activePaneId: tab.activePaneId ?? panes[0]?.id ?? null,
     };
   }
 
-  if (tab.type === 'browser' || tab.type === 'terminal') {
+  if (tab.type === 'browser' || tab.type === 'terminal' || tab.type === 'emulator' || tab.type === 'api') {
     return normalizePane(tab);
   }
 
@@ -99,6 +110,23 @@ function normalizePane(tab: Tab): Tab {
     return {
       ...tab,
       viewMode: tab.viewMode ?? 'code',
+    };
+  }
+
+  if (tab.type === 'emulator') {
+    return {
+      ...tab,
+      platform: tab.platform ?? 'android',
+      deviceId: tab.deviceId ?? null,
+      sessionId: null,
+    };
+  }
+
+  if (tab.type === 'api') {
+    return {
+      ...tab,
+      requestId: tab.requestId ?? null,
+      collectionId: tab.collectionId ?? null,
     };
   }
 

@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useProjectStore } from '@/stores/useProjectStore';
 import type { Project } from '@/types';
 import { isOverlayBlockingTerminalHints } from '@/utils/overlayBlocking';
 
@@ -50,6 +51,13 @@ export function useProjectIndexShortcuts({
       }
 
       if (isEditableTarget(event.target)) {
+        return;
+      }
+
+      const { activeProjectId, projects } = useProjectStore.getState();
+      const activeProject = projects.find((entry) => entry.id === activeProjectId);
+
+      if (activeProject && activeProject.tabs.length > 0) {
         return;
       }
 

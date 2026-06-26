@@ -47,4 +47,17 @@ export function registerDialogHandlers(getWindow: () => BrowserWindow | null): v
 
     return result.filePaths[0];
   });
+
+  ipcMain.handle('dialog:openFile', async () => {
+    const window = getWindow();
+    const result = await dialog.showOpenDialog(window ?? undefined, {
+      properties: ['openFile'],
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    return result.filePaths[0];
+  });
 }

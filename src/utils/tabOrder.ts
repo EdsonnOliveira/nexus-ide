@@ -65,7 +65,7 @@ export function toggleTabPinned(
   const updatedTab: TabBarItem = { ...tab, pinned: !currentlyPinned };
   const without = tabs.filter((entry) => entry.id !== tabId);
   const pinnedCount = without.filter(isTabPinned).length;
-  const insertAt = currentlyPinned ? pinnedCount : pinnedCount;
+  const insertAt = currentlyPinned ? pinnedCount : 0;
 
   return {
     tabs: [...without.slice(0, insertAt), updatedTab, ...without.slice(insertAt)],

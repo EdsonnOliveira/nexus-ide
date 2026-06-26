@@ -1,6 +1,8 @@
 import { useProjectStore } from '@/stores/useProjectStore';
+import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
-import type { BrowserTab, FileTab, Tab, TabBarItem, TabType, TerminalAgent } from '@/types';
+import { bumpFileExternalRevision } from '@/utils/fileExternalRevision';
+import type { ApiTab, BrowserTab, EmulatorPlatform, EmulatorTab, FileTab, Tab, TabBarItem, TabType, TerminalAgent } from '@/types';
 import { normalizeBrowserUrl } from '@/utils/browserUrl';
 import { createBadgeColorIndex } from '@/utils/tabBadge';
 import {
@@ -8,22 +10,31 @@ import {
   findSplitTabByPaneId,
   mergeTabItems,
   renameTabBarItem,
+  resolveActiveTabBarItem,
   unsplitTabItems,
   updatePaneInTabs,
   updateSplitTabLayout,
 } from '@/utils/tabGroups';
-import { findDiffTabByPath, findFileTabByPath } from '@/utils/fileTabs';
+import { findDiffTabByPath, findFilePreviewTabByPath, findFileTabByPath } from '@/utils/fileTabs';
+import { toGitRelativePath, toRepoAbsolutePath } from '@/utils/gitPaths';
+import { resolveAgentGitPromptForFile } from '@/utils/resolveAgentGitPromptForFile';
 import { resolveFileViewMode } from '@/utils/fileViewMode';
 import { isTabPinned, reorderTabBarItems, toggleTabPinned } from '@/utils/tabOrder';
 import { updateSplitRatioAtPath } from '@/utils/splitLayout';
 
-interface TabStoreActions {
+export interface TabStoreActions {
   addTab: (type: TabType) => Promise<void>;
   addAgentTab: (command: string) => Promise<void>;
   openBrowserTab: (url: string) => Promise<void>;
   openFileTab: (filePath: string, fileName: string) => Promise<void>;
-  openDiffTab: (filePath: string, staged: boolean) => Promise<void>;
+  openFilePreviewTab: (filePath: string, fileName: string) => Promise<void>;
+  openFileCodeTab: (filePath: string, fileName: string) => Promise<void>;
+  openDiffTab: (
+    filePath: string,
+    options: { staged: boolean; untracked?: boolean; repoPath?: string; agentPrompt?: string },
+  ) => Promise<void>;
   closeTab: (tabId: string) => Promise<void>;
+  closeAllTabs: () => Promise<void>;
   selectTab: (tabId: string) => Promise<void>;
   selectPane: (paneId: string) => Promise<void>;
   splitTab: (sourceTabId: string, targetTabId: string, side: 'left' | 'right') => Promise<void>;
@@ -35,6 +46,14 @@ interface TabStoreActions {
   setTabPtyId: (tabId: string, ptyId: string | null) => Promise<void>;
   setTabAgent: (tabId: string, agent: TerminalAgent) => Promise<void>;
   updateBrowserUrl: (tabId: string, url: string) => Promise<void>;
+  updateEmulatorTab: (
+    tabId: string,
+    patch: Partial<Pick<EmulatorTab, 'platform' | 'deviceId' | 'sessionId' | 'title'>>,
+  ) => Promise<void>;
+  updateApiTab: (
+    tabId: string,
+    patch: Partial<Pick<ApiTab, 'requestId' | 'collectionId' | 'title'>>,
+  ) => Promise<void>;
   setSplitRatio: (
     splitTabId: string,
     path: readonly number[],
@@ -57,14 +76,37 @@ function countPanesByType(tabs: TabBarItem[], type: TabType): number {
 
 function killTabBarItem(item: TabBarItem): void {
   for (const pane of item.type === 'split' ? item.panes : [item]) {
-    if (pane.type === 'terminal' && pane.ptyId) {
-      window.nexus.terminal.kill(pane.ptyId);
-    }
-
     if (pane.type === 'terminal') {
+      useProjectNotificationStore.getState().clearNotificationForPane(pane.id);
+      useTerminalSessionStore.getState().disposePaneSession(pane.id);
+
+      if (pane.ptyId) {
+        window.nexus.terminal.kill(pane.ptyId);
+      }
+
       void window.nexus.session.removePane(pane.id);
     }
+
+    if (pane.type === 'emulator') {
+      void window.nexus.emulator.stopByTabId(pane.id);
+    }
   }
+}
+
+async function resolveDefaultEmulatorPlatform(projectPath: string): Promise<EmulatorPlatform> {
+  if (typeof navigator !== 'undefined' && /Mac/.test(navigator.userAgent)) {
+    try {
+      const kinds = await window.nexus.files.detectProjectKinds([projectPath]);
+
+      if (kinds[projectPath] === 'mobile') {
+        return 'ios';
+      }
+    } catch {
+      return 'android';
+    }
+  }
+
+  return 'android';
 }
 
 export function useTabActions(): TabStoreActions {
@@ -85,6 +127,45 @@ export function useTabActions(): TabStoreActions {
 
       const tabId = crypto.randomUUID();
       const badgeColorIndex = createBadgeColorIndex(project.tabs);
+
+      if (type === 'emulator') {
+        const platform = await resolveDefaultEmulatorPlatform(project.path);
+        const nextTab: EmulatorTab = {
+          id: tabId,
+          title: `Emulador ${countPanesByType(project.tabs, 'emulator') + 1}`,
+          type: 'emulator',
+          platform,
+          deviceId: null,
+          sessionId: null,
+          badgeColorIndex,
+        };
+
+        await updateProject(project.id, {
+          tabs: [...project.tabs, nextTab],
+          activeTabId: tabId,
+          activePaneId: null,
+        });
+        return;
+      }
+
+      if (type === 'api') {
+        const nextTab: ApiTab = {
+          id: tabId,
+          title: `API Client ${countPanesByType(project.tabs, 'api') + 1}`,
+          type: 'api',
+          requestId: null,
+          collectionId: null,
+          badgeColorIndex,
+        };
+
+        await updateProject(project.id, {
+          tabs: [...project.tabs, nextTab],
+          activeTabId: tabId,
+          activePaneId: null,
+        });
+        return;
+      }
+
       const nextTab: Tab =
         type === 'browser'
           ? {
@@ -120,7 +201,7 @@ export function useTabActions(): TabStoreActions {
       const badgeColorIndex = createBadgeColorIndex(project.tabs);
       const nextTab: Tab = {
         id: tabId,
-        title: `Terminal ${countPanesByType(project.tabs, 'terminal') + 1}`,
+        title: `Agent ${countPanesByType(project.tabs, 'terminal') + 1}`,
         type: 'terminal',
         ptyId: null,
         agent: 'shell',
@@ -174,6 +255,7 @@ export function useTabActions(): TabStoreActions {
       const existing = findFileTabByPath(project.tabs, filePath);
 
       if (existing) {
+        bumpFileExternalRevision(filePath);
         const splitTab = findSplitTabByPaneId(project.tabs, existing.id);
 
         if (splitTab) {
@@ -212,16 +294,17 @@ export function useTabActions(): TabStoreActions {
         activePaneId: null,
       });
     },
-    openDiffTab: async (filePath, staged) => {
+    openFilePreviewTab: async (filePath, fileName) => {
       const project = getProjectSnapshot();
 
       if (!project) {
         return;
       }
 
-      const existing = findDiffTabByPath(project.tabs, filePath, staged);
+      const existing = findFilePreviewTabByPath(project.tabs, filePath);
 
       if (existing) {
+        bumpFileExternalRevision(filePath);
         const splitTab = findSplitTabByPaneId(project.tabs, existing.id);
 
         if (splitTab) {
@@ -244,17 +327,172 @@ export function useTabActions(): TabStoreActions {
         return;
       }
 
-      const diff = await window.nexus.git.diff(project.path, filePath, staged);
-      const fileName = filePath.split('/').pop() ?? filePath;
+      const tabId = crypto.randomUUID();
+      const nextTab: FileTab = {
+        id: tabId,
+        title: fileName,
+        type: 'file',
+        filePath,
+        viewMode: 'preview',
+        badgeColorIndex: createBadgeColorIndex(project.tabs),
+      };
+
+      await updateProject(project.id, {
+        tabs: [...project.tabs, nextTab],
+        activeTabId: tabId,
+        activePaneId: null,
+      });
+    },
+    openFileCodeTab: async (filePath, fileName) => {
+      const project = getProjectSnapshot();
+
+      if (!project) {
+        return;
+      }
+
+      const previewTab = findFilePreviewTabByPath(project.tabs, filePath);
+
+      if (previewTab) {
+        bumpFileExternalRevision(filePath);
+        const updatedTabs = updatePaneInTabs(project.tabs, previewTab.id, (entry) =>
+          entry.type === 'file' ? { ...entry, viewMode: 'code' } : entry,
+        );
+        const splitTab = findSplitTabByPaneId(updatedTabs, previewTab.id);
+
+        if (splitTab) {
+          await updateProject(project.id, {
+            activeTabId: splitTab.id,
+            activePaneId: previewTab.id,
+            tabs: updatedTabs.map((item) =>
+              item.id === splitTab.id && item.type === 'split'
+                ? { ...item, activePaneId: previewTab.id }
+                : item,
+            ),
+          });
+          return;
+        }
+
+        await updateProject(project.id, {
+          activeTabId: previewTab.id,
+          activePaneId: null,
+          tabs: updatedTabs,
+        });
+        return;
+      }
+
+      const existing = findFileTabByPath(project.tabs, filePath);
+
+      if (existing) {
+        bumpFileExternalRevision(filePath);
+        const splitTab = findSplitTabByPaneId(project.tabs, existing.id);
+
+        if (splitTab) {
+          await updateProject(project.id, {
+            activeTabId: splitTab.id,
+            activePaneId: existing.id,
+            tabs: project.tabs.map((item) =>
+              item.id === splitTab.id && item.type === 'split'
+                ? { ...item, activePaneId: existing.id }
+                : item,
+            ),
+          });
+          return;
+        }
+
+        await updateProject(project.id, {
+          activeTabId: existing.id,
+          activePaneId: null,
+        });
+        return;
+      }
+
+      const tabId = crypto.randomUUID();
+      const nextTab: FileTab = {
+        id: tabId,
+        title: fileName,
+        type: 'file',
+        filePath,
+        viewMode: 'code',
+        badgeColorIndex: createBadgeColorIndex(project.tabs),
+      };
+
+      await updateProject(project.id, {
+        tabs: [...project.tabs, nextTab],
+        activeTabId: tabId,
+        activePaneId: null,
+      });
+    },
+    openDiffTab: async (filePath, options) => {
+      const project = getProjectSnapshot();
+
+      if (!project) {
+        return;
+      }
+
+      const staged = options.staged;
+      const untracked = options.untracked ?? false;
+      const repoPath = options.repoPath ?? project.path;
+      const gitRelativePath = toGitRelativePath(repoPath, filePath);
+      const absoluteFilePath = toRepoAbsolutePath(repoPath, gitRelativePath);
+      const agentPrompt =
+        options.agentPrompt ??
+        resolveAgentGitPromptForFile(project.id, absoluteFilePath, repoPath) ??
+        undefined;
+      const sides = await window.nexus.git.getFileDiffSides(repoPath, gitRelativePath, {
+        staged,
+        untracked,
+      });
+      const existing = findDiffTabByPath(project.tabs, absoluteFilePath, { staged, untracked });
+
+      if (existing) {
+        const refreshedTabs = updatePaneInTabs(project.tabs, existing.id, (entry) =>
+          entry.type === 'file' && entry.viewMode === 'diff'
+            ? {
+                ...entry,
+                diffBefore: sides.before,
+                diffAfter: sides.after,
+                diffRepoPath: repoPath,
+                diffAgentPrompt: agentPrompt,
+              }
+            : entry,
+        );
+        const splitTab = findSplitTabByPaneId(refreshedTabs, existing.id);
+
+        if (splitTab) {
+          await updateProject(project.id, {
+            activeTabId: splitTab.id,
+            activePaneId: existing.id,
+            tabs: refreshedTabs.map((item) =>
+              item.id === splitTab.id && item.type === 'split'
+                ? { ...item, activePaneId: existing.id }
+                : item,
+            ),
+          });
+          return;
+        }
+
+        await updateProject(project.id, {
+          activeTabId: existing.id,
+          activePaneId: null,
+          tabs: refreshedTabs,
+        });
+        return;
+      }
+
+      const fileName = gitRelativePath.split('/').pop() ?? gitRelativePath;
       const tabId = crypto.randomUUID();
       const nextTab: FileTab = {
         id: tabId,
         title: `${fileName} (diff)`,
         type: 'file',
-        filePath,
+        filePath: absoluteFilePath,
         viewMode: 'diff',
-        diffPatch: diff.patch,
+        diffBefore: sides.before,
+        diffAfter: sides.after,
         diffStaged: staged,
+        diffUntracked: untracked,
+        diffRepoPath: repoPath,
+        diffAgentPrompt: agentPrompt,
         badgeColorIndex: createBadgeColorIndex(project.tabs),
       };
 
@@ -289,6 +527,34 @@ export function useTabActions(): TabStoreActions {
         activePaneId: null,
       });
     },
+    closeAllTabs: async () => {
+      const project = getProjectSnapshot();
+
+      if (!project) {
+        return;
+      }
+
+      const tabsToClose = project.tabs.filter((item) => !isTabPinned(item));
+
+      if (tabsToClose.length === 0) {
+        return;
+      }
+
+      for (const tab of tabsToClose) {
+        killTabBarItem(tab);
+      }
+
+      const nextTabs = project.tabs.filter((item) => isTabPinned(item));
+      const activeTabId = nextTabs.some((item) => item.id === project.activeTabId)
+        ? project.activeTabId
+        : (nextTabs[0]?.id ?? null);
+
+      await updateProject(project.id, {
+        tabs: nextTabs,
+        activeTabId,
+        activePaneId: null,
+      });
+    },
     selectTab: async (tabId) => {
       const project = getProjectSnapshot();
 
@@ -306,6 +572,17 @@ export function useTabActions(): TabStoreActions {
         activeTabId: tabId,
         activePaneId,
       });
+
+      const activePaneIdForNotification =
+        selectedTab?.type === 'split'
+          ? activePaneId
+          : selectedTab
+            ? tabId
+            : null;
+
+      if (activePaneIdForNotification) {
+        useProjectNotificationStore.getState().clearNotificationForPane(activePaneIdForNotification);
+      }
     },
     selectPane: async (paneId) => {
       const project = getProjectSnapshot();
@@ -328,6 +605,7 @@ export function useTabActions(): TabStoreActions {
               : item,
           ),
         });
+        useProjectNotificationStore.getState().clearNotificationForPane(paneId);
         return;
       }
 
@@ -335,6 +613,7 @@ export function useTabActions(): TabStoreActions {
         activeTabId: paneId,
         activePaneId: null,
       });
+      useProjectNotificationStore.getState().clearNotificationForPane(paneId);
     },
     splitTab: async (sourceTabId, targetTabId, side) => {
       const project = getProjectSnapshot();
@@ -373,7 +652,13 @@ export function useTabActions(): TabStoreActions {
         return;
       }
 
-      const activeIndex = project.tabs.findIndex((tab) => tab.id === project.activeTabId);
+      const activeItem = resolveActiveTabBarItem(project.tabs, project.activeTabId);
+
+      if (!activeItem) {
+        return;
+      }
+
+      const activeIndex = project.tabs.findIndex((tab) => tab.id === activeItem.id);
       const neighbor = project.tabs[activeIndex + 1] ?? project.tabs[activeIndex - 1];
 
       if (!neighbor) {
@@ -382,7 +667,7 @@ export function useTabActions(): TabStoreActions {
 
       const side = activeIndex + 1 < project.tabs.length ? 'right' : 'left';
 
-      const merged = mergeTabItems(project.tabs, project.activeTabId, neighbor.id, side);
+      const merged = mergeTabItems(project.tabs, activeItem.id, neighbor.id, side);
 
       await updateProject(project.id, {
         tabs: merged.nextTabs,
@@ -471,6 +756,32 @@ export function useTabActions(): TabStoreActions {
       await updateProject(project.id, {
         tabs: updatePaneInTabs(project.tabs, tabId, (entry) =>
           entry.type === 'browser' ? { ...entry, url } : entry,
+        ),
+      });
+    },
+    updateEmulatorTab: async (tabId, patch) => {
+      const project = getProjectSnapshot();
+
+      if (!project) {
+        return;
+      }
+
+      await updateProject(project.id, {
+        tabs: updatePaneInTabs(project.tabs, tabId, (entry) =>
+          entry.type === 'emulator' ? { ...entry, ...patch } : entry,
+        ),
+      });
+    },
+    updateApiTab: async (tabId, patch) => {
+      const project = getProjectSnapshot();
+
+      if (!project) {
+        return;
+      }
+
+      await updateProject(project.id, {
+        tabs: updatePaneInTabs(project.tabs, tabId, (entry) =>
+          entry.type === 'api' ? { ...entry, ...patch } : entry,
         ),
       });
     },

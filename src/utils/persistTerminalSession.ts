@@ -1,6 +1,6 @@
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import { useProjectStore } from '@/stores/useProjectStore';
-import type { TerminalTab } from '@/types';
+import type { Project, TerminalTab } from '@/types';
 import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
 import { collectProjectPanes, updatePaneInTabs } from '@/utils/tabGroups';
 
@@ -70,7 +70,7 @@ export function persistTerminalCommand(paneId: string, command: string): void {
 
   schedulePersistTerminalPane(paneId, {
     lastCommand: trimmed,
-    restoreCommand: agentCommand ? trimmed : null,
+    ...(agentCommand ? { restoreCommand: trimmed } : {}),
   });
 }
 
@@ -82,15 +82,17 @@ export function clearTerminalRestoreCommand(paneId: string): void {
   schedulePersistTerminalPane(paneId, { restoreCommand: null });
 }
 
-export async function flushTerminalSessionsNow(): Promise<void> {
-  if (flushTimer !== null) {
-    window.clearTimeout(flushTimer);
-    flushTimer = null;
+export async function saveScrollbackForPane(paneId: string, ptyId: string): Promise<void> {
+  const scrollback = await window.nexus.terminal.getScrollback(ptyId);
+
+  if (!scrollback) {
+    return;
   }
 
-  await flushPendingTerminalSessions();
+  await window.nexus.session.saveScrollbacks({ [paneId]: scrollback });
+}
 
-  const { projects } = useProjectStore.getState();
+export async function saveScrollbacksFromProjects(projects: Project[]): Promise<void> {
   const scrollbacks: Record<string, string> = {};
 
   for (const project of projects) {
@@ -110,4 +112,16 @@ export async function flushTerminalSessionsNow(): Promise<void> {
   if (Object.keys(scrollbacks).length > 0) {
     await window.nexus.session.saveScrollbacks(scrollbacks);
   }
+}
+
+export async function flushTerminalSessionsNow(): Promise<void> {
+  if (flushTimer !== null) {
+    window.clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+
+  await flushPendingTerminalSessions();
+
+  const { projects } = useProjectStore.getState();
+  await saveScrollbacksFromProjects(projects);
 }

@@ -2,6 +2,7 @@ import Store from 'electron-store';
 import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 import type { AppState, Project, ProjectUpdatePayload, Tab, TabBarItem, Workspace } from '../../types';
+import type { ProjectTask, ProjectTaskLocalMeta } from '../../types/task';
 
 const PROJECT_COLORS = [
   '#7c3aed',
@@ -21,6 +22,8 @@ const defaultState: AppState = {
   workspaces: [],
   activeProjectId: null,
   activeWorkspaceId: null,
+  sidebarVideoSession: null,
+  sidebarVideoLastLink: null,
 };
 
 function normalizePane(tab: Tab): Tab {
@@ -46,6 +49,35 @@ function normalizePane(tab: Tab): Tab {
       type: 'file',
       filePath: tab.filePath,
       viewMode: tab.viewMode ?? 'code',
+      ...(tab.diffBefore !== undefined ? { diffBefore: tab.diffBefore } : {}),
+      ...(tab.diffAfter !== undefined ? { diffAfter: tab.diffAfter } : {}),
+      ...(tab.diffStaged !== undefined ? { diffStaged: tab.diffStaged } : {}),
+      ...(tab.diffUntracked !== undefined ? { diffUntracked: tab.diffUntracked } : {}),
+      ...(tab.diffRepoPath !== undefined ? { diffRepoPath: tab.diffRepoPath } : {}),
+      ...(tab.diffAgentPrompt !== undefined ? { diffAgentPrompt: tab.diffAgentPrompt } : {}),
+      ...shared,
+    };
+  }
+
+  if (tab.type === 'emulator') {
+    return {
+      id: tab.id,
+      title: tab.title,
+      type: 'emulator',
+      platform: tab.platform ?? 'android',
+      deviceId: tab.deviceId ?? null,
+      sessionId: null,
+      ...shared,
+    };
+  }
+
+  if (tab.type === 'api') {
+    return {
+      id: tab.id,
+      title: tab.title,
+      type: 'api',
+      requestId: tab.requestId ?? null,
+      collectionId: tab.collectionId ?? null,
       ...shared,
     };
   }
@@ -60,6 +92,60 @@ function normalizePane(tab: Tab): Tab {
     ...(tab.restoreCommand !== undefined ? { restoreCommand: tab.restoreCommand } : {}),
     ...(tab.terminalCwd !== undefined ? { terminalCwd: tab.terminalCwd } : {}),
     ...shared,
+  };
+}
+
+function normalizeStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const items = value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return items.length > 0 ? items : undefined;
+}
+
+function normalizeLocalTaskMeta(raw: unknown): ProjectTaskLocalMeta | undefined {
+  if (!raw || typeof raw !== 'object') {
+    return undefined;
+  }
+
+  const record = raw as Record<string, unknown>;
+  const meta: ProjectTaskLocalMeta = {};
+
+  if (typeof record.dueDate === 'string' && record.dueDate.trim()) {
+    meta.dueDate = record.dueDate.trim();
+  }
+
+  if (typeof record.priority === 'string' && record.priority.trim()) {
+    meta.priority = record.priority.trim();
+  }
+
+  const labels = normalizeStringArray(record.labels);
+
+  if (labels) {
+    meta.labels = labels;
+  }
+
+  return Object.keys(meta).length > 0 ? meta : undefined;
+}
+
+function normalizeTask(task: ProjectTask): ProjectTask {
+  return {
+    id: task.id,
+    source: task.source ?? 'local',
+    ...(task.externalId ? { externalId: task.externalId } : {}),
+    title: typeof task.title === 'string' ? task.title : '',
+    description: typeof task.description === 'string' ? task.description : '',
+    attachments: Array.isArray(task.attachments) ? task.attachments : [],
+    ...(task.status ? { status: task.status } : {}),
+    ...(task.jira ? { jira: task.jira } : {}),
+    ...(task.deepcrm ? { deepcrm: task.deepcrm } : {}),
+    local: normalizeLocalTaskMeta(task.local),
+    updatedAt: typeof task.updatedAt === 'number' ? task.updatedAt : Date.now(),
   };
 }
 
@@ -86,12 +172,18 @@ function stripRuntimeFieldsFromTabs(tabs: TabBarItem[]): TabBarItem[] {
       return {
         ...tab,
         panes: tab.panes.map((pane) =>
-          pane.type === 'browser' ? pane : { ...pane, ptyId: null },
+          pane.type === 'browser' || pane.type === 'emulator' || pane.type === 'api'
+            ? pane
+            : { ...pane, ptyId: null },
         ),
       };
     }
 
-    return tab.type === 'browser' ? tab : { ...tab, ptyId: null };
+    if (tab.type === 'browser' || tab.type === 'emulator' || tab.type === 'api') {
+      return tab;
+    }
+
+    return { ...tab, ptyId: null };
   });
 }
 
@@ -102,6 +194,14 @@ function normalizeProject(project: Project & { layout?: unknown }, fallbackWorks
     iconCustomized: project.iconCustomized ?? project.icon.startsWith('preset:'),
     logo: project.logo ?? null,
     activePaneId: project.activePaneId ?? null,
+    automations: project.automations ?? [],
+    passwordCollections: project.passwordCollections ?? [],
+    whatsappLink: project.whatsappLink ?? null,
+    mailInbox: project.mailInbox ?? null,
+    tasks: (project.tasks ?? []).map((task) => normalizeTask(task as ProjectTask)),
+    taskIntegration: project.taskIntegration ?? null,
+    agentGitGroups: project.agentGitGroups ?? [],
+    flag: project.flag ?? null,
     tabs: (project.tabs ?? []).map((tab) => normalizeTabBarItem(tab as TabBarItem)),
   };
 }
@@ -126,6 +226,21 @@ function normalizeState(state: AppState): AppState {
   return ensureWorkspaces(state);
 }
 
+function migrateLegacyWhatsAppLink(state: AppState, legacyLink: string | null): AppState {
+  if (!legacyLink || !state.activeProjectId) {
+    return state;
+  }
+
+  return {
+    ...state,
+    projects: state.projects.map((project) =>
+      project.id === state.activeProjectId && !project.whatsappLink
+        ? { ...project, whatsappLink: legacyLink }
+        : project,
+    ),
+  };
+}
+
 class ProjectStoreService {
   private store = new Store<AppState>({
     name: 'projects',
@@ -133,12 +248,26 @@ class ProjectStoreService {
   });
 
   private readState(): AppState {
-    return normalizeState({
-      projects: this.store.get('projects'),
-      workspaces: this.store.get('workspaces') ?? [],
-      activeProjectId: this.store.get('activeProjectId'),
-      activeWorkspaceId: this.store.get('activeWorkspaceId') ?? null,
-    });
+    const legacyWhatsAppLink =
+      (this.store.get('sidebarWhatsAppLink' as keyof AppState) as string | null | undefined) ?? null;
+
+    const state = migrateLegacyWhatsAppLink(
+      normalizeState({
+        projects: this.store.get('projects'),
+        workspaces: this.store.get('workspaces') ?? [],
+        activeProjectId: this.store.get('activeProjectId'),
+        activeWorkspaceId: this.store.get('activeWorkspaceId') ?? null,
+        sidebarVideoSession: this.store.get('sidebarVideoSession') ?? null,
+        sidebarVideoLastLink: this.store.get('sidebarVideoLastLink') ?? null,
+      }),
+      legacyWhatsAppLink,
+    );
+
+    if (legacyWhatsAppLink) {
+      this.store.delete('sidebarWhatsAppLink' as keyof AppState);
+    }
+
+    return state;
   }
 
   private writeState(state: AppState): AppState {
@@ -147,6 +276,8 @@ class ProjectStoreService {
     this.store.set('workspaces', normalized.workspaces);
     this.store.set('activeProjectId', normalized.activeProjectId);
     this.store.set('activeWorkspaceId', normalized.activeWorkspaceId);
+    this.store.set('sidebarVideoSession', normalized.sidebarVideoSession ?? null);
+    this.store.set('sidebarVideoLastLink', normalized.sidebarVideoLastLink ?? null);
     return normalized;
   }
 
@@ -189,6 +320,12 @@ class ProjectStoreService {
       activeTabId: null,
       activePaneId: null,
       sidebarCollapsed: false,
+      automations: [],
+      passwordCollections: [],
+      whatsappLink: null,
+      mailInbox: null,
+      tasks: [],
+      taskIntegration: null,
     };
 
     this.writeState({
@@ -223,6 +360,15 @@ class ProjectStoreService {
     this.writeState({
       ...state,
       activeProjectId: id,
+    });
+  }
+
+  clearActiveProject(): void {
+    const state = this.readState();
+
+    this.writeState({
+      ...state,
+      activeProjectId: null,
     });
   }
 
@@ -339,6 +485,16 @@ class ProjectStoreService {
     });
 
     return updatedProject;
+  }
+
+  setSidebarVideoSession(session: AppState['sidebarVideoSession']): void {
+    const state = this.readState();
+
+    this.writeState({
+      ...state,
+      sidebarVideoSession: session ?? null,
+      ...(session ? { sidebarVideoLastLink: session.sourceUrl } : {}),
+    });
   }
 }
 

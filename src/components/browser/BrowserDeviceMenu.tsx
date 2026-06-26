@@ -2,6 +2,7 @@ import { Laptop, Monitor, Smartphone, Tablet, type LucideIcon } from 'lucide-rea
 import { memo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useAnchoredDropdownMenu } from '@/hooks/useAnchoredDropdownMenu';
+import type { OverlayAnimationPhase } from '@/hooks/useAnimatedUnmount';
 import {
   BROWSER_DEVICE_PRESETS,
   type BrowserDevicePreset,
@@ -23,6 +24,8 @@ interface BrowserDeviceMenuProps {
   devicePresetId: string;
   onClose: () => void;
   onSelect: (preset: BrowserDevicePreset) => void;
+  onAnimationPhaseChange?: (phase: OverlayAnimationPhase) => void;
+  onRegisterRequestClose?: (requestClose: (() => void) | null) => void;
 }
 
 function BrowserDeviceMenuComponent({
@@ -31,8 +34,10 @@ function BrowserDeviceMenuComponent({
   devicePresetId,
   onClose,
   onSelect,
+  onAnimationPhaseChange,
+  onRegisterRequestClose,
 }: BrowserDeviceMenuProps) {
-  const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
+  const { menuRef, requestClose, animationClass, phase } = useAnchoredDropdownMenu(
     onClose,
     (menu) => {
       const rect = menu.getBoundingClientRect();
@@ -47,6 +52,18 @@ function BrowserDeviceMenuComponent({
     },
     [anchorRect],
   );
+
+  useEffect(() => {
+    onAnimationPhaseChange?.(phase);
+  }, [onAnimationPhaseChange, phase]);
+
+  useEffect(() => {
+    onRegisterRequestClose?.(requestClose);
+
+    return () => {
+      onRegisterRequestClose?.(null);
+    };
+  }, [onRegisterRequestClose, requestClose]);
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {

@@ -1,9 +1,22 @@
 import { create } from 'zustand';
-import type { AppState, Project, ProjectUpdatePayload, Tab, TabBarItem, Workspace } from '@/types';
-import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
+import type { AppState, MailMailboxRef, Project, ProjectUpdatePayload, Tab, TabBarItem, Workspace } from '@/types';
 import { migrateLegacyProjectTabs } from '@/utils/migrateTabs';
 import { hydrateTerminalSessionFromProjects, restoreActiveAgentsFromProjects } from '@/utils/hydrateTerminalSession';
+import { useAgentGitChangeStore } from '@/stores/useAgentGitChangeStore';
+import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
+import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
+import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
+import { flushTerminalSessionsNow, saveScrollbacksFromProjects } from '@/utils/persistTerminalSession';
+import {
+  flushAgentGitGroupsNow,
+  hydrateAgentGitGroupsFromProjects,
+} from '@/utils/persistAgentGitGroups';
 import { updatePaneInTabs } from '@/utils/tabGroups';
+import {
+  restoreSidebarVideoSession,
+  toPersistedSidebarVideoSession,
+  type SidebarVideoSession,
+} from '@/utils/sidebarVideoProviders';
 
 function hasMissingBadgeColorIndex(tabs: TabBarItem[]): boolean {
   for (const tab of tabs) {
@@ -23,20 +36,25 @@ function hasMissingBadgeColorIndex(tabs: TabBarItem[]): boolean {
   return false;
 }
 
-export type SidePanel = 'explorer' | 'git' | null;
+export type SidePanel = 'explorer' | 'git' | 'passwords' | 'automations' | 'tasks' | null;
 
 interface ProjectStoreState {
   projects: Project[];
   workspaces: Workspace[];
   activeProjectId: string | null;
   activeWorkspaceId: string | null;
+  selectingProjectId: string | null;
   sidebarCollapsed: boolean;
   sidePanel: SidePanel;
+  sidebarVideoSession: SidebarVideoSession | null;
+  sidebarVideoLastLink: string | null;
   initialized: boolean;
   initialize: () => Promise<void>;
   addProject: () => Promise<void>;
   removeProject: (id: string) => Promise<void>;
-  selectProject: (id: string) => Promise<void>;
+  stopProject: (id: string) => Promise<void>;
+  selectProject: (id: string, options?: { syncWorkspace?: boolean }) => Promise<void>;
+  leaveActiveProject: () => Promise<void>;
   updateProject: (id: string, data: ProjectUpdatePayload) => Promise<void>;
   createWorkspace: (name: string) => Promise<void>;
   selectWorkspace: (id: string | null) => Promise<void>;
@@ -45,9 +63,34 @@ interface ProjectStoreState {
   toggleSidebar: () => Promise<void>;
   toggleExplorer: () => void;
   toggleGitPanel: () => void;
+  togglePasswords: () => void;
+  toggleAutomations: () => void;
+  toggleTasks: () => void;
   setSidePanel: (panel: SidePanel) => void;
+  startSidebarVideoSession: (session: SidebarVideoSession) => Promise<void>;
+  closeSidebarVideoSession: () => Promise<void>;
+  setActiveProjectWhatsAppLink: (link: string | null) => Promise<void>;
+  setActiveProjectMailInbox: (mailbox: MailMailboxRef | null) => Promise<void>;
   getActiveProject: () => Project | null;
   setTabPtyId: (projectId: string, tabId: string, ptyId: string | null) => void;
+}
+
+function migrateLegacyGlobalWhatsAppLink(appState: AppState): AppState {
+  const legacyLink = (appState as AppState & { sidebarWhatsAppLink?: string | null })
+    .sidebarWhatsAppLink;
+
+  if (!legacyLink || !appState.activeProjectId) {
+    return appState;
+  }
+
+  return {
+    ...appState,
+    projects: appState.projects.map((project) =>
+      project.id === appState.activeProjectId && !project.whatsappLink
+        ? { ...project, whatsappLink: legacyLink }
+        : project,
+    ),
+  };
 }
 
 function migrateAppState(appState: AppState): AppState {
@@ -58,7 +101,7 @@ function migrateAppState(appState: AppState): AppState {
 
   const fallbackWorkspaceId = workspaces[0]?.id ?? crypto.randomUUID();
 
-  return {
+  return migrateLegacyGlobalWhatsAppLink({
     ...appState,
     workspaces,
     activeWorkspaceId: appState.activeWorkspaceId ?? null,
@@ -77,9 +120,14 @@ function migrateAppState(appState: AppState): AppState {
         tabs: migrated.tabs,
         activeTabId: migrated.activeTabId,
         activePaneId: migrated.activePaneId,
+        automations: legacyProject.automations ?? [],
+        whatsappLink: legacyProject.whatsappLink ?? null,
+        mailInbox: legacyProject.mailInbox ?? null,
+        agentGitGroups: legacyProject.agentGitGroups ?? [],
+        flag: legacyProject.flag ?? null,
       };
     }),
-  };
+  });
 }
 
 function applyState(set: (state: Partial<ProjectStoreState>) => void, appState: AppState) {
@@ -177,13 +225,24 @@ function applyStatePreservingRuntime(
   applyState(set, preserveRuntimePtyIds(appState, prev));
 }
 
+function getWorkspaceProjects(projects: Project[], workspaceId: string | null): Project[] {
+  if (workspaceId === null) {
+    return projects;
+  }
+
+  return projects.filter((project) => project.workspaceId === workspaceId);
+}
+
 export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   projects: [],
   workspaces: [],
   activeProjectId: null,
   activeWorkspaceId: null,
+  selectingProjectId: null,
   sidebarCollapsed: false,
   sidePanel: null,
+  sidebarVideoSession: null,
+  sidebarVideoLastLink: null,
   initialized: false,
   initialize: async () => {
     if (get().initialized) {
@@ -201,9 +260,16 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
 
     applyState(set, appState);
     hydrateTerminalSessionFromProjects(appState.projects);
+    hydrateAgentGitGroupsFromProjects(appState.projects);
+    const restoredVideoSession = appState.sidebarVideoSession
+      ? restoreSidebarVideoSession(appState.sidebarVideoSession)
+      : null;
     set({
       initialized: true,
       sidebarCollapsed: activeProject?.sidebarCollapsed ?? false,
+      sidebarVideoSession: restoredVideoSession,
+      sidebarVideoLastLink:
+        appState.sidebarVideoLastLink ?? appState.sidebarVideoSession?.sourceUrl ?? null,
     });
 
     if (shouldPersistBadgeColors) {
@@ -233,40 +299,155 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     const project = get().projects.find((item) => item.id === id);
 
     if (project) {
+      useProjectNotificationStore.getState().clearProjectNotification(id);
+
       for (const item of project.tabs) {
         const panes: Tab[] = item.type === 'split' ? item.panes : [item];
 
         for (const pane of panes) {
-          if (pane.type === 'terminal' && pane.ptyId) {
-            window.nexus.terminal.kill(pane.ptyId);
-          }
-
           if (pane.type === 'terminal') {
+            useProjectNotificationStore.getState().clearNotificationForPane(pane.id);
+            useTerminalSessionStore.getState().disposePaneSession(pane.id);
+
+            if (pane.ptyId) {
+              window.nexus.terminal.kill(pane.ptyId);
+            }
+
             void window.nexus.session.removePane(pane.id);
+            continue;
           }
         }
       }
     }
 
     const prevState = get();
+    useAgentGitChangeStore.getState().clearProject(id);
+    await flushAgentGitGroupsNow();
     await window.nexus.projects.remove(id);
     const appState = migrateAppState(await window.nexus.projects.list());
     applyStatePreservingRuntime(set, appState, prevState);
   },
-  selectProject: async (id) => {
+  stopProject: async (id) => {
+    const project = get().projects.find((item) => item.id === id);
+
+    if (!project || project.tabs.length === 0) {
+      return;
+    }
+
     useProjectNotificationStore.getState().clearProjectNotification(id);
+    useAutomationExecutionStore.getState().clearAutomationRunning(id);
+
+    for (const item of project.tabs) {
+      const panes: Tab[] = item.type === 'split' ? item.panes : [item];
+
+      for (const pane of panes) {
+        if (pane.type === 'terminal') {
+          useProjectNotificationStore.getState().clearNotificationForPane(pane.id);
+          useTerminalSessionStore.getState().disposePaneSession(pane.id);
+
+          if (pane.ptyId) {
+            window.nexus.terminal.kill(pane.ptyId);
+          }
+
+          void window.nexus.session.removePane(pane.id);
+          continue;
+        }
+
+        if (pane.type === 'emulator') {
+          void window.nexus.emulator.stopByTabId(pane.id);
+        }
+      }
+    }
+
+    await get().updateProject(id, {
+      tabs: [],
+      activeTabId: null,
+      activePaneId: null,
+    });
+  },
+  selectProject: async (id, options) => {
+    set({ selectingProjectId: id });
+
+    try {
+      const prevState = get();
+      const leavingProjectId = prevState.activeProjectId;
+      const selectedProject = prevState.projects.find((project) => project.id === id);
+
+      if (
+        options?.syncWorkspace !== false &&
+        selectedProject?.workspaceId &&
+        prevState.activeWorkspaceId !== null &&
+        selectedProject.workspaceId !== prevState.activeWorkspaceId
+      ) {
+        await window.nexus.projects.selectWorkspace(selectedProject.workspaceId);
+      }
+
+      if (leavingProjectId && leavingProjectId !== id) {
+        const leavingProject = prevState.projects.find((project) => project.id === leavingProjectId);
+
+        if (leavingProject) {
+          await saveScrollbacksFromProjects(prevState.projects);
+          await window.nexus.projects.update(leavingProject.id, {
+            tabs: leavingProject.tabs,
+            activeTabId: leavingProject.activeTabId,
+            activePaneId: leavingProject.activePaneId,
+          });
+        }
+      }
+
+      await flushTerminalSessionsNow();
+      await flushAgentGitGroupsNow();
+      await window.nexus.projects.select(id);
+      const appState = migrateAppState(await window.nexus.projects.list());
+      applyStatePreservingRuntime(set, appState, prevState);
+      hydrateAgentGitGroupsFromProjects(appState.projects);
+      restoreActiveAgentsFromProjects(appState.projects);
+      set({ sidePanel: null });
+    } finally {
+      set({ selectingProjectId: null });
+    }
+  },
+  leaveActiveProject: async () => {
     const prevState = get();
-    await window.nexus.projects.select(id);
-    const appState = migrateAppState(await window.nexus.projects.list());
-    applyStatePreservingRuntime(set, appState, prevState);
-    restoreActiveAgentsFromProjects(appState.projects);
-    set({ sidePanel: null });
+    const leavingProjectId = prevState.activeProjectId;
+
+    if (!leavingProjectId) {
+      return;
+    }
+
+    set({ selectingProjectId: leavingProjectId });
+
+    try {
+      const leavingProject = prevState.projects.find((project) => project.id === leavingProjectId);
+
+      if (leavingProject) {
+        await saveScrollbacksFromProjects(prevState.projects);
+        await window.nexus.projects.update(leavingProject.id, {
+          tabs: leavingProject.tabs,
+          activeTabId: leavingProject.activeTabId,
+          activePaneId: leavingProject.activePaneId,
+        });
+      }
+
+      await flushTerminalSessionsNow();
+      await flushAgentGitGroupsNow();
+      await window.nexus.projects.clearActiveProject();
+      const appState = migrateAppState(await window.nexus.projects.list());
+      applyStatePreservingRuntime(set, appState, prevState);
+      set({ sidePanel: null });
+    } finally {
+      set({ selectingProjectId: null });
+    }
   },
   updateProject: async (id, data) => {
     const prevState = get();
     await window.nexus.projects.update(id, data);
     const appState = migrateAppState(await window.nexus.projects.list());
     applyStatePreservingRuntime(set, appState, prevState);
+
+    if (data.agentGitGroups !== undefined) {
+      hydrateAgentGitGroupsFromProjects(appState.projects);
+    }
   },
   createWorkspace: async (name) => {
     const prevState = get();
@@ -276,9 +457,49 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   },
   selectWorkspace: async (id) => {
     const prevState = get();
+
+    if (prevState.activeWorkspaceId === id) {
+      return;
+    }
+
+    const filteredProjects = getWorkspaceProjects(prevState.projects, id);
+    const targetProjectId = filteredProjects[0]?.id ?? null;
+
     await window.nexus.projects.selectWorkspace(id);
-    const appState = migrateAppState(await window.nexus.projects.list());
-    applyStatePreservingRuntime(set, appState, prevState);
+    const workspaceAppState = migrateAppState(await window.nexus.projects.list());
+    applyStatePreservingRuntime(set, workspaceAppState, prevState);
+
+    if (targetProjectId) {
+      await get().selectProject(targetProjectId, { syncWorkspace: false });
+      return;
+    }
+
+    set({ selectingProjectId: prevState.activeProjectId });
+
+    try {
+      const leavingProjectId = prevState.activeProjectId;
+
+      if (leavingProjectId) {
+        const leavingProject = prevState.projects.find((project) => project.id === leavingProjectId);
+
+        if (leavingProject) {
+          await saveScrollbacksFromProjects(prevState.projects);
+          await window.nexus.projects.update(leavingProject.id, {
+            tabs: leavingProject.tabs,
+            activeTabId: leavingProject.activeTabId,
+            activePaneId: leavingProject.activePaneId,
+          });
+        }
+      }
+
+      await flushTerminalSessionsNow();
+      await window.nexus.projects.clearActiveProject();
+      const appState = migrateAppState(await window.nexus.projects.list());
+      applyStatePreservingRuntime(set, appState, prevState);
+      set({ sidePanel: null });
+    } finally {
+      set({ selectingProjectId: null });
+    }
   },
   removeWorkspace: async (id) => {
     const prevState = get();
@@ -311,8 +532,46 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     const current = get().sidePanel;
     set({ sidePanel: current === 'git' ? null : 'git' });
   },
+  togglePasswords: () => {
+    const current = get().sidePanel;
+    set({ sidePanel: current === 'passwords' ? null : 'passwords' });
+  },
+  toggleAutomations: () => {
+    const current = get().sidePanel;
+    set({ sidePanel: current === 'automations' ? null : 'automations' });
+  },
+  toggleTasks: () => {
+    const current = get().sidePanel;
+    set({ sidePanel: current === 'tasks' ? null : 'tasks' });
+  },
   setSidePanel: (panel) => {
     set({ sidePanel: panel });
+  },
+  startSidebarVideoSession: async (session) => {
+    await window.nexus.projects.setSidebarVideoSession(toPersistedSidebarVideoSession(session));
+    set({ sidebarVideoSession: session, sidebarVideoLastLink: session.sourceUrl });
+  },
+  closeSidebarVideoSession: async () => {
+    await window.nexus.projects.setSidebarVideoSession(null);
+    set({ sidebarVideoSession: null });
+  },
+  setActiveProjectWhatsAppLink: async (link) => {
+    const projectId = get().activeProjectId;
+
+    if (!projectId) {
+      return;
+    }
+
+    await get().updateProject(projectId, { whatsappLink: link });
+  },
+  setActiveProjectMailInbox: async (mailbox) => {
+    const projectId = get().activeProjectId;
+
+    if (!projectId) {
+      return;
+    }
+
+    await get().updateProject(projectId, { mailInbox: mailbox });
   },
   getActiveProject: () => {
     const { projects, activeProjectId } = get();

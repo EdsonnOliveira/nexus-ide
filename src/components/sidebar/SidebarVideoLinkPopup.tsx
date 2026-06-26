@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CirclePlay } from 'lucide-react';
 import {
@@ -7,21 +7,28 @@ import {
 } from '@/hooks/useAnchoredDropdownMenu';
 import {
   SIDEBAR_VIDEO_PROVIDER_LABELS,
+  detectSidebarVideoProvider,
   parseSidebarVideoLink,
   type SidebarVideoSession,
 } from '@/utils/sidebarVideoProviders';
 
 interface SidebarVideoLinkPopupProps {
   anchorRect: DOMRect;
+  initialLink?: string;
   onClose: () => void;
   onStart: (session: SidebarVideoSession) => void;
 }
 
 const SUPPORTED_PROVIDERS = ['youtube', 'prime', 'disney', 'netflix'] as const;
 
-function SidebarVideoLinkPopupComponent({ anchorRect, onClose, onStart }: SidebarVideoLinkPopupProps) {
+function SidebarVideoLinkPopupComponent({
+  anchorRect,
+  initialLink = '',
+  onClose,
+  onStart,
+}: SidebarVideoLinkPopupProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [linkValue, setLinkValue] = useState('');
+  const [linkValue, setLinkValue] = useState(initialLink);
   const [error, setError] = useState<string | null>(null);
   const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
     onClose,
@@ -90,6 +97,20 @@ function SidebarVideoLinkPopupComponent({ anchorRect, onClose, onStart }: Sideba
     }
   }, [error]);
 
+  const detectedProvider = useMemo(() => detectSidebarVideoProvider(linkValue), [linkValue]);
+
+  const submitLabel = useMemo(() => {
+    if (detectedProvider === 'youtube') {
+      return 'Assistir vídeo';
+    }
+
+    if (detectedProvider) {
+      return 'Assistir série';
+    }
+
+    return 'Abrir PiP';
+  }, [detectedProvider]);
+
   return createPortal(
     <div
       ref={menuRef}
@@ -122,7 +143,14 @@ function SidebarVideoLinkPopupComponent({ anchorRect, onClose, onStart }: Sideba
 
         <div className='sidebar-video-popup__providers' aria-label='Plataformas suportadas'>
           {SUPPORTED_PROVIDERS.map((provider) => (
-            <span key={provider} className='sidebar-video-popup__provider'>
+            <span
+              key={provider}
+              className={`sidebar-video-popup__provider${
+                detectedProvider === provider
+                  ? ` sidebar-video-popup__provider--active sidebar-video-popup__provider--${provider}`
+                  : ''
+              }`}
+            >
               {SIDEBAR_VIDEO_PROVIDER_LABELS[provider]}
             </span>
           ))}
@@ -131,7 +159,7 @@ function SidebarVideoLinkPopupComponent({ anchorRect, onClose, onStart }: Sideba
         {error ? <span className='sidebar-video-popup__error'>{error}</span> : null}
 
         <button type='submit' className='sidebar-video-popup__submit app-button app-button--enter'>
-          Abrir PiP
+          {submitLabel}
         </button>
       </form>
     </div>,

@@ -1,4 +1,4 @@
-export type FileViewMode = 'code' | 'image' | 'pdf';
+export type FileViewMode = 'code' | 'image' | 'pdf' | 'preview';
 
 const IMAGE_EXTENSIONS = new Set([
   'png',
@@ -13,6 +13,11 @@ const IMAGE_EXTENSIONS = new Set([
   'tif',
   'tiff',
 ]);
+
+export function isImageFileName(fileName: string): boolean {
+  const extension = fileName.split('.').pop()?.toLowerCase() ?? '';
+  return IMAGE_EXTENSIONS.has(extension);
+}
 
 export function resolveFileViewMode(fileName: string): FileViewMode {
   const extension = fileName.split('.').pop()?.toLowerCase() ?? '';

@@ -6,7 +6,10 @@ import { getProjectPingTone } from '@/utils/projectPingTone';
 interface ProjectListItemProps {
   project: Project;
   isActive: boolean;
+  isFlagged?: boolean;
   hasNotification?: boolean;
+  isAgentRunning?: boolean;
+  isAutomationRunning?: boolean;
   enterIndex?: number;
   enterAnimationKey?: number;
   onSelect: (id: string) => void;
@@ -16,7 +19,10 @@ interface ProjectListItemProps {
 function ProjectListItemComponent({
   project,
   isActive,
+  isFlagged = false,
   hasNotification = false,
+  isAgentRunning = false,
+  isAutomationRunning = false,
   enterIndex = 0,
   enterAnimationKey = 0,
   onSelect,
@@ -71,7 +77,27 @@ function ProjectListItemComponent({
   }, []);
 
   const showLogo = Boolean(logoSrc) && !logoFailed;
-  const shouldAnimateEnter = enterAnimationKey > 0;
+  const [isEntering, setIsEntering] = useState(false);
+
+  useEffect(() => {
+    if (enterAnimationKey <= 0) {
+      setIsEntering(false);
+      return;
+    }
+
+    setIsEntering(true);
+
+    const delay = enterIndex * 42;
+    const duration = 220;
+    const timerId = window.setTimeout(() => {
+      setIsEntering(false);
+    }, delay + duration);
+
+    return () => {
+      window.clearTimeout(timerId);
+    };
+  }, [enterAnimationKey, enterIndex]);
+
   const pingClassName = useMemo(
     () => `project-item__ping project-item__ping--${getProjectPingTone(project.color)}`,
     [project.color],
@@ -80,8 +106,8 @@ function ProjectListItemComponent({
   return (
     <button
       type='button'
-      className={`project-item${isActive ? ' project-item--active' : ''}${shouldAnimateEnter ? ' project-item--enter' : ''}`}
-      style={shouldAnimateEnter ? { ['--enter-index' as string]: enterIndex } : undefined}
+      className={`project-item${isActive ? ' project-item--active' : ''}${hasNotification ? ' project-item--notified' : ''}${isFlagged ? ' project-item--flagged' : ''}${isEntering ? ' project-item--enter' : ''}`}
+      style={isEntering ? { ['--enter-index' as string]: enterIndex } : undefined}
       title={project.name}
       onClick={handleClick}
       onContextMenu={handleContextMenu}
@@ -106,6 +132,16 @@ function ProjectListItemComponent({
         </span>
       )}
       <span className='project-item__name'>{project.name}</span>
+      {isAgentRunning || isAutomationRunning ? (
+        <span className='project-item__indicators'>
+          {isAutomationRunning ? (
+            <span className='project-item__automation project-item__automation--loading' aria-label='Automação em execução' />
+          ) : null}
+          {isAgentRunning ? (
+            <span className='project-item__agent project-item__agent--loading' aria-label='Agent em execução' />
+          ) : null}
+        </span>
+      ) : null}
     </button>
   );
 }

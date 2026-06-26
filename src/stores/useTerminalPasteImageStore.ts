@@ -4,29 +4,41 @@ export interface TerminalPasteImage {
   id: number;
   label: string;
   dataUrl: string;
+  relativePath: string;
+  absolutePath: string;
   addedAt: number;
 }
 
 interface TerminalPasteImageState {
   imagesByPane: Record<string, TerminalPasteImage[]>;
-  confirmedInPromptByPane: Record<string, number[]>;
-  addImage: (paneId: string, dataUrl: string) => TerminalPasteImage;
+  confirmedInPromptByPane: Record<string, string[]>;
+  addImage: (
+    paneId: string,
+    dataUrl: string,
+    saved: { relativePath: string; absolutePath: string },
+  ) => TerminalPasteImage;
   removeImage: (paneId: string, imageId: number) => void;
-  syncPaneImages: (paneId: string, activeIds: number[]) => void;
+  syncPaneImages: (paneId: string, activeRelativePaths: string[]) => void;
   clearPaneImages: (paneId: string) => void;
 }
 
 const PASTE_GRACE_MS = 5000;
 
+function normalizeRelativePath(value: string): string {
+  return value.replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
 export const useTerminalPasteImageStore = create<TerminalPasteImageState>((set, get) => ({
   imagesByPane: {},
   confirmedInPromptByPane: {},
-  addImage: (paneId, dataUrl) => {
+  addImage: (paneId, dataUrl, saved) => {
     const current = get().imagesByPane[paneId] ?? [];
     const nextImage: TerminalPasteImage = {
       id: current.length + 1,
       label: `Image #${current.length + 1}`,
       dataUrl,
+      relativePath: normalizeRelativePath(saved.relativePath),
+      absolutePath: saved.absolutePath,
       addedAt: Date.now(),
     };
 
@@ -42,13 +54,15 @@ export const useTerminalPasteImageStore = create<TerminalPasteImageState>((set, 
   removeImage: (paneId, imageId) => {
     set((state) => {
       const current = state.imagesByPane[paneId] ?? [];
-      const next = current.filter((image) => image.id !== imageId);
-      const previousConfirmed = state.confirmedInPromptByPane[paneId] ?? [];
-      const nextConfirmed = previousConfirmed.filter((id) => id !== imageId);
+      const removed = current.find((image) => image.id === imageId);
 
-      if (next.length === current.length && nextConfirmed.length === previousConfirmed.length) {
+      if (!removed) {
         return state;
       }
+
+      const next = current.filter((image) => image.id !== imageId);
+      const previousConfirmed = state.confirmedInPromptByPane[paneId] ?? [];
+      const nextConfirmed = previousConfirmed.filter((path) => path !== removed.relativePath);
 
       const imagesByPane = { ...state.imagesByPane };
       const confirmedInPromptByPane = { ...state.confirmedInPromptByPane };
@@ -68,7 +82,7 @@ export const useTerminalPasteImageStore = create<TerminalPasteImageState>((set, 
       return { imagesByPane, confirmedInPromptByPane };
     });
   },
-  syncPaneImages: (paneId, activeIds) => {
+  syncPaneImages: (paneId, activeRelativePaths) => {
     set((state) => {
       const current = state.imagesByPane[paneId] ?? [];
 
@@ -76,29 +90,25 @@ export const useTerminalPasteImageStore = create<TerminalPasteImageState>((set, 
         return state;
       }
 
-      const activeIdSet = new Set(activeIds);
+      const activePathSet = new Set(activeRelativePaths.map(normalizeRelativePath));
       const confirmedSet = new Set(state.confirmedInPromptByPane[paneId] ?? []);
       const now = Date.now();
 
-      for (const id of activeIds) {
-        confirmedSet.add(id);
+      for (const pathValue of activeRelativePaths) {
+        confirmedSet.add(normalizeRelativePath(pathValue));
       }
 
       const next = current.filter((image) => {
-        if (activeIdSet.has(image.id)) {
+        if (activePathSet.has(image.relativePath)) {
           return true;
         }
 
-        if (!confirmedSet.has(image.id)) {
-          return now - image.addedAt < PASTE_GRACE_MS;
-        }
-
-        return false;
+        return now - image.addedAt < PASTE_GRACE_MS;
       });
 
       const nextConfirmed = [...confirmedSet]
-        .filter((id) => activeIdSet.has(id) || next.some((image) => image.id === id))
-        .sort((left, right) => left - right);
+        .filter((pathValue) => activePathSet.has(pathValue) || next.some((image) => image.relativePath === pathValue))
+        .sort((left, right) => left.localeCompare(right));
 
       const confirmedInPromptByPane = { ...state.confirmedInPromptByPane };
 

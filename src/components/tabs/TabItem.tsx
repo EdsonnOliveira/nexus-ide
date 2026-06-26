@@ -1,7 +1,9 @@
-import { memo, useCallback, useMemo } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Pin, X } from 'lucide-react';
 import { TAB_DRAG_MIME } from '@/constants/tabDrag';
+import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { PROJECT_COLORS, type TabBarItem } from '@/types';
+import { resolveTabDisplayTitle } from '@/utils/resolveAgentPaneForTab';
 import { resolveTabBadgeColor } from '@/utils/tabBadge';
 import { isTabPinned } from '@/utils/tabOrder';
 
@@ -35,12 +37,42 @@ function TabItemComponent({
   onContextMenu,
 }: TabItemProps) {
   const pinned = isTabPinned(tab);
+  const activeAgentByPane = useTerminalSessionStore((state) => state.activeAgentByPane);
 
   const badgeStyle = useMemo(() => {
     return { backgroundColor: resolveTabBadgeColor(tab) };
   }, [tab]);
 
   const badgeLabel = useMemo(() => index + 1, [index]);
+  const wasRestartingRef = useRef(false);
+  const itemRef = useRef<HTMLDivElement>(null);
+  const [shimmerCycle, setShimmerCycle] = useState(0);
+  const displayTitle = useMemo(
+    () => resolveTabDisplayTitle(tab, activeAgentByPane),
+    [activeAgentByPane, tab],
+  );
+
+  useEffect(() => {
+    if (isRestarting && !wasRestartingRef.current) {
+      setShimmerCycle((cycle) => cycle + 1);
+    }
+
+    wasRestartingRef.current = isRestarting;
+  }, [isRestarting]);
+
+  useEffect(() => {
+    if (!isFocused || !itemRef.current) {
+      return;
+    }
+
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    itemRef.current.scrollIntoView({
+      behavior: reduceMotion ? 'auto' : 'smooth',
+      block: 'nearest',
+      inline: 'nearest',
+    });
+  }, [isFocused, tab.id]);
 
   const handleSelect = useCallback(() => {
     onSelect(tab.id);
@@ -121,6 +153,7 @@ function TabItemComponent({
 
   return (
     <div
+      ref={itemRef}
       role='tab'
       tabIndex={0}
       aria-selected={isFocused}
@@ -146,7 +179,12 @@ function TabItemComponent({
       >
         {isRestarting ? <Loader2 size={10} strokeWidth={2.5} className='tab-item__badge-spinner' /> : badgeLabel}
       </span>
-      <span className={`tab-item__title${isRestarting ? ' tab-item__title--loading' : ''}`}>{tab.title}</span>
+      <span
+        key={isRestarting ? shimmerCycle : undefined}
+        className={`tab-item__title${isRestarting ? ' tab-item__title--loading' : ''}`}
+      >
+        {displayTitle}
+      </span>
       {pinned ? null : (
         <button type='button' className='tab-item__close' onClick={handleClose} aria-label='Fechar aba'>
           <X size={16} strokeWidth={2.25} />

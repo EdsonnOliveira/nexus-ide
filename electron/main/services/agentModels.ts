@@ -1,6 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import os from 'node:os';
-import path from 'node:path';
+import { buildCliPathEnv } from '../utils/cliPathEnv';
 import type { TerminalCommandHint } from './terminalHints';
 
 const MAX_MODEL_HINTS = 8;
@@ -42,28 +41,6 @@ let cacheTimestamp = 0;
 
 const CACHE_TTL_MS = 60_000;
 
-function buildDetectionPathEnv(): string {
-  const home = os.homedir();
-  const segments = new Set<string>();
-
-  for (const segment of (process.env.PATH ?? '').split(':')) {
-    if (segment) {
-      segments.add(segment);
-    }
-  }
-
-  for (const segment of [
-    path.join(home, '.local', 'bin'),
-    path.join(home, '.cursor', 'bin'),
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-  ]) {
-    segments.add(segment);
-  }
-
-  return Array.from(segments).join(':');
-}
-
 function parseModelsOutput(output: string): AgentModelEntry[] {
   const models: AgentModelEntry[] = [];
 
@@ -101,7 +78,7 @@ function loadAvailableModels(): AgentModelEntry[] {
   try {
     const output = execFileSync('cursor-agent', ['models'], {
       encoding: 'utf8',
-      env: { ...process.env, PATH: buildDetectionPathEnv() },
+      env: { ...process.env, PATH: buildCliPathEnv() },
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 10_000,
     });

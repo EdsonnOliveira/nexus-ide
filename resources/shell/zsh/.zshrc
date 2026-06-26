@@ -1,6 +1,8 @@
 typeset -g PROMPT='%~ %# '
 typeset -g RPROMPT=''
 
+export PATH="${HOME}/.local/bin:${HOME}/.cursor/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
+
 export STARSHIP_DISABLE=1
 export POWERLEVEL9K_DISABLE_CONFIGURATION=true
 export POWERLEVEL9K_INSTANT_PROMPT=off

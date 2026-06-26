@@ -2,9 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useProjectStore } from '@/stores/useProjectStore';
 import type { TerminalTab } from '@/types';
 import { collectProjectPanes } from '@/utils/tabGroups';
-import { extractTerminalUrls } from '@/utils/terminalUrlExtract';
+import { extractTerminalUrls, resolveTerminalUrlHints } from '@/utils/terminalUrlExtract';
 
-const MAX_URL_HINTS = 4;
 const REFRESH_DEBOUNCE_MS = 350;
 
 async function readTerminalPaneText(pane: TerminalTab): Promise<string> {
@@ -55,21 +54,21 @@ export function useProjectTerminalUrlHints(
       return;
     }
 
-    const seen = new Set<string>();
+    const collected: string[] = [];
 
     for (const pane of terminalPanes) {
       const text = await readTerminalPaneText(pane);
 
       for (const url of extractTerminalUrls(text)) {
-        if (url === currentUrl) {
+        if (url === currentUrl || collected.includes(url)) {
           continue;
         }
 
-        seen.add(url);
+        collected.push(url);
       }
     }
 
-    setHints(Array.from(seen).slice(0, MAX_URL_HINTS));
+    setHints(resolveTerminalUrlHints(collected));
   }, [currentUrl, enabled, terminalPanes]);
 
   const scheduleCollect = useCallback(() => {

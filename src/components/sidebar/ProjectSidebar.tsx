@@ -1,52 +1,128 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, CirclePlay, Music, PanelLeft, Plus } from 'lucide-react';
+import { ChevronDown, CirclePlay, Mail, Music, PanelLeft, Plus } from 'lucide-react';
 import { useProjectIndexShortcuts } from '@/hooks/useProjectIndexShortcuts';
+import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
+import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
+import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
 import { ProjectListItem } from '@/components/sidebar/ProjectListItem';
 import { ProjectContextMenu } from '@/components/sidebar/ProjectContextMenu';
 import { ProjectPromptDialog } from '@/components/sidebar/ProjectPromptDialog';
 import { ProjectColorPicker } from '@/components/sidebar/ProjectColorPicker';
 import { ProjectLogoCropDialog } from '@/components/sidebar/ProjectLogoCropDialog';
 import { ProjectDeleteDialog } from '@/components/sidebar/ProjectDeleteDialog';
+import { ProjectFlagCreateDialog } from '@/components/sidebar/ProjectFlagCreateDialog';
+import { ProjectFlagWarningDialog } from '@/components/sidebar/ProjectFlagWarningDialog';
 import { SidebarVideoLinkPopup } from '@/components/sidebar/SidebarVideoLinkPopup';
 import { SidebarVideoPiP } from '@/components/sidebar/SidebarVideoPiP';
 import { SidebarMusicPlayer } from '@/components/sidebar/SidebarMusicPlayer';
+import { SidebarWhatsAppIcon } from '@/components/sidebar/SidebarWhatsAppIcon';
+import { SidebarWhatsAppLinkPopup } from '@/components/sidebar/SidebarWhatsAppLinkPopup';
+import { SidebarMailInboxPopup } from '@/components/sidebar/SidebarMailInboxPopup';
+import { SidebarMailPanel } from '@/components/sidebar/SidebarMailPanel';
+import { SidebarVercelDeployCard } from '@/components/sidebar/SidebarVercelDeployCard';
+import { SidebarVercelIcon } from '@/components/sidebar/SidebarVercelIcon';
+import { SidebarVercelTokenPopup } from '@/components/sidebar/SidebarVercelTokenPopup';
 import { WorkspaceMenu } from '@/components/sidebar/WorkspaceMenu';
-import type { SidebarVideoSession } from '@/utils/sidebarVideoProviders';
+import { useVercelDeployments } from '@/hooks/useVercelDeployments';
+import {
+  fetchSidebarVideoTitle,
+  type SidebarVideoSession,
+} from '@/utils/sidebarVideoProviders';
+import { openSidebarWhatsAppLink } from '@/utils/sidebarWhatsAppLink';
 import { ProjectMoveWorkspaceMenu } from '@/components/sidebar/ProjectMoveWorkspaceMenu';
 import { WorkspaceDeleteDialog } from '@/components/sidebar/WorkspaceDeleteDialog';
-import type { ContextMenuState, ProjectPromptMode } from '@/types';
+import type { ContextMenuState, MailMailboxRef, ProjectPromptMode } from '@/types';
+import { buildRunningAgentProjectIdSet } from '@/utils/projectAgentStatus';
+import { buildRunningAutomationProjectIdSet } from '@/utils/projectAutomationStatus';
+import {
+  buildSidebarProjects,
+  getHiddenNotifiedProjects,
+  getNotifiedWorkspaceIds,
+} from '@/utils/projectNotificationVisibility';
+import { getProjectPingTone } from '@/utils/projectPingTone';
 
 function ProjectSidebarComponent() {
   const projects = useProjectStore((state) => state.projects);
   const workspaces = useProjectStore((state) => state.workspaces);
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
+  const selectingProjectId = useProjectStore((state) => state.selectingProjectId);
   const activeWorkspaceId = useProjectStore((state) => state.activeWorkspaceId);
   const addProject = useProjectStore((state) => state.addProject);
   const selectProject = useProjectStore((state) => state.selectProject);
   const updateProject = useProjectStore((state) => state.updateProject);
   const removeProject = useProjectStore((state) => state.removeProject);
+  const stopProject = useProjectStore((state) => state.stopProject);
   const createWorkspace = useProjectStore((state) => state.createWorkspace);
   const selectWorkspace = useProjectStore((state) => state.selectWorkspace);
   const removeWorkspace = useProjectStore((state) => state.removeWorkspace);
   const moveProjectToWorkspace = useProjectStore((state) => state.moveProjectToWorkspace);
   const toggleSidebar = useProjectStore((state) => state.toggleSidebar);
   const sidebarCollapsed = useProjectStore((state) => state.sidebarCollapsed);
-  const notifiedProjectIds = useProjectNotificationStore((state) => state.notifiedProjectIds);
+  const activeVideoSession = useProjectStore((state) => state.sidebarVideoSession);
+  const sidebarVideoLastLink = useProjectStore((state) => state.sidebarVideoLastLink);
+  const startSidebarVideoSession = useProjectStore((state) => state.startSidebarVideoSession);
+  const closeSidebarVideoSession = useProjectStore((state) => state.closeSidebarVideoSession);
+  const activeProjectWhatsAppLink = useProjectStore((state) => {
+    const project = state.projects.find((item) => item.id === state.activeProjectId);
+    return project?.whatsappLink ?? null;
+  });
+  const setActiveProjectWhatsAppLink = useProjectStore((state) => state.setActiveProjectWhatsAppLink);
+  const activeProjectMailInbox = useProjectStore((state) => {
+    const project = state.projects.find((item) => item.id === state.activeProjectId);
+    return project?.mailInbox ?? null;
+  });
+  const setActiveProjectMailInbox = useProjectStore((state) => state.setActiveProjectMailInbox);
+  const initialized = useProjectStore((state) => state.initialized);
+  const notifiedAgentPaneByProject = useProjectNotificationStore(
+    (state) => state.notifiedAgentPaneByProject,
+  );
+  const awaitingResponseByPane = useTerminalSessionStore((state) => state.awaitingResponseByPane);
+  const activeAgentByPane = useTerminalSessionStore((state) => state.activeAgentByPane);
+  const agentBusyByPane = useTerminalSessionStore((state) => state.agentBusyByPane);
+  const runningAgentProjectIds = useMemo(
+    () => buildRunningAgentProjectIdSet(projects, awaitingResponseByPane, activeAgentByPane, agentBusyByPane),
+    [activeAgentByPane, agentBusyByPane, awaitingResponseByPane, projects],
+  );
+  const executingAutomationByProject = useAutomationExecutionStore(
+    (state) => state.executingAutomationByProject,
+  );
+  const runningAutomationProjectIds = useMemo(
+    () => buildRunningAutomationProjectIdSet(executingAutomationByProject),
+    [executingAutomationByProject],
+  );
 
   const filterButtonRef = useRef<HTMLButtonElement>(null);
   const videoButtonRef = useRef<HTMLButtonElement>(null);
+  const whatsappButtonRef = useRef<HTMLButtonElement>(null);
+  const mailButtonRef = useRef<HTMLButtonElement>(null);
+  const vercelButtonRef = useRef<HTMLButtonElement>(null);
   const skipWorkspaceListAnimationRef = useRef(true);
+  const flagStartupCheckedRef = useRef(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [workspaceMenuRect, setWorkspaceMenuRect] = useState<DOMRect | null>(null);
   const [videoPopupOpen, setVideoPopupOpen] = useState(false);
   const [videoPopupAnchor, setVideoPopupAnchor] = useState<DOMRect | null>(null);
-  const [activeVideoSession, setActiveVideoSession] = useState<SidebarVideoSession | null>(null);
+  const [whatsappPopupOpen, setWhatsappPopupOpen] = useState(false);
+  const [whatsappPopupAnchor, setWhatsappPopupAnchor] = useState<DOMRect | null>(null);
+  const [whatsappPopupOpensOnSave, setWhatsappPopupOpensOnSave] = useState(true);
+  const [mailPanelOpen, setMailPanelOpen] = useState(false);
+  const [mailPopupOpen, setMailPopupOpen] = useState(false);
+  const [mailPopupAnchor, setMailPopupAnchor] = useState<DOMRect | null>(null);
+  const [mailPopupOpensOnSave, setMailPopupOpensOnSave] = useState(true);
+  const [vercelPopupOpen, setVercelPopupOpen] = useState(false);
+  const [vercelPopupAnchor, setVercelPopupAnchor] = useState<DOMRect | null>(null);
   const [musicPlayerOpen, setMusicPlayerOpen] = useState(false);
-  const pipAnchorRef = useRef<HTMLDivElement>(null);
-  const [pipAnchorHeight, setPipAnchorHeight] = useState<number | null>(null);
+  const musicPlayerOpenTick = useGlobalSearchStore((state) => state.musicPlayerOpenTick);
   const [projectListAnimationKey, setProjectListAnimationKey] = useState(0);
+  const {
+    tokenConfigured: vercelTokenConfigured,
+    activeDeployment: vercelActiveDeployment,
+    refresh: refreshVercelDeployments,
+    refreshTokenConfigured: refreshVercelTokenConfigured,
+    dismiss: dismissVercelDeployCard,
+  } = useVercelDeployments(true);
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [promptMode, setPromptMode] = useState<ProjectPromptMode | null>(null);
@@ -57,6 +133,11 @@ function ProjectSidebarComponent() {
   const [moveProjectId, setMoveProjectId] = useState<string | null>(null);
   const [moveMenuPosition, setMoveMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const [deleteWorkspaceId, setDeleteWorkspaceId] = useState<string | null>(null);
+  const [flagCreateProjectId, setFlagCreateProjectId] = useState<string | null>(null);
+  const [pendingFlagAccess, setPendingFlagAccess] = useState<{
+    projectId: string;
+    previousProjectId: string | null;
+  } | null>(null);
 
   const filteredProjects = useMemo(() => {
     if (activeWorkspaceId === null) {
@@ -65,6 +146,57 @@ function ProjectSidebarComponent() {
 
     return projects.filter((project) => project.workspaceId === activeWorkspaceId);
   }, [activeWorkspaceId, projects]);
+
+  const sidebarProjects = useMemo(
+    () =>
+      buildSidebarProjects(
+        projects,
+        filteredProjects,
+        activeProjectId,
+        notifiedAgentPaneByProject,
+        selectingProjectId,
+      ),
+    [activeProjectId, filteredProjects, notifiedAgentPaneByProject, projects, selectingProjectId],
+  );
+
+  const hiddenNotifiedProjects = useMemo(
+    () => getHiddenNotifiedProjects(projects, sidebarProjects, notifiedAgentPaneByProject),
+    [sidebarProjects, notifiedAgentPaneByProject, projects],
+  );
+
+  const notifiedWorkspaceIds = useMemo(
+    () => getNotifiedWorkspaceIds(projects, notifiedAgentPaneByProject),
+    [notifiedAgentPaneByProject, projects],
+  );
+
+  const workspaceFilterHasNotification = useMemo(() => {
+    if (activeWorkspaceId === null) {
+      return Object.keys(notifiedAgentPaneByProject).length > 0;
+    }
+
+    return projects.some(
+      (project) =>
+        project.workspaceId === activeWorkspaceId && Boolean(notifiedAgentPaneByProject[project.id]),
+    );
+  }, [activeWorkspaceId, notifiedAgentPaneByProject, projects]);
+
+  const filterPingTone = useMemo(() => {
+    const notifiedProject =
+      hiddenNotifiedProjects[0] ??
+      projects.find((project) => {
+        if (!notifiedAgentPaneByProject[project.id]) {
+          return false;
+        }
+
+        if (activeWorkspaceId === null) {
+          return true;
+        }
+
+        return project.workspaceId === activeWorkspaceId;
+      });
+
+    return notifiedProject ? getProjectPingTone(notifiedProject.color) : null;
+  }, [activeWorkspaceId, hiddenNotifiedProjects, notifiedAgentPaneByProject, projects]);
 
   const workspaceFilterLabel = useMemo(() => {
     if (activeWorkspaceId === null) {
@@ -85,6 +217,12 @@ function ProjectSidebarComponent() {
 
     setProjectListAnimationKey((key) => key + 1);
   }, [activeWorkspaceId]);
+
+  useEffect(() => {
+    if (musicPlayerOpenTick > 0) {
+      setMusicPlayerOpen(true);
+    }
+  }, [musicPlayerOpenTick]);
 
   const contextProject = useMemo(
     () => projects.find((project) => project.id === contextMenu?.projectId) ?? null,
@@ -121,6 +259,30 @@ function ProjectSidebarComponent() {
     [deleteWorkspaceId, workspaces],
   );
 
+  const flagCreateProject = useMemo(
+    () => projects.find((project) => project.id === flagCreateProjectId) ?? null,
+    [flagCreateProjectId, projects],
+  );
+
+  const pendingFlagProject = useMemo(
+    () => projects.find((project) => project.id === pendingFlagAccess?.projectId) ?? null,
+    [pendingFlagAccess?.projectId, projects],
+  );
+
+  useEffect(() => {
+    if (!initialized || flagStartupCheckedRef.current) {
+      return;
+    }
+
+    flagStartupCheckedRef.current = true;
+
+    const activeProject = projects.find((project) => project.id === activeProjectId);
+
+    if (activeProject?.flag) {
+      setPendingFlagAccess({ projectId: activeProject.id, previousProjectId: null });
+    }
+  }, [activeProjectId, initialized, projects]);
+
   const handleAddProject = useCallback(() => {
     void addProject();
   }, [addProject]);
@@ -141,22 +303,175 @@ function ProjectSidebarComponent() {
     setVideoPopupAnchor(null);
   }, []);
 
-  const handleStartVideoSession = useCallback((session: SidebarVideoSession) => {
-    setActiveVideoSession(session);
-  }, []);
+  const handleStartVideoSession = useCallback(
+    async (session: SidebarVideoSession) => {
+      const title = await fetchSidebarVideoTitle(session.sourceUrl, session.provider);
+      await startSidebarVideoSession({ ...session, title });
+    },
+    [startSidebarVideoSession],
+  );
 
   const handleCloseVideoSession = useCallback(() => {
-    setActiveVideoSession(null);
-    setPipAnchorHeight(null);
-  }, []);
+    void closeSidebarVideoSession();
+  }, [closeSidebarVideoSession]);
 
-  const handlePipAnchorSizeChange = useCallback((size: { width: number; height: number } | null) => {
-    setPipAnchorHeight(size?.height ?? null);
-  }, []);
+  const videoPopupInitialLink = activeVideoSession?.sourceUrl ?? sidebarVideoLastLink ?? '';
 
   const handleToggleMusicPlayer = useCallback(() => {
     setMusicPlayerOpen((current) => !current);
   }, []);
+
+  const openWhatsappPopup = useCallback((opensOnSave: boolean) => {
+    const rect = whatsappButtonRef.current?.getBoundingClientRect();
+
+    if (!rect) {
+      return;
+    }
+
+    setWhatsappPopupOpensOnSave(opensOnSave);
+    setWhatsappPopupAnchor(rect);
+    setWhatsappPopupOpen(true);
+  }, []);
+
+  const handleCloseWhatsappPopup = useCallback(() => {
+    setWhatsappPopupOpen(false);
+    setWhatsappPopupAnchor(null);
+  }, []);
+
+  const handleWhatsappClick = useCallback(() => {
+    if (!activeProjectId) {
+      return;
+    }
+
+    if (activeProjectWhatsAppLink) {
+      void openSidebarWhatsAppLink(activeProjectWhatsAppLink);
+      return;
+    }
+
+    openWhatsappPopup(true);
+  }, [activeProjectId, activeProjectWhatsAppLink, openWhatsappPopup]);
+
+  const handleWhatsappContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (!activeProjectId || !activeProjectWhatsAppLink) {
+        return;
+      }
+
+      event.preventDefault();
+      openWhatsappPopup(false);
+    },
+    [activeProjectId, activeProjectWhatsAppLink, openWhatsappPopup],
+  );
+
+  const handleSaveWhatsappLink = useCallback(
+    async (link: string) => {
+      await setActiveProjectWhatsAppLink(link);
+
+      if (whatsappPopupOpensOnSave) {
+        void openSidebarWhatsAppLink(link);
+      }
+    },
+    [setActiveProjectWhatsAppLink, whatsappPopupOpensOnSave],
+  );
+
+  const openMailPopup = useCallback((opensOnSave: boolean) => {
+    const rect = mailButtonRef.current?.getBoundingClientRect();
+
+    if (!rect) {
+      return;
+    }
+
+    setMailPopupOpensOnSave(opensOnSave);
+    setMailPopupAnchor(rect);
+    setMailPopupOpen(true);
+  }, []);
+
+  const handleCloseMailPopup = useCallback(() => {
+    setMailPopupOpen(false);
+    setMailPopupAnchor(null);
+  }, []);
+
+  const handleMailClick = useCallback(() => {
+    if (!activeProjectId) {
+      return;
+    }
+
+    if (activeProjectMailInbox) {
+      setMailPanelOpen((current) => !current);
+      return;
+    }
+
+    openMailPopup(true);
+  }, [activeProjectId, activeProjectMailInbox, openMailPopup]);
+
+  const handleMailContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (!activeProjectId) {
+        return;
+      }
+
+      event.preventDefault();
+      openMailPopup(false);
+    },
+    [activeProjectId, openMailPopup],
+  );
+
+  const handleSaveMailInbox = useCallback(
+    async (mailbox: MailMailboxRef) => {
+      await setActiveProjectMailInbox(mailbox);
+
+      if (mailPopupOpensOnSave) {
+        setMailPanelOpen(true);
+      }
+    },
+    [mailPopupOpensOnSave, setActiveProjectMailInbox],
+  );
+
+  const openVercelPopup = useCallback(() => {
+    const rect = vercelButtonRef.current?.getBoundingClientRect();
+
+    if (!rect) {
+      return;
+    }
+
+    setVercelPopupAnchor(rect);
+    setVercelPopupOpen(true);
+  }, []);
+
+  const handleCloseVercelPopup = useCallback(() => {
+    setVercelPopupOpen(false);
+    setVercelPopupAnchor(null);
+  }, []);
+
+  const handleVercelClick = useCallback(() => {
+    openVercelPopup();
+  }, [openVercelPopup]);
+
+  const handleVercelContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (!vercelTokenConfigured) {
+        return;
+      }
+
+      event.preventDefault();
+      openVercelPopup();
+    },
+    [openVercelPopup, vercelTokenConfigured],
+  );
+
+  const handleVercelTokenSaved = useCallback(() => {
+    void refreshVercelTokenConfigured();
+    void refreshVercelDeployments();
+  }, [refreshVercelDeployments, refreshVercelTokenConfigured]);
+
+  const handleVercelTokenCleared = useCallback(() => {
+    void refreshVercelTokenConfigured();
+    void refreshVercelDeployments();
+  }, [refreshVercelDeployments, refreshVercelTokenConfigured]);
+
+  useEffect(() => {
+    setMailPanelOpen(false);
+  }, [activeProjectId]);
 
   const handleToggleSidebar = useCallback(() => {
     void toggleSidebar();
@@ -209,12 +524,75 @@ function ProjectSidebarComponent() {
 
   const handleSelectProject = useCallback(
     (id: string) => {
+      if (id === activeProjectId) {
+        return;
+      }
+
+      const project = projects.find((item) => item.id === id);
+
+      if (project?.flag) {
+        setPendingFlagAccess({ projectId: id, previousProjectId: activeProjectId });
+        return;
+      }
+
       void selectProject(id);
     },
-    [selectProject],
+    [activeProjectId, projects, selectProject],
   );
 
-  useProjectIndexShortcuts({ filteredProjects, onSelectProject: handleSelectProject });
+  const handleCreateFlag = useCallback((projectId: string) => {
+    setFlagCreateProjectId(projectId);
+  }, []);
+
+  const handleFlagCreateClose = useCallback(() => {
+    setFlagCreateProjectId(null);
+  }, []);
+
+  const handleFlagCreateConfirm = useCallback(
+    (reason: string) => {
+      if (!flagCreateProjectId) {
+        return;
+      }
+
+      void updateProject(flagCreateProjectId, {
+        flag: { reason, createdAt: Date.now() },
+      });
+      setFlagCreateProjectId(null);
+    },
+    [flagCreateProjectId, updateProject],
+  );
+
+  const handleFlagAccessDismiss = useCallback(() => {
+    if (!pendingFlagAccess) {
+      return;
+    }
+
+    const { projectId } = pendingFlagAccess;
+    setPendingFlagAccess(null);
+
+    if (projectId !== activeProjectId) {
+      void selectProject(projectId);
+    }
+  }, [activeProjectId, pendingFlagAccess, selectProject]);
+
+  const handleFlagAccessRemove = useCallback(() => {
+    if (!pendingFlagAccess) {
+      return;
+    }
+
+    const { projectId, previousProjectId } = pendingFlagAccess;
+    setPendingFlagAccess(null);
+
+    void (async () => {
+      await updateProject(projectId, { flag: null });
+
+      if (previousProjectId !== null && projectId !== activeProjectId) {
+        await selectProject(projectId);
+      }
+    })();
+  }, [activeProjectId, pendingFlagAccess, selectProject, updateProject]);
+
+  useProjectIndexShortcuts({ filteredProjects: sidebarProjects, onSelectProject: handleSelectProject });
 
   const handleContextMenu = useCallback((project: { id: string }, x: number, y: number) => {
     setContextMenu({ projectId: project.id, x, y });
@@ -296,6 +674,13 @@ function ProjectSidebarComponent() {
   const handleDelete = useCallback((projectId: string) => {
     setDeleteProjectId(projectId);
   }, []);
+
+  const handleStopAll = useCallback(
+    (projectId: string) => {
+      void stopProject(projectId);
+    },
+    [stopProject],
+  );
 
   const handleMove = useCallback((projectId: string, anchorRect: DOMRect) => {
     setContextMenu(null);
@@ -395,22 +780,36 @@ function ProjectSidebarComponent() {
         <button
           ref={filterButtonRef}
           type='button'
-          className='sidebar__filter'
+          className={`sidebar__filter${workspaceFilterHasNotification ? ' sidebar__filter--notified' : ''}`}
           title={workspaceFilterLabel}
           onClick={handleOpenWorkspaceMenu}
         >
-          <span>{workspaceFilterLabel}</span>
+          <span className='sidebar__filter-label'>
+            <span className='sidebar__filter-icon-wrap'>
+              <span className='sidebar__filter-dot' aria-hidden='true' />
+              {filterPingTone ? (
+                <span
+                  className={`project-item__ping project-item__ping--${filterPingTone} sidebar__filter-ping`}
+                  aria-hidden='true'
+                />
+              ) : null}
+            </span>
+            <span className='sidebar__filter-text'>{workspaceFilterLabel}</span>
+          </span>
           <ChevronDown size={14} />
         </button>
       </div>
 
       <div className='sidebar__list'>
-        {filteredProjects.map((project, index) => (
+        {sidebarProjects.map((project, index) => (
           <ProjectListItem
             key={project.id}
             project={project}
             isActive={project.id === activeProjectId}
-            hasNotification={Boolean(notifiedProjectIds[project.id])}
+            isFlagged={Boolean(project.flag)}
+            hasNotification={Boolean(notifiedAgentPaneByProject[project.id])}
+            isAgentRunning={runningAgentProjectIds.has(project.id)}
+            isAutomationRunning={runningAutomationProjectIds.has(project.id)}
             enterIndex={index}
             enterAnimationKey={projectListAnimationKey}
             onSelect={handleSelectProject}
@@ -421,23 +820,20 @@ function ProjectSidebarComponent() {
 
       <div className='sidebar__footer'>
         {activeVideoSession ? (
-          <>
-            <div
-              ref={pipAnchorRef}
-              className='sidebar-video-pip-anchor'
-              style={pipAnchorHeight ? { height: `${pipAnchorHeight}px` } : undefined}
-              aria-hidden='true'
-            />
-            <SidebarVideoPiP
-              session={activeVideoSession}
-              anchorRef={pipAnchorRef}
-              onAnchorSizeChange={handlePipAnchorSizeChange}
-              onClose={handleCloseVideoSession}
-            />
-          </>
+          <div className='sidebar-video-pip-anchor'>
+            <SidebarVideoPiP session={activeVideoSession} onClose={handleCloseVideoSession} />
+          </div>
         ) : null}
 
         {musicPlayerOpen ? <SidebarMusicPlayer /> : null}
+
+        {mailPanelOpen && activeProjectMailInbox ? (
+          <SidebarMailPanel mailbox={activeProjectMailInbox} />
+        ) : null}
+
+        {vercelActiveDeployment ? (
+          <SidebarVercelDeployCard deployment={vercelActiveDeployment} onDismiss={dismissVercelDeployCard} />
+        ) : null}
 
         <button type='button' className='sidebar__add app-button app-button--enter' title='Adicionar projeto' onClick={handleAddProject}>
           <Plus size={14} />
@@ -464,14 +860,80 @@ function ProjectSidebarComponent() {
           >
             <Music size={14} />
           </button>
+          <button
+            ref={whatsappButtonRef}
+            type='button'
+            className={`sidebar__action-btn app-button app-button--enter${whatsappPopupOpen ? ' sidebar__action-btn--active' : ''}`}
+            aria-label='WhatsApp'
+            title='WhatsApp'
+            onClick={handleWhatsappClick}
+            onContextMenu={handleWhatsappContextMenu}
+          >
+            <SidebarWhatsAppIcon size={14} />
+          </button>
+          <button
+            ref={mailButtonRef}
+            type='button'
+            className={`sidebar__action-btn app-button app-button--enter${mailPanelOpen || mailPopupOpen ? ' sidebar__action-btn--active' : ''}`}
+            aria-label='E-mail'
+            title='E-mail'
+            onClick={handleMailClick}
+            onContextMenu={handleMailContextMenu}
+          >
+            <Mail size={14} />
+          </button>
+          <button
+            ref={vercelButtonRef}
+            type='button'
+            className={`sidebar__action-btn app-button app-button--enter${vercelPopupOpen || vercelTokenConfigured ? ' sidebar__action-btn--active' : ''}`}
+            aria-label='Vercel'
+            title='Vercel'
+            onClick={handleVercelClick}
+            onContextMenu={handleVercelContextMenu}
+          >
+            <SidebarVercelIcon size={14} />
+          </button>
         </div>
       </div>
 
       {videoPopupOpen && videoPopupAnchor ? (
         <SidebarVideoLinkPopup
           anchorRect={videoPopupAnchor}
+          initialLink={videoPopupInitialLink}
           onClose={handleCloseVideoPopup}
           onStart={handleStartVideoSession}
+        />
+      ) : null}
+
+      {whatsappPopupOpen && whatsappPopupAnchor && activeProjectId ? (
+        <SidebarWhatsAppLinkPopup
+          key={activeProjectId}
+          anchorRect={whatsappPopupAnchor}
+          initialLink={activeProjectWhatsAppLink ?? ''}
+          submitOpensLink={whatsappPopupOpensOnSave}
+          onClose={handleCloseWhatsappPopup}
+          onSave={(link) => void handleSaveWhatsappLink(link)}
+        />
+      ) : null}
+
+      {mailPopupOpen && mailPopupAnchor && activeProjectId ? (
+        <SidebarMailInboxPopup
+          key={activeProjectId}
+          anchorRect={mailPopupAnchor}
+          initialMailbox={activeProjectMailInbox}
+          submitOpensPanel={mailPopupOpensOnSave}
+          onClose={handleCloseMailPopup}
+          onSave={(mailbox) => void handleSaveMailInbox(mailbox)}
+        />
+      ) : null}
+
+      {vercelPopupOpen && vercelPopupAnchor ? (
+        <SidebarVercelTokenPopup
+          anchorRect={vercelPopupAnchor}
+          tokenConfigured={vercelTokenConfigured}
+          onClose={handleCloseVercelPopup}
+          onSaved={handleVercelTokenSaved}
+          onCleared={handleVercelTokenCleared}
         />
       ) : null}
 
@@ -481,6 +943,8 @@ function ProjectSidebarComponent() {
           workspaces={workspaces}
           activeWorkspaceId={activeWorkspaceId}
           canDeleteWorkspace={canDeleteWorkspace}
+          hasHiddenNotifications={notifiedWorkspaceIds.size > 0}
+          notifiedWorkspaceIds={notifiedWorkspaceIds}
           onClose={handleCloseWorkspaceMenu}
           onSelect={handleSelectWorkspace}
           onCreate={handleCreateWorkspace}
@@ -500,7 +964,9 @@ function ProjectSidebarComponent() {
           onSetIcon={handleSetIcon}
           onSetIconColor={handleSetIconColor}
           onRename={handleRename}
+          onCreateFlag={handleCreateFlag}
           onMove={handleMove}
+          onStopAll={handleStopAll}
           onDelete={handleDelete}
         />
       ) : null}
@@ -547,6 +1013,24 @@ function ProjectSidebarComponent() {
           projectName={projectToDelete.name}
           onConfirm={handleDeleteConfirm}
           onClose={handleDeleteClose}
+        />
+      ) : null}
+
+      {flagCreateProject ? (
+        <ProjectFlagCreateDialog
+          projectName={flagCreateProject.name}
+          onConfirm={handleFlagCreateConfirm}
+          onClose={handleFlagCreateClose}
+        />
+      ) : null}
+
+      {pendingFlagProject?.flag ? (
+        <ProjectFlagWarningDialog
+          projectName={pendingFlagProject.name}
+          reason={pendingFlagProject.flag.reason}
+          onDismiss={handleFlagAccessDismiss}
+          onRemoveFlag={handleFlagAccessRemove}
+          onClose={handleFlagAccessDismiss}
         />
       ) : null}
 

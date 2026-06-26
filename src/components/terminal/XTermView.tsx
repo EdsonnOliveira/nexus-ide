@@ -15,58 +15,50 @@ import { TERMINAL_AGENTS } from '@/constants/terminalAgents';
 import { buildTerminalTheme } from '@/constants/terminalTheme';
 import { TerminalLinkContextMenu } from '@/components/terminal/TerminalLinkContextMenu';
 import type { TerminalAgent } from '@/types';
+import { saveScrollbackForPane } from '@/utils/persistTerminalSession';
 import { findUrlAtTerminalPosition, registerNexusTerminalLinks } from '@/utils/terminalLink';
 import { createTerminalOutputParser } from '@/utils/terminalStream';
 import {
   createAgentReadyStreamDetector,
   createSettledCallback,
+  completeShellIdleTaskIfAwaiting,
+  dispatchPendingAgentTaskCommands,
+  isPaneTrackingAgentCompletion,
   trackAgentReadyDetectorReset,
 } from '@/utils/terminalTaskCompletion';
+import { completeAgentGitTurn, trackAgentGitPrompt } from '@/utils/agentGitTurn';
+import { handleAutomationPaneShellPrompt } from '@/utils/automationPaneExecution';
+import { useAgentGitChangeStore } from '@/stores/useAgentGitChangeStore';
+import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
+import { shouldMarkAgentAwaiting } from '@/utils/projectAgentStatus';
 import { parseCdCommandLine } from '@/utils/terminalCwd';
 import { isOverlayBlockingTerminalHints } from '@/utils/overlayBlocking';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useTerminalPasteImageStore } from '@/stores/useTerminalPasteImageStore';
+import { attachAgentPromptImageToPane } from '@/utils/attachAgentPromptImage';
 import { readClipboardImageDataUrl } from '@/utils/terminalClipboardImage';
 import {
+  buildRemoveImagePathPromptSequence,
   buildRemoveImagePromptSequence,
+  parseImagePathReferences,
   parseImageTokenIds,
 } from '@/utils/terminalPasteImageTokens';
-
-function readShellPromptInput(terminal: Terminal): string {
-  const buffer = terminal.buffer.active;
-  const line = buffer.getLine(buffer.cursorY);
-
-  if (!line) {
-    return '';
-  }
-
-  const lineText = line.translateToString(true).replace(/\s+$/, '');
-  const arrowMatch = lineText.match(/(?:^|\s)->\s*(.*)$/);
-
-  if (arrowMatch) {
-    return (arrowMatch[1] ?? '').trim();
-  }
-
-  const match = lineText.match(/[%#]\s*(.*)$/);
-
-  if (!match) {
-    return lineText.trim();
-  }
-
-  return (match[1] ?? '').trim();
-}
+import { readShellPromptInput, sanitizeAgentPrompt } from '@/utils/terminalShellPrompt';
 
 export interface XTermViewHandle {
   focus: () => void;
   write: (data: string) => void;
+  isWritable: () => boolean;
   interruptAndRun: (command: string) => Promise<void>;
   removeImageFromPrompt: (imageId: number) => void;
 }
 
 interface XTermViewProps {
   paneId: string;
+  projectPath: string;
   ptyId: string | null;
   isVisible: boolean;
+  isRuntimeActive: boolean;
   isFocused: boolean;
   cwd: string;
   agent: TerminalAgent;
@@ -79,11 +71,144 @@ interface XTermViewProps {
   hintsKeyboardActive?: boolean;
 }
 
-function fitTerminal(fitAddon: FitAddon, terminal: Terminal, ptyId: string | null): void {
+function isTerminalAtBottom(terminal: Terminal): boolean {
+  const buffer = terminal.buffer.active;
+  return buffer.baseY + terminal.rows >= buffer.length;
+}
+
+function fitTerminal(
+  fitAddon: FitAddon,
+  terminal: Terminal,
+  ptyId: string | null,
+  stickToBottomRef: { current: boolean },
+  isVisible: boolean,
+): void {
+  if (!isVisible) {
+    return;
+  }
+
+  const stickToBottom = stickToBottomRef.current;
+
   fitAddon.fit();
+
+  if (stickToBottom) {
+    terminal.scrollToBottom();
+    stickToBottomRef.current = true;
+  } else {
+    stickToBottomRef.current = isTerminalAtBottom(terminal);
+  }
 
   if (ptyId && terminal.cols > 0 && terminal.rows > 0) {
     window.nexus.terminal.resize(ptyId, terminal.cols, terminal.rows);
+  }
+}
+
+function refreshTerminalDisplay(
+  fitAddon: FitAddon,
+  terminal: Terminal,
+  ptyId: string | null,
+  stickToBottomRef: { current: boolean },
+  isVisible: boolean,
+): void {
+  fitTerminal(fitAddon, terminal, ptyId, stickToBottomRef, isVisible);
+
+  if (terminal.rows > 0) {
+    terminal.refresh(0, terminal.rows - 1);
+  }
+}
+
+function scheduleTerminalDisplayRefresh(
+  fitAddon: FitAddon,
+  terminal: Terminal,
+  ptyId: string | null,
+  stickToBottomRef: { current: boolean },
+  isVisible: boolean,
+): void {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      refreshTerminalDisplay(fitAddon, terminal, ptyId, stickToBottomRef, isVisible);
+    });
+  });
+}
+
+async function fetchTerminalScrollback(ptyId: string, paneId: string): Promise<string> {
+  let scrollback = await window.nexus.terminal.getScrollback(ptyId);
+
+  if (!scrollback) {
+    scrollback = await window.nexus.session.getScrollback(paneId);
+  }
+
+  return scrollback;
+}
+
+async function forceReplayTerminalScrollback(
+  terminal: Terminal,
+  ptyId: string,
+  paneId: string,
+  parseStream: (data: string) => string,
+  suppressShellPromptClearRef: { current: boolean },
+  stickToBottomRef: { current: boolean },
+): Promise<void> {
+  const scrollback = await fetchTerminalScrollback(ptyId, paneId);
+
+  if (!scrollback) {
+    return;
+  }
+
+  suppressShellPromptClearRef.current = true;
+  terminal.clear();
+  terminal.write(parseStream(scrollback));
+  suppressShellPromptClearRef.current = false;
+  terminal.scrollToBottom();
+  stickToBottomRef.current = true;
+
+  if (terminal.rows > 0) {
+    terminal.refresh(0, terminal.rows - 1);
+  }
+}
+
+async function restoreTerminalScrollback(
+  terminal: Terminal,
+  ptyId: string,
+  paneId: string,
+  parseStream: (data: string) => string,
+  suppressShellPromptClearRef: { current: boolean },
+  stickToBottomRef: { current: boolean },
+): Promise<void> {
+  if (terminal.buffer.active.length > 1) {
+    return;
+  }
+
+  const scrollback = await fetchTerminalScrollback(ptyId, paneId);
+
+  replayTerminalScrollback(
+    terminal,
+    scrollback,
+    parseStream,
+    suppressShellPromptClearRef,
+    stickToBottomRef,
+  );
+}
+
+function replayTerminalScrollback(
+  terminal: Terminal,
+  scrollback: string,
+  parseStream: (data: string) => string,
+  suppressShellPromptClearRef: { current: boolean },
+  stickToBottomRef: { current: boolean },
+): void {
+  if (!scrollback || terminal.buffer.active.length > 1) {
+    return;
+  }
+
+  suppressShellPromptClearRef.current = true;
+  terminal.write(parseStream(scrollback));
+  suppressShellPromptClearRef.current = false;
+  terminal.scrollToBottom();
+  stickToBottomRef.current = true;
+
+  if (terminal.rows > 0) {
+    terminal.refresh(0, terminal.rows - 1);
   }
 }
 
@@ -98,8 +223,10 @@ function applyTransparentViewport(container: HTMLDivElement): void {
 const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function XTermViewComponent(
   {
     paneId,
+    projectPath,
     ptyId,
     isVisible,
+    isRuntimeActive,
     isFocused,
     cwd,
     agent,
@@ -124,15 +251,20 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
   const terminalDomFocusedRef = useRef(false);
   const prevAgentRef = useRef(agent);
   const creatingRef = useRef(false);
+  const terminalExitedRef = useRef(false);
   const onPtyCreatedRef = useRef(onPtyCreated);
   const onPtyLostRef = useRef(onPtyLost);
   const onOpenLinkInBrowserRef = useRef(onOpenLinkInBrowser);
   const onCwdChangeRef = useRef(onCwdChange);
   const onFocusHintsRef = useRef(onFocusHints);
   const cwdRef = useRef(cwd);
+  const projectPathRef = useRef(projectPath);
   const parseStreamRef = useRef<(data: string) => string>((data) => data);
   const replayedScrollbackRef = useRef<{ ptyId: string; terminal: Terminal } | null>(null);
   const suppressShellPromptClearRef = useRef(false);
+  const stickToBottomRef = useRef(true);
+  const spawnTerminalRef = useRef<() => Promise<void>>(async () => undefined);
+  const resizeFrameRef = useRef<number | null>(null);
   const syncPasteImagesTimerRef = useRef<number | null>(null);
   const paneIdRef = useRef(paneId);
   const isVisibleRef = useRef(isVisible);
@@ -153,6 +285,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
           window.nexus.terminal.write(ptyIdRef.current, data);
         }
       },
+      isWritable: () => Boolean(ptyIdRef.current),
       interruptAndRun: async (command: string) => {
         const activePtyId = ptyIdRef.current;
 
@@ -166,6 +299,16 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         });
         window.nexus.terminal.write(activePtyId, `${command}\n`);
         useTerminalSessionStore.getState().setLastCommand(paneIdRef.current, command);
+
+        if (
+          shouldMarkAgentAwaiting(
+            paneIdRef.current,
+            command,
+            useTerminalSessionStore.getState().activeAgentByPane,
+          )
+        ) {
+          useTerminalSessionStore.getState().markAwaitingResponse(paneIdRef.current);
+        }
       },
       removeImageFromPrompt: (imageId: number) => {
         const activePtyId = ptyIdRef.current;
@@ -181,7 +324,13 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         }
 
         const promptText = readShellPromptInput(terminal);
-        const sequence = buildRemoveImagePromptSequence(imageId, promptText);
+        const image = useTerminalPasteImageStore
+          .getState()
+          .imagesByPane[paneIdRef.current]
+          ?.find((entry) => entry.id === imageId);
+        const sequence = image
+          ? buildRemoveImagePathPromptSequence(image.relativePath, promptText)
+          : buildRemoveImagePromptSequence(imageId, promptText);
 
         if (!sequence) {
           return;
@@ -205,9 +354,15 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     }
 
     const promptText = readShellPromptInput(terminal);
-    const activeIds = parseImageTokenIds(promptText);
+    const legacyIds = parseImageTokenIds(promptText);
+    const activeRelativePaths =
+      legacyIds.length > 0
+        ? (useTerminalPasteImageStore.getState().imagesByPane[paneIdRef.current] ?? [])
+            .filter((image) => legacyIds.includes(image.id))
+            .map((image) => image.relativePath)
+        : parseImagePathReferences(promptText);
 
-    useTerminalPasteImageStore.getState().syncPaneImages(paneIdRef.current, activeIds);
+    useTerminalPasteImageStore.getState().syncPaneImages(paneIdRef.current, activeRelativePaths);
   }, []);
 
   const syncPasteImagesFromPromptRef = useRef(syncPasteImagesFromPrompt);
@@ -283,6 +438,10 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     cwdRef.current = cwd;
   }, [cwd]);
 
+  useEffect(() => {
+    projectPathRef.current = projectPath;
+  }, [projectPath]);
+
   const spawnTerminal = useCallback(async () => {
     if (creatingRef.current) {
       return;
@@ -291,23 +450,26 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     creatingRef.current = true;
 
     try {
-      const createdPtyId = await window.nexus.terminal.create(cwd, agentRef.current);
+      const createdPtyId = await window.nexus.terminal.create(cwdRef.current, agentRef.current);
+      terminalExitedRef.current = false;
       ptyIdRef.current = createdPtyId;
       onPtyCreatedRef.current(createdPtyId);
-      applyCwdChange(cwd);
+      applyCwdChange(cwdRef.current);
 
       const terminal = terminalRef.current;
       const fitAddon = fitAddonRef.current;
 
       if (terminal) {
-        const savedScrollback = await window.nexus.session.getScrollback(paneIdRef.current);
+        await restoreTerminalScrollback(
+          terminal,
+          createdPtyId,
+          paneIdRef.current,
+          parseStreamRef.current,
+          suppressShellPromptClearRef,
+          stickToBottomRef,
+        );
 
-        if (savedScrollback) {
-          suppressShellPromptClearRef.current = true;
-          terminal.write(parseStreamRef.current(savedScrollback));
-          suppressShellPromptClearRef.current = false;
-          replayedScrollbackRef.current = { ptyId: createdPtyId, terminal };
-        }
+        replayedScrollbackRef.current = { ptyId: createdPtyId, terminal };
       }
 
       window.setTimeout(() => {
@@ -328,13 +490,17 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       }, 350);
 
       if (terminal && fitAddon) {
-        requestAnimationFrame(() => {
-          fitTerminal(fitAddon, terminal, createdPtyId);
+        scheduleTerminalDisplayRefresh(
+          fitAddon,
+          terminal,
+          createdPtyId,
+          stickToBottomRef,
+          isVisibleRef.current,
+        );
 
-          if (isFocusedRef.current) {
-            terminal.focus();
-          }
-        });
+        if (isFocusedRef.current) {
+          terminal.focus();
+        }
       }
     } catch (error) {
       const terminal = terminalRef.current;
@@ -343,7 +509,9 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     } finally {
       creatingRef.current = false;
     }
-  }, [applyCwdChange, cwd]);
+  }, [applyCwdChange]);
+
+  spawnTerminalRef.current = spawnTerminal;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -353,7 +521,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     }
 
     const terminal = new Terminal({
-      cursorBlink: false,
+      cursorBlink: true,
       cursorStyle: 'bar',
       cursorWidth: 1,
       fontFamily: 'SF Mono, Fira Code, Cascadia Code, Menlo, monospace',
@@ -384,7 +552,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     requestAnimationFrame(() => {
       applyTransparentViewport(container);
       terminal.refresh(0, terminal.rows - 1);
-      fitTerminal(fitAddon, terminal, ptyIdRef.current);
+      fitTerminal(fitAddon, terminal, ptyIdRef.current, stickToBottomRef, isVisibleRef.current);
     });
 
     terminalRef.current = terminal;
@@ -431,15 +599,28 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     });
 
     const resizeObserver = new ResizeObserver(() => {
-      fitTerminal(fitAddon, terminal, ptyIdRef.current);
+      if (!isVisibleRef.current) {
+        return;
+      }
+
+      if (resizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(resizeFrameRef.current);
+      }
+
+      resizeFrameRef.current = window.requestAnimationFrame(() => {
+        resizeFrameRef.current = null;
+        fitTerminal(fitAddon, terminal, ptyIdRef.current, stickToBottomRef, isVisibleRef.current);
+      });
     });
 
     resizeObserver.observe(container);
 
     const completeIfAwaiting = createSettledCallback(() => {
       if (!suppressShellPromptClearRef.current) {
-        useTerminalSessionStore.getState().completeTaskIfAwaiting(paneIdRef.current);
+        completeShellIdleTaskIfAwaiting(paneIdRef.current);
       }
+
+      handleAutomationPaneShellPrompt(paneIdRef.current);
     });
 
     const parseStream = createTerminalOutputParser(
@@ -459,12 +640,47 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     const agentReadyDetector = createAgentReadyStreamDetector(
       () => {
         if (!suppressShellPromptClearRef.current) {
+          completeAgentGitTurn(paneIdRef.current);
           useTerminalSessionStore.getState().completeTaskIfAwaiting(paneIdRef.current);
         }
+
+        const session = useTerminalSessionStore.getState();
+        const paneId = paneIdRef.current;
+        const ptyId = ptyIdRef.current;
+
+        if (!ptyId || !session.activeAgentByPane[paneId]) {
+          return;
+        }
+
+        dispatchPendingAgentTaskCommands(paneId, (command) => {
+          if (ptyIdRef.current !== ptyId) {
+            return;
+          }
+
+          window.nexus.terminal.write(ptyId, `${command}\n`);
+        });
       },
       {
-        isAwaiting: () =>
-          useTerminalSessionStore.getState().awaitingResponseByPane[paneIdRef.current] === true,
+        isAwaiting: () => {
+          const session = useTerminalSessionStore.getState();
+          const paneId = paneIdRef.current;
+          return isPaneTrackingAgentCompletion(
+            paneId,
+            session.awaitingResponseByPane,
+            session.agentNotifyEligibleByPane,
+            session.agentBusyByPane,
+          );
+        },
+        isBlocked: () => {
+          const paneId = paneIdRef.current;
+          const pending = useAgentGitChangeStore.getState().pendingTurnByPane[paneId];
+
+          if (pending) {
+            return false;
+          }
+
+          return Boolean(useTerminalSessionStore.getState().agentBusyByPane[paneId]);
+        },
       },
     );
     const disposeAgentDetectorReset = trackAgentReadyDetectorReset(
@@ -478,8 +694,18 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       const trimmed = line.trim();
 
       if (trimmed) {
-        useTerminalSessionStore.getState().markAwaitingResponse(paneIdRef.current);
-        useTerminalSessionStore.getState().setLastCommand(paneIdRef.current, trimmed);
+        stickToBottomRef.current = true;
+
+        const session = useTerminalSessionStore.getState();
+        const paneId = paneIdRef.current;
+
+        if (shouldMarkAgentAwaiting(paneId, trimmed, session.activeAgentByPane)) {
+          session.setLastCommand(paneId, trimmed);
+          trackAgentGitPrompt(paneId, trimmed);
+          session.markAwaitingResponse(paneId);
+        } else {
+          session.setLastCommand(paneId, trimmed);
+        }
       }
 
       if (isAgentSessionRef.current) {
@@ -498,12 +724,33 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       });
     };
 
+    const scrollDisposable = terminal.onScroll(() => {
+      stickToBottomRef.current = isTerminalAtBottom(terminal);
+    });
+
     const unsubscribeData = window.nexus.terminal.onData((incomingPtyId, data) => {
-      if (incomingPtyId === ptyIdRef.current) {
-        agentReadyDetector.feed(data);
-        terminal.write(parseStream(data));
-        scheduleSyncPasteImagesFromPromptRef.current(true);
+      if (incomingPtyId !== ptyIdRef.current) {
+        return;
       }
+
+      agentReadyDetector.feed(data);
+
+      if (!isVisibleRef.current) {
+        scheduleSyncPasteImagesFromPromptRef.current(true);
+        return;
+      }
+
+      const shouldStick = stickToBottomRef.current;
+      terminal.write(parseStream(data));
+
+      if (shouldStick) {
+        terminal.scrollToBottom();
+        stickToBottomRef.current = true;
+      } else {
+        stickToBottomRef.current = isTerminalAtBottom(terminal);
+      }
+
+      scheduleSyncPasteImagesFromPromptRef.current(true);
     });
 
     const unsubscribeExit = window.nexus.terminal.onExit((incomingPtyId, code) => {
@@ -512,6 +759,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       }
 
       terminal.writeln(`\r\n\x1b[38;5;244m[processo encerrou com código ${code}]\x1b[0m`);
+      terminalExitedRef.current = true;
       ptyIdRef.current = null;
       onPtyLostRef.current();
     });
@@ -523,7 +771,10 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
 
       for (const char of data) {
         if (char === '\r' || char === '\n') {
-          handleSubmittedLine(inputLine);
+          const submittedLine = isAgentSessionRef.current
+            ? readShellPromptInput(terminal) || sanitizeAgentPrompt(inputLine)
+            : inputLine;
+          handleSubmittedLine(submittedLine);
           inputLine = '';
           scheduleSyncPasteImagesFromPromptRef.current(true);
           continue;
@@ -555,12 +806,25 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         return;
       }
 
-      void readClipboardImageDataUrl(event).then((dataUrl) => {
+      const clipboardData = event.clipboardData;
+      const hasImageItem = clipboardData
+        ? Array.from(clipboardData.items).some((item) => item.type.startsWith('image/'))
+        : false;
+
+      if (!hasImageItem) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      void readClipboardImageDataUrl(event).then(async (dataUrl) => {
         if (!dataUrl) {
           return;
         }
 
-        useTerminalPasteImageStore.getState().addImage(paneIdRef.current, dataUrl);
+        await attachAgentPromptImageToPane(projectPathRef.current, paneIdRef.current, dataUrl);
+        scheduleSyncPasteImagesFromPromptRef.current(true);
       });
     };
 
@@ -608,11 +872,17 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         syncPasteImagesFrameRef.current = null;
       }
 
+      if (resizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(resizeFrameRef.current);
+        resizeFrameRef.current = null;
+      }
+
       container.removeEventListener('paste', handlePaste, true);
       container.removeEventListener('contextmenu', handleContextMenu);
       container.removeEventListener('focusin', handleFocusIn);
       container.removeEventListener('focusout', handleFocusOut);
       disposeAgentDetectorReset();
+      scrollDisposable.dispose();
       linkDisposable.dispose();
       themeObserver.disconnect();
       dataDisposable.dispose();
@@ -637,23 +907,26 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
           const fitAddon = fitAddonRef.current;
 
           if (terminal) {
-            const scrollback = await window.nexus.terminal.getScrollback(ptyId);
             const alreadyReplayed =
               replayedScrollbackRef.current?.ptyId === ptyId &&
               replayedScrollbackRef.current.terminal === terminal;
+            const needsRestore = terminal.buffer.active.length <= 1;
 
-            if (scrollback && !alreadyReplayed) {
-              suppressShellPromptClearRef.current = true;
-              terminal.write(parseStreamRef.current(scrollback));
-              suppressShellPromptClearRef.current = false;
+            if (!alreadyReplayed || needsRestore) {
+              await restoreTerminalScrollback(
+                terminal,
+                ptyId,
+                paneIdRef.current,
+                parseStreamRef.current,
+                suppressShellPromptClearRef,
+                stickToBottomRef,
+              );
               replayedScrollbackRef.current = { ptyId, terminal };
             }
           }
 
           if (terminal && fitAddon && isVisible) {
-            requestAnimationFrame(() => {
-              fitTerminal(fitAddon, terminal, ptyId);
-            });
+            scheduleTerminalDisplayRefresh(fitAddon, terminal, ptyId, stickToBottomRef, true);
           }
 
           return;
@@ -671,11 +944,25 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         ptyIdRef.current = null;
       }
 
-      if (!ptyIdRef.current && !creatingRef.current && isVisible) {
-        await spawnTerminal();
+      if (!ptyIdRef.current && !creatingRef.current && isRuntimeActive && !terminalExitedRef.current) {
+        await spawnTerminalRef.current();
       }
     })();
-  }, [cwd, isVisible, ptyId, spawnTerminal]);
+  }, [isRuntimeActive, ptyId]);
+
+  useEffect(() => {
+    if (isVisible) {
+      return;
+    }
+
+    const activePtyId = ptyIdRef.current;
+
+    if (!activePtyId) {
+      return;
+    }
+
+    void saveScrollbackForPane(paneIdRef.current, activePtyId);
+  }, [isVisible]);
 
   useEffect(() => {
     if (!isVisible) {
@@ -684,14 +971,27 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
 
     const terminal = terminalRef.current;
     const fitAddon = fitAddonRef.current;
+    const activePtyId = ptyIdRef.current;
 
     if (!terminal || !fitAddon) {
       return;
     }
 
-    requestAnimationFrame(() => {
-      fitTerminal(fitAddon, terminal, ptyIdRef.current);
-    });
+    void (async () => {
+      if (activePtyId && (await window.nexus.terminal.has(activePtyId))) {
+        await forceReplayTerminalScrollback(
+          terminal,
+          activePtyId,
+          paneIdRef.current,
+          parseStreamRef.current,
+          suppressShellPromptClearRef,
+          stickToBottomRef,
+        );
+        replayedScrollbackRef.current = { ptyId: activePtyId, terminal };
+      }
+
+      scheduleTerminalDisplayRefresh(fitAddon, terminal, ptyIdRef.current, stickToBottomRef, true);
+    })();
   }, [isVisible]);
 
   useEffect(() => {
@@ -705,6 +1005,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       return;
     }
 
+    terminalExitedRef.current = false;
     window.nexus.terminal.kill(ptyIdRef.current);
     ptyIdRef.current = null;
     onPtyLostRef.current();
@@ -722,10 +1023,8 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       return;
     }
 
-    requestAnimationFrame(() => {
-      fitTerminal(fitAddon, terminal, ptyId);
-      terminal.focus();
-    });
+    scheduleTerminalDisplayRefresh(fitAddon, terminal, ptyId, stickToBottomRef, true);
+    terminal.focus();
   }, [isFocused, ptyId]);
 
   const handleCloseLinkMenu = useCallback(() => {
@@ -736,11 +1035,25 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     onOpenLinkInBrowserRef.current(url);
   }, []);
 
+  const requestTerminalRestart = useCallback(() => {
+    if (!terminalExitedRef.current || creatingRef.current || !isVisibleRef.current) {
+      return;
+    }
+
+    terminalExitedRef.current = false;
+    void spawnTerminalRef.current();
+  }, [spawnTerminal]);
+
+  const handleContainerMouseDown = useCallback(() => {
+    requestTerminalRestart();
+  }, [requestTerminalRestart]);
+
   return (
     <>
       <div
         className='terminal-panel__container'
         style={{ '--terminal-cursor': TERMINAL_AGENTS[agent].cursorColor } as CSSProperties}
+        onMouseDown={handleContainerMouseDown}
       >
         <div ref={containerRef} className='terminal-panel__xterm-mount' />
       </div>

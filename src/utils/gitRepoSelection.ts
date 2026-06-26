@@ -86,29 +86,80 @@ function formatRepoBranchEntry(repo: GitRepoDiscovery): string | null {
   return `${repo.branch} (${repo.relativePath})`;
 }
 
-export function formatGitBranchLabel(
+export function formatGitBranchEntries(
   repos: GitRepoDiscovery[],
   activeRepo: GitRepoDiscovery | null,
-): string | null {
+): string[] {
   const withBranch = repos.filter((repo) => repo.branch);
 
   if (withBranch.length === 0) {
-    return null;
+    return [];
   }
 
   if (withBranch.length === 1) {
-    return formatRepoBranchEntry(withBranch[0]);
+    const entry = formatRepoBranchEntry(withBranch[0]);
+    return entry ? [entry] : [];
   }
 
   const ordered = activeRepo?.branch
-    ? [
-        activeRepo,
-        ...withBranch.filter((repo) => repo.path !== activeRepo.path),
-      ]
+    ? [activeRepo, ...withBranch.filter((repo) => repo.path !== activeRepo.path)]
     : withBranch;
 
   return ordered
     .map((repo) => formatRepoBranchEntry(repo))
-    .filter((entry): entry is string => entry !== null)
-    .join(' · ');
+    .filter((entry): entry is string => entry !== null);
+}
+
+export function formatGitBranchLabel(
+  repos: GitRepoDiscovery[],
+  activeRepo: GitRepoDiscovery | null,
+): string | null {
+  const entries = formatGitBranchEntries(repos, activeRepo);
+
+  if (entries.length === 0) {
+    return null;
+  }
+
+  return entries.join(' · ');
+}
+
+export interface GitBranchBarEntry {
+  id: string;
+  label: string;
+  repoPath: string;
+  relativePath: string;
+  branch: string;
+}
+
+export function buildGitBranchBarEntries(
+  repos: GitRepoDiscovery[],
+  activeRepo: GitRepoDiscovery | null,
+): GitBranchBarEntry[] {
+  const withBranch = repos.filter((repo) => repo.branch);
+
+  if (withBranch.length === 0) {
+    return [];
+  }
+
+  const ordered = activeRepo?.branch
+    ? [activeRepo, ...withBranch.filter((repo) => repo.path !== activeRepo.path)]
+    : withBranch;
+
+  return ordered
+    .map((repo) => {
+      const label = formatRepoBranchEntry(repo);
+
+      if (!label || !repo.branch) {
+        return null;
+      }
+
+      return {
+        id: repo.path,
+        label,
+        repoPath: repo.path,
+        relativePath: repo.relativePath,
+        branch: repo.branch,
+      };
+    })
+    .filter((entry): entry is GitBranchBarEntry => entry !== null);
 }

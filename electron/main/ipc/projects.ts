@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import { removeProjectLogo, saveProjectLogo, saveProjectLogoFromDataUrl } from '../services/logoStore';
 import { projectStore } from '../services/projectStore';
-import type { ProjectUpdatePayload } from '../../types';
+import type { AppState, ProjectUpdatePayload } from '../../types';
 
 export function registerProjectHandlers(): void {
   ipcMain.handle('projects:list', () => projectStore.list());
@@ -20,6 +20,10 @@ export function registerProjectHandlers(): void {
     projectStore.select(id);
   });
 
+  ipcMain.handle('projects:clearActiveProject', () => {
+    projectStore.clearActiveProject();
+  });
+
   ipcMain.handle('projects:selectWorkspace', (_, id: string | null) => {
     projectStore.selectWorkspace(id);
   });
@@ -32,6 +36,13 @@ export function registerProjectHandlers(): void {
 
   ipcMain.handle('projects:update', (_, id: string, data: ProjectUpdatePayload) =>
     projectStore.update(id, data),
+  );
+
+  ipcMain.handle(
+    'projects:setSidebarVideoSession',
+    (_, session: AppState['sidebarVideoSession']) => {
+      projectStore.setSidebarVideoSession(session);
+    },
   );
 
   ipcMain.handle('projects:saveLogo', async (_, projectId: string, sourcePath: string) => {

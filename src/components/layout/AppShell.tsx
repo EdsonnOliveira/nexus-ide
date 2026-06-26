@@ -1,10 +1,19 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { FolderPlus } from 'lucide-react';
 import { useNexusReady } from '@/hooks/useNexusReady';
+import { useAutomationScheduler } from '@/hooks/useAutomationScheduler';
 import { flushTerminalSessionsNow } from '@/utils/persistTerminalSession';
+import { flushAgentGitGroupsNow } from '@/utils/persistAgentGitGroups';
+import { bumpFileExternalRevision } from '@/utils/fileExternalRevision';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useTabActions } from '@/stores/useTabStore';
+import { isMarkdownFile } from '@/utils/explorerRelativePath';
+import { EmptyState } from '@/components/overlay/EmptyState';
 import { ProjectSidebar } from '@/components/sidebar/ProjectSidebar';
 import { StatusBar } from '@/components/layout/StatusBar';
+import { GlobalSearchPalette } from '@/components/search/GlobalSearchPalette';
+import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
+import { isAnyModalOpen, subscribeOverlayBlockingChange } from '@/utils/overlayBlocking';
 
 const TerminalPanel = lazy(() =>
   import('@/components/terminal/TerminalPanel').then((module) => ({
@@ -24,6 +33,24 @@ const ProjectGitDrawer = lazy(() =>
   })),
 );
 
+const ProjectAutomationsDrawer = lazy(() =>
+  import('@/components/automations/ProjectAutomationsDrawer').then((module) => ({
+    default: module.ProjectAutomationsDrawer,
+  })),
+);
+
+const ProjectTasksDrawer = lazy(() =>
+  import('@/components/tasks/ProjectTasksDrawer').then((module) => ({
+    default: module.ProjectTasksDrawer,
+  })),
+);
+
+const ProjectPasswordsDrawer = lazy(() =>
+  import('@/components/passwords/ProjectPasswordsDrawer').then((module) => ({
+    default: module.ProjectPasswordsDrawer,
+  })),
+);
+
 function EmptyWorkspace() {
   const addProject = useProjectStore((state) => state.addProject);
 
@@ -32,20 +59,24 @@ function EmptyWorkspace() {
   }, [addProject]);
 
   return (
-    <div className='empty-state'>
-      <span className='empty-state__title'>Nenhum projeto adicionado</span>
-      <span>Adicione um projeto para começar</span>
+    <EmptyState
+      icon={FolderPlus}
+      title='Nenhum projeto adicionado'
+      message='Adicione um projeto para começar'
+    >
       <button type='button' className='empty-state__action empty-state__action--primary app-button app-button--enter' onClick={handleAddProject}>
         Adicionar projeto
       </button>
-    </div>
+    </EmptyState>
   );
 }
 
 function AppShellComponent() {
   const nexusReady = useNexusReady();
   const initialize = useProjectStore((state) => state.initialize);
-  const toggleSidebar = useProjectStore((state) => state.toggleSidebar);
+  const toggleExplorer = useProjectStore((state) => state.toggleExplorer);
+  const toggleGlobalSearch = useGlobalSearchStore((state) => state.toggle);
+  const [isModalOpen, setIsModalOpen] = useState(isAnyModalOpen);
   const sidebarCollapsed = useProjectStore((state) => state.sidebarCollapsed);
   const sidePanel = useProjectStore((state) => state.sidePanel);
   const projects = useProjectStore((state) => state.projects);
@@ -55,23 +86,41 @@ function AppShellComponent() {
     () => projects.find((project) => project.id === activeProjectId) ?? null,
     [activeProjectId, projects],
   );
-  const { openFileTab, openDiffTab } = useTabActions();
+  const projectPaths = useMemo(() => projects.map((project) => project.path), [projects]);
+  const { openFileTab, openFilePreviewTab, openFileCodeTab, openDiffTab, selectPane } = useTabActions();
 
   const handleOpenExplorerFile = useCallback(
     (entry: { path: string; name: string }) => {
+      if (isMarkdownFile(entry.name)) {
+        void openFilePreviewTab(entry.path, entry.name);
+        return;
+      }
+
       void openFileTab(entry.path, entry.name);
     },
-    [openFileTab],
+    [openFilePreviewTab, openFileTab],
+  );
+
+  const handleOpenExplorerFileCode = useCallback(
+    (entry: { path: string; name: string }) => {
+      void openFileCodeTab(entry.path, entry.name);
+    },
+    [openFileCodeTab],
   );
 
   const handleOpenGitDiff = useCallback(
-    (filePath: string, staged: boolean) => {
-      void openDiffTab(filePath, staged);
+    (
+      filePath: string,
+      options: { staged: boolean; untracked?: boolean; repoPath?: string; agentPrompt?: string },
+    ) => {
+      void openDiffTab(filePath, options);
     },
     [openDiffTab],
   );
 
   const isCollapsed = sidebarCollapsed;
+
+  useAutomationScheduler();
 
   const isMac = useMemo(
     () => typeof navigator !== 'undefined' && /Mac|iPhone|iPod|iPad/i.test(navigator.platform),
@@ -93,8 +142,21 @@ function AppShellComponent() {
       classes.push('app-shell--has-project');
     }
 
+    if (isModalOpen) {
+      classes.push('app-shell--modal-open');
+    }
+
     return classes.join(' ');
-  }, [activeProject, isCollapsed, isMac]);
+  }, [activeProject, isCollapsed, isMac, isModalOpen]);
+
+  useEffect(() => {
+    const syncModalOpen = () => {
+      setIsModalOpen(isAnyModalOpen());
+    };
+
+    syncModalOpen();
+    return subscribeOverlayBlockingChange(syncModalOpen);
+  }, []);
 
   useEffect(() => {
     if (!nexusReady) {
@@ -110,7 +172,9 @@ function AppShellComponent() {
     }
 
     const unsubscribe = window.nexus.onFlushSession(() => {
-      void flushTerminalSessionsNow().then(() => window.nexus.session.flushComplete());
+      void Promise.all([flushTerminalSessionsNow(), flushAgentGitGroupsNow()]).then(() =>
+        window.nexus.session.flushComplete(),
+      );
     });
 
     return unsubscribe;
@@ -121,12 +185,52 @@ function AppShellComponent() {
       return;
     }
 
-    const unsubscribe = window.nexus.onToggleSidebar(() => {
-      void toggleSidebar();
+    const unsubscribe = window.nexus.onOpenGlobalSearch(() => {
+      toggleGlobalSearch();
     });
 
     return unsubscribe;
-  }, [nexusReady, toggleSidebar]);
+  }, [nexusReady, toggleGlobalSearch]);
+
+  useEffect(() => {
+    if (!nexusReady) {
+      return;
+    }
+
+    const unsubscribe = window.nexus.onToggleExplorer(() => {
+      if (!useProjectStore.getState().activeProjectId) {
+        return;
+      }
+
+      toggleExplorer();
+    });
+
+    return unsubscribe;
+  }, [nexusReady, toggleExplorer]);
+
+  useEffect(() => {
+    if (!nexusReady || projectPaths.length === 0) {
+      return;
+    }
+
+    projectPaths.forEach((projectPath) => {
+      void window.nexus.files.watchProject(projectPath);
+    });
+
+    const unsubscribe = window.nexus.files.onProjectChange((payload) => {
+      if (payload.changedPath) {
+        bumpFileExternalRevision(payload.changedPath);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+
+      projectPaths.forEach((projectPath) => {
+        void window.nexus.files.unwatchProject(projectPath);
+      });
+    };
+  }, [nexusReady, projectPaths]);
 
   if (!nexusReady) {
     return <div className='app-loading'>Carregando...</div>;
@@ -160,24 +264,47 @@ function AppShellComponent() {
           <Suspense
             fallback={
               <div className='project-explorer__loading'>
-                {sidePanel === 'git' ? 'Carregando Git...' : 'Carregando explorador...'}
+                {sidePanel === 'git'
+                  ? 'Carregando Git...'
+                  : sidePanel === 'passwords'
+                    ? 'Carregando formulário...'
+                    : sidePanel === 'automations'
+                      ? 'Carregando automações...'
+                      : sidePanel === 'tasks'
+                        ? 'Carregando tarefas...'
+                        : 'Carregando explorador...'}
               </div>
             }
           >
             {sidePanel === 'explorer' ? (
               <ProjectExplorerDrawer
+                projectId={activeProject.id}
                 rootPath={activeProject.path}
                 onOpenFile={handleOpenExplorerFile}
+                onOpenFileCode={handleOpenExplorerFileCode}
+                onSelectPane={selectPane}
               />
             ) : null}
             {sidePanel === 'git' ? (
-              <ProjectGitDrawer rootPath={activeProject.path} onOpenDiff={handleOpenGitDiff} />
+              <ProjectGitDrawer
+                projectId={activeProject.id}
+                rootPath={activeProject.path}
+                onOpenDiff={handleOpenGitDiff}
+              />
             ) : null}
+            {sidePanel === 'passwords' ? (
+              <ProjectPasswordsDrawer projectId={activeProject.id} />
+            ) : null}
+            {sidePanel === 'automations' ? (
+              <ProjectAutomationsDrawer projectId={activeProject.id} />
+            ) : null}
+            {sidePanel === 'tasks' ? <ProjectTasksDrawer projectId={activeProject.id} /> : null}
           </Suspense>
         </div>
       ) : null}
 
       <StatusBar />
+      <GlobalSearchPalette />
     </div>
   );
 }

@@ -1,30 +1,67 @@
 import { create } from 'zustand';
+import {
+  playAgentNotificationSound,
+  startAgentNotificationSoundLoop,
+  stopAgentNotificationSoundLoop,
+} from '@/utils/agentNotificationSound';
+import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
 
 interface ProjectNotificationState {
-  notifiedProjectIds: Record<string, true>;
-  markProjectReady: (projectId: string) => void;
+  notifiedAgentPaneByProject: Record<string, string>;
+  markProjectReady: (projectId: string, paneId: string) => void;
   clearProjectNotification: (projectId: string) => void;
+  clearNotificationForPane: (paneId: string) => void;
 }
 
 export const useProjectNotificationStore = create<ProjectNotificationState>((set) => ({
-  notifiedProjectIds: {},
-  markProjectReady: (projectId) => {
+  notifiedAgentPaneByProject: {},
+  markProjectReady: (projectId, paneId) => {
+    playAgentNotificationSound();
+    startAgentNotificationSoundLoop();
+
     set((state) => ({
-      notifiedProjectIds: {
-        ...state.notifiedProjectIds,
-        [projectId]: true,
+      notifiedAgentPaneByProject: {
+        ...state.notifiedAgentPaneByProject,
+        [projectId]: paneId,
       },
     }));
   },
   clearProjectNotification: (projectId) => {
     set((state) => {
-      if (!state.notifiedProjectIds[projectId]) {
+      if (!state.notifiedAgentPaneByProject[projectId]) {
         return state;
       }
 
-      const next = { ...state.notifiedProjectIds };
+      const next = { ...state.notifiedAgentPaneByProject };
       delete next[projectId];
-      return { notifiedProjectIds: next };
+
+      if (Object.keys(next).length === 0) {
+        stopAgentNotificationSoundLoop();
+      }
+
+      return { notifiedAgentPaneByProject: next };
+    });
+  },
+  clearNotificationForPane: (paneId) => {
+    const projectId = findProjectIdByPaneId(paneId);
+
+    if (!projectId) {
+      return;
+    }
+
+    set((state) => {
+      if (state.notifiedAgentPaneByProject[projectId] !== paneId) {
+        return state;
+      }
+
+      const next = { ...state.notifiedAgentPaneByProject };
+      delete next[projectId];
+
+      if (Object.keys(next).length === 0) {
+        stopAgentNotificationSoundLoop();
+      }
+
+      return { notifiedAgentPaneByProject: next };
     });
   },
 }));

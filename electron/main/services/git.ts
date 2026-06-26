@@ -1,8 +1,17 @@
 import { execFile, execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, watch, type FSWatcher } from 'node:fs';
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  watch,
+  type FSWatcher,
+} from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { BrowserWindow } from 'electron';
+import { bufferToDataUrl } from './imageLoader';
 import { resolveDirectoryPath } from './directoryListing';
 
 const execFileAsync = promisify(execFile);
@@ -19,6 +28,8 @@ export interface GitChangeEntry {
   path: string;
   previousPath?: string;
   status: GitChangeStatus;
+  additions?: number;
+  deletions?: number;
 }
 
 export interface GitRepoInfo {
@@ -40,6 +51,18 @@ export interface GitStatusResult {
 export interface GitDiffResult {
   path: string;
   patch: string;
+}
+
+export interface GitFileDiffSidesResult {
+  path: string;
+  before: string;
+  after: string;
+}
+
+export interface GitFileDiffImageSidesResult {
+  path: string;
+  before: string | null;
+  after: string | null;
 }
 
 export interface GitBranchInfo {
@@ -64,6 +87,8 @@ export type GitCommandResult = { ok: true } | { ok: false; error: string };
 const statusCache = new Map<string, { expiresAt: number; result: GitStatusResult }>();
 const CACHE_TTL_MS = 2_000;
 const MAX_GIT_DISCOVERY_DEPTH = 6;
+const MAX_UNTRACKED_LINE_COUNT_BYTES = 128 * 1024;
+const MAX_UNTRACKED_LINE_STATS = 400;
 
 const GIT_DISCOVERY_IGNORED_DIRS = new Set([
   '.git',
@@ -100,6 +125,30 @@ export function setGitWatchWindow(getter: () => BrowserWindow | null): void {
 
 function resolveRepo(dirPath: string): string {
   return resolveDirectoryPath(dirPath);
+}
+
+function resolveGitRepoRoot(dirPath: string): string {
+  const resolved = resolveRepo(dirPath);
+
+  if (isGitRepo(resolved)) {
+    return resolved;
+  }
+
+  try {
+    const output = execFileSync('git', ['-C', resolved, 'rev-parse', '--show-toplevel'], {
+      encoding: 'utf8',
+      timeout: 3000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+
+    if (output) {
+      return output;
+    }
+  } catch {
+    return resolved;
+  }
+
+  return resolved;
 }
 
 function isGitRepo(dirPath: string): boolean {
@@ -204,6 +253,10 @@ function resolveProjectGitRepo(projectPath: string): string | null {
 
 function invalidateCache(dirPath: string): void {
   statusCache.delete(resolveRepo(dirPath));
+}
+
+export function invalidateGitStatusCache(dirPath: string): void {
+  invalidateCache(dirPath);
 }
 
 function mapIndexStatus(code: string): GitChangeStatus {
@@ -338,6 +391,111 @@ function parseStatusOutput(output: string, repoPath: string): GitStatusResult {
   return { repo, staged, unstaged, untracked };
 }
 
+function parseNumstatOutput(output: string): Map<string, { additions: number; deletions: number }> {
+  const stats = new Map<string, { additions: number; deletions: number }>();
+
+  for (const line of output.split('\n')) {
+    if (!line.trim()) {
+      continue;
+    }
+
+    const parts = line.split('\t');
+
+    if (parts.length < 3) {
+      continue;
+    }
+
+    const [additionsRaw, deletionsRaw, ...pathParts] = parts;
+    const filePath = pathParts.join('\t');
+    const additions = additionsRaw === '-' ? 0 : Number(additionsRaw) || 0;
+    const deletions = deletionsRaw === '-' ? 0 : Number(deletionsRaw) || 0;
+
+    stats.set(filePath, { additions, deletions });
+  }
+
+  return stats;
+}
+
+async function getNumstatMap(
+  dirPath: string,
+  staged: boolean,
+): Promise<Map<string, { additions: number; deletions: number }>> {
+  const resolved = resolveRepo(dirPath);
+
+  if (!isGitRepo(resolved)) {
+    return new Map();
+  }
+
+  try {
+    const args = staged ? ['diff', '--cached', '--numstat'] : ['diff', '--numstat'];
+    const output = await runGit(resolved, args);
+    return parseNumstatOutput(output);
+  } catch {
+    return new Map();
+  }
+}
+
+function countUntrackedLines(resolved: string, filePath: string): number {
+  const absolutePath = path.join(resolved, filePath);
+
+  try {
+    const stats = statSync(absolutePath);
+
+    if (!stats.isFile() || stats.size > MAX_UNTRACKED_LINE_COUNT_BYTES) {
+      return 0;
+    }
+
+    const content = readFileSync(absolutePath, 'utf8');
+
+    if (!content || content.includes('\0')) {
+      return 0;
+    }
+
+    return content.split('\n').length;
+  } catch {
+    return 0;
+  }
+}
+
+function applyStatsToEntry(
+  entry: GitChangeEntry,
+  stats: Map<string, { additions: number; deletions: number }>,
+): GitChangeEntry {
+  const fileStats = stats.get(entry.path);
+
+  if (!fileStats) {
+    return entry;
+  }
+
+  return {
+    ...entry,
+    additions: fileStats.additions,
+    deletions: fileStats.deletions,
+  };
+}
+
+async function enrichStatusWithStats(
+  resolved: string,
+  result: GitStatusResult,
+): Promise<GitStatusResult> {
+  const [stagedStats, unstagedStats] = await Promise.all([
+    getNumstatMap(resolved, true),
+    getNumstatMap(resolved, false),
+  ]);
+
+  return {
+    ...result,
+    staged: result.staged.map((entry) => applyStatsToEntry(entry, stagedStats)),
+    unstaged: result.unstaged.map((entry) => applyStatsToEntry(entry, unstagedStats)),
+    untracked: result.untracked.map((entry, index) => ({
+      ...entry,
+      additions:
+        index < MAX_UNTRACKED_LINE_STATS ? countUntrackedLines(resolved, entry.path) : 0,
+      deletions: 0,
+    })),
+  };
+}
+
 async function runGit(
   dirPath: string,
   args: string[],
@@ -401,7 +559,8 @@ export async function getGitStatus(dirPath: string): Promise<GitStatusResult> {
   }
 
   const output = await runGit(resolved, ['status', '--porcelain=1', '-b']);
-  const result = parseStatusOutput(output, resolved);
+  const parsed = parseStatusOutput(output, resolved);
+  const result = await enrichStatusWithStats(resolved, parsed);
   statusCache.set(resolved, { expiresAt: now + CACHE_TTL_MS, result });
 
   return result;
@@ -449,7 +608,32 @@ export async function discardGitPaths(dirPath: string, paths: string[]): Promise
       return { ok: false, error: 'Nenhum arquivo selecionado' };
     }
 
-    await runGit(resolved, ['restore', '--', ...paths]);
+    const statusOutput = await runGit(resolved, ['status', '--porcelain']);
+    const status = await enrichStatusWithStats(
+      resolved,
+      parseStatusOutput(statusOutput, resolved),
+    );
+    const untrackedPaths = new Set(status.untracked.map((entry) => entry.path));
+    const trackedPaths: string[] = [];
+    const cleanPaths: string[] = [];
+
+    for (const filePath of paths) {
+      if (untrackedPaths.has(filePath)) {
+        cleanPaths.push(filePath);
+        continue;
+      }
+
+      trackedPaths.push(filePath);
+    }
+
+    if (trackedPaths.length > 0) {
+      await runGit(resolved, ['restore', '--staged', '--worktree', '--', ...trackedPaths]);
+    }
+
+    if (cleanPaths.length > 0) {
+      await runGit(resolved, ['clean', '-fd', '--', ...cleanPaths]);
+    }
+
     invalidateCache(resolved);
     return { ok: true };
   } catch (error) {
@@ -474,16 +658,162 @@ export async function commitGit(dirPath: string, message: string): Promise<GitCo
   }
 }
 
+function resolveGitFileInRepo(
+  repoRoot: string,
+  filePath: string,
+): { relativePath: string; absolutePath: string } {
+  const resolvedRoot = path.resolve(repoRoot);
+  const normalizedInput = filePath.replace(/\\/g, '/');
+
+  let relativePath: string;
+  let absolutePath: string;
+
+  if (path.isAbsolute(filePath)) {
+    absolutePath = path.resolve(filePath);
+    relativePath = path.relative(resolvedRoot, absolutePath).replace(/\\/g, '/');
+  } else {
+    relativePath = normalizedInput.replace(/^\/+/, '').replace(/^\.\/+/, '');
+    absolutePath = path.resolve(resolvedRoot, relativePath);
+    relativePath = path.relative(resolvedRoot, absolutePath).replace(/\\/g, '/');
+  }
+
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    const fileName = path.basename(normalizedInput);
+    relativePath = fileName;
+    absolutePath = path.resolve(resolvedRoot, fileName);
+  }
+
+  return { relativePath, absolutePath };
+}
+
+async function readGitBlobBuffer(repoRoot: string, spec: string): Promise<Buffer | null> {
+  try {
+    const resolved = resolveRepo(repoRoot);
+    const { stdout } = await execFileAsync('git', ['-C', resolved, 'show', spec], {
+      encoding: 'buffer',
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: 120_000,
+    });
+
+    return stdout;
+  } catch {
+    return null;
+  }
+}
+
+async function readWorktreeFileBuffer(absolutePath: string): Promise<Buffer | null> {
+  try {
+    return await readFile(absolutePath);
+  } catch {
+    return null;
+  }
+}
+
+function toImageDataUrl(buffer: Buffer | null, absolutePath: string): string | null {
+  if (!buffer || buffer.length === 0) {
+    return null;
+  }
+
+  return bufferToDataUrl(buffer, absolutePath);
+}
+
+async function readGitBlob(repoRoot: string, spec: string): Promise<string | null> {
+  try {
+    return await runGit(repoRoot, ['show', spec]);
+  } catch {
+    return null;
+  }
+}
+
+function readWorktreeFile(absolutePath: string): string {
+  try {
+    return readFileSync(absolutePath, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
 export async function getGitDiff(
   dirPath: string,
   filePath: string,
   staged: boolean,
 ): Promise<GitDiffResult> {
   const resolved = resolveRepo(dirPath);
-  const args = staged ? ['diff', '--cached', '--', filePath] : ['diff', '--', filePath];
+  const { relativePath } = resolveGitFileInRepo(resolved, filePath);
+  const args = staged ? ['diff', '--cached', '--', relativePath] : ['diff', '--', relativePath];
   const patch = await runGit(resolved, args);
 
-  return { path: filePath, patch };
+  return { path: relativePath, patch };
+}
+
+export async function getGitFileDiffSides(
+  dirPath: string,
+  filePath: string,
+  options: { staged: boolean; untracked?: boolean },
+): Promise<GitFileDiffSidesResult> {
+  const resolved = resolveGitRepoRoot(dirPath);
+  const { relativePath, absolutePath } = resolveGitFileInRepo(resolved, filePath);
+
+  if (options.untracked) {
+    return { path: relativePath, before: '', after: readWorktreeFile(absolutePath) };
+  }
+
+  if (options.staged) {
+    const before = (await readGitBlob(resolved, `HEAD:${relativePath}`)) ?? '';
+    const indexContent = await readGitBlob(resolved, `:${relativePath}`);
+    const after = indexContent ?? readWorktreeFile(absolutePath);
+
+    return { path: relativePath, before, after };
+  }
+
+  const indexContent = await readGitBlob(resolved, `:${relativePath}`);
+  const headContent = await readGitBlob(resolved, `HEAD:${relativePath}`);
+  const before = indexContent ?? headContent ?? '';
+  const after = readWorktreeFile(absolutePath);
+
+  return { path: relativePath, before, after };
+}
+
+export async function getGitFileDiffImageSides(
+  dirPath: string,
+  filePath: string,
+  options: { staged: boolean; untracked?: boolean },
+): Promise<GitFileDiffImageSidesResult> {
+  const resolved = resolveGitRepoRoot(dirPath);
+  const { relativePath, absolutePath } = resolveGitFileInRepo(resolved, filePath);
+
+  if (options.untracked) {
+    const afterBuffer = await readWorktreeFileBuffer(absolutePath);
+
+    return {
+      path: relativePath,
+      before: null,
+      after: toImageDataUrl(afterBuffer, absolutePath),
+    };
+  }
+
+  if (options.staged) {
+    const beforeBuffer = await readGitBlobBuffer(resolved, `HEAD:${relativePath}`);
+    const indexBuffer = await readGitBlobBuffer(resolved, `:${relativePath}`);
+    const afterBuffer = indexBuffer ?? (await readWorktreeFileBuffer(absolutePath));
+
+    return {
+      path: relativePath,
+      before: toImageDataUrl(beforeBuffer, absolutePath),
+      after: toImageDataUrl(afterBuffer, absolutePath),
+    };
+  }
+
+  const indexBuffer = await readGitBlobBuffer(resolved, `:${relativePath}`);
+  const headBuffer = await readGitBlobBuffer(resolved, `HEAD:${relativePath}`);
+  const beforeBuffer = indexBuffer ?? headBuffer;
+  const afterBuffer = await readWorktreeFileBuffer(absolutePath);
+
+  return {
+    path: relativePath,
+    before: toImageDataUrl(beforeBuffer, absolutePath),
+    after: toImageDataUrl(afterBuffer, absolutePath),
+  };
 }
 
 export async function pullGit(dirPath: string): Promise<GitCommandResult> {
@@ -647,8 +977,12 @@ export function watchGitRepo(dirPath: string): void {
     }, 300);
   };
 
-  const watcher = watch(resolved, { recursive: true }, scheduleNotify);
-  watchStates.set(resolved, { watcher, debounceTimer: null, repoPath: resolved });
+  try {
+    const watcher = watch(resolved, { recursive: true }, scheduleNotify);
+    watchStates.set(resolved, { watcher, debounceTimer: null, repoPath: resolved });
+  } catch {
+    return;
+  }
 }
 
 export function unwatchGitRepo(dirPath: string): void {

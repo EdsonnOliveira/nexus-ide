@@ -38,6 +38,9 @@ export function hydrateTerminalSessionFromProjects(projects: Project[]): void {
     activeAgentSinceByPane,
     pendingLaunchCommands,
     lastAgentCommand: Object.values(activeAgentByPane).find(Boolean) ?? null,
+    awaitingResponseByPane: {},
+    agentNotifyEligibleByPane: {},
+    agentBusyByPane: {},
   });
 }
 

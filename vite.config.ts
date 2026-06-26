@@ -44,7 +44,10 @@ export default defineConfig(({ command }) => {
           },
         },
         preload: {
-          input: 'electron/preload/index.ts',
+          input: {
+            index: 'electron/preload/index.ts',
+            'browser-guest': 'electron/preload/browser-guest.ts',
+          },
           plugins: [notBundle()],
           options: {
             build: {
@@ -55,6 +58,7 @@ export default defineConfig(({ command }) => {
                 external,
                 output: {
                   format: 'cjs',
+                  codeSplitting: true,
                   entryFileNames: '[name].cjs',
                   chunkFileNames: '[name].cjs',
                 },

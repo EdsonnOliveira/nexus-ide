@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GitBranchInfo, GitCommandResult, GitStatusResult, GitStashEntry } from '@/types/git';
+import { GIT_REPO_REFRESH_EVENT } from '@/utils/gitRepoRefresh';
 
 interface UseGitStatusResult {
   status: GitStatusResult | null;
@@ -109,9 +110,19 @@ export function useGitStatus(repoPath: string | null, enabled: boolean): UseGitS
       }
     });
 
+    const handleGitRefresh = (event: Event) => {
+      const detail = (event as CustomEvent<{ repoPath: string }>).detail;
+
+      if (detail.repoPath === repoPath) {
+        void refresh();
+      }
+    };
+
+    window.addEventListener(GIT_REPO_REFRESH_EVENT, handleGitRefresh);
+
     return () => {
       unsubscribe();
-      void window.nexus.git.unwatch(repoPath);
+      window.removeEventListener(GIT_REPO_REFRESH_EVENT, handleGitRefresh);
     };
   }, [enabled, refresh, repoPath]);
 

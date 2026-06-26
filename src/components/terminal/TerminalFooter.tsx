@@ -14,6 +14,7 @@ import iconModePlan from '@/assets/icon-mode-plan.svg';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { isOverlayBlockingTerminalHints } from '@/utils/overlayBlocking';
+import { shouldShowAgentSkillHints } from '@/utils/parseAgentModeCommand';
 import { PROJECT_COLORS, type TerminalCommandHint, type TerminalTab } from '@/types';
 
 interface TerminalFooterProps {
@@ -208,12 +209,14 @@ function TerminalFooterComponent({
   const footerRef = useRef<HTMLElement>(null);
   const rowVisibleCountsRef = useRef<Record<string, number>>({});
   const [visibleCountsVersion, setVisibleCountsVersion] = useState(0);
-  const storedActiveAgent = useTerminalSessionStore((state) => state.activeAgentByPane[tab.id] ?? null);
-  const activeAgent = useMemo(() => {
-    const fromRestore = tab.restoreCommand ? extractCliAgentCommand(tab.restoreCommand) : null;
-
-    return fromRestore ?? storedActiveAgent ?? null;
-  }, [storedActiveAgent, tab.restoreCommand]);
+  const activeAgentCommand = useTerminalSessionStore(
+    (state) => state.activeAgentByPane[tab.id] ?? null,
+  );
+  const activeAgentMode = useTerminalSessionStore(
+    (state) => state.activeAgentModeByPane[tab.id] ?? 'agent',
+  );
+  const showSkillHints = shouldShowAgentSkillHints(activeAgentMode);
+  const useAgentHints = Boolean(activeAgentCommand);
 
   const handleRowVisibleCountChange = useCallback((rowKey: string, count: number) => {
     if (rowVisibleCountsRef.current[rowKey] === count) {
@@ -224,9 +227,21 @@ function TerminalFooterComponent({
     setVisibleCountsVersion((version) => version + 1);
   }, []);
 
+  const visibleHints = useMemo(() => {
+    if (showSkillHints) {
+      return hints;
+    }
+
+    return hints.filter((hint) => {
+      const hintKind = hint.hintKind ?? (hint.id.startsWith('skill-') ? 'skill' : undefined);
+
+      return hintKind !== 'skill';
+    });
+  }, [hints, showSkillHints]);
+
   useEffect(() => {
-    hintsRef.current = hints;
-  }, [hints]);
+    hintsRef.current = visibleHints;
+  }, [visibleHints]);
 
   useEffect(() => {
     activeIndexRef.current = activeIndex;
@@ -240,7 +255,7 @@ function TerminalFooterComponent({
     let cancelled = false;
 
     const loadHints = async () => {
-      const entries = activeAgent
+      const entries = useAgentHints
         ? await window.nexus.files.getAgentSkillHints(cwd)
         : await window.nexus.files.getTerminalHints(cwd);
 
@@ -254,7 +269,7 @@ function TerminalFooterComponent({
     return () => {
       cancelled = true;
     };
-  }, [activeAgent, cwd, isVisible, tab.id]);
+  }, [cwd, isVisible, tab.id, useAgentHints]);
 
   useEffect(() => {
     if (!isVisible || !tab.restoreCommand) {
@@ -287,7 +302,7 @@ function TerminalFooterComponent({
   }, [activeIndex, keyboardActive]);
 
   useEffect(() => {
-    if (!keyboardActive || hints.length === 0) {
+    if (!keyboardActive || visibleHints.length === 0) {
       return;
     }
 
@@ -401,16 +416,18 @@ function TerminalFooterComponent({
   useEffect(() => {
     rowVisibleCountsRef.current = {};
     setVisibleCountsVersion((version) => version + 1);
-  }, [activeAgent, hints, isVisible]);
+  }, [hints, isVisible, useAgentHints, showSkillHints]);
 
   const hintBadges = useMemo(
     () =>
-      hints.map((hint, index) => {
+      visibleHints.map((hint, index) => {
         const badgeIcon = hint.badgeIcon;
         const hintKind = hint.hintKind ?? (hint.id.startsWith('skill-') ? 'skill' : undefined);
         const backgroundColor =
           hint.badgeColor ??
-          (badgeIcon ? HINT_BADGE_COLORS[badgeIcon] : PROJECT_COLORS[index % PROJECT_COLORS.length]);
+          (badgeIcon && badgeIcon in HINT_BADGE_COLORS
+            ? HINT_BADGE_COLORS[badgeIcon as keyof typeof HINT_BADGE_COLORS]
+            : PROJECT_COLORS[index % PROJECT_COLORS.length]);
 
         return {
           hint,
@@ -420,7 +437,7 @@ function TerminalFooterComponent({
           globalIndex: index,
         };
       }),
-    [hints],
+    [visibleHints],
   );
 
   const hintRows = useMemo((): HintRow[] => {
@@ -428,7 +445,7 @@ function TerminalFooterComponent({
       (item) => item.hintKind === 'mode' || item.hintKind === 'model' || item.hintKind === 'skill',
     );
 
-    if (!activeAgent || !hasAgentHintKinds) {
+    if (!useAgentHints || !hasAgentHintKinds) {
       return [{ kind: 'default', items: hintBadges }];
     }
 
@@ -453,7 +470,7 @@ function TerminalFooterComponent({
 
       return [{ kind, items }];
     });
-  }, [activeAgent, hintBadges]);
+  }, [hintBadges, useAgentHints]);
 
   const visibleHintIndices = useMemo(() => {
     void visibleCountsVersion;
@@ -514,7 +531,7 @@ function TerminalFooterComponent({
     [activeIndex, handleHintClick, keyboardActive, onActiveIndexChange],
   );
 
-  if (hints.length === 0) {
+  if (visibleHints.length === 0) {
     return null;
   }
 

@@ -10,6 +10,8 @@ export interface GitChangeEntry {
   path: string;
   previousPath?: string;
   status: GitChangeStatus;
+  additions?: number;
+  deletions?: number;
 }
 
 export interface GitRepoInfo {
@@ -31,6 +33,18 @@ export interface GitStatusResult {
 export interface GitDiffResult {
   path: string;
   patch: string;
+}
+
+export interface GitFileDiffSidesResult {
+  path: string;
+  before: string;
+  after: string;
+}
+
+export interface GitFileDiffImageSidesResult {
+  path: string;
+  before: string | null;
+  after: string | null;
 }
 
 export interface GitBranchInfo {

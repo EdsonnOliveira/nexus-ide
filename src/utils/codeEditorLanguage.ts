@@ -6,13 +6,27 @@ import { markdown } from '@codemirror/lang-markdown';
 import { python } from '@codemirror/lang-python';
 import { sql } from '@codemirror/lang-sql';
 import { yaml } from '@codemirror/lang-yaml';
+import { StreamLanguage } from '@codemirror/language';
+import { groovy } from '@codemirror/legacy-modes/mode/groovy';
+import { properties } from '@codemirror/legacy-modes/mode/properties';
+import { swift } from '@codemirror/legacy-modes/mode/swift';
 import type { Extension } from '@codemirror/state';
+
+export function isEnvFilePath(filePath: string): boolean {
+  const fileName = filePath.split(/[/\\]/).pop() ?? filePath;
+
+  return fileName === '.env' || fileName.startsWith('.env.');
+}
 
 function resolveFileExtension(filePath: string): string {
   const fileName = filePath.split(/[/\\]/).pop() ?? filePath;
 
   if (fileName === 'Dockerfile') {
     return 'dockerfile';
+  }
+
+  if (isEnvFilePath(filePath)) {
+    return 'env';
   }
 
   if (!fileName.includes('.')) {
@@ -24,6 +38,8 @@ function resolveFileExtension(filePath: string): string {
 
 export function getCodeEditorExtensions(filePath: string): Extension[] {
   switch (resolveFileExtension(filePath)) {
+    case 'env':
+      return [StreamLanguage.define(properties)];
     case 'tsx':
       return [javascript({ typescript: true, jsx: true })];
     case 'ts':
@@ -61,6 +77,13 @@ export function getCodeEditorExtensions(filePath: string): Extension[] {
     case 'sql':
     case 'prisma':
       return [sql()];
+    case 'swift':
+      return [StreamLanguage.define(swift)];
+    case 'gradle':
+    case 'groovy':
+    case 'kt':
+    case 'kts':
+      return [StreamLanguage.define(groovy)];
     default:
       return [];
   }

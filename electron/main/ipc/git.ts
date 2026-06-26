@@ -7,6 +7,8 @@ import {
   discardGitPaths,
   discoverGitRepos,
   getGitDiff,
+  getGitFileDiffSides,
+  getGitFileDiffImageSides,
   getGitStatus,
   listGitBranches,
   listGitStashes,
@@ -19,6 +21,7 @@ import {
   unstageGitPaths,
   unwatchGitRepo,
   watchGitRepo,
+  invalidateGitStatusCache,
 } from '../services/git';
 
 export function registerGitHandlers(getWindow: () => Electron.BrowserWindow | null): void {
@@ -50,6 +53,26 @@ export function registerGitHandlers(getWindow: () => Electron.BrowserWindow | nu
 
   ipcMain.handle('git:diff', async (_, dirPath: string, filePath: string, staged: boolean) =>
     getGitDiff(resolveDirectoryPath(dirPath), filePath, staged),
+  );
+
+  ipcMain.handle(
+    'git:getFileDiffSides',
+    async (
+      _,
+      dirPath: string,
+      filePath: string,
+      options: { staged: boolean; untracked?: boolean },
+    ) => getGitFileDiffSides(resolveDirectoryPath(dirPath), filePath, options),
+  );
+
+  ipcMain.handle(
+    'git:getFileDiffImageSides',
+    async (
+      _,
+      dirPath: string,
+      filePath: string,
+      options: { staged: boolean; untracked?: boolean },
+    ) => getGitFileDiffImageSides(resolveDirectoryPath(dirPath), filePath, options),
   );
 
   ipcMain.handle('git:pull', async (_, dirPath: string) => pullGit(resolveDirectoryPath(dirPath)));
@@ -86,5 +109,9 @@ export function registerGitHandlers(getWindow: () => Electron.BrowserWindow | nu
 
   ipcMain.handle('git:unwatch', async (_, dirPath: string) => {
     unwatchGitRepo(resolveDirectoryPath(dirPath));
+  });
+
+  ipcMain.handle('git:invalidateCache', async (_, dirPath: string) => {
+    invalidateGitStatusCache(resolveDirectoryPath(dirPath));
   });
 }

@@ -5,125 +5,67 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  Archive,
+  CheckCheck,
   ChevronDown,
-  ChevronRight,
+  Download,
+  File,
   GitBranch,
-  Minus,
-  Plus,
+  MoreHorizontal,
   RefreshCw,
   RotateCcw,
-  Upload,
-  Download,
-  Archive,
   Trash2,
+  Upload,
 } from 'lucide-react';
-import {
-  ExplorerDirectoryIcon,
-  ExplorerFileIcon,
-  getExplorerFileIconVariant,
-} from '@/components/explorer/ExplorerTreeIcon';
+import { GitDiscardConfirmDialog } from '@/components/git/GitDiscardConfirmDialog';
+import { AgentGitPromptLabel, AgentGitPromptModal } from '@/components/git/AgentGitPromptChip';
+import { ExplorerEntryContextMenu } from '@/components/explorer/ExplorerEntryContextMenu';
+import { EmptyState } from '@/components/overlay/EmptyState';
+import { AppCheckbox } from '@/components/overlay/AppCheckbox';
+import { EXPLORER_ENTRY_DRAG_MIME } from '@/constants/explorerDrag';
+import { StatusBarBranchMenu } from '@/components/layout/StatusBarBranchMenu';
 import {
   positionDropdownBelowAnchor,
   useAnchoredDropdownMenu,
 } from '@/hooks/useAnchoredDropdownMenu';
 import { useGitStatus } from '@/hooks/useGitStatus';
-import type { GitChangeEntry, GitChangeStatus, GitRepoDiscovery } from '@/types/git';
+import { useDelayedHoverHint } from '@/hooks/useDelayedHoverHint';
 import {
-  buildGitChangesTree,
-  collectChangePaths,
-  type GitChangesTreeNode,
-} from '@/utils/gitChangesTree';
+  useAgentGitChangeStore,
+  useAgentGitGroupsForProject,
+} from '@/stores/useAgentGitChangeStore';
+import { useProjectStore } from '@/stores/useProjectStore';
+import { useTabActions } from '@/stores/useTabStore';
+import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
+import type { GitRepoDiscovery } from '@/types/git';
+import type { ProjectDirectoryEntry } from '@/types';
+import { mentionExplorerEntryInAgent } from '@/utils/explorerAgentMention';
+import { toProjectRelativePath } from '@/utils/explorerRelativePath';
+import { buildFlatChanges, type GitFlatChange } from '@/utils/gitFlatChanges';
+import { findGitFlatChangeByPath, gitChangePathsMatch, toRepoAbsolutePath } from '@/utils/gitPaths';
+import { resolvePaneAgentCommand } from '@/utils/projectAgentStatus';
+import { sanitizeAgentPrompt } from '@/utils/terminalShellPrompt';
+import { collectProjectPanes } from '@/utils/tabGroups';
 
-interface GitBranchMenuProps {
-  anchorRect: DOMRect;
-  branches: { name: string; current: boolean }[];
-  newBranchName: string;
-  onClose: () => void;
-  onCheckout: (branch: string) => void;
-  onNewBranchNameChange: (value: string) => void;
-  onCreateBranch: () => void;
-}
+type DiscardConfirmState =
+  | { scope: 'file'; path: string; paths: string[] }
+  | { scope: 'paths'; paths: string[] }
+  | { scope: 'group'; paths: string[]; groupLabel: string };
 
-function GitBranchMenu({
-  anchorRect,
-  branches,
-  newBranchName,
-  onClose,
-  onCheckout,
-  onNewBranchNameChange,
-  onCreateBranch,
-}: GitBranchMenuProps) {
-  const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
-    onClose,
-    (menu) => positionDropdownBelowAnchor(menu, anchorRect, 'start'),
-    [anchorRect],
-  );
+function truncateGroupLabel(prompt: string, maxLength = 80): string {
+  const sanitized = sanitizeAgentPrompt(prompt).replace(/\s+/g, ' ').trim();
+  const singleLine = sanitized.split('\n')[0] ?? sanitized;
 
-  useEffect(() => {
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) {
-        requestClose();
-      }
-    };
+  if (singleLine.length <= maxLength) {
+    return singleLine;
+  }
 
-    const timeoutId = window.setTimeout(() => {
-      window.addEventListener('mousedown', handlePointerDown);
-    }, 0);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-      window.removeEventListener('mousedown', handlePointerDown);
-    };
-  }, [menuRef, requestClose]);
-
-  return createPortal(
-    <div ref={menuRef} className={`overlay-popup git-panel__branch-menu ${animationClass}`}>
-      <div className='git-panel__branch-list'>
-        {branches.map((branch) => (
-          <button
-            key={branch.name}
-            type='button'
-            className={`git-panel__branch-item app-button app-button--enter${branch.current ? ' git-panel__branch-item--active' : ''}`}
-            onClick={() => {
-              onCheckout(branch.name);
-              requestClose();
-            }}
-          >
-            {branch.name}
-          </button>
-        ))}
-      </div>
-      <div className='git-panel__branch-create'>
-        <input
-          type='text'
-          className='git-panel__branch-input'
-          placeholder='Nova branch'
-          value={newBranchName}
-          onChange={(event) => onNewBranchNameChange(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              onCreateBranch();
-              requestClose();
-            }
-          }}
-        />
-        <button
-          type='button'
-          className='git-panel__branch-create-btn app-button app-button--enter'
-          onClick={() => {
-            onCreateBranch();
-            requestClose();
-          }}
-        >
-          Criar
-        </button>
-      </div>
-    </div>,
-    document.body,
-  );
+  return `${singleLine.slice(0, maxLength - 1)}…`;
 }
 
 interface GitRepoMenuProps {
@@ -191,243 +133,295 @@ function GitRepoMenu({ anchorRect, repos, selectedPath, onClose, onSelect }: Git
   );
 }
 
-interface ProjectGitDrawerProps {
-  rootPath: string;
-  onOpenDiff: (filePath: string, staged: boolean) => void;
+interface GitMoreMenuProps {
+  anchorRect: DOMRect;
+  actionLoading: boolean;
+  onClose: () => void;
+  onRefresh: () => void;
+  onPull: () => void;
+  onPush: () => void;
+  onStash: () => void;
+  onStashPop: () => void;
 }
 
-interface GitChangesSectionProps {
-  title: string;
-  changes: GitChangeEntry[];
-  staged: boolean;
-  onStage: (paths: string[]) => void;
-  onUnstage: (paths: string[]) => void;
-  onDiscard: (paths: string[]) => void;
-  onOpenDiff: (filePath: string, staged: boolean) => void;
+function GitMoreMenu({
+  anchorRect,
+  actionLoading,
+  onClose,
+  onRefresh,
+  onPull,
+  onPush,
+  onStash,
+  onStashPop,
+}: GitMoreMenuProps) {
+  const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
+    onClose,
+    (menu) => positionDropdownBelowAnchor(menu, anchorRect, 'end'),
+    [anchorRect],
+  );
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        requestClose();
+      }
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      window.addEventListener('mousedown', handlePointerDown);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [menuRef, requestClose]);
+
+  const handleAction = useCallback(
+    (action: () => void) => {
+      action();
+      requestClose();
+    },
+    [requestClose],
+  );
+
+  return createPortal(
+    <div ref={menuRef} className={`overlay-popup git-scm__more-menu ${animationClass}`}>
+      <button
+        type='button'
+        className='git-scm__more-item app-button app-button--enter'
+        disabled={actionLoading}
+        onClick={() => handleAction(onRefresh)}
+      >
+        <RefreshCw size={13} strokeWidth={2} />
+        Atualizar
+      </button>
+      <button
+        type='button'
+        className='git-scm__more-item app-button app-button--enter'
+        disabled={actionLoading}
+        onClick={() => handleAction(onPull)}
+      >
+        <Download size={13} strokeWidth={2} />
+        Pull
+      </button>
+      <button
+        type='button'
+        className='git-scm__more-item app-button app-button--enter'
+        disabled={actionLoading}
+        onClick={() => handleAction(onPush)}
+      >
+        <Upload size={13} strokeWidth={2} />
+        Push
+      </button>
+      <button
+        type='button'
+        className='git-scm__more-item app-button app-button--enter'
+        disabled={actionLoading}
+        onClick={() => handleAction(onStash)}
+      >
+        <Archive size={13} strokeWidth={2} />
+        Stash
+      </button>
+      <button
+        type='button'
+        className='git-scm__more-item app-button app-button--enter'
+        disabled={actionLoading}
+        onClick={() => handleAction(onStashPop)}
+      >
+        <Trash2 size={13} strokeWidth={2} />
+        Stash pop
+      </button>
+    </div>,
+    document.body,
+  );
 }
 
-const STATUS_LABEL: Record<GitChangeStatus, string> = {
-  modified: 'M',
-  added: 'A',
-  deleted: 'D',
-  renamed: 'R',
-  untracked: 'U',
-  conflicted: 'C',
-};
-
-function GitChangeStatusBadge({ status }: { status: GitChangeStatus }) {
-  return <span className={`git-panel__status git-panel__status--${status}`}>{STATUS_LABEL[status]}</span>;
+interface GitChangeRowProps {
+  change: GitFlatChange;
+  absolutePath: string | null;
+  agentPrompt?: string;
+  selected: boolean;
+  onToggleSelected: (path: string, selected: boolean) => void;
+  onStage: (path: string) => void;
+  onUnstage: (path: string) => void;
+  onDiscard: (path: string) => void;
+  onOpenDiff: (
+    filePath: string,
+    options: { staged: boolean; untracked?: boolean; agentPrompt?: string },
+  ) => void;
+  onContextMenu: (change: GitFlatChange, x: number, y: number) => void;
 }
 
-const GitTreeNode = memo(function GitTreeNodeComponent({
-  node,
-  depth,
-  staged,
+const GitChangeRow = memo(function GitChangeRowComponent({
+  change,
+  absolutePath,
+  agentPrompt,
+  selected,
+  onToggleSelected,
   onStage,
   onUnstage,
   onDiscard,
   onOpenDiff,
-}: {
-  node: GitChangesTreeNode;
-  depth: number;
-  staged: boolean;
-  onStage: (paths: string[]) => void;
-  onUnstage: (paths: string[]) => void;
-  onDiscard: (paths: string[]) => void;
-  onOpenDiff: (filePath: string, staged: boolean) => void;
-}) {
-  const [expanded, setExpanded] = useState(true);
-  const isDirectory = node.type === 'directory';
-  const iconVariant = getExplorerFileIconVariant(node.name, node.type);
+  onContextMenu,
+}: GitChangeRowProps) {
+  const isNew = change.status === 'untracked' || change.status === 'added';
+  const { onMouseEnter, onMouseLeave, hintNode } = useDelayedHoverHint(change.path);
 
-  const handleRowClick = useCallback(() => {
-    if (isDirectory) {
-      setExpanded((value) => !value);
-      return;
-    }
+  const handleOpenDiff = useCallback(() => {
+    onOpenDiff(change.path, {
+      staged: change.staged,
+      untracked: change.status === 'untracked',
+      agentPrompt,
+    });
+  }, [agentPrompt, change.path, change.staged, change.status, onOpenDiff]);
 
-    if (node.change) {
-      onOpenDiff(node.change.path, staged);
-    }
-  }, [isDirectory, node.change, onOpenDiff, staged]);
+  const handleRowClick = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      const target = event.target as HTMLElement;
 
-  const handleStage = useCallback(() => {
-    if (node.change) {
-      onStage([node.change.path]);
-    }
-  }, [node.change, onStage]);
+      if (target.closest('.git-scm__file-revert, .git-scm__file-checkbox, .app-checkbox')) {
+        return;
+      }
 
-  const handleUnstage = useCallback(() => {
-    if (node.change) {
-      onUnstage([node.change.path]);
-    }
-  }, [node.change, onUnstage]);
+      handleOpenDiff();
+    },
+    [handleOpenDiff],
+  );
 
-  const handleDiscard = useCallback(() => {
-    if (node.change) {
-      onDiscard([node.change.path]);
-    }
-  }, [node.change, onDiscard]);
+  const handleRowKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (event.key !== 'Enter' && event.key !== ' ') {
+        return;
+      }
+
+      event.preventDefault();
+      handleOpenDiff();
+    },
+    [handleOpenDiff],
+  );
+
+  const handleToggleSelected = useCallback(() => {
+    onToggleSelected(change.path, !selected);
+  }, [change.path, onToggleSelected, selected]);
+
+  const handleDiscard = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation();
+      onDiscard(change.path);
+    },
+    [change.path, onDiscard],
+  );
+
+  const handleContextMenu = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onContextMenu(change, event.clientX, event.clientY);
+    },
+    [change, onContextMenu],
+  );
+
+  const handleDragStart = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      if (!absolutePath) {
+        event.preventDefault();
+        return;
+      }
+
+      const target = event.target as HTMLElement;
+
+      if (target.closest('.git-scm__file-revert, .git-scm__file-checkbox, .app-checkbox')) {
+        event.preventDefault();
+        return;
+      }
+
+      event.dataTransfer.setData(EXPLORER_ENTRY_DRAG_MIME, absolutePath);
+      event.dataTransfer.setData('text/plain', absolutePath);
+      event.dataTransfer.effectAllowed = 'move';
+    },
+    [absolutePath],
+  );
 
   return (
-    <div className={`project-explorer__branch${expanded ? ' project-explorer__branch--expanded' : ''}`}>
-      <div className='git-panel__tree-row' style={{ paddingLeft: `${8 + depth * 14}px` }}>
-        <button
-          type='button'
-          className='project-explorer__row app-button app-button--enter'
-          onClick={handleRowClick}
-        >
-          <span className='project-explorer__chevron' aria-hidden='true'>
-            {isDirectory ? (
-              expanded ? <ChevronDown size={12} strokeWidth={2} /> : <ChevronRight size={12} strokeWidth={2} />
-            ) : null}
-          </span>
-          {isDirectory ? (
-            <ExplorerDirectoryIcon folderName={node.name} />
-          ) : (
-            <ExplorerFileIcon variant={iconVariant} />
-          )}
-          <span className='project-explorer__label'>{node.name}</span>
-          {node.change ? <GitChangeStatusBadge status={node.change.status} /> : null}
-        </button>
-        {node.change ? (
-          <div className='git-panel__row-actions'>
-            {staged ? (
-              <button
-                type='button'
-                className='git-panel__action app-button app-button--enter'
-                aria-label='Remover do stage'
-                onClick={handleUnstage}
-              >
-                <Minus size={12} strokeWidth={2.25} />
-              </button>
-            ) : (
-              <>
-                <button
-                  type='button'
-                  className='git-panel__action app-button app-button--enter'
-                  aria-label='Adicionar ao stage'
-                  onClick={handleStage}
-                >
-                  <Plus size={12} strokeWidth={2.25} />
-                </button>
-                {node.change.status !== 'untracked' ? (
-                  <button
-                    type='button'
-                    className='git-panel__action git-panel__action--danger app-button app-button--enter'
-                    aria-label='Descartar alterações'
-                    onClick={handleDiscard}
-                  >
-                    <RotateCcw size={12} strokeWidth={2.25} />
-                  </button>
-                ) : null}
-              </>
-            )}
-          </div>
+    <div
+      className='git-scm__file-row app-button app-button--enter'
+      role='button'
+      tabIndex={0}
+      draggable={Boolean(absolutePath)}
+      onClick={handleRowClick}
+      onKeyDown={handleRowKeyDown}
+      onContextMenu={handleContextMenu}
+      onDragStart={handleDragStart}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
+      <File size={14} strokeWidth={2} className='git-scm__file-icon' aria-hidden />
+      <span className='git-scm__file-path app-button__label'>{change.path}</span>
+      <span className='git-scm__file-stats'>
+        {change.additions > 0 ? (
+          <span className='git-scm__file-stat git-scm__file-stat--add'>+{change.additions}</span>
         ) : null}
-      </div>
-      {isDirectory ? (
-        <div className={`project-explorer__children${expanded ? ' project-explorer__children--open' : ''}`}>
-          <div className='project-explorer__children-inner'>
-            {expanded
-              ? node.children?.map((child) => (
-                  <GitTreeNode
-                    key={`${child.path}-${child.type}`}
-                    node={child}
-                    depth={depth + 1}
-                    staged={staged}
-                    onStage={onStage}
-                    onUnstage={onUnstage}
-                    onDiscard={onDiscard}
-                    onOpenDiff={onOpenDiff}
-                  />
-                ))
-              : null}
-          </div>
-        </div>
-      ) : null}
+        {change.deletions > 0 ? (
+          <span className='git-scm__file-stat git-scm__file-stat--del'>-{change.deletions}</span>
+        ) : null}
+      </span>
+      {isNew ? <span className='git-scm__file-new'>Novo</span> : null}
+      <button
+        type='button'
+        className='git-scm__file-revert app-button app-button--enter'
+        aria-label='Descartar alterações'
+        onClick={handleDiscard}
+      >
+        <RotateCcw size={12} strokeWidth={2.25} />
+      </button>
+      <AppCheckbox
+        className='git-scm__file-checkbox'
+        checked={selected}
+        aria-label={selected ? 'Remover da seleção' : 'Selecionar para descartar'}
+        onChange={handleToggleSelected}
+      />
+      {hintNode}
     </div>
   );
 });
 
-const GitChangesSection = memo(function GitChangesSectionComponent({
-  title,
-  changes,
-  staged,
-  onStage,
-  onUnstage,
-  onDiscard,
-  onOpenDiff,
-}: GitChangesSectionProps) {
-  const [open, setOpen] = useState(true);
-  const tree = useMemo(() => buildGitChangesTree(changes), [changes]);
-  const allPaths = useMemo(() => collectChangePaths(tree), [tree]);
+interface GitChangeContextMenuState {
+  change: GitFlatChange;
+  x: number;
+  y: number;
+}
 
-  const handleBulkPrimary = useCallback(() => {
-    if (staged) {
-      onUnstage(allPaths);
-      return;
-    }
+interface ProjectGitDrawerProps {
+  projectId: string;
+  rootPath: string;
+  onOpenDiff: (
+    filePath: string,
+    options: { staged: boolean; untracked?: boolean; repoPath?: string; agentPrompt?: string },
+  ) => void;
+}
 
-    onStage(allPaths);
-  }, [allPaths, onStage, onUnstage, staged]);
-
-  if (changes.length === 0) {
-    return null;
-  }
-
-  return (
-    <section className='git-panel__section'>
-      <div className='git-panel__section-header'>
-        <button
-          type='button'
-          className='git-panel__section-toggle app-button app-button--enter'
-          onClick={() => setOpen((value) => !value)}
-        >
-          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          <span>
-            {title} ({changes.length})
-          </span>
-        </button>
-        <button
-          type='button'
-          className='git-panel__section-action app-button app-button--enter'
-          aria-label={staged ? 'Unstage all' : 'Stage all'}
-          onClick={handleBulkPrimary}
-        >
-          {staged ? <Minus size={13} /> : <Plus size={13} />}
-        </button>
-      </div>
-      {open ? (
-        <div className='project-explorer__tree git-panel__tree'>
-          {tree.map((node) => (
-            <GitTreeNode
-              key={`${node.path}-${node.type}`}
-              node={node}
-              depth={0}
-              staged={staged}
-              onStage={onStage}
-              onUnstage={onUnstage}
-              onDiscard={onDiscard}
-              onOpenDiff={onOpenDiff}
-            />
-          ))}
-        </div>
-      ) : null}
-    </section>
-  );
-});
-
-function ProjectGitDrawerComponent({ rootPath, onOpenDiff }: ProjectGitDrawerProps) {
+function ProjectGitDrawerComponent({ projectId, rootPath, onOpenDiff }: ProjectGitDrawerProps) {
+  const project = useProjectStore((state) => state.projects.find((item) => item.id === projectId) ?? null);
+  const activeAgentByPane = useTerminalSessionStore((state) => state.activeAgentByPane);
+  const { selectPane } = useTabActions();
   const [discoveredRepos, setDiscoveredRepos] = useState<GitRepoDiscovery[]>([]);
   const [selectedRepoPath, setSelectedRepoPath] = useState<string | null>(null);
   const [discovering, setDiscovering] = useState(true);
   const [commitMessage, setCommitMessage] = useState('');
-  const [newBranchName, setNewBranchName] = useState('');
   const [branchAnchor, setBranchAnchor] = useState<DOMRect | null>(null);
   const [repoAnchor, setRepoAnchor] = useState<DOMRect | null>(null);
+  const [moreAnchor, setMoreAnchor] = useState<DOMRect | null>(null);
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
+  const [discardConfirm, setDiscardConfirm] = useState<DiscardConfirmState | null>(null);
+  const [promptModalText, setPromptModalText] = useState<string | null>(null);
+  const [changeContextMenu, setChangeContextMenu] = useState<GitChangeContextMenuState | null>(null);
   const branchButtonRef = useRef<HTMLButtonElement>(null);
   const repoButtonRef = useRef<HTMLButtonElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const focusedGroupRef = useRef<HTMLDivElement>(null);
+  const promptGroups = useAgentGitGroupsForProject(projectId);
+  const focusedGroupId = useAgentGitChangeStore((state) => state.focusedGroupId);
 
   useEffect(() => {
     let cancelled = false;
@@ -436,15 +430,22 @@ function ProjectGitDrawerComponent({ rootPath, onOpenDiff }: ProjectGitDrawerPro
     setDiscoveredRepos([]);
     setSelectedRepoPath(null);
 
-    void window.nexus.git.discoverRepos(rootPath).then((repos) => {
-      if (cancelled) {
-        return;
-      }
+    void window.nexus.git
+      .discoverRepos(rootPath)
+      .then((repos) => {
+        if (cancelled) {
+          return;
+        }
 
-      setDiscoveredRepos(repos);
-      setSelectedRepoPath(repos[0]?.path ?? null);
-      setDiscovering(false);
-    });
+        setDiscoveredRepos(repos);
+        setSelectedRepoPath(repos[0]?.path ?? null);
+        setDiscovering(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDiscovering(false);
+        }
+      });
 
     return () => {
       cancelled = true;
@@ -453,7 +454,6 @@ function ProjectGitDrawerComponent({ rootPath, onOpenDiff }: ProjectGitDrawerPro
 
   const {
     status,
-    branches,
     loading,
     actionLoading,
     error,
@@ -475,31 +475,235 @@ function ProjectGitDrawerComponent({ rootPath, onOpenDiff }: ProjectGitDrawerPro
     [discoveredRepos, selectedRepoPath],
   );
 
-  const localBranches = useMemo(
-    () => branches.filter((branch) => !branch.remote),
-    [branches],
+  const flatChanges = useMemo(() => (status ? buildFlatChanges(status) : []), [status]);
+
+  useEffect(() => {
+    if (discovering || loading || !status) {
+      return;
+    }
+
+    useAgentGitChangeStore.getState().pruneGroupsForChanges(projectId, flatChanges);
+  }, [discovering, flatChanges, loading, projectId, status]);
+
+  const agentGroupedPaths = useMemo(() => {
+    const paths = new Set<string>();
+
+    for (const change of flatChanges) {
+      for (const group of promptGroups) {
+        const isGrouped = group.files.some((file) => gitChangePathsMatch(file.path, change.path));
+
+        if (isGrouped) {
+          paths.add(change.path);
+        }
+      }
+    }
+
+    return paths;
+  }, [flatChanges, promptGroups]);
+
+  const otherChanges = useMemo(
+    () => flatChanges.filter((change) => !agentGroupedPaths.has(change.path)),
+    [agentGroupedPaths, flatChanges],
+  );
+
+  const promptGroupSections = useMemo(
+    () =>
+      promptGroups
+        .map((group) => ({
+          group,
+          changes: group.files
+            .map((file) => findGitFlatChangeByPath(flatChanges, file.path))
+            .filter((change): change is GitFlatChange => change !== null),
+        }))
+        .filter((section) => section.changes.length > 0),
+    [flatChanges, promptGroups],
+  );
+
+  const totalAdditions = useMemo(
+    () => flatChanges.reduce((sum, change) => sum + change.additions, 0),
+    [flatChanges],
+  );
+
+  const totalDeletions = useMemo(
+    () => flatChanges.reduce((sum, change) => sum + change.deletions, 0),
+    [flatChanges],
+  );
+
+  const allSelected = useMemo(
+    () => flatChanges.length > 0 && flatChanges.every((change) => selectedPaths.has(change.path)),
+    [flatChanges, selectedPaths],
+  );
+
+  const hasSelection = selectedPaths.size > 0;
+
+  useEffect(() => {
+    setSelectedPaths((previous) => {
+      const validPaths = new Set(flatChanges.map((change) => change.path));
+      const next = new Set<string>();
+
+      for (const path of previous) {
+        if (validPaths.has(path)) {
+          next.add(path);
+        }
+      }
+
+      if (next.size === previous.size && [...next].every((path) => previous.has(path))) {
+        return previous;
+      }
+
+      return next;
+    });
+  }, [flatChanges]);
+
+  const canAddToChat = useMemo(() => {
+    if (!project) {
+      return false;
+    }
+
+    return collectProjectPanes(project.tabs).some((pane) =>
+      Boolean(resolvePaneAgentCommand(pane, activeAgentByPane)),
+    );
+  }, [activeAgentByPane, project]);
+
+  const changeContextMenuEntry = useMemo<ProjectDirectoryEntry | null>(() => {
+    if (!changeContextMenu || !selectedRepoPath) {
+      return null;
+    }
+
+    const absolutePath = toRepoAbsolutePath(selectedRepoPath, changeContextMenu.change.path);
+    const fileName = changeContextMenu.change.path.split('/').pop() ?? changeContextMenu.change.path;
+
+    return {
+      name: fileName,
+      path: absolutePath,
+      type: 'file',
+    };
+  }, [changeContextMenu, selectedRepoPath]);
+
+  useEffect(() => {
+    if (!focusedGroupId) {
+      return;
+    }
+
+    if (discovering || loading) {
+      return;
+    }
+
+    const hasVisibleGroup = promptGroupSections.some(
+      ({ group, changes }) => group.id === focusedGroupId && changes.length > 0,
+    );
+
+    if (!hasVisibleGroup) {
+      useAgentGitChangeStore.getState().setFocusedGroupId(null);
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      focusedGroupRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      useAgentGitChangeStore.getState().setFocusedGroupId(null);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [discovering, focusedGroupId, loading, promptGroupSections]);
+
+  const handleOpenDiff = useCallback(
+    (filePath: string, options: { staged: boolean; untracked?: boolean; agentPrompt?: string }) => {
+      onOpenDiff(filePath, {
+        ...options,
+        repoPath: selectedRepoPath ?? undefined,
+      });
+    },
+    [onOpenDiff, selectedRepoPath],
   );
 
   const handleStage = useCallback(
-    (paths: string[]) => {
-      void stage(paths);
+    (path: string) => {
+      void stage([path]);
     },
     [stage],
   );
 
   const handleUnstage = useCallback(
-    (paths: string[]) => {
-      void unstage(paths);
+    (path: string) => {
+      void unstage([path]);
     },
     [unstage],
   );
 
-  const handleDiscard = useCallback(
-    (paths: string[]) => {
-      void discard(paths);
-    },
-    [discard],
-  );
+  const handleToggleSelected = useCallback((path: string, selected: boolean) => {
+    setSelectedPaths((previous) => {
+      const next = new Set(previous);
+
+      if (selected) {
+        next.add(path);
+      } else {
+        next.delete(path);
+      }
+
+      return next;
+    });
+  }, []);
+
+  const handleToggleAllSelected = useCallback(() => {
+    if (allSelected) {
+      setSelectedPaths(new Set());
+      return;
+    }
+
+    setSelectedPaths(new Set(flatChanges.map((change) => change.path)));
+  }, [allSelected, flatChanges]);
+
+  const handleDiscard = useCallback((path: string) => {
+    setDiscardConfirm({ scope: 'file', path, paths: [path] });
+  }, []);
+
+  const handleDiscardSelected = useCallback(() => {
+    const paths = [...selectedPaths];
+
+    if (paths.length === 0) {
+      return;
+    }
+
+    setDiscardConfirm({ scope: 'paths', paths });
+  }, [selectedPaths]);
+
+  const handleDiscardGroup = useCallback((paths: string[], groupLabel: string) => {
+    if (paths.length === 0) {
+      return;
+    }
+
+    setDiscardConfirm({ scope: 'group', paths, groupLabel });
+  }, []);
+
+  const handleDiscardConfirm = useCallback(() => {
+    if (!discardConfirm) {
+      return;
+    }
+
+    const pathsToDiscard = discardConfirm.paths;
+
+    if (pathsToDiscard.length > 0) {
+      void discard(pathsToDiscard).then(() => {
+        setSelectedPaths((previous) => {
+          const next = new Set(previous);
+
+          for (const path of pathsToDiscard) {
+            next.delete(path);
+          }
+
+          return next;
+        });
+      });
+    }
+
+    setDiscardConfirm(null);
+  }, [discard, discardConfirm]);
+
+  const handleDiscardClose = useCallback(() => {
+    setDiscardConfirm(null);
+  }, []);
 
   const handleCommit = useCallback(() => {
     void commit(commitMessage).then((result) => {
@@ -517,17 +721,23 @@ function ProjectGitDrawerComponent({ rootPath, onOpenDiff }: ProjectGitDrawerPro
     [checkout],
   );
 
-  const handleCreateBranch = useCallback(() => {
-    const trimmed = newBranchName.trim();
+  const handleCreateBranch = useCallback(
+    (name: string) => {
+      setBranchAnchor(null);
+      void createBranch(name);
+    },
+    [createBranch],
+  );
 
-    if (!trimmed) {
-      return;
+  const openBranchMenu = useCallback(() => {
+    const rect = branchButtonRef.current?.getBoundingClientRect();
+
+    if (rect) {
+      setBranchAnchor(rect);
+      setMoreAnchor(null);
+      setRepoAnchor(null);
     }
-
-    setBranchAnchor(null);
-    setNewBranchName('');
-    void createBranch(trimmed);
-  }, [createBranch, newBranchName]);
+  }, []);
 
   const handleToggleBranchMenu = useCallback(() => {
     if (branchAnchor) {
@@ -535,12 +745,8 @@ function ProjectGitDrawerComponent({ rootPath, onOpenDiff }: ProjectGitDrawerPro
       return;
     }
 
-    const rect = branchButtonRef.current?.getBoundingClientRect();
-
-    if (rect) {
-      setBranchAnchor(rect);
-    }
-  }, [branchAnchor]);
+    openBranchMenu();
+  }, [branchAnchor, openBranchMenu]);
 
   const handleToggleRepoMenu = useCallback(() => {
     if (repoAnchor) {
@@ -552,13 +758,72 @@ function ProjectGitDrawerComponent({ rootPath, onOpenDiff }: ProjectGitDrawerPro
 
     if (rect) {
       setRepoAnchor(rect);
+      setBranchAnchor(null);
+      setMoreAnchor(null);
     }
   }, [repoAnchor]);
+
+  const handleToggleMoreMenu = useCallback(() => {
+    if (moreAnchor) {
+      setMoreAnchor(null);
+      return;
+    }
+
+    const rect = moreButtonRef.current?.getBoundingClientRect();
+
+    if (rect) {
+      setMoreAnchor(rect);
+      setBranchAnchor(null);
+      setRepoAnchor(null);
+    }
+  }, [moreAnchor]);
 
   const handleSelectRepo = useCallback((path: string) => {
     setRepoAnchor(null);
     setSelectedRepoPath(path);
   }, []);
+
+  const handleOpenPromptModal = useCallback((prompt: string) => {
+    setPromptModalText(prompt);
+  }, []);
+
+  const handleClosePromptModal = useCallback(() => {
+    setPromptModalText(null);
+  }, []);
+
+  const handleChangeContextMenu = useCallback((change: GitFlatChange, x: number, y: number) => {
+    setChangeContextMenu({ change, x, y });
+  }, []);
+
+  const handleCloseChangeContextMenu = useCallback(() => {
+    setChangeContextMenu(null);
+  }, []);
+
+  const handleAddToChat = useCallback(
+    (entry: ProjectDirectoryEntry) => {
+      if (!project) {
+        return;
+      }
+
+      void mentionExplorerEntryInAgent(project, entry.path, selectPane);
+    },
+    [project, selectPane],
+  );
+
+  const handleRevealInFolder = useCallback((entry: ProjectDirectoryEntry) => {
+    void window.nexus.files.revealInFolder(entry.path);
+  }, []);
+
+  const handleCopyPath = useCallback((entry: ProjectDirectoryEntry) => {
+    void navigator.clipboard.writeText(entry.path);
+  }, []);
+
+  const handleCopyRelativePath = useCallback(
+    (entry: ProjectDirectoryEntry) => {
+      void navigator.clipboard.writeText(toProjectRelativePath(rootPath, entry.path));
+    },
+    [rootPath],
+  );
 
   if (discovering || (loading && !status && selectedRepoPath)) {
     return (
@@ -571,10 +836,12 @@ function ProjectGitDrawerComponent({ rootPath, onOpenDiff }: ProjectGitDrawerPro
   if (discoveredRepos.length === 0) {
     return (
       <aside className='project-explorer-drawer git-panel' aria-label='Controle de versão'>
-        <div className='project-explorer__header'>
-          <span className='project-explorer__title'>Git</span>
-        </div>
-        <div className='git-panel__empty'>Nenhum repositório Git encontrado neste projeto.</div>
+        <EmptyState
+          icon={GitBranch}
+          message='Nenhum repositório Git encontrado neste projeto.'
+          compact
+          className='git-panel__empty'
+        />
       </aside>
     );
   }
@@ -582,92 +849,53 @@ function ProjectGitDrawerComponent({ rootPath, onOpenDiff }: ProjectGitDrawerPro
   if (!status?.repo.isRepo) {
     return (
       <aside className='project-explorer-drawer git-panel' aria-label='Controle de versão'>
-        <div className='project-explorer__header'>
-          <span className='project-explorer__title'>Git</span>
-        </div>
-        <div className='git-panel__empty'>Este projeto não é um repositório Git.</div>
+        <EmptyState
+          icon={GitBranch}
+          message='Este projeto não é um repositório Git.'
+          compact
+          className='git-panel__empty'
+        />
       </aside>
     );
   }
 
   const hasMultipleRepos = discoveredRepos.length > 1;
-  const hasChanges =
-    status.staged.length + status.unstaged.length + status.untracked.length > 0;
+  const hasChanges = flatChanges.length > 0;
   const currentBranch = status.repo.branch ?? 'HEAD';
 
   return (
-    <aside className='project-explorer-drawer git-panel' aria-label='Controle de versão'>
-      <div className='project-explorer__header git-panel__header'>
-        <div className='git-panel__header-main'>
-          {hasMultipleRepos ? (
-            <button
-              ref={repoButtonRef}
-              type='button'
-              className='git-panel__repo-btn app-button app-button--enter'
-              onClick={handleToggleRepoMenu}
-            >
-              {formatRepoLabel(selectedRepo?.relativePath ?? '.')}
-              <ChevronDown size={12} />
-            </button>
-          ) : null}
-          <GitBranch size={14} strokeWidth={2} />
+    <aside className='project-explorer-drawer git-panel git-scm' aria-label='Controle de versão'>
+      <div className='git-scm__toolbar'>
+        {hasMultipleRepos ? (
           <button
-            ref={branchButtonRef}
+            ref={repoButtonRef}
             type='button'
-            className='git-panel__branch-btn app-button app-button--enter'
-            onClick={handleToggleBranchMenu}
+            className='git-scm__repo-btn app-button app-button--enter'
+            onClick={handleToggleRepoMenu}
           >
-            {currentBranch}
+            {formatRepoLabel(selectedRepo?.relativePath ?? '.')}
             <ChevronDown size={12} />
           </button>
-        </div>
-        <div className='project-explorer__header-actions'>
-          <button
-            type='button'
-            className='project-explorer__header-btn app-button app-button--enter'
-            aria-label='Atualizar'
-            disabled={actionLoading}
-            onClick={() => void refresh()}
-          >
-            <RefreshCw size={14} strokeWidth={2} />
-          </button>
-          <button
-            type='button'
-            className='project-explorer__header-btn app-button app-button--enter'
-            aria-label='Pull'
-            disabled={actionLoading}
-            onClick={() => void pull()}
-          >
-            <Download size={14} strokeWidth={2} />
-          </button>
-          <button
-            type='button'
-            className='project-explorer__header-btn app-button app-button--enter'
-            aria-label='Push'
-            disabled={actionLoading}
-            onClick={() => void push()}
-          >
-            <Upload size={14} strokeWidth={2} />
-          </button>
-          <button
-            type='button'
-            className='project-explorer__header-btn app-button app-button--enter'
-            aria-label='Stash'
-            disabled={actionLoading}
-            onClick={() => void stash()}
-          >
-            <Archive size={14} strokeWidth={2} />
-          </button>
-          <button
-            type='button'
-            className='project-explorer__header-btn app-button app-button--enter'
-            aria-label='Stash pop'
-            disabled={actionLoading}
-            onClick={() => void stashPop()}
-          >
-            <Trash2 size={14} strokeWidth={2} />
-          </button>
-        </div>
+        ) : null}
+        <button
+          ref={branchButtonRef}
+          type='button'
+          className='git-scm__branch-btn app-button app-button--enter'
+          aria-label='Trocar branch'
+          onClick={handleToggleBranchMenu}
+        >
+          <GitBranch size={13} strokeWidth={2} />
+          {currentBranch}
+        </button>
+        <button
+          ref={moreButtonRef}
+          type='button'
+          className='git-scm__icon-btn app-button app-button--enter'
+          aria-label='Mais ações'
+          onClick={handleToggleMoreMenu}
+        >
+          <MoreHorizontal size={15} strokeWidth={2} />
+        </button>
       </div>
 
       {repoAnchor ? (
@@ -680,24 +908,36 @@ function ProjectGitDrawerComponent({ rootPath, onOpenDiff }: ProjectGitDrawerPro
         />
       ) : null}
 
-      {branchAnchor ? (
-        <GitBranchMenu
+      {branchAnchor && selectedRepoPath ? (
+        <StatusBarBranchMenu
           anchorRect={branchAnchor}
-          branches={localBranches}
-          newBranchName={newBranchName}
+          repoPath={selectedRepoPath}
+          currentBranch={currentBranch}
+          placement='below'
           onClose={() => setBranchAnchor(null)}
           onCheckout={handleCheckout}
-          onNewBranchNameChange={setNewBranchName}
           onCreateBranch={handleCreateBranch}
+        />
+      ) : null}
+
+      {moreAnchor ? (
+        <GitMoreMenu
+          anchorRect={moreAnchor}
+          actionLoading={actionLoading}
+          onClose={() => setMoreAnchor(null)}
+          onRefresh={() => void refresh()}
+          onPull={() => void pull()}
+          onPush={() => void push()}
+          onStash={() => void stash()}
+          onStashPop={() => void stashPop()}
         />
       ) : null}
 
       {error ? <div className='git-panel__error'>{error}</div> : null}
 
-      <div className='git-panel__body'>
+      <div className='git-panel__body git-scm__body'>
         {!hasChanges ? (
-          <div className='git-panel__empty'>
-            <span>Nenhuma alteração</span>
+          <EmptyState icon={CheckCheck} message='Nenhuma alteração' compact className='git-panel__empty'>
             <button
               type='button'
               className='git-panel__refresh-btn app-button app-button--enter'
@@ -705,28 +945,141 @@ function ProjectGitDrawerComponent({ rootPath, onOpenDiff }: ProjectGitDrawerPro
             >
               Atualizar
             </button>
-          </div>
+          </EmptyState>
         ) : (
-          <>
-            <GitChangesSection
-              title='Staged Changes'
-              changes={status.staged}
-              staged
-              onStage={handleStage}
-              onUnstage={handleUnstage}
-              onDiscard={handleDiscard}
-              onOpenDiff={onOpenDiff}
-            />
-            <GitChangesSection
-              title='Changes'
-              changes={[...status.unstaged, ...status.untracked]}
-              staged={false}
-              onStage={handleStage}
-              onUnstage={handleUnstage}
-              onDiscard={handleDiscard}
-              onOpenDiff={onOpenDiff}
-            />
-          </>
+          <section className='git-scm__changes'>
+            <div className='git-scm__changes-header'>
+              <span className='git-scm__changes-title'>
+                {flatChanges.length} Alterações
+              </span>
+              <span className='git-scm__changes-stats'>
+                <span className='git-scm__changes-stat git-scm__changes-stat--add'>+{totalAdditions}</span>
+                <span className='git-scm__changes-stat git-scm__changes-stat--del'>-{totalDeletions}</span>
+              </span>
+              <button
+                type='button'
+                className='git-scm__changes-revert app-button app-button--enter'
+                aria-label='Descartar alterações selecionadas'
+                disabled={!hasSelection}
+                onClick={handleDiscardSelected}
+              >
+                <RotateCcw size={13} strokeWidth={2.25} />
+              </button>
+              <AppCheckbox
+                className='git-scm__changes-checkbox'
+                checked={allSelected}
+                aria-label={allSelected ? 'Desmarcar todos' : 'Selecionar todos para descartar'}
+                onChange={handleToggleAllSelected}
+              />
+            </div>
+            <div className='git-scm__changes-body'>
+              {promptGroups.length === 0 ? (
+                <div className='git-scm__file-list'>
+                  {flatChanges.map((change) => (
+                    <GitChangeRow
+                      key={change.path}
+                      change={change}
+                      absolutePath={
+                        selectedRepoPath ? toRepoAbsolutePath(selectedRepoPath, change.path) : null
+                      }
+                      selected={selectedPaths.has(change.path)}
+                      onToggleSelected={handleToggleSelected}
+                      onStage={handleStage}
+                      onUnstage={handleUnstage}
+                      onDiscard={handleDiscard}
+                      onOpenDiff={handleOpenDiff}
+                      onContextMenu={handleChangeContextMenu}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <>
+                  {promptGroupSections.map(({ group, changes }) => (
+                      <section
+                        key={group.id}
+                        ref={group.id === focusedGroupId ? focusedGroupRef : undefined}
+                        className={`git-scm__prompt-group${group.id === focusedGroupId ? ' git-scm__prompt-group--focused' : ''}`}
+                      >
+                        <div className='git-scm__prompt-header'>
+                          <AgentGitPromptLabel prompt={group.prompt} onOpen={handleOpenPromptModal} />
+                          <span className='git-scm__changes-stats'>
+                            <span className='git-scm__changes-stat git-scm__changes-stat--add'>
+                              +{changes.reduce((sum, change) => sum + change.additions, 0)}
+                            </span>
+                            <span className='git-scm__changes-stat git-scm__changes-stat--del'>
+                              -{changes.reduce((sum, change) => sum + change.deletions, 0)}
+                            </span>
+                          </span>
+                          <button
+                            type='button'
+                            className='git-scm__changes-revert app-button app-button--enter'
+                            aria-label='Descartar alterações do prompt'
+                            onClick={() =>
+                              handleDiscardGroup(
+                                changes.map((change) => change.path),
+                                group.prompt,
+                              )
+                            }
+                          >
+                            <RotateCcw size={12} strokeWidth={2.25} />
+                          </button>
+                        </div>
+                        <div className='git-scm__file-list'>
+                          {changes.map((change) => (
+                            <GitChangeRow
+                              key={`${group.id}:${change.path}`}
+                              change={change}
+                              absolutePath={
+                                selectedRepoPath
+                                  ? toRepoAbsolutePath(selectedRepoPath, change.path)
+                                  : null
+                              }
+                              agentPrompt={group.prompt}
+                              selected={selectedPaths.has(change.path)}
+                              onToggleSelected={handleToggleSelected}
+                              onStage={handleStage}
+                              onUnstage={handleUnstage}
+                              onDiscard={handleDiscard}
+                              onOpenDiff={handleOpenDiff}
+                              onContextMenu={handleChangeContextMenu}
+                            />
+                          ))}
+                        </div>
+                      </section>
+                  ))}
+                  {otherChanges.length > 0 ? (
+                    <section className='git-scm__prompt-group'>
+                      <div className='git-scm__prompt-header'>
+                        <p className='git-scm__prompt-label git-scm__prompt-label--other'>
+                          Outras alterações
+                        </p>
+                      </div>
+                      <div className='git-scm__file-list'>
+                        {otherChanges.map((change) => (
+                          <GitChangeRow
+                            key={change.path}
+                            change={change}
+                            absolutePath={
+                              selectedRepoPath
+                                ? toRepoAbsolutePath(selectedRepoPath, change.path)
+                                : null
+                            }
+                            selected={selectedPaths.has(change.path)}
+                            onToggleSelected={handleToggleSelected}
+                            onStage={handleStage}
+                            onUnstage={handleUnstage}
+                            onDiscard={handleDiscard}
+                            onOpenDiff={handleOpenDiff}
+                            onContextMenu={handleChangeContextMenu}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
+                </>
+              )}
+            </div>
+          </section>
         )}
       </div>
 
@@ -752,6 +1105,42 @@ function ProjectGitDrawerComponent({ rootPath, onOpenDiff }: ProjectGitDrawerPro
           Commit
         </button>
       </div>
+
+      {promptModalText ? (
+        <AgentGitPromptModal prompt={promptModalText} onClose={handleClosePromptModal} />
+      ) : null}
+
+      {discardConfirm ? (
+        <GitDiscardConfirmDialog
+          scope={discardConfirm.scope}
+          filePath={discardConfirm.scope === 'file' ? discardConfirm.path : undefined}
+          pathCount={discardConfirm.scope === 'paths' ? discardConfirm.paths.length : undefined}
+          groupLabel={
+            discardConfirm.scope === 'group'
+              ? truncateGroupLabel(discardConfirm.groupLabel)
+              : undefined
+          }
+          onConfirm={handleDiscardConfirm}
+          onClose={handleDiscardClose}
+        />
+      ) : null}
+
+      {changeContextMenu && changeContextMenuEntry ? (
+        <ExplorerEntryContextMenu
+          entry={changeContextMenuEntry}
+          x={changeContextMenu.x}
+          y={changeContextMenu.y}
+          canAddToChat={canAddToChat}
+          hideRename
+          hideDelete
+          hideViewCode
+          onClose={handleCloseChangeContextMenu}
+          onAddToChat={handleAddToChat}
+          onRevealInFolder={handleRevealInFolder}
+          onCopyPath={handleCopyPath}
+          onCopyRelativePath={handleCopyRelativePath}
+        />
+      ) : null}
     </aside>
   );
 }

@@ -6,7 +6,13 @@ export function isSplitTab(item: TabBarItem): item is SplitTab {
 }
 
 export function isPaneTab(item: TabBarItem): item is Tab {
-  return item.type === 'terminal' || item.type === 'browser' || item.type === 'file';
+  return (
+    item.type === 'terminal' ||
+    item.type === 'browser' ||
+    item.type === 'file' ||
+    item.type === 'emulator' ||
+    item.type === 'api'
+  );
 }
 
 export function getPanesFromItem(item: TabBarItem): Tab[] {
@@ -71,6 +77,38 @@ function buildSplitTabTitle(panes: Tab[], layout: SplitLayoutNode): string {
     .join(' + ');
 }
 
+export function reconcileSplitLayout(panes: Tab[], layout: SplitLayoutNode): SplitLayoutNode {
+  const paneIds = new Set(panes.map((pane) => pane.id));
+  const layoutIds = getVisibleTabIds(layout);
+
+  if (
+    layoutIds.length === panes.length &&
+    layoutIds.length > 0 &&
+    layoutIds.every((paneId) => paneIds.has(paneId))
+  ) {
+    return layout;
+  }
+
+  if (panes.length === 0) {
+    return layout;
+  }
+
+  if (panes.length === 1) {
+    return createTabLayout(panes[0].id);
+  }
+
+  return panes.slice(1).reduce<SplitLayoutNode>(
+    (left, pane) => ({
+      type: 'split',
+      orientation: 'horizontal',
+      left,
+      right: createTabLayout(pane.id),
+      ratio: 0.5,
+    }),
+    createTabLayout(panes[0].id),
+  );
+}
+
 export function mergeTabItems(
   tabs: TabBarItem[],
   sourceId: string,
@@ -91,7 +129,10 @@ export function mergeTabItems(
   const sourcePanes = getPanesFromItem(sourceItem);
   const targetPanes = getPanesFromItem(targetItem);
   const mergedPanes = dedupePanes([...targetPanes, ...sourcePanes]);
-  const mergedLayout = mergeLayouts(getLayoutFromItem(targetItem), getLayoutFromItem(sourceItem), side);
+  const mergedLayout = reconcileSplitLayout(
+    mergedPanes,
+    mergeLayouts(getLayoutFromItem(targetItem), getLayoutFromItem(sourceItem), side),
+  );
   const activePaneId = sourcePanes[0]?.id ?? targetPanes[0]?.id ?? null;
 
   const splitTab: SplitTab = {
@@ -176,6 +217,23 @@ export function findSplitTabByPaneId(tabs: TabBarItem[], paneId: string): SplitT
   }
 
   return null;
+}
+
+export function resolveActiveTabBarItem(
+  tabs: TabBarItem[],
+  activeTabId: string | null,
+): TabBarItem | null {
+  if (!activeTabId) {
+    return null;
+  }
+
+  const directMatch = tabs.find((item) => item.id === activeTabId);
+
+  if (directMatch) {
+    return directMatch;
+  }
+
+  return findSplitTabByPaneId(tabs, activeTabId);
 }
 
 export function collectProjectPanes(tabs: TabBarItem[]): Tab[] {

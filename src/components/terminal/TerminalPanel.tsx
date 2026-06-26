@@ -1,37 +1,68 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Globe, Layers, Terminal } from 'lucide-react';
+import { Bot, Braces, Clock, Globe, Layers, Play, Smartphone, Terminal } from 'lucide-react';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useTabActions } from '@/stores/useTabStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
+import { ApiView } from '@/components/api/ApiView';
 import { BrowserView } from '@/components/browser/BrowserView';
+import { EmulatorView } from '@/components/emulator/EmulatorView';
 import { FileView } from '@/components/file/FileView';
 import { TabStrip } from '@/components/tabs/TabStrip';
-import { PanePortal } from '@/components/workspace/PanePortal';
-import { PaneSlot } from '@/components/workspace/PaneSlot';
-import { PaneSlotRegistryProvider } from '@/components/workspace/PaneSlotRegistry';
 import { WorkspaceDropOverlay } from '@/components/workspace/WorkspaceDropOverlay';
+import {
+  useWorkspacePaneContext,
+  WorkspacePaneProvider,
+  type WorkspacePaneContextValue,
+} from '@/components/workspace/WorkspacePaneContext';
 import { TerminalFooter } from '@/components/terminal/TerminalFooter';
+import { AgentGitChangePill } from '@/components/terminal/AgentGitChangePill';
 import { TerminalPasteImages } from '@/components/terminal/TerminalPasteImages';
 import { XTermView, type XTermViewHandle } from '@/components/terminal/XTermView';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import { parseCdCommandLine } from '@/utils/terminalCwd';
-import { collectProjectPanes, findPaneTab } from '@/utils/tabGroups';
+import { collectProjectPanes, findPaneTab, resolveActiveTabBarItem } from '@/utils/tabGroups';
 import { persistTerminalCwd } from '@/utils/persistTerminalSession';
 import { registerTerminalHandle } from '@/utils/terminalHandleRegistry';
 import {
+  completeShellIdleTaskIfAwaiting,
   createAgentReadyStreamDetector,
   createSettledCallback,
+  isPaneTrackingAgentCompletion,
+  syncAgentBusyFromTail,
   trackAgentReadyDetectorReset,
+  TURN_BUFFER_SIZE,
   type AgentReadyStreamDetector,
 } from '@/utils/terminalTaskCompletion';
 import { createTerminalOutputParser } from '@/utils/terminalStream';
 import { clampSplitRatio } from '@/utils/splitLayout';
+import { executeAutomation } from '@/utils/executeAutomation';
+import { handleAutomationPaneShellPrompt } from '@/utils/automationPaneExecution';
+import { completeAgentGitTurn, trackAgentGitPrompt } from '@/utils/agentGitTurn';
+import { useAgentGitChangeStore } from '@/stores/useAgentGitChangeStore';
 import {
   isOverlayBlockingTerminalHints,
   subscribeOverlayBlockingChange,
 } from '@/utils/overlayBlocking';
-import type { Project, SplitLayoutNode, Tab, TabBarItem } from '@/types';
+import { EXPLORER_ENTRY_DRAG_MIME } from '@/constants/explorerDrag';
+import { mentionExplorerEntryInPane } from '@/utils/explorerAgentMention';
+import {
+  attachAgentPromptImagesToPane,
+  readDroppedImageDataUrls,
+  readImagePathAsDataUrl,
+} from '@/utils/attachAgentPromptImage';
+import {
+  getExplorerDragEntryPath,
+  isExplorerInternalDrag,
+  isExternalImageFileDrag,
+  resolveExplorerDropEffect,
+} from '@/utils/explorerExternalDrop';
+import {
+  buildRunningAgentProjectIdSet,
+  resolvePaneAgentCommand,
+  shouldMarkAgentAwaiting,
+} from '@/utils/projectAgentStatus';
+import type { ApiTab, EmulatorTab, Project, SplitLayoutNode, Tab, TabBarItem } from '@/types';
 
 interface WorkspaceSplitProps {
   node: SplitLayoutNode;
@@ -46,12 +77,21 @@ interface TabPaneProps {
   projectPath: string;
   isFocused: boolean;
   isVisible: boolean;
+  isRuntimeActive: boolean;
   terminalRef: (handle: XTermViewHandle | null) => void;
   onFocusPane: (paneId: string) => void;
   onPtyCreated: (ptyId: string) => void;
   onPtyLost: () => void;
   onBrowserUrlChange: (url: string) => void;
   onOpenLinkInBrowser: (url: string) => void;
+  onUpdateEmulatorTab: (
+    tabId: string,
+    patch: Partial<Pick<EmulatorTab, 'platform' | 'deviceId' | 'sessionId' | 'title'>>,
+  ) => void;
+  onUpdateApiTab: (
+    tabId: string,
+    patch: Partial<Pick<ApiTab, 'requestId' | 'collectionId' | 'title'>>,
+  ) => void;
 }
 
 const TabPane = memo(function TabPaneComponent({
@@ -60,19 +100,25 @@ const TabPane = memo(function TabPaneComponent({
   projectPath,
   isFocused,
   isVisible,
+  isRuntimeActive,
   terminalRef,
   onFocusPane,
   onPtyCreated,
   onPtyLost,
   onBrowserUrlChange,
   onOpenLinkInBrowser,
+  onUpdateEmulatorTab,
+  onUpdateApiTab,
 }: TabPaneProps) {
+  const { selectPane } = useTabActions();
+  const isAgentTab = tab.type === 'terminal' && tab.agent !== 'shell';
   const terminalHandleRef = useRef<XTermViewHandle | null>(null);
   const [terminalCwd, setTerminalCwd] = useState(
     tab.type === 'terminal' && tab.terminalCwd ? tab.terminalCwd : projectPath,
   );
   const [hintsKeyboardActive, setHintsKeyboardActive] = useState(false);
   const [hintsActiveIndex, setHintsActiveIndex] = useState(0);
+  const [explorerDropActive, setExplorerDropActive] = useState(false);
   const hintsCountRef = useRef(0);
   const storedActiveAgent = useTerminalSessionStore((state) => state.activeAgentByPane[tab.id] ?? null);
   const activeAgent = useMemo(() => {
@@ -84,6 +130,7 @@ const TabPane = memo(function TabPaneComponent({
 
     return fromRestore ?? storedActiveAgent ?? null;
   }, [storedActiveAgent, tab]);
+  const isAgentSession = isAgentTab || Boolean(activeAgent);
 
   useEffect(() => {
     if (tab.type === 'terminal' && tab.terminalCwd) {
@@ -107,6 +154,22 @@ const TabPane = memo(function TabPaneComponent({
       }
     });
   }, []);
+
+  useEffect(() => {
+    if (!explorerDropActive) {
+      return;
+    }
+
+    const handleDragEnd = () => {
+      setExplorerDropActive(false);
+    };
+
+    window.addEventListener('dragend', handleDragEnd);
+
+    return () => {
+      window.removeEventListener('dragend', handleDragEnd);
+    };
+  }, [explorerDropActive]);
 
   const handleHintsCountChange = useCallback((count: number) => {
     hintsCountRef.current = count;
@@ -172,8 +235,15 @@ const TabPane = memo(function TabPaneComponent({
       const commandLine = command.replace(/\n$/, '');
 
       if (commandLine) {
-        useTerminalSessionStore.getState().markAwaitingResponse(tab.id);
-        useTerminalSessionStore.getState().setLastCommand(tab.id, commandLine);
+        const session = useTerminalSessionStore.getState();
+
+        if (shouldMarkAgentAwaiting(tab.id, commandLine, session.activeAgentByPane)) {
+          session.setLastCommand(tab.id, commandLine);
+          trackAgentGitPrompt(tab.id, commandLine);
+          session.markAwaitingResponse(tab.id);
+        } else {
+          session.setLastCommand(tab.id, commandLine);
+        }
       }
 
       terminalHandleRef.current?.write(command);
@@ -193,6 +263,71 @@ const TabPane = memo(function TabPaneComponent({
     onFocusPane(tab.id);
   }, [onFocusPane, tab.id]);
 
+  const handleExplorerDragOver = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      if (!isAgentSession) {
+        return;
+      }
+
+      const isExplorerDrag = isExplorerInternalDrag(event.dataTransfer);
+      const isImageDrag = isExternalImageFileDrag(event.dataTransfer);
+
+      if (!isExplorerDrag && !isImageDrag) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = resolveExplorerDropEffect(event.dataTransfer.effectAllowed);
+      setExplorerDropActive(true);
+    },
+    [isAgentSession],
+  );
+
+  const handleExplorerDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    const related = event.relatedTarget as Node | null;
+
+    if (!event.currentTarget.contains(related)) {
+      setExplorerDropActive(false);
+    }
+  }, []);
+
+  const handleExplorerDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      if (!isAgentSession) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      setExplorerDropActive(false);
+
+      if (isExplorerInternalDrag(event.dataTransfer)) {
+        const entryPath = getExplorerDragEntryPath(event.dataTransfer);
+
+        if (!entryPath) {
+          return;
+        }
+
+        void mentionExplorerEntryInPane(projectPath, tab.id, entryPath, selectPane);
+        return;
+      }
+
+      if (!isExternalImageFileDrag(event.dataTransfer)) {
+        return;
+      }
+
+      void readDroppedImageDataUrls(event.dataTransfer).then((dataUrls) => {
+        if (dataUrls.length === 0) {
+          return;
+        }
+
+        void attachAgentPromptImagesToPane(projectPath, tab.id, dataUrls);
+      });
+    },
+    [isAgentSession, projectPath, selectPane, tab.id],
+  );
+
   if (tab.type === 'browser') {
     return (
       <div className='workspace-pane' onMouseDown={handleMouseDown}>
@@ -200,6 +335,7 @@ const TabPane = memo(function TabPaneComponent({
           projectId={projectId}
           url={tab.url}
           isVisible={isVisible}
+          isRuntimeActive={isRuntimeActive}
           isFocused={isFocused}
           onUrlChange={onBrowserUrlChange}
         />
@@ -210,26 +346,62 @@ const TabPane = memo(function TabPaneComponent({
   if (tab.type === 'file') {
     return (
       <div className='workspace-pane workspace-pane--file' onMouseDown={handleMouseDown}>
-        <FileView tab={tab} isVisible={isVisible} />
+        <FileView tab={tab} isVisible={isVisible} projectId={projectId} />
+      </div>
+    );
+  }
+
+  if (tab.type === 'emulator') {
+    return (
+      <div className='workspace-pane workspace-pane--emulator' onMouseDown={handleMouseDown}>
+        <EmulatorView
+          tab={tab}
+          isVisible={isVisible}
+          isRuntimeActive={isRuntimeActive}
+          isFocused={isFocused}
+          onFocusPane={onFocusPane}
+          onUpdateTab={onUpdateEmulatorTab}
+        />
+      </div>
+    );
+  }
+
+  if (tab.type === 'api') {
+    return (
+      <div className='workspace-pane workspace-pane--api' onMouseDown={handleMouseDown}>
+        <ApiView
+          tab={tab}
+          projectId={projectId}
+          isVisible={isVisible}
+          isRuntimeActive={isRuntimeActive}
+          isFocused={isFocused}
+          onFocusPane={onFocusPane}
+          onUpdateTab={onUpdateApiTab}
+        />
       </div>
     );
   }
 
   return (
     <div
-      className={`workspace-pane terminal-panel__shell terminal-panel__shell--${tab.agent}`}
+      className={`workspace-pane terminal-panel__shell terminal-panel__shell--${tab.agent}${explorerDropActive ? ' workspace-pane--explorer-drop-target' : ''}`}
       onMouseDown={handleMouseDown}
+      onDragOver={isAgentSession ? handleExplorerDragOver : undefined}
+      onDragLeave={isAgentSession ? handleExplorerDragLeave : undefined}
+      onDrop={isAgentSession ? handleExplorerDrop : undefined}
     >
       <div className='terminal-panel__body'>
         <XTermView
           ref={handleTerminalRef}
           paneId={tab.id}
+          projectPath={projectPath}
           ptyId={tab.ptyId}
           isVisible={isVisible}
+          isRuntimeActive={isRuntimeActive}
           isFocused={isFocused}
           cwd={terminalCwd}
           agent={tab.agent}
-          isAgentSession={Boolean(activeAgent)}
+          isAgentSession={isAgentSession}
           onPtyCreated={onPtyCreated}
           onPtyLost={handlePtyLost}
           onCwdChange={handleCwdChange}
@@ -237,8 +409,17 @@ const TabPane = memo(function TabPaneComponent({
           onFocusHints={handleFocusHintsWhenFocused}
           hintsKeyboardActive={hintsKeyboardActive && isFocused}
         />
+        {isAgentSession ? (
+          <div className='agent-git-change-pill-slot'>
+            <AgentGitChangePill projectId={projectId} paneId={tab.id} />
+          </div>
+        ) : null}
       </div>
-      <TerminalPasteImages paneId={tab.id} isVisible={isVisible && Boolean(activeAgent)} />
+      <TerminalPasteImages
+        paneId={tab.id}
+        projectPath={projectPath}
+        isVisible={isVisible && isAgentSession}
+      />
       <TerminalFooter
         tab={tab}
         cwd={terminalCwd}
@@ -249,6 +430,58 @@ const TabPane = memo(function TabPaneComponent({
         onDismissKeyboard={handleDismissHints}
         onHintsCountChange={handleHintsCountChange}
         onRunCommand={handleRunCommand}
+      />
+    </div>
+  );
+});
+
+const ProjectPaneSlot = memo(function ProjectPaneSlotComponent({ paneId }: { paneId: string }) {
+  const {
+    project,
+    terminalRefs,
+    onFocusPane,
+    onPtyCreated,
+    onPtyLost,
+    onBrowserUrlChange,
+    onOpenLinkInBrowser,
+    onUpdateEmulatorTab,
+    onUpdateApiTab,
+    isPaneVisible,
+    isPaneFocused,
+    isPaneRuntimeActive,
+  } = useWorkspacePaneContext();
+
+  const tab = findPaneTab(project.tabs, paneId);
+
+  const handleTerminalRef = useCallback(
+    (handle: XTermViewHandle | null) => {
+      terminalRefs.current[paneId] = handle;
+      registerTerminalHandle(paneId, handle);
+    },
+    [paneId, terminalRefs],
+  );
+
+  if (!tab) {
+    return <div className='workspace-pane workspace-pane--slot' />;
+  }
+
+  return (
+    <div className='workspace-pane workspace-pane--slot'>
+      <TabPane
+        tab={tab}
+        projectId={project.id}
+        projectPath={project.path}
+        isFocused={isPaneFocused(paneId)}
+        isVisible={isPaneVisible(paneId)}
+        isRuntimeActive={isPaneRuntimeActive(paneId)}
+        terminalRef={handleTerminalRef}
+        onFocusPane={onFocusPane}
+        onPtyCreated={(ptyId) => onPtyCreated(project.id, paneId, ptyId)}
+        onPtyLost={() => onPtyLost(project.id, paneId)}
+        onBrowserUrlChange={(url) => onBrowserUrlChange(project.id, paneId, url)}
+        onOpenLinkInBrowser={onOpenLinkInBrowser}
+        onUpdateEmulatorTab={onUpdateEmulatorTab}
+        onUpdateApiTab={onUpdateApiTab}
       />
     </div>
   );
@@ -266,14 +499,14 @@ const WorkspaceSplit = memo(function WorkspaceSplitComponent({
   const splitRatio = node.type === 'split' ? (liveRatio ?? node.ratio) : 0.5;
 
   useEffect(() => {
-    if (liveRatio === null) {
+    if (liveRatio === null || node.type !== 'split') {
       return;
     }
 
     if (Math.abs(node.ratio - liveRatio) < 0.0001) {
       setLiveRatio(null);
     }
-  }, [liveRatio, node.ratio]);
+  }, [liveRatio, node]);
 
   const handlePointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
@@ -326,7 +559,7 @@ const WorkspaceSplit = memo(function WorkspaceSplitComponent({
   );
 
   if (node.type !== 'split') {
-    return <PaneSlot paneId={node.tabId} />;
+    return <ProjectPaneSlot paneId={node.tabId} />;
   }
 
   return (
@@ -363,7 +596,7 @@ function isPaneInActiveLayout(project: Project, isProjectActive: boolean, paneId
     return false;
   }
 
-  const activeItem = project.tabs.find((item) => item.id === project.activeTabId);
+  const activeItem = resolveActiveTabBarItem(project.tabs, project.activeTabId);
 
   if (!activeItem) {
     return false;
@@ -376,12 +609,20 @@ function isPaneInActiveLayout(project: Project, isProjectActive: boolean, paneId
   return activeItem.id === paneId;
 }
 
+function isPaneRuntimeActive(project: Project, isProjectActive: boolean, paneId: string): boolean {
+  if (!isProjectActive) {
+    return false;
+  }
+
+  return findPaneTab(project.tabs, paneId) !== null;
+}
+
 function isPaneFocused(project: Project, isProjectActive: boolean, paneId: string): boolean {
   if (!isPaneInActiveLayout(project, isProjectActive, paneId)) {
     return false;
   }
 
-  const activeItem = project.tabs.find((item) => item.id === project.activeTabId);
+  const activeItem = resolveActiveTabBarItem(project.tabs, project.activeTabId);
 
   if (!activeItem) {
     return false;
@@ -406,6 +647,14 @@ interface ProjectWorkspaceProps {
   onPtyLost: (projectId: string, tabId: string) => void;
   onBrowserUrlChange: (projectId: string, tabId: string, url: string) => void;
   onOpenLinkInBrowser: (url: string) => void;
+  onUpdateEmulatorTab: (
+    tabId: string,
+    patch: Partial<Pick<EmulatorTab, 'platform' | 'deviceId' | 'sessionId' | 'title'>>,
+  ) => void;
+  onUpdateApiTab: (
+    tabId: string,
+    patch: Partial<Pick<ApiTab, 'requestId' | 'collectionId' | 'title'>>,
+  ) => void;
   onSplitRatioCommit: (
     splitTabId: string,
     path: readonly number[],
@@ -422,13 +671,66 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
   onPtyLost,
   onBrowserUrlChange,
   onOpenLinkInBrowser,
+  onUpdateEmulatorTab,
+  onUpdateApiTab,
   onSplitRatioCommit,
 }: ProjectWorkspaceProps) {
-  const projectPanes = useMemo(() => collectProjectPanes(project.tabs), [project.tabs]);
+  const activeTabItem = useMemo(
+    () => resolveActiveTabBarItem(project.tabs, project.activeTabId),
+    [project.activeTabId, project.tabs],
+  );
+
+  const isPaneVisibleForProject = useCallback(
+    (paneId: string) => isPaneInActiveLayout(project, isProjectActive, paneId),
+    [isProjectActive, project],
+  );
+
+  const isPaneFocusedForProject = useCallback(
+    (paneId: string) => isPaneFocused(project, isProjectActive, paneId),
+    [isProjectActive, project],
+  );
+
+  const isPaneRuntimeActiveForProject = useCallback(
+    (paneId: string) => isPaneRuntimeActive(project, isProjectActive, paneId),
+    [isProjectActive, project],
+  );
+
+  const workspacePaneContext = useMemo<WorkspacePaneContextValue>(
+    () => ({
+      project,
+      isProjectActive,
+      terminalRefs,
+      onFocusPane,
+      onPtyCreated,
+      onPtyLost,
+      onBrowserUrlChange,
+      onOpenLinkInBrowser,
+      onUpdateEmulatorTab,
+      onUpdateApiTab,
+      isPaneVisible: isPaneVisibleForProject,
+      isPaneFocused: isPaneFocusedForProject,
+      isPaneRuntimeActive: isPaneRuntimeActiveForProject,
+    }),
+    [
+      isPaneFocusedForProject,
+      isPaneRuntimeActiveForProject,
+      isPaneVisibleForProject,
+      isProjectActive,
+      onBrowserUrlChange,
+      onFocusPane,
+      onOpenLinkInBrowser,
+      onPtyCreated,
+      onPtyLost,
+      onUpdateApiTab,
+      onUpdateEmulatorTab,
+      project,
+      terminalRefs,
+    ],
+  );
 
   const renderTabLayout = useCallback(
     (tabItem: TabBarItem) => {
-      const isTabActive = isProjectActive && tabItem.id === project.activeTabId;
+      const isTabActive = isProjectActive && tabItem.id === activeTabItem?.id;
 
       if (tabItem.type === 'split') {
         return (
@@ -451,11 +753,11 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
           key={tabItem.id}
           className={`terminal-panel__layout${isTabActive ? ' terminal-panel__layout--active' : ''}`}
         >
-          <PaneSlot paneId={tabItem.id} />
+          <ProjectPaneSlot paneId={tabItem.id} />
         </div>
       );
     },
-    [isProjectActive, onSplitRatioCommit, project.activeTabId],
+    [activeTabItem?.id, isProjectActive, onSplitRatioCommit],
   );
 
   if (!project.tabs.length) {
@@ -463,45 +765,21 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
   }
 
   return (
-    <PaneSlotRegistryProvider>
+    <WorkspacePaneProvider value={workspacePaneContext}>
       <div
         className={`terminal-panel__view${isProjectActive ? ' terminal-panel__view--active' : ''}`}
       >
         {project.tabs.map(renderTabLayout)}
-        {projectPanes.map((pane) => {
-          const latestPane = findPaneTab(project.tabs, pane.id) ?? pane;
-          const isVisible = isPaneInActiveLayout(project, isProjectActive, pane.id);
-          const isFocused = isPaneFocused(project, isProjectActive, pane.id);
-
-          return (
-            <PanePortal key={pane.id} paneId={pane.id}>
-              <TabPane
-                tab={latestPane}
-                projectId={project.id}
-                projectPath={project.path}
-                isFocused={isFocused}
-                isVisible={isVisible}
-                terminalRef={(handle) => {
-                  terminalRefs.current[pane.id] = handle;
-                  registerTerminalHandle(pane.id, handle);
-                }}
-                onFocusPane={onFocusPane}
-                onPtyCreated={(ptyId) => onPtyCreated(project.id, pane.id, ptyId)}
-                onPtyLost={() => onPtyLost(project.id, pane.id)}
-                onBrowserUrlChange={(url) => onBrowserUrlChange(project.id, pane.id, url)}
-                onOpenLinkInBrowser={onOpenLinkInBrowser}
-              />
-            </PanePortal>
-          );
-        })}
       </div>
-    </PaneSlotRegistryProvider>
+    </WorkspacePaneProvider>
   );
 });
 
 interface PaneCompletionTracker {
   agentDetector: AgentReadyStreamDetector;
   parseShellPrompt: (chunk: string) => string;
+  busyBuffer: string;
+  resetBusyBuffer: () => void;
   disposeReset: () => void;
 }
 
@@ -509,7 +787,7 @@ function TerminalPanelComponent() {
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const projects = useProjectStore((state) => state.projects);
   const completionTrackersRef = useRef(new Map<string, PaneCompletionTracker>());
-  const { selectPane, updateBrowserUrl, splitTab, openBrowserTab, addTab, addAgentTab, setSplitRatio } =
+  const { selectPane, updateBrowserUrl, updateEmulatorTab, updateApiTab, splitTab, openBrowserTab, addTab, addAgentTab, setSplitRatio } =
     useTabActions();
   const setTabPtyId = useProjectStore((state) => state.setTabPtyId);
   const terminalRefs = useRef<Record<string, XTermViewHandle | null>>({});
@@ -519,6 +797,33 @@ function TerminalPanelComponent() {
     () => projects.find((project) => project.id === activeProjectId) ?? null,
     [activeProjectId, projects],
   );
+  const toggleAutomations = useProjectStore((state) => state.toggleAutomations);
+  const featuredAutomations = useMemo(
+    () => (activeProject?.automations ?? []).slice(0, 5),
+    [activeProject?.automations],
+  );
+  const hasMoreAutomations = (activeProject?.automations?.length ?? 0) > 5;
+
+  const handleRunAutomation = useCallback(
+    (automationId: string) => {
+      if (!activeProject) {
+        return;
+      }
+
+      const automation = (activeProject.automations ?? []).find((entry) => entry.id === automationId);
+
+      if (!automation) {
+        return;
+      }
+
+      void executeAutomation(automation, activeProject.id);
+    },
+    [activeProject],
+  );
+
+  const handleOpenAutomationsDrawer = useCallback(() => {
+    toggleAutomations();
+  }, [toggleAutomations]);
 
   const handlePtyLost = useCallback(
     (projectId: string, tabId: string) => {
@@ -569,26 +874,38 @@ function TerminalPanelComponent() {
 
   const handleWorkspaceDrop = useCallback(
     (sourceTabId: string, side: 'left' | 'right') => {
-      if (!sourceTabId || !activeProject?.activeTabId) {
+      if (!sourceTabId || !activeProject) {
         return;
       }
 
-      if (sourceTabId === activeProject.activeTabId) {
+      const activeTabItem = resolveActiveTabBarItem(activeProject.tabs, activeProject.activeTabId);
+
+      if (!activeTabItem) {
         return;
       }
 
-      void splitTab(sourceTabId, activeProject.activeTabId, side);
+      if (sourceTabId === activeTabItem.id) {
+        return;
+      }
+
+      void splitTab(sourceTabId, activeTabItem.id, side);
       setDraggedTabId(null);
     },
-    [activeProject?.activeTabId, splitTab],
+    [activeProject, splitTab],
   );
 
   const showDropOverlay = useMemo(() => {
-    if (!draggedTabId || !activeProject?.activeTabId) {
+    if (!draggedTabId || !activeProject) {
       return false;
     }
 
-    if (draggedTabId === activeProject.activeTabId) {
+    const activeTabItem = resolveActiveTabBarItem(activeProject.tabs, activeProject.activeTabId);
+
+    if (!activeTabItem) {
+      return false;
+    }
+
+    if (draggedTabId === activeTabItem.id) {
       return false;
     }
 
@@ -611,12 +928,37 @@ function TerminalPanelComponent() {
     };
   }, [draggedTabId]);
 
+  const handleUpdateEmulatorTab = useCallback(
+    (
+      tabId: string,
+      patch: Partial<Pick<EmulatorTab, 'platform' | 'deviceId' | 'sessionId' | 'title'>>,
+    ) => {
+      void updateEmulatorTab(tabId, patch);
+    },
+    [updateEmulatorTab],
+  );
+
+  const handleUpdateApiTab = useCallback(
+    (tabId: string, patch: Partial<Pick<ApiTab, 'requestId' | 'collectionId' | 'title'>>) => {
+      void updateApiTab(tabId, patch);
+    },
+    [updateApiTab],
+  );
+
+  const handleAddApi = useCallback(() => {
+    void addTab('api');
+  }, [addTab]);
+
   const handleAddTerminal = useCallback(() => {
     void addTab('terminal');
   }, [addTab]);
 
   const handleAddBrowser = useCallback(() => {
     void addTab('browser');
+  }, [addTab]);
+
+  const handleAddEmulator = useCallback(() => {
+    void addTab('emulator');
   }, [addTab]);
 
   const resolveAgentCommand = useCallback(async (): Promise<string> => {
@@ -639,10 +981,13 @@ function TerminalPanelComponent() {
 
   useEffect(() => {
     const ptyToPane = new Map<string, string>();
+    const paneById = new Map<string, Tab>();
     const activePaneIds = new Set<string>();
 
     for (const project of projects) {
       for (const pane of collectProjectPanes(project.tabs)) {
+        paneById.set(pane.id, pane);
+
         if (pane.type !== 'terminal' || !pane.ptyId) {
           continue;
         }
@@ -653,23 +998,51 @@ function TerminalPanelComponent() {
         if (!completionTrackersRef.current.has(pane.id)) {
           const paneId = pane.id;
           const completeIfAwaiting = createSettledCallback(() => {
-            useTerminalSessionStore.getState().completeTaskIfAwaiting(paneId);
+            completeShellIdleTaskIfAwaiting(paneId);
+            handleAutomationPaneShellPrompt(paneId);
           });
           const agentDetector = createAgentReadyStreamDetector(
             () => {
+              completeAgentGitTurn(paneId);
               useTerminalSessionStore.getState().completeTaskIfAwaiting(paneId);
             },
             {
-              isAwaiting: () =>
-                useTerminalSessionStore.getState().awaitingResponseByPane[paneId] === true,
+              isAwaiting: () => {
+                const session = useTerminalSessionStore.getState();
+                return isPaneTrackingAgentCompletion(
+                  paneId,
+                  session.awaitingResponseByPane,
+                  session.agentNotifyEligibleByPane,
+                  session.agentBusyByPane,
+                );
+              },
+              isBlocked: () => {
+                const session = useTerminalSessionStore.getState();
+                const pending = useAgentGitChangeStore.getState().pendingTurnByPane[paneId];
+
+                if (pending) {
+                  return false;
+                }
+
+                return Boolean(session.agentBusyByPane[paneId]);
+              },
             },
           );
 
-          completionTrackersRef.current.set(paneId, {
+          const tracker: PaneCompletionTracker = {
             agentDetector,
             parseShellPrompt: createTerminalOutputParser(() => {}, completeIfAwaiting),
-            disposeReset: trackAgentReadyDetectorReset(paneId, () => agentDetector.reset()),
-          });
+            busyBuffer: '',
+            resetBusyBuffer() {
+              this.busyBuffer = '';
+            },
+            disposeReset: trackAgentReadyDetectorReset(paneId, () => {
+              agentDetector.reset();
+              tracker.resetBusyBuffer();
+            }),
+          };
+
+          completionTrackersRef.current.set(paneId, tracker);
         }
       }
     }
@@ -696,10 +1069,59 @@ function TerminalPanelComponent() {
 
       tracker.agentDetector.feed(data);
       tracker.parseShellPrompt(data);
+      tracker.busyBuffer = (tracker.busyBuffer + data).slice(-TURN_BUFFER_SIZE);
+
+      const session = useTerminalSessionStore.getState();
+      const pane = paneById.get(paneId);
+      const hasActiveAgent = Boolean(session.activeAgentByPane[paneId]);
+
+      syncAgentBusyFromTail(
+        paneId,
+        tracker.busyBuffer,
+        hasActiveAgent,
+        session.setAgentBusy,
+        () => {
+          useTerminalSessionStore.getState().markAgentNotifyEligible(paneId);
+        },
+        () => {
+          completeAgentGitTurn(paneId);
+        },
+      );
     });
 
     return unsubscribe;
   }, [projects]);
+
+  useEffect(() => {
+    if (!activeProject) {
+      return;
+    }
+
+    for (const pane of collectProjectPanes(activeProject.tabs)) {
+      if (pane.type !== 'terminal' || !pane.ptyId) {
+        continue;
+      }
+
+      const paneId = pane.id;
+      const tracker = completionTrackersRef.current.get(paneId);
+
+      void window.nexus.terminal.getScrollback(pane.ptyId).then((scrollback) => {
+        const tail = (scrollback ?? '').slice(-TURN_BUFFER_SIZE);
+        const session = useTerminalSessionStore.getState();
+
+        if (tracker && tail) {
+          tracker.busyBuffer = tail;
+        }
+
+        syncAgentBusyFromTail(
+          paneId,
+          tail,
+          Boolean(session.activeAgentByPane[paneId]),
+          session.setAgentBusy,
+        );
+      });
+    }
+  }, [activeProject]);
 
   if (!activeProject) {
     return null;
@@ -718,33 +1140,107 @@ function TerminalPanelComponent() {
               <Layers size={26} strokeWidth={1.75} />
             </div>
             <span className='empty-state__title'>Nenhuma aba aberta</span>
-            <span>Crie um terminal, agent ou navegador para começar</span>
+            <span>Crie um terminal, agent, navegador, emulador ou API Client para começar</span>
             <div className='workspace-empty-state__actions'>
-              <button
-                type='button'
-                className='empty-state__action empty-state__action--terminal app-button app-button--enter'
-                onClick={handleAddTerminal}
-              >
-                <Terminal size={14} />
-                Terminal
-              </button>
-              <button
-                type='button'
-                className='empty-state__action empty-state__action--agent app-button app-button--enter'
-                onClick={handleAddAgent}
-              >
-                <Bot size={14} />
-                Agent
-              </button>
-              <button
-                type='button'
-                className='empty-state__action empty-state__action--browser app-button app-button--enter'
-                onClick={handleAddBrowser}
-              >
-                <Globe size={14} />
-                Navegador
-              </button>
+              <div className='workspace-empty-state__row'>
+                <button
+                  type='button'
+                  className='empty-state__action empty-state__action--agent app-button app-button--enter'
+                  onClick={handleAddAgent}
+                >
+                  <Bot size={14} />
+                  Agent
+                </button>
+                <button
+                  type='button'
+                  className='empty-state__action empty-state__action--browser app-button app-button--enter'
+                  onClick={handleAddBrowser}
+                >
+                  <Globe size={14} />
+                  Navegador
+                </button>
+              </div>
+              <div className='workspace-empty-state__row'>
+                <button
+                  type='button'
+                  className='empty-state__action empty-state__action--terminal app-button app-button--enter'
+                  onClick={handleAddTerminal}
+                >
+                  <Terminal size={14} />
+                  Terminal
+                </button>
+                <button
+                  type='button'
+                  className='empty-state__action empty-state__action--emulator app-button app-button--enter'
+                  onClick={handleAddEmulator}
+                >
+                  <Smartphone size={14} />
+                  Emulador
+                </button>
+                <button
+                  type='button'
+                  className='empty-state__action empty-state__action--api app-button app-button--enter'
+                  onClick={handleAddApi}
+                >
+                  <Braces size={14} />
+                  API Client
+                </button>
+              </div>
             </div>
+
+            {featuredAutomations.length > 0 ? (
+              <div className='workspace-empty-state__automations'>
+                <span className='workspace-empty-state__section-label'>Automações</span>
+                <div className='workspace-empty-state__row'>
+                  {featuredAutomations.slice(0, 2).map((automation, index) => (
+                    <button
+                      key={automation.id}
+                      type='button'
+                      className='empty-state__action empty-state__action--automation app-button app-button--enter'
+                      style={{ animationDelay: `${200 + index * 40}ms` }}
+                      onClick={() => handleRunAutomation(automation.id)}
+                    >
+                      {automation.trigger === 'interval' ? (
+                        <Clock size={14} />
+                      ) : (
+                        <Play size={14} />
+                      )}
+                      {automation.name}
+                    </button>
+                  ))}
+                </div>
+                {featuredAutomations.length > 2 ? (
+                  <div className='workspace-empty-state__row'>
+                    {featuredAutomations.slice(2, 5).map((automation, index) => (
+                      <button
+                        key={automation.id}
+                        type='button'
+                        className='empty-state__action empty-state__action--automation app-button app-button--enter'
+                        style={{ animationDelay: `${280 + index * 40}ms` }}
+                        onClick={() => handleRunAutomation(automation.id)}
+                      >
+                        {automation.trigger === 'interval' ? (
+                          <Clock size={14} />
+                        ) : (
+                          <Play size={14} />
+                        )}
+                        {automation.name}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {hasMoreAutomations ? (
+                  <button
+                    type='button'
+                    className='empty-state__action empty-state__action--ghost app-button app-button--enter'
+                    style={{ animationDelay: '420ms' }}
+                    onClick={handleOpenAutomationsDrawer}
+                  >
+                    Ver todas
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
       ) : (
@@ -760,6 +1256,8 @@ function TerminalPanelComponent() {
               onPtyLost={handlePtyLost}
               onBrowserUrlChange={handleBrowserUrlChange}
               onOpenLinkInBrowser={handleOpenLinkInBrowser}
+              onUpdateEmulatorTab={handleUpdateEmulatorTab}
+              onUpdateApiTab={handleUpdateApiTab}
               onSplitRatioCommit={handleSplitRatioCommit}
             />
           ))}

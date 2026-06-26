@@ -1,6 +1,18 @@
 import type { IDisposable, ILink, ILinkProvider, Terminal } from '@xterm/xterm';
 import { normalizeBrowserUrl } from '@/utils/browserUrl';
-import { stripTrailingUrlChars, TERMINAL_URL_REGEX } from '@/utils/terminalUrlExtract';
+import {
+  extendTerminalUrlAcrossLines,
+  isPositionInsideTerminalUrlRange,
+  isTerminalUrlContinuationLine,
+  stripTrailingUrlChars,
+  TERMINAL_URL_CONTINUE_REGEX,
+  TERMINAL_URL_REGEX,
+  type TerminalLineTextReader,
+} from '@/utils/terminalUrlExtract';
+
+function createLineTextReader(terminal: Terminal): TerminalLineTextReader {
+  return (row: number) => terminal.buffer.active.getLine(row)?.translateToString(true) ?? null;
+}
 
 function setLinkDecorations(link: ILink, active: boolean): void {
   if (!link.decorations) {
@@ -73,22 +85,37 @@ export function findUrlAtTerminalPosition(terminal: Terminal, event: MouseEvent)
     return null;
   }
 
-  const line = terminal.buffer.active.getLine(position.row);
+  const getLineText = createLineTextReader(terminal);
+  let scanRow = position.row;
 
-  if (!line) {
+  while (scanRow > 0 && isTerminalUrlContinuationLine(getLineText, scanRow)) {
+    scanRow -= 1;
+  }
+
+  const text = getLineText(scanRow);
+
+  if (!text) {
     return null;
   }
 
-  const text = line.translateToString(true);
-  const matches = text.matchAll(TERMINAL_URL_REGEX);
+  const regex = new RegExp(TERMINAL_URL_REGEX.source, TERMINAL_URL_REGEX.flags);
 
-  for (const match of matches) {
+  for (const match of text.matchAll(regex)) {
     const start = match.index ?? 0;
-    const raw = stripTrailingUrlChars(match[0]);
-    const end = start + raw.length;
+    const seed = stripTrailingUrlChars(match[0]);
+    const extended = extendTerminalUrlAcrossLines(getLineText, scanRow, start, seed);
 
-    if (position.col >= start && position.col < end) {
-      return normalizeBrowserUrl(raw);
+    if (
+      isPositionInsideTerminalUrlRange(
+        position.row,
+        position.col,
+        scanRow,
+        start,
+        extended.endRow,
+        extended.endCol,
+      )
+    ) {
+      return normalizeBrowserUrl(extended.url);
     }
   }
 
@@ -157,48 +184,106 @@ export function registerNexusTerminalLinks(
 
   const provider: ILinkProvider = {
     provideLinks(bufferLineNumber, callback) {
-      const line = terminal.buffer.active.getLine(bufferLineNumber - 1);
+      const bufferRow = bufferLineNumber - 1;
+      const getLineText = createLineTextReader(terminal);
+      const text = getLineText(bufferRow);
 
-      if (!line) {
+      if (!text) {
         linksByLine.delete(bufferLineNumber);
         callback(undefined);
         return;
       }
 
-      const text = line.translateToString(true);
       const links: ILink[] = [];
 
-      for (const match of text.matchAll(TERMINAL_URL_REGEX)) {
-        const start = match.index ?? 0;
-        const raw = stripTrailingUrlChars(match[0]);
-        const end = start + raw.length;
+      if (isTerminalUrlContinuationLine(getLineText, bufferRow)) {
+        let originRow = bufferRow;
 
-        const link: ILink = {
-          text: raw,
-          range: {
-            start: { x: start + 1, y: bufferLineNumber },
-            end: { x: end, y: bufferLineNumber },
-          },
-          decorations: {
-            underline: false,
-            pointerCursor: false,
-          },
-          activate(event, linkText) {
-            if (!event.metaKey) {
-              return;
+        while (originRow > 0 && isTerminalUrlContinuationLine(getLineText, originRow)) {
+          originRow -= 1;
+        }
+
+        const originText = getLineText(originRow) ?? '';
+        const regex = new RegExp(TERMINAL_URL_REGEX.source, TERMINAL_URL_REGEX.flags);
+        const originMatch = [...originText.matchAll(regex)].at(-1);
+
+        if (originMatch) {
+          const start = originMatch.index ?? 0;
+          const seed = stripTrailingUrlChars(originMatch[0]);
+          const extended = extendTerminalUrlAcrossLines(getLineText, originRow, start, seed);
+
+          if (extended.endRow === bufferRow) {
+            const leadingSpaces = text.length - text.trimStart().length;
+            const continuation = text.trimStart().match(TERMINAL_URL_CONTINUE_REGEX)?.[0] ?? '';
+
+            if (continuation) {
+              const link: ILink = {
+                text: extended.url,
+                range: {
+                  start: { x: leadingSpaces + 1, y: bufferLineNumber },
+                  end: { x: leadingSpaces + continuation.length, y: bufferLineNumber },
+                },
+                decorations: {
+                  underline: false,
+                  pointerCursor: false,
+                },
+                activate(event, linkText) {
+                  if (!event.metaKey) {
+                    return;
+                  }
+
+                  onOpenLink(normalizeBrowserUrl(linkText));
+                },
+                hover(event) {
+                  scheduleLinkDecorations(link, event.metaKey);
+                },
+                leave() {
+                  scheduleLinkDecorations(link, false);
+                },
+              };
+
+              links.push(link);
             }
+          }
+        }
+      } else {
+        const regex = new RegExp(TERMINAL_URL_REGEX.source, TERMINAL_URL_REGEX.flags);
 
-            onOpenLink(normalizeBrowserUrl(linkText));
-          },
-          hover(event) {
-            scheduleLinkDecorations(link, event.metaKey);
-          },
-          leave() {
-            scheduleLinkDecorations(link, false);
-          },
-        };
+        for (const match of text.matchAll(regex)) {
+          const start = match.index ?? 0;
+          const seed = stripTrailingUrlChars(match[0]);
+          const extended = extendTerminalUrlAcrossLines(getLineText, bufferRow, start, seed);
 
-        links.push(link);
+          const link: ILink = {
+            text: extended.url,
+            range: {
+              start: { x: start + 1, y: bufferLineNumber },
+              end: {
+                x: extended.endRow === bufferRow ? extended.endCol : text.length,
+                y: bufferLineNumber,
+              },
+            },
+            decorations: {
+              underline: false,
+              pointerCursor: false,
+            },
+            activate(event, linkText) {
+              if (!event.metaKey) {
+                return;
+              }
+
+              onOpenLink(normalizeBrowserUrl(linkText));
+            },
+            hover(event) {
+              scheduleLinkDecorations(link, event.metaKey);
+            },
+            leave() {
+              scheduleLinkDecorations(link, false);
+            },
+          };
+
+          links.push(link);
+        }
       }
 
       if (links.length > 0) {

@@ -1,4 +1,4 @@
-import { Bot, Globe, Terminal } from 'lucide-react';
+import { Bot, Braces, Globe, Smartphone, Terminal } from 'lucide-react';
 import { memo, useCallback, useEffect, useState, type ComponentType } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -6,7 +6,7 @@ import {
   useAnchoredDropdownMenu,
 } from '@/hooks/useAnchoredDropdownMenu';
 
-export type TabAddOptionId = 'terminal' | 'agent' | 'browser';
+export type TabAddOptionId = 'terminal' | 'agent' | 'browser' | 'emulator' | 'api';
 
 interface TabAddMenuProps {
   anchorRect: DOMRect;
@@ -22,6 +22,8 @@ const TAB_ADD_OPTIONS: {
   { id: 'terminal', label: 'Terminal', icon: Terminal },
   { id: 'agent', label: 'Agent', icon: Bot },
   { id: 'browser', label: 'Navegador', icon: Globe },
+  { id: 'emulator', label: 'Emulador', icon: Smartphone },
+  { id: 'api', label: 'API Client', icon: Braces },
 ];
 
 function TabAddMenuComponent({ anchorRect, onClose, onSelect }: TabAddMenuProps) {

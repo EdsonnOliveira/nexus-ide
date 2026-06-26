@@ -1,6 +1,7 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Move, RotateCcw, X } from 'lucide-react';
+import { MusicMarqueeLine } from '@/components/sidebar/SidebarMusicPlayer';
 import {
   SIDEBAR_VIDEO_PROVIDER_LABELS,
   type SidebarVideoSession,
@@ -8,9 +9,7 @@ import {
 
 interface SidebarVideoPiPProps {
   session: SidebarVideoSession;
-  anchorRef: React.RefObject<HTMLElement | null>;
   onClose: () => void;
-  onAnchorSizeChange: (size: { width: number; height: number } | null) => void;
 }
 
 interface PiPPosition {
@@ -45,77 +44,28 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function SidebarVideoPiPComponent({
-  session,
-  anchorRef,
-  onClose,
-  onAnchorSizeChange,
-}: SidebarVideoPiPProps) {
+function SidebarVideoPiPComponent({ session, onClose }: SidebarVideoPiPProps) {
   const pipRef = useRef<HTMLElement>(null);
   const dragOffsetRef = useRef<DragOffset | null>(null);
   const resizeStateRef = useRef<ResizeState | null>(null);
   const [isFloating, setIsFloating] = useState(false);
   const [position, setPosition] = useState<PiPPosition | null>(null);
   const [customSize, setCustomSize] = useState<PiPSize | null>(null);
-  const [inlineLayout, setInlineLayout] = useState<DOMRect | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const providerLabel = SIDEBAR_VIDEO_PROVIDER_LABELS[session.provider];
   const isCustomized = isFloating || customSize !== null;
+  const displayTitle = session.title.trim() || providerLabel;
 
   useEffect(() => {
     setIsFloating(false);
     setPosition(null);
     setCustomSize(null);
-    setInlineLayout(null);
     setIsDragging(false);
     setIsResizing(false);
     dragOffsetRef.current = null;
     resizeStateRef.current = null;
-    onAnchorSizeChange(null);
-  }, [onAnchorSizeChange, session.sourceUrl]);
-
-  useLayoutEffect(() => {
-    if (isFloating) {
-      setInlineLayout(null);
-      onAnchorSizeChange(null);
-      return;
-    }
-
-    const anchor = anchorRef.current;
-
-    if (!anchor) {
-      return;
-    }
-
-    const syncInlineLayout = () => {
-      setInlineLayout(anchor.getBoundingClientRect());
-    };
-
-    syncInlineLayout();
-
-    const resizeObserver = new ResizeObserver(syncInlineLayout);
-    resizeObserver.observe(anchor);
-    window.addEventListener('resize', syncInlineLayout);
-
-    return () => {
-      resizeObserver.disconnect();
-      window.removeEventListener('resize', syncInlineLayout);
-    };
-  }, [anchorRef, isFloating, onAnchorSizeChange]);
-
-  useLayoutEffect(() => {
-    if (isFloating || !pipRef.current) {
-      return;
-    }
-
-    const pip = pipRef.current;
-
-    onAnchorSizeChange({
-      width: pip.offsetWidth,
-      height: pip.offsetHeight,
-    });
-  }, [customSize, inlineLayout, isFloating, onAnchorSizeChange]);
+  }, [session.sourceUrl]);
 
   const handleClose = useCallback(() => {
     onClose();
@@ -324,34 +274,26 @@ function SidebarVideoPiPComponent({
       };
     }
 
-    if (inlineLayout) {
-      const style: React.CSSProperties = {
-        left: `${inlineLayout.left}px`,
-        top: `${inlineLayout.top}px`,
-        width: `${inlineLayout.width}px`,
+    if (customSize) {
+      return {
+        height: `${customSize.height}px`,
       };
-
-      if (customSize) {
-        style.height = `${customSize.height}px`;
-      }
-
-      return style;
     }
 
     return undefined;
-  }, [customSize, inlineLayout, isFloating, position]);
+  }, [customSize, isFloating, position]);
 
   const pipNode = (
     <section
       ref={pipRef}
-      className={`sidebar-video-pip sidebar-video-pip--portaled app-button--enter${isFloating ? ' sidebar-video-pip--floating' : ''}${customSize ? ' sidebar-video-pip--custom-size' : ''}${isDragging ? ' sidebar-video-pip--dragging' : ''}${isResizing ? ' sidebar-video-pip--resizing' : ''}`}
+      className={`sidebar-video-pip app-button--enter${isFloating ? ' sidebar-video-pip--portaled sidebar-video-pip--floating' : ''}${customSize ? ' sidebar-video-pip--custom-size' : ''}${isDragging ? ' sidebar-video-pip--dragging' : ''}${isResizing ? ' sidebar-video-pip--resizing' : ''}`}
       style={pipStyle}
       aria-label={`PiP ${providerLabel}`}
     >
       <div className='sidebar-video-pip__header'>
         <div className='sidebar-video-pip__meta'>
           <span className='sidebar-video-pip__eyebrow'>Rodando agora</span>
-          <span className='sidebar-video-pip__provider'>{providerLabel}</span>
+          <MusicMarqueeLine text={displayTitle} className='sidebar-video-pip__title' />
         </div>
         <div className='sidebar-video-pip__actions'>
           {isCustomized ? (
@@ -393,7 +335,7 @@ function SidebarVideoPiPComponent({
           <iframe
             className='sidebar-video-pip__frame'
             src={session.playbackUrl}
-            title={`Reprodução ${providerLabel}`}
+            title={displayTitle}
             allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share'
             allowFullScreen
           />
@@ -401,7 +343,7 @@ function SidebarVideoPiPComponent({
           <webview
             className='sidebar-video-pip__frame'
             src={session.playbackUrl}
-            allowpopups='true'
+            allowpopups
             webpreferences='contextIsolation=yes,javascript=yes,sandbox=no'
           />
         )}
@@ -419,7 +361,11 @@ function SidebarVideoPiPComponent({
     </section>
   );
 
-  return createPortal(pipNode, document.body);
+  if (isFloating) {
+    return createPortal(pipNode, document.body);
+  }
+
+  return pipNode;
 }
 
 export const SidebarVideoPiP = memo(SidebarVideoPiPComponent);

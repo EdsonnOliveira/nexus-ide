@@ -3,13 +3,20 @@ delete process.env.NODE_OPTIONS;
 import { app, BrowserWindow, globalShortcut, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { registerApiHandlers } from './ipc/api';
 import { registerBrowserHandlers } from './ipc/browser';
 import { registerDialogHandlers } from './ipc/dialog';
+import { cleanupEmulatorSessions, registerEmulatorHandlers } from './ipc/emulator';
 import { registerFileHandlers } from './ipc/files';
 import { registerProjectHandlers } from './ipc/projects';
 import { registerGitHandlers } from './ipc/git';
 import { registerMusicHandlers } from './ipc/music';
+import { registerMailHandlers } from './ipc/mail';
+import { registerVercelHandlers } from './ipc/vercel';
+import { registerWhatsAppHandlers } from './ipc/whatsapp';
 import { registerSessionHandlers } from './ipc/session';
+import { registerTaskHandlers } from './ipc/tasks';
+import { registerPasswordHandlers } from './ipc/passwords';
 import { registerTerminalHandlers } from './ipc/terminal';
 import {
   registerLocalFileProtocol,
@@ -120,32 +127,96 @@ function isOpenTabAddMenuShortcut(input: Electron.Input): boolean {
   return primaryModifier && !input.alt && !input.shift;
 }
 
+let lastGlobalSearchShortcutAt = 0;
+
+function isOpenGlobalSearchShortcut(input: Electron.Input): boolean {
+  if (input.type !== 'keyDown' || input.key.toLowerCase() !== 'o') {
+    return false;
+  }
+
+  const primaryModifier = process.platform === 'darwin' ? input.meta : input.control;
+
+  return primaryModifier && !input.alt && !input.shift;
+}
+
+function isBrowserReloadShortcut(input: Electron.Input): boolean {
+  if (input.type !== 'keyDown') {
+    return false;
+  }
+
+  if (input.key === 'F5') {
+    return !input.meta && !input.control && !input.alt && !input.shift;
+  }
+
+  if (input.key.toLowerCase() !== 'r') {
+    return false;
+  }
+
+  const primaryModifier = process.platform === 'darwin' ? input.meta : input.control;
+
+  return primaryModifier && !input.alt && !input.shift;
+}
+
+function requestBrowserReloadFromShortcut(): void {
+  win?.webContents.send('app:browser-reload');
+}
+
+function openGlobalSearchFromShortcut(): void {
+  const now = Date.now();
+
+  if (now - lastGlobalSearchShortcutAt < 120) {
+    return;
+  }
+
+  lastGlobalSearchShortcutAt = now;
+  win?.webContents.send('app:open-global-search');
+}
+
 function registerWindowShortcuts(window: BrowserWindow): void {
   window.webContents.on('before-input-event', (event, input) => {
-    if (!window.isFocused() || !isOpenTabAddMenuShortcut(input)) {
+    if (!window.isFocused()) {
       return;
     }
 
-    event.preventDefault();
-    window.webContents.send('app:open-tab-add-menu');
+    if (isBrowserReloadShortcut(input)) {
+      event.preventDefault();
+      requestBrowserReloadFromShortcut();
+      return;
+    }
+
+    if (isOpenTabAddMenuShortcut(input)) {
+      event.preventDefault();
+      window.webContents.send('app:open-tab-add-menu');
+    }
   });
 }
 
 function registerShortcuts() {
   globalShortcut.register('CommandOrControl+B', () => {
-    win?.webContents.send('app:toggle-sidebar');
+    win?.webContents.send('app:toggle-explorer');
+  });
+
+  globalShortcut.register('CommandOrControl+O', () => {
+    openGlobalSearchFromShortcut();
   });
 }
 
 app.whenReady().then(() => {
   registerLocalFileProtocol();
   registerProjectHandlers();
-  registerFileHandlers();
+  registerFileHandlers(() => win);
   registerTerminalHandlers();
+  registerTaskHandlers();
+  registerPasswordHandlers();
   registerDialogHandlers(() => win);
   registerBrowserHandlers();
+  registerApiHandlers();
   registerGitHandlers(() => win);
   registerMusicHandlers();
+  registerMailHandlers();
+  registerVercelHandlers();
+  registerWhatsAppHandlers();
+  registerEmulatorHandlers(() => win);
   registerSessionHandlers(() => {
     isQuitting = true;
 
@@ -170,6 +241,21 @@ function registerWebviewHandlers(): void {
       return;
     }
 
+    contents.on('before-input-event', (event, input) => {
+      if (isBrowserReloadShortcut(input)) {
+        event.preventDefault();
+        requestBrowserReloadFromShortcut();
+        return;
+      }
+
+      if (!isOpenGlobalSearchShortcut(input)) {
+        return;
+      }
+
+      event.preventDefault();
+      openGlobalSearchFromShortcut();
+    });
+
     contents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith('https:') || url.startsWith('http:')) {
         void shell.openExternal(url);
@@ -183,6 +269,7 @@ function registerWebviewHandlers(): void {
 app.on('window-all-closed', () => {
   globalShortcut.unregisterAll();
   ptyManager.killAll();
+  void cleanupEmulatorSessions();
 
   if (process.platform !== 'darwin') {
     app.quit();
@@ -208,6 +295,7 @@ app.on('activate', () => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   ptyManager.killAll();
+  void cleanupEmulatorSessions();
 });
 
 app.on('second-instance', () => {

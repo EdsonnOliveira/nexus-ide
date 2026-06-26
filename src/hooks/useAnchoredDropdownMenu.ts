@@ -1,6 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useAnimatedUnmount } from '@/hooks/useAnimatedUnmount';
-import { registerAnchoredDropdownOpen } from '@/utils/overlayBlocking';
+import {
+  closeAllAnchoredDropdowns,
+  registerAnchoredDropdownCloser,
+  registerAnchoredDropdownOpen,
+  registerModalOpen,
+} from '@/utils/overlayBlocking';
 
 export function positionDropdownBelowAnchor(
   menu: HTMLDivElement,
@@ -52,12 +57,38 @@ export function useAnchoredDropdownMenu(
   onClose: () => void,
   positionMenu: (menu: HTMLDivElement) => void,
   deps: readonly unknown[],
+  host: 'dropdown' | 'modal' = 'dropdown',
 ) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const { phase, requestClose } = useAnimatedUnmount(onClose);
   const [isPositioned, setIsPositioned] = useState(false);
 
-  useEffect(() => registerAnchoredDropdownOpen(), []);
+  useEffect(() => {
+    closeAllAnchoredDropdowns();
+
+    if (host === 'modal') {
+      const unregisterModal = registerModalOpen();
+
+      return () => {
+        unregisterModal();
+      };
+    }
+
+    const forceClose = () => {
+      onCloseRef.current();
+    };
+
+    const unregisterOpen = registerAnchoredDropdownOpen();
+    const unregisterCloser = registerAnchoredDropdownCloser(forceClose);
+    closeAllAnchoredDropdowns(forceClose);
+
+    return () => {
+      unregisterOpen();
+      unregisterCloser();
+    };
+  }, [host]);
 
   useLayoutEffect(() => {
     const menu = menuRef.current;
@@ -82,5 +113,5 @@ export function useAnchoredDropdownMenu(
 
   const animationClass = isPositioned ? `overlay-popup--${phase}` : 'overlay-popup--pending';
 
-  return { menuRef, requestClose, animationClass };
+  return { menuRef, requestClose, animationClass, phase };
 }

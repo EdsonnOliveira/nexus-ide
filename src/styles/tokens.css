@@ -5,7 +5,6 @@
   --bg-panel: rgba(22, 22, 30, 0.32);
   --bg-terminal: rgba(255, 255, 255, 0.03);
   --bg-terminal-footer: rgba(255, 255, 255, 0.05);
-  --glass-blur-terminal: blur(40px) saturate(200%);
   --bg-tab: rgba(255, 255, 255, 0.04);
   --bg-tab-active: rgba(255, 255, 255, 0.1);
   --bg-tab-hover: rgba(255, 255, 255, 0.07);

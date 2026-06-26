@@ -1,6 +1,9 @@
 import { Fragment, memo, useCallback, useMemo, useState } from 'react';
 import { TAB_DRAG_MIME } from '@/constants/tabDrag';
+import { useTabCloseShortcut } from '@/hooks/useTabCloseShortcut';
+import { useTabIndexShortcuts } from '@/hooks/useTabIndexShortcuts';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useTabActions } from '@/stores/useTabStore';
 import { ProjectPromptDialog } from '@/components/sidebar/ProjectPromptDialog';
@@ -8,7 +11,8 @@ import { TabContextMenu } from '@/components/tabs/TabContextMenu';
 import { TabItem } from '@/components/tabs/TabItem';
 import { TabToolbar } from '@/components/tabs/TabToolbar';
 import type { TabBarItem } from '@/types';
-import { getPanesFromItem } from '@/utils/tabGroups';
+import { getPanesFromItem, resolveActiveTabBarItem } from '@/utils/tabGroups';
+import { isPaneAgentLoading } from '@/utils/projectAgentStatus';
 import { countPinnedTabs } from '@/utils/tabOrder';
 
 interface TabContextMenuState {
@@ -23,9 +27,12 @@ interface TabStripProps {
 }
 
 function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
+  useTabCloseShortcut();
+  useTabIndexShortcuts();
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const projects = useProjectStore((state) => state.projects);
-  const { selectTab, closeTab, renameTab, unsplitTab, reorderTab, togglePinTab } = useTabActions();
+  const { selectTab, closeTab, closeAllTabs, renameTab, unsplitTab, reorderTab, togglePinTab } =
+    useTabActions();
   const [contextMenu, setContextMenu] = useState<TabContextMenuState | null>(null);
   const [renameTabId, setRenameTabId] = useState<string | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
@@ -37,8 +44,17 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
 
   const tabs = useMemo(() => activeProject?.tabs ?? [], [activeProject?.tabs]);
   const pinnedCount = useMemo(() => countPinnedTabs(tabs), [tabs]);
-  const activeTabId = activeProject?.activeTabId ?? null;
+  const canCloseAllTabs = tabs.length > pinnedCount;
+  const activeTabItem = useMemo(
+    () => resolveActiveTabBarItem(tabs, activeProject?.activeTabId ?? null),
+    [activeProject?.activeTabId, tabs],
+  );
   const restartingPaneIds = useTerminalSessionStore((state) => state.restartingPaneIds);
+  const executingPaneIds = useAutomationExecutionStore((state) => state.executingPaneIds);
+  const pendingLaunchCommands = useTerminalSessionStore((state) => state.pendingLaunchCommands);
+  const agentBusyByPane = useTerminalSessionStore((state) => state.agentBusyByPane);
+  const awaitingResponseByPane = useTerminalSessionStore((state) => state.awaitingResponseByPane);
+  const activeAgentByPane = useTerminalSessionStore((state) => state.activeAgentByPane);
 
   const tabRestartingMap = useMemo(() => {
     const map = new Map<string, boolean>();
@@ -47,12 +63,26 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
       const terminalPanes = getPanesFromItem(tab).filter((pane) => pane.type === 'terminal');
       map.set(
         tab.id,
-        terminalPanes.some((pane) => Boolean(restartingPaneIds[pane.id])),
+        terminalPanes.some(
+          (pane) =>
+            Boolean(restartingPaneIds[pane.id]) ||
+            Boolean(executingPaneIds[pane.id]) ||
+            Boolean(pendingLaunchCommands[pane.id]) ||
+            isPaneAgentLoading(pane, awaitingResponseByPane, activeAgentByPane, agentBusyByPane),
+        ),
       );
     }
 
     return map;
-  }, [restartingPaneIds, tabs]);
+  }, [
+    activeAgentByPane,
+    agentBusyByPane,
+    awaitingResponseByPane,
+    executingPaneIds,
+    pendingLaunchCommands,
+    restartingPaneIds,
+    tabs,
+  ]);
 
   const contextTab = useMemo(
     () => tabs.find((tab) => tab.id === contextMenu?.tabId) ?? null,
@@ -136,6 +166,10 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
     [togglePinTab],
   );
 
+  const handleCloseAllTabs = useCallback(() => {
+    void closeAllTabs();
+  }, [closeAllTabs]);
+
   const handleTabsDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     if (!event.currentTarget.contains(event.relatedTarget as Node)) {
       setDropTargetIndex(null);
@@ -189,7 +223,7 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
               <TabItem
                 tab={tab}
                 index={index}
-                isFocused={tab.id === activeTabId}
+                isFocused={tab.id === activeTabItem?.id}
                 isRestarting={tabRestartingMap.get(tab.id) ?? false}
                 isDropTarget={dropTargetIndex === index}
                 onSelect={handleSelectTab}
@@ -217,13 +251,16 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
       {contextMenu && contextTab ? (
         <TabContextMenu
           tab={contextTab}
+          project={activeProject}
           x={contextMenu.x}
           y={contextMenu.y}
           pinnedCount={pinnedCount}
+          canCloseAllTabs={canCloseAllTabs}
           onClose={handleCloseContextMenu}
           onRename={handleRenameRequest}
           onUnsplit={handleUnsplit}
           onTogglePin={handleTogglePin}
+          onCloseAllTabs={handleCloseAllTabs}
         />
       ) : null}
 

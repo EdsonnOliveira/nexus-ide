@@ -6,11 +6,7 @@ import type { TerminalAgent } from '@/types';
 export function buildTerminalTheme(agent: TerminalAgent): ITheme {
   const config = TERMINAL_AGENTS[agent];
 
-  return {
-    ...buildMonokaiTheme(config.cursorColor, '#272822', config.selectionBackground),
-    cursor: '#272822',
-    cursorAccent: '#272822',
-  };
+  return buildMonokaiTheme(config.cursorColor, '#272822', config.selectionBackground);
 }
 
 export function getTerminalCursorCssVar(agent: TerminalAgent): string {

@@ -1,17 +1,22 @@
 import { memo, useCallback, useState } from 'react';
-import { X } from 'lucide-react';
+import { Paperclip, X } from 'lucide-react';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { useTerminalPasteImageStore, type TerminalPasteImage } from '@/stores/useTerminalPasteImageStore';
+import {
+  attachAgentPromptImageToPane,
+  readImagePathAsDataUrl,
+} from '@/utils/attachAgentPromptImage';
 import { getTerminalHandle } from '@/utils/terminalHandleRegistry';
 
 interface TerminalPasteImagesProps {
   paneId: string;
+  projectPath: string;
   isVisible: boolean;
 }
 
 const EMPTY_PASTE_IMAGES: TerminalPasteImage[] = [];
 
-function TerminalPasteImagesComponent({ paneId, isVisible }: TerminalPasteImagesProps) {
+function TerminalPasteImagesComponent({ paneId, projectPath, isVisible }: TerminalPasteImagesProps) {
   const images = useTerminalPasteImageStore((state) => state.imagesByPane[paneId] ?? EMPTY_PASTE_IMAGES);
   const removeImage = useTerminalPasteImageStore((state) => state.removeImage);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
@@ -36,13 +41,37 @@ function TerminalPasteImagesComponent({ paneId, isVisible }: TerminalPasteImages
     [expandedImage, paneId, removeImage],
   );
 
-  if (!isVisible || images.length === 0) {
+  const handleAttachImage = useCallback(async () => {
+    const sourcePath = await window.nexus.dialog.openImage();
+
+    if (!sourcePath) {
+      return;
+    }
+
+    const dataUrl = await readImagePathAsDataUrl(sourcePath);
+
+    if (!dataUrl) {
+      return;
+    }
+
+    await attachAgentPromptImageToPane(projectPath, paneId, dataUrl);
+  }, [paneId, projectPath]);
+
+  if (!isVisible) {
     return null;
   }
 
   return (
     <>
-      <div className='terminal-panel__paste-images' role='list' aria-label='Imagens coladas'>
+      <div className='terminal-panel__paste-images' role='list' aria-label='Imagens do prompt'>
+        <button
+          type='button'
+          className='terminal-panel__paste-image-attach app-button app-button--enter'
+          aria-label='Adicionar imagem'
+          onClick={() => void handleAttachImage()}
+        >
+          <Paperclip size={14} strokeWidth={2} />
+        </button>
         {images.map((image) => (
           <div key={image.id} className='terminal-panel__paste-image' role='listitem'>
             <button

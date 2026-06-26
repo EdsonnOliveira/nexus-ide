@@ -11,12 +11,8 @@ export interface DirectoryEntry {
 const IGNORED_DIRECTORY_NAMES = new Set([
   '.git',
   '.hg',
+  '.nexus',
   '.svn',
-  '.next',
-  '.turbo',
-  '.cache',
-  '.idea',
-  '.vscode',
   '__pycache__',
   'coverage',
   'dist',
@@ -26,10 +22,6 @@ const IGNORED_DIRECTORY_NAMES = new Set([
 ]);
 
 function shouldSkipEntry(name: string): boolean {
-  if (name.startsWith('.')) {
-    return true;
-  }
-
   return IGNORED_DIRECTORY_NAMES.has(name);
 }
 

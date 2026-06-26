@@ -1,10 +1,14 @@
 import {
   ArrowRightLeft,
+  Copy,
+  Flag,
+  FolderOpen,
   ImagePlus,
   ImageOff,
   Palette,
   Pencil,
   Shapes,
+  Square,
   Trash2,
   type LucideIcon,
 } from 'lucide-react';
@@ -15,6 +19,7 @@ import {
   useAnchoredDropdownMenu,
 } from '@/hooks/useAnchoredDropdownMenu';
 import type { Project } from '@/types';
+import { getRevealInFolderLabel } from '@/utils/explorerRelativePath';
 
 interface ProjectContextMenuProps {
   project: Project;
@@ -27,7 +32,9 @@ interface ProjectContextMenuProps {
   onSetIcon: (projectId: string) => void;
   onSetIconColor: (projectId: string) => void;
   onRename: (projectId: string) => void;
+  onCreateFlag: (projectId: string) => void;
   onMove: (projectId: string, anchorRect: DOMRect) => void;
+  onStopAll: (projectId: string) => void;
   onDelete: (projectId: string) => void;
 }
 
@@ -51,7 +58,9 @@ function ProjectContextMenuComponent({
   onSetIcon,
   onSetIconColor,
   onRename,
+  onCreateFlag,
   onMove,
+  onStopAll,
   onDelete,
 }: ProjectContextMenuProps) {
   const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
@@ -61,6 +70,7 @@ function ProjectContextMenuComponent({
   );
   const hasCustomIcon = project.iconCustomized;
   const hasLogo = Boolean(project.logo);
+  const hasFlag = Boolean(project.flag);
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -114,6 +124,15 @@ function ProjectContextMenuComponent({
     [onMove, project.id, requestClose],
   );
 
+  const handleRevealInFolder = useCallback(async () => {
+    const resolvedPath = await window.nexus.files.resolveCdPath('/', project.path);
+    void window.nexus.files.revealInFolder(resolvedPath);
+  }, [project.path]);
+
+  const handleCopyPathname = useCallback(() => {
+    void navigator.clipboard.writeText(project.path);
+  }, [project.path]);
+
   const menuItems = useMemo<ProjectContextMenuItem[]>(() => {
     const items: ProjectContextMenuItem[] = [
       {
@@ -158,12 +177,43 @@ function ProjectContextMenuComponent({
         icon: Pencil,
         onSelect: () => onRename(project.id),
       },
+      ...(hasFlag
+        ? []
+        : [
+            {
+              id: 'create-flag',
+              label: 'Criar flag',
+              icon: Flag,
+              onSelect: () => onCreateFlag(project.id),
+            } satisfies ProjectContextMenuItem,
+          ]),
       {
         id: 'move',
         label: 'Mover projeto...',
         icon: ArrowRightLeft,
         onSelect: () => undefined,
         disabled: !canMoveWorkspace,
+      },
+      {
+        id: 'reveal-in-folder',
+        label: getRevealInFolderLabel(),
+        icon: FolderOpen,
+        onSelect: () => {
+          void handleRevealInFolder();
+        },
+      },
+      {
+        id: 'copy-pathname',
+        label: 'Copiar pathname',
+        icon: Copy,
+        onSelect: handleCopyPathname,
+      },
+      {
+        id: 'stop-all',
+        label: 'Parar tudo',
+        icon: Square,
+        onSelect: () => onStopAll(project.id),
+        disabled: project.tabs.length === 0,
       },
       {
         id: 'delete',
@@ -177,10 +227,16 @@ function ProjectContextMenuComponent({
     return items;
   }, [
     canMoveWorkspace,
+    handleCopyPathname,
+    handleRevealInFolder,
     hasCustomIcon,
+    hasFlag,
     hasLogo,
+    onCreateFlag,
     onDelete,
+    onStopAll,
     onRemoveLogo,
+    project.tabs.length,
     onRename,
     onSetIcon,
     onSetIconColor,
@@ -197,7 +253,8 @@ function ProjectContextMenuComponent({
     >
       {menuItems.map((item) => {
         const Icon = item.icon;
-        const showSeparator = item.id === 'rename' || item.id === 'delete';
+        const showSeparator =
+          item.id === 'rename' || item.id === 'create-flag' || item.id === 'stop-all';
 
         return (
           <div key={item.id}>

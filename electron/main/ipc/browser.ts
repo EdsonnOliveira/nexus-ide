@@ -1,4 +1,4 @@
-import { ipcMain, webContents } from 'electron';
+import { clipboard, ipcMain, webContents } from 'electron';
 import { probeUrlReachable } from '../services/browserProbe';
 
 export function registerBrowserHandlers(): void {
@@ -37,5 +37,26 @@ export function registerBrowserHandlers(): void {
     }
 
     guest.closeDevTools();
+  });
+
+  ipcMain.handle('browser:captureScreenshot', async (_, guestWebContentsId: number) => {
+    const guest = webContents.fromId(guestWebContentsId);
+
+    if (!guest || guest.isDestroyed()) {
+      return false;
+    }
+
+    try {
+      const image = await guest.capturePage();
+
+      if (image.isEmpty()) {
+        return false;
+      }
+
+      clipboard.writeImage(image);
+      return true;
+    } catch {
+      return false;
+    }
   });
 }

@@ -3,9 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { app } from 'electron';
 import type { BrowserWindow } from 'electron';
 import * as pty from 'node-pty';
 import type { TerminalAgent } from '../../types';
+import { buildCliPathEnv } from '../utils/cliPathEnv';
 
 interface PtySession {
   id: string;
@@ -16,6 +18,16 @@ interface PtySession {
 const SCROLLBACK_LIMIT = 512 * 1024;
 
 function getAppRoot(): string {
+  if (app.isPackaged) {
+    const appPath = app.getAppPath();
+
+    if (appPath.endsWith('.asar')) {
+      return `${appPath}.unpacked`;
+    }
+
+    return appPath;
+  }
+
   return process.env.APP_ROOT || path.join(path.dirname(fileURLToPath(import.meta.url)), '../..');
 }
 
@@ -95,7 +107,7 @@ function buildEnv(agent: TerminalAgent, shell: string): Record<string, string> {
 
   const nextEnv: Record<string, string> = {
     ...env,
-    PATH: env.PATH || '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+    PATH: buildCliPathEnv(env.PATH),
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
     FORCE_COLOR: '1',
@@ -218,16 +230,36 @@ class PtyManager {
     return id;
   }
 
-  write(ptyId: string, data: string): void {
-    this.sessions.get(ptyId)?.pty.write(data);
-  }
-
   resize(ptyId: string, cols: number, rows: number): void {
     if (cols <= 0 || rows <= 0) {
       return;
     }
 
-    this.sessions.get(ptyId)?.pty.resize(cols, rows);
+    const session = this.sessions.get(ptyId);
+
+    if (!session) {
+      return;
+    }
+
+    try {
+      session.pty.resize(cols, rows);
+    } catch {
+      this.sessions.delete(ptyId);
+    }
+  }
+
+  write(ptyId: string, data: string): void {
+    const session = this.sessions.get(ptyId);
+
+    if (!session) {
+      return;
+    }
+
+    try {
+      session.pty.write(data);
+    } catch {
+      this.sessions.delete(ptyId);
+    }
   }
 
   kill(ptyId: string): void {

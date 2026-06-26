@@ -12,6 +12,8 @@ interface WorkspaceMenuProps {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
   canDeleteWorkspace: boolean;
+  hasHiddenNotifications: boolean;
+  notifiedWorkspaceIds: Set<string>;
   onClose: () => void;
   onSelect: (workspaceId: string | null) => void;
   onCreate: () => void;
@@ -23,6 +25,8 @@ function WorkspaceMenuComponent({
   workspaces,
   activeWorkspaceId,
   canDeleteWorkspace,
+  hasHiddenNotifications,
+  notifiedWorkspaceIds,
   onClose,
   onSelect,
   onCreate,
@@ -114,27 +118,38 @@ function WorkspaceMenuComponent({
     >
       <button
         type='button'
-        className={`context-menu__item${activeWorkspaceId === null ? ' context-menu__item--active' : ''}`}
+        className={`context-menu__item workspace-menu__all${activeWorkspaceId === null ? ' context-menu__item--active' : ''}${hasHiddenNotifications ? ' workspace-menu__item--notified' : ''}`}
         role='menuitem'
         onMouseDown={handleSelectAll}
       >
-        <FolderKanban size={14} strokeWidth={2} aria-hidden />
+        <span className='workspace-menu__icon-wrap'>
+          <FolderKanban size={14} strokeWidth={2} aria-hidden />
+          {hasHiddenNotifications ? (
+            <span className='project-item__ping project-item__ping--red workspace-menu__ping' aria-hidden='true' />
+          ) : null}
+        </span>
         <span>Todos os projetos</span>
         {activeWorkspaceId === null ? <Check size={14} strokeWidth={2} aria-hidden /> : null}
       </button>
       {workspaces.length > 0 ? <div className='context-menu__separator' /> : null}
       {workspaces.map((workspace) => {
         const isActive = activeWorkspaceId === workspace.id;
+        const hasNotification = notifiedWorkspaceIds.has(workspace.id);
 
         return (
           <div key={workspace.id} className='workspace-menu__row'>
             <button
               type='button'
-              className={`context-menu__item workspace-menu__item${isActive ? ' context-menu__item--active' : ''}`}
+              className={`context-menu__item workspace-menu__item${isActive ? ' context-menu__item--active' : ''}${hasNotification ? ' workspace-menu__item--notified' : ''}`}
               role='menuitem'
               onMouseDown={handleSelectWorkspace(workspace.id)}
             >
-              <span className='workspace-menu__dot' aria-hidden />
+              <span className='workspace-menu__icon-wrap'>
+                <span className='workspace-menu__dot' aria-hidden />
+                {hasNotification ? (
+                  <span className='project-item__ping project-item__ping--red workspace-menu__ping' aria-hidden='true' />
+                ) : null}
+              </span>
               <span className='workspace-menu__label'>{workspace.name}</span>
               {isActive ? (
                 <Check size={14} strokeWidth={2} className='workspace-menu__check' aria-hidden />

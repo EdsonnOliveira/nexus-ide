@@ -1,6 +1,8 @@
 export STARSHIP_DISABLE=1
 export DISABLE_UPDATE_PROMPT=true
 
+export PATH="${HOME}/.local/bin:${HOME}/.cursor/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
+
 PS1='\w \$ '
 
 [[ -s "${HOME}/.nvm/nvm.sh" ]] && source "${HOME}/.nvm/nvm.sh"

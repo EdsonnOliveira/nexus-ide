@@ -15,6 +15,10 @@ export function useAnimatedUnmount(onClose: () => void, durationMs = OVERLAY_POP
     setPhase((current) => (current === 'out' ? current : 'out'));
   }, []);
 
+  const resetPhase = useCallback(() => {
+    setPhase('in');
+  }, []);
+
   useEffect(() => {
     if (phase !== 'out') {
       return;
@@ -29,5 +33,5 @@ export function useAnimatedUnmount(onClose: () => void, durationMs = OVERLAY_POP
     };
   }, [durationMs, phase]);
 
-  return { phase, requestClose };
+  return { phase, requestClose, resetPhase };
 }
