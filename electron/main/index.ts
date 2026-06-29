@@ -1,6 +1,6 @@
 delete process.env.NODE_OPTIONS;
 
-import { app, BrowserWindow, globalShortcut, shell } from 'electron';
+import { app, BrowserWindow, globalShortcut, nativeImage, shell, type NativeImage } from 'electron';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { registerApiHandlers } from './ipc/api';
@@ -30,6 +30,9 @@ import { agentPrintRunner } from './services/agentPrintRunner';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const DOCK_APP_NAME = 'Nexus';
+const APP_WINDOW_TITLE = 'Nexus IDE';
+
 registerLocalFileScheme();
 
 process.env.APP_ROOT = path.join(__dirname, '../..');
@@ -46,6 +49,8 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
   process.exit(0);
 }
+
+app.setName(DOCK_APP_NAME);
 
 function registerProcessDiagnostics(): void {
   process.on('uncaughtException', (error) => {
@@ -73,15 +78,62 @@ let flushMode: 'quit' | 'close' = 'quit';
 const preload = path.join(__dirname, '../preload/index.cjs');
 const indexHtml = path.join(RENDERER_DIST, 'index.html');
 
-async function createWindow() {
+function resolveAppIcon(): NativeImage | undefined {
+  const appRoot = process.env.APP_ROOT ?? '';
+  const candidates =
+    process.platform === 'darwin'
+      ? [
+          path.join(appRoot, 'build/icon.icns'),
+          path.join(appRoot, 'build/icon.png'),
+          path.join(process.env.VITE_PUBLIC ?? '', 'nexus-logo.png'),
+          path.join(RENDERER_DIST, 'nexus-logo.png'),
+        ]
+      : [
+          path.join(appRoot, 'build/icon.png'),
+          path.join(appRoot, 'build/icon.ico'),
+          path.join(process.env.VITE_PUBLIC ?? '', 'nexus-logo.png'),
+          path.join(RENDERER_DIST, 'nexus-logo.png'),
+        ];
+
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+
+    const image = nativeImage.createFromPath(candidate);
+
+    if (!image.isEmpty()) {
+      return image;
+    }
+  }
+
+  return undefined;
+}
+
+function applyAppBranding(): NativeImage | undefined {
+  app.setName(DOCK_APP_NAME);
+
+  const appIcon = resolveAppIcon();
+
+  if (!appIcon) {
+    return undefined;
+  }
+
+  return appIcon;
+}
+
+async function createWindow(appIcon?: NativeImage) {
+  const windowIcon = appIcon ?? resolveAppIcon();
+
   win = new BrowserWindow({
-    title: 'Nexus IDE',
+    title: APP_WINDOW_TITLE,
     width: 1400,
     height: 900,
     minWidth: 960,
     minHeight: 640,
     show: false,
     backgroundColor: '#08080c',
+    ...(windowIcon && process.platform !== 'darwin' ? { icon: windowIcon } : {}),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 10, y: 10 },
     webPreferences: {
@@ -95,6 +147,10 @@ async function createWindow() {
 
   ptyManager.setWindow(win);
   agentPrintRunner.setWindow(win);
+
+  if (windowIcon && process.platform !== 'darwin') {
+    win.setIcon(windowIcon);
+  }
 
   win.webContents.on('preload-error', (_, preloadPath, error) => {
     console.error('Preload error:', preloadPath, error);
@@ -264,7 +320,8 @@ app.whenReady().then(() => {
     app.quit();
   });
   registerWebviewHandlers();
-  createWindow();
+  const appIcon = applyAppBranding();
+  createWindow(appIcon);
   registerShortcuts();
 });
 
@@ -324,7 +381,7 @@ app.on('before-quit', (event) => {
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
+    createWindow(applyAppBranding());
   }
 });
 

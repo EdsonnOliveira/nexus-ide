@@ -17,6 +17,7 @@ interface UseAgentComposerShortcutsOptions {
   onStop: () => void;
   onModeChange: (mode: AutomationAgentMode) => void;
   onRunModelCommand: (command: string) => void;
+  mentionMenuOpen?: boolean;
 }
 
 export function useAgentComposerShortcuts({
@@ -32,6 +33,7 @@ export function useAgentComposerShortcuts({
   onStop,
   onModeChange,
   onRunModelCommand,
+  mentionMenuOpen = false,
 }: UseAgentComposerShortcutsOptions) {
   const handleStopOrSubmit = useCallback(() => {
     const trimmed = draft.trim();
@@ -62,7 +64,7 @@ export function useAgentComposerShortcuts({
 
       const mod = event.metaKey || event.ctrlKey;
 
-      if (event.key === 'Tab' && event.shiftKey) {
+      if (event.key === 'Tab' && event.shiftKey && !mentionMenuOpen) {
         event.preventDefault();
         event.stopPropagation();
         const nextMode = cycleAgentMode(activeMode);
@@ -121,6 +123,7 @@ export function useAgentComposerShortcuts({
     modelHints,
     onForceSubmit,
     onModeChange,
+    mentionMenuOpen,
     onRunModelCommand,
     onStop,
   ]);

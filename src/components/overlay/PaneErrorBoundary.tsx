@@ -1,5 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 
+import { NexusLogo } from '@/components/overlay/NexusLogo';
+
 interface PaneErrorBoundaryProps {
   children: ReactNode;
 }
@@ -28,6 +30,9 @@ export class PaneErrorBoundary extends Component<PaneErrorBoundaryProps, PaneErr
       return (
         <div className='app-loading'>
           <div className='empty-state'>
+            <div className='empty-state__icon' aria-hidden='true'>
+              <NexusLogo size={40} className='nexus-brand-logo' />
+            </div>
             <span className='empty-state__title'>Erro ao carregar a interface</span>
             <span>Reinicie o app ou tente novamente</span>
             <button

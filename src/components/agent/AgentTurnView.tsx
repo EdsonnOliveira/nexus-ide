@@ -37,16 +37,26 @@ function AgentTurnViewComponent({
     turn.running ||
     isAgentTurnSummaryVisible(turn.summary);
   const stickySentinelRef = useRef<HTMLDivElement>(null);
-  const isPromptStuck = useStickyPromptState(stickySentinelRef, scrollContainerRef, turn.id);
+  const { isStuck: isPromptStuck, phase: stickyPhase } = useStickyPromptState(
+    stickySentinelRef,
+    scrollContainerRef,
+    turn.id,
+  );
 
   return (
     <div className='agent-view__turn'>
       <div ref={stickySentinelRef} className='agent-view__user-prompt-sticky-sentinel' aria-hidden='true' />
       <div
-        className={`agent-view__user-prompt-sticky${isPromptStuck ? ' agent-view__user-prompt-sticky--stuck' : ''}`}
+        className={`agent-view__user-prompt-sticky${isPromptStuck ? ' agent-view__user-prompt-sticky--stuck' : ''}${stickyPhase === 'in' ? ' agent-view__user-prompt-sticky--enter' : ''}${stickyPhase === 'out' ? ' agent-view__user-prompt-sticky--exit' : ''}`}
         style={{ zIndex: turnIndex + 1 }}
       >
-        <AgentUserPrompt turn={turn} isEditing={isEditing} onEdit={onEdit} onRedo={onRedo} />
+        <AgentUserPrompt
+          turn={turn}
+          isEditing={isEditing}
+          isStickyLayout={isPromptStuck && stickyPhase !== 'out'}
+          onEdit={onEdit}
+          onRedo={onRedo}
+        />
       </div>
       {hasActivities ? (
         <AgentActivityList

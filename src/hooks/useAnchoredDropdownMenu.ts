@@ -53,6 +53,45 @@ export function positionDropdownAboveAnchor(
   menu.style.top = `${Math.max(8, top)}px`;
 }
 
+export function positionDropdownAboveComposerInput(
+  menu: HTMLDivElement,
+  anchorRect: DOMRectReadOnly,
+): void {
+  const padding = 8;
+  const gap = 8;
+  const viewportHeight = window.innerHeight;
+  const availableAbove = Math.max(0, anchorRect.top - padding - gap);
+  const menuHeight = menu.offsetHeight || menu.getBoundingClientRect().height;
+
+  if (menuHeight > availableAbove && availableAbove >= 120) {
+    menu.style.maxHeight = `${Math.max(120, availableAbove)}px`;
+  }
+
+  const resolvedHeight = menu.offsetHeight || menu.getBoundingClientRect().height;
+  const composerNearBottom = anchorRect.bottom > viewportHeight * 0.45;
+  let top = anchorRect.top - resolvedHeight - gap;
+
+  if (composerNearBottom) {
+    top = anchorRect.top - resolvedHeight - gap;
+  } else if (top < padding) {
+    top = anchorRect.bottom + gap;
+  }
+
+  top = Math.max(padding, Math.min(top, viewportHeight - resolvedHeight - padding));
+
+  if (composerNearBottom) {
+    const maxTop = anchorRect.top - resolvedHeight - gap;
+    top = Math.min(top, maxTop);
+    top = Math.max(padding, top);
+  }
+
+  const menuWidth = menu.offsetWidth || menu.getBoundingClientRect().width;
+  const left = Math.max(padding, Math.min(anchorRect.left, window.innerWidth - menuWidth - padding));
+
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
 export function positionContextSubmenuWithinViewport(
   submenu: HTMLDivElement,
   rowElement: HTMLElement,

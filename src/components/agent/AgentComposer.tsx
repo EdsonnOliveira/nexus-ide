@@ -1,13 +1,16 @@
 import {
   memo,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
-import { ArrowUp, Pencil, Square, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { ArrowUp, BookOpen, File, Pencil, Square, X } from 'lucide-react';
 import {
   AGENT_MODE_INPUT_PLACEHOLDERS,
   getAgentModeOption,
@@ -21,9 +24,18 @@ import {
 import { AgentLiveStatus } from '@/components/agent/AgentLiveStatus';
 import { AgentContextUsageIndicator } from '@/components/agent/AgentContextUsageIndicator';
 import { AgentCursorUsageIndicator } from '@/components/agent/AgentCursorUsageIndicator';
+import { ExplorerDirectoryIcon, ExplorerFileIcon } from '@/components/explorer/ExplorerTreeIcon';
+import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
+import { EmptyState } from '@/components/overlay/EmptyState';
+import { useAgentComposerMention } from '@/hooks/useAgentComposerMention';
+import {
+  positionDropdownAboveComposerInput,
+  useAnchoredDropdownMenu,
+} from '@/hooks/useAnchoredDropdownMenu';
 import { useAgentComposerShortcuts } from '@/hooks/useAgentComposerShortcuts';
 import { useCursorUsage } from '@/hooks/useCursorUsage';
+import { useProjectStore } from '@/stores/useProjectStore';
 import { useTerminalPasteImageStore } from '@/stores/useTerminalPasteImageStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { TERMINAL_AGENTS } from '@/constants/terminalAgents';
@@ -34,7 +46,14 @@ import {
   readImagePathAsDataUrl,
 } from '@/utils/attachAgentPromptImage';
 import { writeAgentPaneDraft } from '@/utils/agentPaneRegistry';
+import { parseComposerSkillDraft } from '@/utils/agentSkillDisplay';
+import {
+  applyComposerMention,
+  type ComposerMentionMatch,
+  type ComposerMentionTrigger,
+} from '@/utils/agentComposerMention';
 import type { AgentContextUsageSnapshot } from '@/utils/agentContextUsageParser';
+import type { ProjectKind, TerminalCommandHint } from '@/types';
 
 interface AgentComposerProps {
   paneId: string;
@@ -70,6 +89,224 @@ function resizeComposerInput(textarea: HTMLTextAreaElement): void {
   textarea.style.overflowY = textarea.scrollHeight > COMPOSER_INPUT_MAX_HEIGHT ? 'auto' : 'hidden';
 }
 
+function normalizeMentionFsPath(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+function getMentionProjectKindBadgeLabel(kind: ProjectKind): string {
+  if (kind === 'mobile') {
+    return 'APP';
+  }
+
+  return kind.toUpperCase();
+}
+
+interface ComposerMentionProjectThumbProps {
+  logo: string | null;
+  icon: string;
+  color: string;
+}
+
+function ComposerMentionProjectThumbComponent({
+  logo,
+  icon,
+  color,
+}: ComposerMentionProjectThumbProps) {
+  const [logoSrc, setLogoSrc] = useState<string | null>(null);
+  const [logoFailed, setLogoFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    setLogoSrc(null);
+    setLogoFailed(false);
+
+    if (!logo) {
+      return;
+    }
+
+    void window.nexus.files.readImageAsDataUrl(logo).then((dataUrl) => {
+      if (cancelled) {
+        return;
+      }
+
+      if (dataUrl) {
+        setLogoSrc(dataUrl);
+        return;
+      }
+
+      setLogoFailed(true);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [logo]);
+
+  const handleLogoError = useCallback(() => {
+    setLogoFailed(true);
+    setLogoSrc(null);
+  }, []);
+
+  if (logoSrc && !logoFailed) {
+    return (
+      <img
+        src={logoSrc}
+        alt=''
+        className='agent-view__composer-mention-project-logo'
+        draggable={false}
+        onError={handleLogoError}
+      />
+    );
+  }
+
+  return (
+    <span className='agent-view__composer-mention-project-icon' style={{ backgroundColor: color }}>
+      <ProjectIconMark icon={icon} size={10} />
+    </span>
+  );
+}
+
+const ComposerMentionProjectThumb = memo(ComposerMentionProjectThumbComponent);
+
+function AgentComposerMentionMatchIconComponent({ match }: { match: ComposerMentionMatch }) {
+  const projects = useProjectStore((state) => state.projects);
+  const registeredProject = useMemo(() => {
+    if (!match.absolutePath) {
+      return null;
+    }
+
+    const normalized = normalizeMentionFsPath(match.absolutePath);
+
+    return projects.find((project) => normalizeMentionFsPath(project.path) === normalized) ?? null;
+  }, [match.absolutePath, projects]);
+
+  if (match.kind === 'skill') {
+    return (
+      <span className='agent-view__composer-mention-icon' aria-hidden='true'>
+        <BookOpen size={14} />
+      </span>
+    );
+  }
+
+  if (match.kind === 'file') {
+    return (
+      <span className='agent-view__composer-mention-icon' aria-hidden='true'>
+        <ExplorerFileIcon name={match.name} />
+      </span>
+    );
+  }
+
+  if (registeredProject) {
+    return (
+      <span className='agent-view__composer-mention-icon' aria-hidden='true'>
+        <ComposerMentionProjectThumb
+          logo={registeredProject.logo}
+          icon={registeredProject.icon}
+          color={registeredProject.color}
+        />
+      </span>
+    );
+  }
+
+  if (match.isProjectFolder && match.projectKind) {
+    return (
+      <span className='agent-view__composer-mention-icon' aria-hidden='true'>
+        <span className='project-explorer__kind-badge agent-view__composer-mention-kind-badge'>
+          {getMentionProjectKindBadgeLabel(match.projectKind)}
+        </span>
+      </span>
+    );
+  }
+
+  return (
+    <span className='agent-view__composer-mention-icon' aria-hidden='true'>
+      <ExplorerDirectoryIcon folderName={match.name} expanded={false} />
+    </span>
+  );
+}
+
+const AgentComposerMentionMatchIcon = memo(AgentComposerMentionMatchIconComponent);
+
+interface AgentComposerMentionMenuProps {
+  getAnchorRect: () => DOMRect | null;
+  matches: ComposerMentionMatch[];
+  activeIndex: number;
+  isLoading: boolean;
+  trigger: ComposerMentionTrigger;
+  repositionToken: number;
+  onClose: () => void;
+  onSelect: (match: ComposerMentionMatch) => void;
+}
+
+function AgentComposerMentionMenuComponent({
+  getAnchorRect,
+  matches,
+  activeIndex,
+  isLoading,
+  trigger,
+  repositionToken,
+  onClose,
+  onSelect,
+}: AgentComposerMentionMenuProps) {
+  const menuLabel = trigger === '/' ? 'Skills' : 'Menções';
+  const emptyMessage = trigger === '/' ? 'Nenhuma skill' : 'Nenhum resultado';
+
+  const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
+    onClose,
+    (menu) => {
+      const anchorRect = getAnchorRect();
+
+      if (!anchorRect || (anchorRect.width === 0 && anchorRect.height === 0)) {
+        return;
+      }
+
+      positionDropdownAboveComposerInput(menu, anchorRect);
+    },
+    [getAnchorRect, repositionToken],
+  );
+
+  return (
+    <div
+      ref={menuRef}
+      className={`context-menu agent-view__composer-mention-menu overlay-popup ${animationClass}`}
+      role='listbox'
+      aria-label={menuLabel}
+    >
+      {isLoading && matches.length === 0 ? (
+        <div className='agent-view__composer-mention-empty'>Buscando…</div>
+      ) : null}
+      {!isLoading && matches.length === 0 ? (
+        <EmptyState icon={trigger === '/' ? BookOpen : File} message={emptyMessage} compact />
+      ) : null}
+      {matches.map((match, index) => {
+        const isActive = index === activeIndex;
+
+        return (
+          <button
+            key={match.id}
+            type='button'
+            role='option'
+            aria-selected={isActive}
+            className={`context-menu__item app-button${isActive ? ' context-menu__item--active' : ''}`}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              onSelect(match);
+              requestClose();
+            }}
+          >
+            <AgentComposerMentionMatchIcon match={match} />
+            <span className='agent-view__composer-mention-label'>{match.label}</span>
+            <span className='agent-view__composer-mention-subtitle'>{match.subtitle}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const AgentComposerMentionMenu = memo(AgentComposerMentionMenuComponent);
+
 function AgentComposerComponent({
   paneId,
   projectPath,
@@ -98,6 +335,10 @@ function AgentComposerComponent({
   const images = useTerminalPasteImageStore((state) => state.imagesByPane[paneId] ?? EMPTY_PASTE_IMAGES);
   const removeImage = useTerminalPasteImageStore((state) => state.removeImage);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [caretIndex, setCaretIndex] = useState(0);
+  const [mentionRepositionToken, setMentionRepositionToken] = useState(0);
+  const composerCardRef = useRef<HTMLDivElement>(null);
+  const [skillHints, setSkillHints] = useState<TerminalCommandHint[]>([]);
   const activeMode = useTerminalSessionStore(
     (state) => state.activeAgentModeByPane[paneId] ?? 'agent',
   );
@@ -105,6 +346,143 @@ function AgentComposerComponent({
   const modelHints = useAgentModelHints(paneId, projectPath, isVisible);
   const { usage: cursorUsage, isLoading: cursorUsageLoading, refresh: refreshCursorUsage } =
     useCursorUsage(isVisible);
+
+  useEffect(() => {
+    if (!isVisible) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void window.nexus.files.getAgentSkillHints(projectPath).then((entries) => {
+      if (!cancelled) {
+        setSkillHints(entries.filter((hint) => hint.hintKind === 'skill'));
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isVisible, projectPath]);
+
+  const skillDraft = useMemo(
+    () => parseComposerSkillDraft(draft, skillHints),
+    [draft, skillHints],
+  );
+  const composerInputValue = skillDraft.hasSkill ? skillDraft.body : draft;
+  const mentionCaretIndex = skillDraft.hasSkill
+    ? skillDraft.prefixLength + caretIndex
+    : caretIndex;
+
+  const mention = useAgentComposerMention({
+    draft,
+    caretIndex: mentionCaretIndex,
+    projectPath,
+    isVisible,
+    skillHints,
+  });
+
+  const getMentionAnchorRect = useCallback((): DOMRect | null => {
+    const inputRect = inputRef.current?.getBoundingClientRect();
+    const cardRect = composerCardRef.current?.getBoundingClientRect();
+    const composerLowerBound = window.innerHeight * 0.3;
+
+    if (inputRect && inputRect.height > 0 && inputRect.bottom > composerLowerBound) {
+      return inputRect;
+    }
+
+    if (cardRect && cardRect.height > 0 && cardRect.bottom > composerLowerBound) {
+      return cardRect;
+    }
+
+    if (inputRect && inputRect.height > 0) {
+      return inputRect;
+    }
+
+    if (cardRect && cardRect.height > 0) {
+      return cardRect;
+    }
+
+    return null;
+  }, [inputRef]);
+
+  useEffect(() => {
+    if (!mention.isOpen) {
+      return;
+    }
+
+    const handleReposition = () => {
+      setMentionRepositionToken((token) => token + 1);
+    };
+
+    window.addEventListener('scroll', handleReposition, true);
+    window.addEventListener('resize', handleReposition);
+
+    return () => {
+      window.removeEventListener('scroll', handleReposition, true);
+      window.removeEventListener('resize', handleReposition);
+    };
+  }, [mention.isOpen]);
+
+  const syncCaretIndex = useCallback(() => {
+    const textarea = inputRef.current;
+
+    if (!textarea) {
+      return;
+    }
+
+    setCaretIndex(textarea.selectionStart ?? 0);
+  }, [inputRef]);
+
+  useLayoutEffect(() => {
+    if (!mention.isOpen) {
+      return;
+    }
+
+    setMentionRepositionToken((token) => token + 1);
+  }, [mention.isOpen, draft, caretIndex, skillDraft.hasSkill]);
+
+  const handleMentionSelect = useCallback(
+    (match: ComposerMentionMatch) => {
+      if (!mention.mentionContext) {
+        return;
+      }
+
+      const { nextValue, nextCaret } = applyComposerMention(
+        draft,
+        mention.mentionContext.startIndex,
+        mention.mentionContext.endIndex,
+        match.insertText,
+      );
+
+      onDraftChange(nextValue);
+      mention.dismiss();
+
+      window.requestAnimationFrame(() => {
+        const textarea = inputRef.current;
+
+        if (!textarea) {
+          return;
+        }
+
+        const parsed = parseComposerSkillDraft(nextValue, skillHints);
+        const nextCaretInInput = parsed.hasSkill
+          ? Math.max(0, nextCaret - parsed.prefixLength)
+          : nextCaret;
+
+        textarea.focus();
+        textarea.setSelectionRange(nextCaretInInput, nextCaretInInput);
+        setCaretIndex(nextCaretInInput);
+        resizeComposerInput(textarea);
+      });
+    },
+    [draft, inputRef, mention, onDraftChange, skillHints],
+  );
+
+  const handleMentionClose = useCallback(() => {
+    mention.dismiss();
+    inputRef.current?.focus();
+  }, [inputRef, mention]);
 
   const syncComposerInputHeight = useCallback(() => {
     const textarea = inputRef.current;
@@ -208,10 +586,42 @@ function AgentComposerComponent({
     },
     onModeChange: handleModeChange,
     onRunModelCommand: onRunCommand,
+    mentionMenuOpen: mention.isOpen,
   });
 
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+      if (mention.isOpen) {
+        if (event.key === 'ArrowDown') {
+          event.preventDefault();
+          mention.moveDown();
+          return;
+        }
+
+        if (event.key === 'ArrowUp') {
+          event.preventDefault();
+          mention.moveUp();
+          return;
+        }
+
+        if (event.key === 'Enter' || event.key === 'Tab') {
+          const activeMatch = mention.getActiveMatch();
+
+          if (activeMatch) {
+            event.preventDefault();
+            handleMentionSelect(activeMatch);
+          }
+
+          return;
+        }
+
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          handleMentionClose();
+          return;
+        }
+      }
+
       if (isEditing && event.key === 'Escape') {
         event.preventDefault();
         onCancelEdit?.();
@@ -223,15 +633,40 @@ function AgentComposerComponent({
         handleStopOrSubmit();
       }
     },
-    [handleStopOrSubmit, isEditing, onCancelEdit],
+    [
+      handleMentionClose,
+      handleMentionSelect,
+      handleStopOrSubmit,
+      isEditing,
+      mention,
+      onCancelEdit,
+    ],
   );
+
+  const handleClearSkill = useCallback(() => {
+    const nextDraft = skillDraft.body
+      ? `${skillDraft.skillCommand} ${skillDraft.body}`
+      : skillDraft.skillCommand;
+    onDraftChange(nextDraft);
+    inputRef.current?.focus();
+  }, [inputRef, onDraftChange, skillDraft.body, skillDraft.skillCommand]);
 
   const handleDraftChange = useCallback(
     (event: ChangeEvent<HTMLTextAreaElement>) => {
-      onDraftChange(event.target.value);
+      const nextValue = event.target.value;
+
+      if (skillDraft.hasSkill) {
+        onDraftChange(
+          nextValue ? `${skillDraft.skillCommand} ${nextValue}` : skillDraft.skillCommand,
+        );
+      } else {
+        onDraftChange(nextValue);
+      }
+
+      setCaretIndex(event.target.selectionStart ?? 0);
       resizeComposerInput(event.target);
     },
-    [onDraftChange],
+    [onDraftChange, skillDraft],
   );
 
   const handleAttach = useCallback(async () => {
@@ -333,20 +768,42 @@ function AgentComposerComponent({
           </div>
         ) : null}
         <div
+          ref={composerCardRef}
           className={`agent-view__composer-card${isEditing ? ' agent-view__composer-card--editing' : ''}`}
         >
           {pendingImages.length > 0 ? (
             <div className='agent-view__composer-attachments'>{pendingImages}</div>
           ) : null}
-          <div className='agent-view__composer-input-row'>
+          <div
+            className={`agent-view__composer-input-row${skillDraft.hasSkill ? ' agent-view__composer-input-row--with-skill' : ''}`}
+          >
+            {skillDraft.hasSkill ? (
+              <div className='agent-view__composer-skill-badge app-button--enter'>
+                <div className='agent-view__user-skill agent-view__user-skill--skill'>
+                  <BookOpen size={11} strokeWidth={2} aria-hidden='true' />
+                  <span className='agent-view__user-skill-label'>{skillDraft.skillLabel}</span>
+                </div>
+                <button
+                  type='button'
+                  className='agent-view__composer-skill-clear app-button'
+                  aria-label={`Remover skill ${skillDraft.skillLabel}`}
+                  onClick={handleClearSkill}
+                >
+                  <X size={12} strokeWidth={2.25} aria-hidden='true' />
+                </button>
+              </div>
+            ) : null}
             <textarea
               ref={inputRef}
               className='agent-view__composer-input'
-              value={draft}
+              value={composerInputValue}
               rows={1}
               placeholder={inputPlaceholder}
               disabled={interactionPending}
               onChange={handleDraftChange}
+              onClick={syncCaretIndex}
+              onKeyUp={syncCaretIndex}
+              onSelect={syncCaretIndex}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
             />
@@ -409,6 +866,21 @@ function AgentComposerComponent({
           </div>
         </div>
       </div>
+      {mention.isOpen && getMentionAnchorRect()
+        ? createPortal(
+            <AgentComposerMentionMenu
+              getAnchorRect={getMentionAnchorRect}
+              matches={mention.matches}
+              activeIndex={mention.activeIndex}
+              isLoading={mention.isLoading}
+              trigger={mention.mentionContext?.trigger ?? '@'}
+              repositionToken={mentionRepositionToken}
+              onClose={handleMentionClose}
+              onSelect={handleMentionSelect}
+            />,
+            document.body,
+          )
+        : null}
       {previewUrl ? (
         <AnimatedModal panelClassName='terminal-paste-image-lightbox' onClose={() => setPreviewUrl(null)}>
           {(requestClose) => (

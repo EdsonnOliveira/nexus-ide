@@ -1,5 +1,4 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { FolderPlus } from 'lucide-react';
 import { useNexusReady } from '@/hooks/useNexusReady';
 import { useAutomationScheduler } from '@/hooks/useAutomationScheduler';
 import { flushTerminalSessionsNow } from '@/utils/persistTerminalSession';
@@ -8,7 +7,7 @@ import { bumpFileExternalRevision } from '@/utils/fileExternalRevision';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useTabActions } from '@/stores/useTabStore';
 import { isMarkdownFile } from '@/utils/explorerRelativePath';
-import { EmptyState } from '@/components/overlay/EmptyState';
+import { NexusLogo } from '@/components/overlay/NexusLogo';
 import { PaneErrorBoundary } from '@/components/overlay/PaneErrorBoundary';
 import { ProjectSidebar } from '@/components/sidebar/ProjectSidebar';
 import { StatusBar } from '@/components/layout/StatusBar';
@@ -54,15 +53,20 @@ function EmptyWorkspace() {
   }, [addProject]);
 
   return (
-    <EmptyState
-      icon={FolderPlus}
-      title='Nenhum projeto adicionado'
-      message='Adicione um projeto para começar'
-    >
-      <button type='button' className='empty-state__action empty-state__action--primary app-button app-button--enter' onClick={handleAddProject}>
+    <div className='empty-state'>
+      <div className='empty-state__icon' aria-hidden='true'>
+        <NexusLogo size={48} className='nexus-brand-logo' />
+      </div>
+      <span className='empty-state__title'>Nenhum projeto adicionado</span>
+      <span className='empty-state__message'>Adicione um projeto para começar</span>
+      <button
+        type='button'
+        className='empty-state__action empty-state__action--primary app-button app-button--enter'
+        onClick={handleAddProject}
+      >
         Adicionar projeto
       </button>
-    </EmptyState>
+    </div>
   );
 }
 
@@ -228,7 +232,14 @@ function AppShellComponent() {
   }, [nexusReady, projectPaths]);
 
   if (!nexusReady) {
-    return <div className='app-loading'>Carregando...</div>;
+    return (
+      <div className='app-loading'>
+        <div className='app-loading__brand app-button--enter'>
+          <NexusLogo size={48} className='nexus-brand-logo app-loading__logo' />
+          <span>Carregando...</span>
+        </div>
+      </div>
+    );
   }
 
   return (

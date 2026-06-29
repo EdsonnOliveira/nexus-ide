@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FolderTree, ListTodo, Lock, Plus, Search, Workflow } from 'lucide-react';
+import { FolderTree, ListTodo, Lock, Plus, Workflow } from 'lucide-react';
+import nexusGoMark from '@/assets/nexus-go-mark.png';
 import { GLOBAL_SEARCH_NAME } from '@/constants/globalSearch';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
@@ -24,8 +25,14 @@ function TabSearchBadgeComponent() {
       aria-label={GLOBAL_SEARCH_NAME}
       onClick={handleOpenGlobalSearch}
     >
-      <Search size={13} strokeWidth={2.25} aria-hidden='true' />
-      <span className='app-button__label'>{GLOBAL_SEARCH_NAME}</span>
+      <img
+        src={nexusGoMark}
+        alt=''
+        className='tab-toolbar__search-badge-mark'
+        draggable={false}
+        aria-hidden='true'
+      />
+      <span className='tab-toolbar__search-badge-label app-button__label'>Go</span>
     </button>
   );
 }

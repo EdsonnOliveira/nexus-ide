@@ -7,12 +7,15 @@ import {
   useState,
   type CSSProperties,
 } from 'react';
-import { Bot } from 'lucide-react';
+import { ArrowDown, Bot } from 'lucide-react';
 import { AgentComposer } from '@/components/agent/AgentComposer';
 import { AgentFollowUpQueue } from '@/components/agent/AgentFollowUpQueue';
 import { AgentPlanReviewDock } from '@/components/agent/AgentPlanReviewDock';
 import { AgentProjectSkillPills } from '@/components/agent/AgentProjectSkillPills';
-import { AgentTranscript } from '@/components/agent/AgentTranscript';
+import {
+  AgentTranscript,
+  type AgentTranscriptScrollControl,
+} from '@/components/agent/AgentTranscript';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import { AgentGitChangePill } from '@/components/terminal/AgentGitChangePill';
 import { useAgentPaneSession } from '@/hooks/useAgentPaneSession';
@@ -47,14 +50,28 @@ function AgentViewComponent({
 }: AgentViewProps) {
   const [draft, setDraft] = useState('');
   const [turns, setTurns] = useState<AgentTurn[]>(tab.turns ?? []);
+  const [isTranscriptAtBottom, setIsTranscriptAtBottom] = useState(true);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const transcriptScrollRef = useRef<AgentTranscriptScrollControl | null>(null);
   const terminalAgent = cliAgentToTerminalAgent(tab.cliAgent);
   const agentConfig = TERMINAL_AGENTS[terminalAgent];
 
   useEffect(() => {
     setTurns(tab.turns ?? []);
   }, [tab.id, tab.turns]);
+
+  useEffect(() => {
+    setIsTranscriptAtBottom(true);
+  }, [tab.id]);
+
+  const handleTranscriptAtBottomChange = useCallback((atBottom: boolean) => {
+    setIsTranscriptAtBottom(atBottom);
+  }, []);
+
+  const handleScrollTranscriptToBottom = useCallback(() => {
+    transcriptScrollRef.current?.scrollToBottom();
+  }, []);
 
   const appendDraft = useCallback((text: string) => {
     setDraft((prev) => prev + text);
@@ -142,6 +159,8 @@ function AgentViewComponent({
     [rejectPlan],
   );
 
+  const showScrollToBottom = turns.length > 0 && !isTranscriptAtBottom;
+
   const emptyState = useMemo(
     () => (
       <EmptyState
@@ -160,23 +179,37 @@ function AgentViewComponent({
       style={{ '--agent-accent': agentConfig.promptColor } as CSSProperties}
       onMouseDown={handleMouseDown}
     >
-      <div className='agent-view__transcript' ref={transcriptRef}>
-        {turns.length === 0 ? (
-          <div className='agent-view__empty'>{emptyState}</div>
-        ) : (
-          <AgentTranscript
-            turns={turns}
-            scrollContainerRef={transcriptRef}
-            scrollKey={tab.id}
-            editingTurnId={editingTurnId}
-            projectId={projectId}
-            projectPath={projectPath}
-            paneId={tab.id}
-            onEdit={editAgentTurn}
-            onRedo={redoAgentTurn}
-            onSubmitQuestion={submitQuestionAnswers}
-          />
-        )}
+      <div className='agent-view__transcript-shell'>
+        <div className='agent-view__transcript' ref={transcriptRef}>
+          {turns.length === 0 ? (
+            <div className='agent-view__empty'>{emptyState}</div>
+          ) : (
+            <AgentTranscript
+              turns={turns}
+              scrollContainerRef={transcriptRef}
+              scrollControlRef={transcriptScrollRef}
+              scrollKey={tab.id}
+              editingTurnId={editingTurnId}
+              projectId={projectId}
+              projectPath={projectPath}
+              paneId={tab.id}
+              onAtBottomChange={handleTranscriptAtBottomChange}
+              onEdit={editAgentTurn}
+              onRedo={redoAgentTurn}
+              onSubmitQuestion={submitQuestionAnswers}
+            />
+          )}
+        </div>
+        {showScrollToBottom ? (
+          <button
+            type='button'
+            className='agent-view__scroll-to-bottom app-button app-button--enter'
+            aria-label='Descer até o fim'
+            onClick={handleScrollTranscriptToBottom}
+          >
+            <ArrowDown size={16} strokeWidth={2.25} aria-hidden='true' />
+          </button>
+        ) : null}
       </div>
 
       <div

@@ -4,7 +4,7 @@ import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { bumpFileExternalRevision } from '@/utils/fileExternalRevision';
 import type { AgentTab, ApiTab, BrowserTab, EmulatorPlatform, EmulatorTab, FileTab, Tab, TabBarItem, TabType, TerminalAgent } from '@/types';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
-import { isAgentPaneTab, isLegacyAgentTerminalTab, resolveAgentTabCli, terminalAgentToCli } from '@/utils/agentTabHelpers';
+import { isAgentPaneTab, isLegacyAgentTerminalTab, resolveAgentPaneRootPath, resolveAgentTabCli, terminalAgentToCli } from '@/utils/agentTabHelpers';
 import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
 import { normalizeBrowserUrl } from '@/utils/browserUrl';
 import { createBadgeColorIndex } from '@/utils/tabBadge';
@@ -252,7 +252,7 @@ export function useTabActions(): TabStoreActions {
         messages: [],
         turns: [],
         restoreCommand: trimmed || cliAgent,
-        workingDirectory: project.path,
+        workingDirectory: resolveAgentPaneRootPath(project.path),
         badgeColorIndex,
       };
 
@@ -326,6 +326,7 @@ export function useTabActions(): TabStoreActions {
               restoreCommand: launchCommand,
               cliAgent,
               ptyId: null,
+              workingDirectory: resolveAgentPaneRootPath(project.path),
             }
           : entry,
       );

@@ -1,5 +1,6 @@
-import { rmSync } from 'node:fs';
+import { rmSync, existsSync } from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { electronSimple } from 'vite-plugin-electron/multi-env';
@@ -9,6 +10,8 @@ import pkg from './package.json';
 const external = Object.keys(
   'dependencies' in pkg ? (pkg.dependencies as Record<string, string>) : {},
 );
+
+const nexusElectronBinary = path.join(__dirname, 'build/Nexus.app/Contents/MacOS/Electron');
 
 export default defineConfig(({ command }) => {
   const isBuild = command === 'build';
@@ -32,6 +35,24 @@ export default defineConfig(({ command }) => {
         main: {
           input: 'electron/main/index.ts',
           plugins: [notBundle()],
+          onstart({ startup }) {
+            if (process.platform === 'darwin' && existsSync(nexusElectronBinary)) {
+              const child = spawn(nexusElectronBinary, ['.', '--no-sandbox'], {
+                cwd: process.cwd(),
+                stdio: 'inherit',
+                env: process.env,
+              });
+
+              child.on('exit', (code) => {
+                process.exit(code ?? 0);
+              });
+
+              process.electronApp = child;
+              return;
+            }
+
+            void startup();
+          },
           options: {
             build: {
               sourcemap,

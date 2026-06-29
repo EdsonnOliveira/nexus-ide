@@ -1,5 +1,5 @@
 import type { SplitLayoutNode, SplitTab, Tab, TabBarItem } from '@/types';
-import { migrateLegacyAgentTerminalTab, isLegacyAgentTerminalTab } from '@/utils/agentTabHelpers';
+import { migrateLegacyAgentTerminalTab, isLegacyAgentTerminalTab, resolveAgentPaneRootPath } from '@/utils/agentTabHelpers';
 import { migrateMessagesToTurns } from '@/utils/agentTranscriptParser';
 import { getVisibleTabIds } from '@/utils/splitLayout';
 import { ensureTabBarBadgeColorIndexes } from '@/utils/tabBadge';
@@ -9,9 +9,10 @@ export function migrateLegacyProjectTabs(
   tabs: TabBarItem[],
   layout: SplitLayoutNode | null | undefined,
   activeTabId: string | null,
+  projectPath?: string,
 ): { tabs: TabBarItem[]; activeTabId: string | null; activePaneId: string | null } {
   const normalizedTabs = ensureTabBarBadgeColorIndexes(
-    tabs.map((tab) => normalizeTabBarItem(tab)),
+    tabs.map((tab) => normalizeTabBarItem(tab, projectPath)),
   );
 
   if (!layout) {
@@ -77,9 +78,9 @@ export function migrateLegacyProjectTabs(
   };
 }
 
-function normalizeTabBarItem(tab: TabBarItem): TabBarItem {
+function normalizeTabBarItem(tab: TabBarItem, projectPath?: string): TabBarItem {
   if (tab.type === 'split') {
-    const panes = tab.panes.map((pane) => normalizePane(pane));
+    const panes = tab.panes.map((pane) => normalizePane(pane, projectPath));
     const layout = reconcileSplitLayout(panes, tab.layout);
 
     return {
@@ -97,17 +98,17 @@ function normalizeTabBarItem(tab: TabBarItem): TabBarItem {
     tab.type === 'emulator' ||
     tab.type === 'api'
   ) {
-    return normalizePane(tab);
+    return normalizePane(tab, projectPath);
   }
 
   if (tab.type === 'file') {
-    return normalizePane(tab);
+    return normalizePane(tab, projectPath);
   }
 
-  return normalizePane(tab as Tab);
+  return normalizePane(tab as Tab, projectPath);
 }
 
-function normalizePane(tab: Tab): Tab {
+function normalizePane(tab: Tab, projectPath?: string): Tab {
   if (tab.type === 'agent') {
     const legacyMessages = tab.messages ?? [];
     const turns =
@@ -123,6 +124,7 @@ function normalizePane(tab: Tab): Tab {
       messages: [],
       cliAgent: tab.cliAgent ?? 'cursor-agent',
       ptyId: null,
+      ...(projectPath ? { workingDirectory: resolveAgentPaneRootPath(projectPath) } : {}),
     };
   }
 

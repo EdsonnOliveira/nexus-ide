@@ -121,6 +121,7 @@ function migrateAppState(appState: AppState): AppState {
         legacyProject.tabs,
         legacyProject.layout as never,
         legacyProject.activeTabId,
+        legacyProject.path,
       );
 
       return {

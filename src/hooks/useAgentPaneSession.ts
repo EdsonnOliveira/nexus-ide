@@ -55,6 +55,7 @@ import {
   isAgentQuestionAnswerComplete,
 } from '@/utils/agentQuestionPrompt';
 import { waitForActiveAgent, waitForAgentPaneReady } from '@/utils/waitForAgentPaneReady';
+import { resolveAgentPaneRootPath } from '@/utils/agentTabHelpers';
 import { createNexusCwdStreamParser } from '@/utils/terminalCwd';
 import {
   mergeAgentContextUsageSnapshots,
@@ -174,7 +175,7 @@ export function useAgentPaneSession({
   const onAppendDraftRef = useRef(onAppendDraft);
   const onRestoreDraftRef = useRef(onRestoreDraft);
   const paneIdRef = useRef(tab.id);
-  const cwdRef = useRef(tab.workingDirectory ?? projectPath);
+  const agentRootPath = useMemo(() => resolveAgentPaneRootPath(projectPath), [projectPath]);
   const isVisibleRef = useRef(isVisible);
   const isRuntimeActiveRef = useRef(isRuntimeActive);
   const pendingSetupRef = useRef<Promise<void> | null>(null);
@@ -199,6 +200,7 @@ export function useAgentPaneSession({
   const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
   const editingTurnIdRef = useRef<string | null>(null);
   const followUpsRef = useRef<AgentFollowUp[]>([]);
+  const suppressFollowUpFlushRef = useRef(false);
   const promotePendingFollowUpTurnRef = useRef<() => void>(() => {});
   const tryFlushFollowUpQueueRef = useRef<
     (options?: { force?: boolean; onlyId?: string }) => boolean
@@ -344,10 +346,6 @@ export function useAgentPaneSession({
     }
   }, [tab.ptyId]);
 
-  useEffect(() => {
-    cwdRef.current = tab.workingDirectory ?? projectPath;
-  }, [projectPath, tab.workingDirectory]);
-
   const persistTurns = useCallback((nextTurns: AgentTurn[]) => {
     turnsRef.current = nextTurns;
     setTurnsRevision((revision) => revision + 1);
@@ -405,7 +403,10 @@ export function useAgentPaneSession({
 
     persistTurns(nextTurns);
     promotePendingFollowUpTurnRef.current();
-    tryFlushFollowUpQueueRef.current();
+
+    if (!suppressFollowUpFlushRef.current) {
+      tryFlushFollowUpQueueRef.current();
+    }
   }, [persistTurns, usesStreamJson]);
 
   const finalizeStreamJsonTurnFromEvent = useCallback(() => {
@@ -501,7 +502,7 @@ export function useAgentPaneSession({
 
       void window.nexus.agentPrint.start({
         paneId,
-        cwd: cwdRef.current?.trim() || projectPath,
+        cwd: agentRootPath,
         prompt: fullPrompt,
         model,
         mode,
@@ -511,7 +512,7 @@ export function useAgentPaneSession({
 
       return true;
     },
-    [projectPath],
+    [agentRootPath],
   );
 
   const clearContextUsageReportTimer = useCallback(() => {
@@ -695,7 +696,7 @@ export function useAgentPaneSession({
     [scheduleSetupSettled, usesStreamJson, writeToPty],
   );
 
-  const stopAgent = useCallback(() => {
+  const stopAgent = useCallback((options?: { preserveFollowUps?: boolean }) => {
     const ptyId = ptyIdRef.current;
     const paneId = paneIdRef.current;
 
@@ -727,11 +728,20 @@ export function useAgentPaneSession({
       });
     }
 
+    if (options?.preserveFollowUps) {
+      suppressFollowUpFlushRef.current = true;
+    }
+
     finalizeActiveTurn();
     parserStateRef.current = createAgentTranscriptParserState();
     streamJsonStateRef.current = createAgentStreamJsonParserState();
     useTerminalSessionStore.getState().resetAgentWorkload(paneId);
-    setFollowUps([]);
+
+    if (options?.preserveFollowUps) {
+      suppressFollowUpFlushRef.current = false;
+    } else {
+      setFollowUps([]);
+    }
 
     return Boolean(ptyId);
   }, [clearApprovalConfirmTimer, finalizeActiveTurn, syncAgentReadyFromTail, usesStreamJson]);
@@ -843,7 +853,7 @@ export function useAgentPaneSession({
 
   const dispatchFollowUpToPty = useCallback(
     (item: AgentFollowUp, force = false): boolean => {
-      if (!ptyIdRef.current) {
+      if (!usesStreamJson && !ptyIdRef.current) {
         return false;
       }
 
@@ -867,35 +877,43 @@ export function useAgentPaneSession({
 
       if (hasRunningTurn) {
         if (usesStreamJson) {
-          return false;
-        }
-
-        const session = useTerminalSessionStore.getState();
-
-        writeToPty(PTY_CLEAR_INPUT);
-
-        if (item.content) {
-          if (shouldMarkAgentAwaiting(paneId, item.content, session.activeAgentByPane)) {
-            session.setLastCommand(paneId, item.content);
-            trackAgentGitPrompt(paneId, item.content);
-            session.markAwaitingResponse(paneId);
-          } else {
-            session.setLastCommand(paneId, item.content);
+          if (!force) {
+            return false;
           }
 
-          writeToPty(item.content);
-        }
+          stopAgent({ preserveFollowUps: true });
+        } else {
+          const session = useTerminalSessionStore.getState();
 
-        for (const reference of imageRefs) {
-          writeToPty(` ${reference}`);
-        }
+          writeToPty(PTY_CLEAR_INPUT);
 
-        if (item.content || imageRefs.length > 0) {
-          writeToPty('\n');
-        }
+          if (item.content) {
+            if (shouldMarkAgentAwaiting(paneId, item.content, session.activeAgentByPane)) {
+              session.setLastCommand(paneId, item.content);
+              trackAgentGitPrompt(paneId, item.content);
+              session.markAwaitingResponse(paneId);
+            } else {
+              session.setLastCommand(paneId, item.content);
+            }
 
-        appendPendingFollowUpTurn(user);
-        return true;
+            writeToPty(item.content);
+          }
+
+          for (const reference of imageRefs) {
+            writeToPty(` ${reference}`);
+          }
+
+          if (item.content || imageRefs.length > 0) {
+            writeToPty('\n');
+          }
+
+          appendPendingFollowUpTurn(user);
+          return true;
+        }
+      }
+
+      if (turnsRef.current.some((turn) => turn.running)) {
+        return false;
       }
 
       const turn = createTurn(user);
@@ -942,7 +960,15 @@ export function useAgentPaneSession({
 
       return true;
     },
-    [appendPendingFollowUpTurn, persistTurns, resetAgentReadyDetectors, startStreamJsonAgentRun, usesStreamJson, writeToPty],
+    [
+      appendPendingFollowUpTurn,
+      persistTurns,
+      resetAgentReadyDetectors,
+      startStreamJsonAgentRun,
+      stopAgent,
+      usesStreamJson,
+      writeToPty,
+    ],
   );
 
   const tryFlushFollowUpQueue = useCallback(
@@ -953,7 +979,7 @@ export function useAgentPaneSession({
         return false;
       }
 
-      if (turnsRef.current.some((turn) => turn.running)) {
+      if (!options?.force && turnsRef.current.some((turn) => turn.running)) {
         return false;
       }
 
@@ -1491,7 +1517,7 @@ export function useAgentPaneSession({
 
     try {
       const terminalAgent = cliAgentToTerminalAgent(resolveAgentTabCli(tab));
-      const createdPtyId = await window.nexus.terminal.create(cwdRef.current, terminalAgent);
+      const createdPtyId = await window.nexus.terminal.create(agentRootPath, terminalAgent);
       ptyIdRef.current = createdPtyId;
       setActivePtyId(createdPtyId);
       setIsAgentReady(false);
@@ -1524,7 +1550,7 @@ export function useAgentPaneSession({
     } finally {
       creatingRef.current = false;
     }
-  }, [tab]);
+  }, [agentRootPath, tab]);
 
   useEffect(() => {
     void (async () => {

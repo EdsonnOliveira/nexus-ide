@@ -85,6 +85,44 @@ function expandMarkdownLines(source: string): string[] {
   return lines;
 }
 
+function looksLikeCodeLine(line: string): boolean {
+  const trimmed = line.trim();
+
+  if (!trimmed) {
+    return false;
+  }
+
+  if (
+    /^\s*(export|import|const|let|var|function|class|interface|type|return|if|else|for|while|switch|case|await|async|new|throw|default)\b/.test(
+      trimmed,
+    )
+  ) {
+    return true;
+  }
+
+  if (/[{};]/.test(trimmed)) {
+    return true;
+  }
+
+  if (/=>|\+\+|--|<<|>>|::|\?\./.test(trimmed)) {
+    return true;
+  }
+
+  if (/^\s*\)?\s*:\s*[\w<>,\s|.&]+[{;]/.test(trimmed)) {
+    return true;
+  }
+
+  if (/^\s*if\s*\(/.test(trimmed)) {
+    return true;
+  }
+
+  if (/[=<>]=/.test(trimmed)) {
+    return true;
+  }
+
+  return false;
+}
+
 function isTableRow(line: string): boolean {
   const trimmed = line.trim().replace(/^\*\*(.+)\*\*$/, '$1').trim();
 
@@ -92,11 +130,25 @@ function isTableRow(line: string): boolean {
     return false;
   }
 
+  if (looksLikeCodeLine(trimmed)) {
+    return false;
+  }
+
   if (isTableSeparator(trimmed)) {
     return true;
   }
 
-  return parseTableCells(trimmed).length >= 2;
+  if (trimmed.startsWith('|')) {
+    return parseTableCells(trimmed).length >= 2;
+  }
+
+  const cells = parseTableCells(trimmed);
+
+  if (cells.length < 2) {
+    return false;
+  }
+
+  return cells.every((cell) => cell.length > 0 && cell.length <= 64 && !/[{}();=<>]/.test(cell));
 }
 
 function parseTableCells(line: string): string[] {
@@ -151,6 +203,12 @@ function isAgentSectionTitle(line: string, nextLine: string | null): boolean {
   }
 
   if (/^\*\*(.+)\*\*$/.test(line)) {
+    const inner = line.replace(/^\*\*(.+)\*\*$/, '$1').trim();
+
+    if (looksLikeCodeLine(inner)) {
+      return false;
+    }
+
     return true;
   }
 
@@ -200,7 +258,70 @@ function isMermaidDiagramLine(line: string): boolean {
     return true;
   }
 
-  return /-->|flowchart\s|sequenceDiagram|graph\s+(?:TD|LR|TB|RL|BT|RL)/i.test(trimmed);
+  return (
+    /^graph\s+(?:TD|LR|TB|RL|BT)\b/i.test(trimmed) ||
+    /^flowchart\s+(?:TD|LR|TB|RL|BT)\b/i.test(trimmed) ||
+    /^sequenceDiagram\b/i.test(trimmed)
+  );
+}
+
+function looksLikeProseLine(trimmed: string): boolean {
+  if (looksLikeCodeLine(trimmed)) {
+    return false;
+  }
+
+  if (/^\s*(export|import|const|let|var|function|class|interface|type|return|if|else|for|while|switch|case|await|async)\b/.test(trimmed)) {
+    return false;
+  }
+
+  if (/[{}();]/.test(trimmed) && /[=<>]/.test(trimmed)) {
+    return false;
+  }
+
+  if (/:\s*$/.test(trimmed)) {
+    const alpha = (trimmed.match(/[a-zA-ZáàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ]/g) ?? []).length;
+    return alpha >= 8;
+  }
+
+  return false;
+}
+
+function shouldAutoCloseMarkdownFence(line: string, codeLineCount: number): boolean {
+  if (codeLineCount === 0) {
+    return false;
+  }
+
+  const trimmed = line.trim();
+
+  if (!trimmed) {
+    return false;
+  }
+
+  if (trimmed === '```' || /^```\s*\S+/.test(trimmed)) {
+    return true;
+  }
+
+  if (/^#{1,6}\s/.test(trimmed)) {
+    return true;
+  }
+
+  if (/^(?:[-*+•·]\s|\d+\.\s)/.test(trimmed)) {
+    return true;
+  }
+
+  if (/^\*\*[^*]+\*\*\s*$/.test(trimmed)) {
+    const inner = trimmed.replace(/^\*\*(.+)\*\*$/, '$1').trim();
+
+    if (!looksLikeCodeLine(inner)) {
+      return true;
+    }
+  }
+
+  if (looksLikeProseLine(trimmed)) {
+    return true;
+  }
+
+  return false;
 }
 
 function collectMermaidBlock(lines: string[], startIndex: number): { block: string[]; nextIndex: number } {
@@ -284,21 +405,34 @@ export function renderMarkdownPreview(source: string): string {
 
     if (fenceMatch) {
       const language = fenceMatch[1] ?? '';
+      const safeLanguage = language.replace(/[^a-zA-Z0-9_-]/g, '');
+      const isMarkdownFence = safeLanguage === 'markdown' || safeLanguage === 'md';
       index += 1;
       const codeLines: string[] = [];
 
       while (index < lines.length) {
-        if (lines[index].trim() === '```') {
+        const currentLine = lines[index];
+
+        if (currentLine.trim() === '```') {
           index += 1;
           break;
         }
 
-        codeLines.push(lines[index]);
+        if (!isMarkdownFence && shouldAutoCloseMarkdownFence(currentLine, codeLines.length)) {
+          break;
+        }
+
+        codeLines.push(currentLine);
         index += 1;
       }
 
       const rawCode = codeLines.join('\n');
-      const safeLanguage = language.replace(/[^a-zA-Z0-9_-]/g, '');
+
+      if (isMarkdownFence) {
+        blocks.push(renderMarkdownPreview(rawCode));
+        continue;
+      }
+
       const highlightedCode = highlightMarkdownCodeBlock(rawCode, safeLanguage);
       const langClass = safeLanguage ? ` language-${safeLanguage}` : '';
       blocks.push(`<pre class="hljs"><code class="hljs${langClass}">${highlightedCode}</code></pre>`);

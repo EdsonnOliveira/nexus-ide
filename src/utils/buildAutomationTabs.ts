@@ -178,7 +178,7 @@ export async function buildTabFromStep(
       messages: [],
       turns: [],
       restoreCommand: command || cliAgent,
-      workingDirectory: terminalCwd ?? projectPath,
+      workingDirectory: projectPath,
       ...shared,
     };
 

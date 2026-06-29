@@ -47,6 +47,16 @@ export function isLegacyAgentTerminalTab(tab: Tab): boolean {
   return Boolean(tab.restoreCommand && extractCliAgentCommand(tab.restoreCommand));
 }
 
+export function resolveAgentPaneRootPath(projectPath: string): string {
+  const trimmed = projectPath.trim();
+
+  if (!trimmed) {
+    return projectPath;
+  }
+
+  return trimmed.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
 export function migrateLegacyAgentTerminalTab(tab: TerminalTab): AgentTab {
   const cliFromRestore = tab.restoreCommand ? extractCliAgentCommand(tab.restoreCommand) : null;
   const cliAgent = cliFromRestore ?? terminalAgentToCli(tab.agent);
@@ -60,7 +70,7 @@ export function migrateLegacyAgentTerminalTab(tab: TerminalTab): AgentTab {
     messages: [],
     turns: [],
     restoreCommand: tab.restoreCommand ?? cliAgent,
-    workingDirectory: tab.terminalCwd ?? null,
+    workingDirectory: null,
     pinned: tab.pinned,
     badgeColorIndex: tab.badgeColorIndex,
   };

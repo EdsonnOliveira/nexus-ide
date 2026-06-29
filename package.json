@@ -1,6 +1,6 @@
 {
   "name": "nexus-ide",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "Nexus IDE — AI-powered desktop IDE",
   "engines": {
@@ -9,7 +9,7 @@
   "type": "module",
   "main": "dist-electron/main/index.js",
   "scripts": {
-    "dev": "env -u NODE_OPTIONS vite",
+    "dev": "node scripts/patch-electron-branding.mjs && env -u NODE_OPTIONS vite",
     "build": "tsc --noEmit && vite build && electron-builder",
     "build:local": "tsc --noEmit && vite build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder && node scripts/finish-mac-local-build.mjs",
     "preview": "vite preview",
@@ -55,6 +55,7 @@
   "build": {
     "appId": "com.nexus.ide",
     "productName": "Nexus IDE",
+    "icon": "build/icon.png",
     "asar": true,
     "directories": {
       "output": "release"
@@ -62,7 +63,10 @@
     "files": [
       "dist-electron",
       "dist",
-      "resources/shell"
+      "resources/shell",
+      "build/icon.icns",
+      "build/icon.ico",
+      "build/icon.png"
     ],
     "asarUnpack": [
       "**/node_modules/node-pty/**/*",
@@ -70,6 +74,15 @@
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
+      "icon": "build/icon.icns",
+      "extraResources": [
+        "build/Assets.car"
+      ],
+      "extendInfo": {
+        "CFBundleDisplayName": "Nexus",
+        "CFBundleName": "Nexus",
+        "CFBundleIconName": "Nexus"
+      },
       "x64ArchFiles": "**/node-pty/**",
       "identity": "-",
       "gatekeeperAssess": false,
@@ -90,6 +103,7 @@
       ]
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",

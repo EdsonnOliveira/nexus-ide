@@ -8,6 +8,7 @@ import { getActiveTerminalCwd, type GitBranchBarEntry } from '@/utils/gitRepoSel
 import { getGitPendingWorkMessage, gitRepoHasPendingWork } from '@/utils/gitPendingWork';
 import { shortenPath } from '@/utils/shortenPath';
 import { APP_VERSION_LABEL } from '@/constants/appVersion';
+import { NexusLogo } from '@/components/overlay/NexusLogo';
 
 interface BranchMenuState {
   entry: GitBranchBarEntry;
@@ -191,7 +192,10 @@ function StatusBarComponent() {
               <Settings size={12} />
             </button>
           </div>
-          <span className='status-bar__version'>{APP_VERSION_LABEL}</span>
+          <div className='status-bar__brand'>
+            <NexusLogo size={18} className='nexus-brand-logo status-bar__brand-logo' />
+            <span className='status-bar__version'>{APP_VERSION_LABEL}</span>
+          </div>
         </div>
       </footer>
 

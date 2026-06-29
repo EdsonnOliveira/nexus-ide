@@ -1,6 +1,7 @@
 import type { GitFlatChange } from '@/utils/gitFlatChanges';
 import { buildFlatChanges } from '@/utils/gitFlatChanges';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { resolveAgentPaneRootPath } from '@/utils/agentTabHelpers';
 import { findPaneTab } from '@/utils/tabGroups';
 import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
 
@@ -45,8 +46,8 @@ export async function resolveRepoPathForAgentTurn(
     useProjectStore.getState().projects.find((entry) => entry.id === projectId) ?? null;
   const pane = project ? findPaneTab(project.tabs, paneId) : null;
   const cwd =
-    pane?.type === 'agent' && pane.workingDirectory
-      ? pane.workingDirectory
+    pane?.type === 'agent'
+      ? resolveAgentPaneRootPath(project?.path ?? projectPath)
       : pane?.type === 'terminal' && pane.terminalCwd
         ? pane.terminalCwd
         : (project?.path ?? projectPath);

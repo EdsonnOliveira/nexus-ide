@@ -29,3 +29,13 @@ const rebuild = spawnSync(
 if (rebuild.status !== 0) {
   process.exit(rebuild.status ?? 1);
 }
+
+const patchBranding = spawnSync(process.execPath, ['scripts/patch-electron-branding.mjs'], {
+  cwd: rootDir,
+  stdio: 'inherit',
+  env: process.env,
+});
+
+if (patchBranding.status !== 0) {
+  process.exit(patchBranding.status ?? 1);
+}

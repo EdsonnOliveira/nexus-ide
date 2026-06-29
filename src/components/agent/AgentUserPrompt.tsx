@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState, type CSSProperties } from 'react';
+import { memo, useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { BookOpen, Pencil, RotateCcw } from 'lucide-react';
 import iconModeAsk from '@/assets/icon-mode-ask.svg';
 import iconModeAgent from '@/assets/icon-mode-agent.svg';
@@ -7,8 +7,9 @@ import iconModeMultitask from '@/assets/icon-mode-multitask.svg';
 import iconModePlan from '@/assets/icon-mode-plan.svg';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { getAgentModeOption, type AgentModeBadgeIcon } from '@/constants/agentModes';
+import { useFlipMotion } from '@/hooks/useFlipMotion';
 import type { AgentTurn } from '@/types';
-import { resolveAgentSkillDisplayState } from '@/utils/agentSkillDisplay';
+import { resolveAgentSkillDisplayState, shouldShowSkillChipAbovePrompt } from '@/utils/agentSkillDisplay';
 
 const MODE_ICON_SRC: Record<AgentModeBadgeIcon, string> = {
   'mode-agent': iconModeAgent,
@@ -21,6 +22,7 @@ const MODE_ICON_SRC: Record<AgentModeBadgeIcon, string> = {
 interface AgentUserPromptProps {
   turn: AgentTurn;
   isEditing?: boolean;
+  isStickyLayout?: boolean;
   onEdit?: (turnId: string) => void;
   onRedo?: (turnId: string) => void;
 }
@@ -28,10 +30,12 @@ interface AgentUserPromptProps {
 function AgentUserPromptComponent({
   turn,
   isEditing = false,
+  isStickyLayout = false,
   onEdit,
   onRedo,
 }: AgentUserPromptProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const actionsRef = useRef<HTMLDivElement>(null);
   const attachments = turn.user.attachments ?? [];
   const modeOption = useMemo(() => {
     const mode = turn.user.mode;
@@ -44,7 +48,8 @@ function AgentUserPromptComponent({
   }, [turn.user.mode]);
   const { hasSkillPrompt, skillChipLabel } = resolveAgentSkillDisplayState(turn.user);
   const bubbleContent = turn.user.content.trim();
-  const showSkillChip = hasSkillPrompt && skillChipLabel !== bubbleContent;
+  const showSkillChip =
+    hasSkillPrompt && shouldShowSkillChipAbovePrompt(bubbleContent, skillChipLabel);
   const isMultilineBubble =
     bubbleContent.includes('\n') || bubbleContent.length > 72;
 
@@ -56,7 +61,10 @@ function AgentUserPromptComponent({
     onRedo?.(turn.id);
   }, [onRedo, turn.id]);
 
-  const showActions = !turn.running && !turn.pendingFollowUp && (onEdit || onRedo);
+  const showActions =
+    !turn.running && !turn.pendingFollowUp && Boolean(onEdit || onRedo);
+
+  useFlipMotion(isStickyLayout, actionsRef, showActions);
 
   return (
     <>
@@ -117,7 +125,7 @@ function AgentUserPromptComponent({
             </div>
           ) : null}
           {showActions ? (
-            <div className='agent-view__user-prompt-actions'>
+            <div ref={actionsRef} className='agent-view__user-prompt-actions'>
               {onEdit ? (
                 <button
                   type='button'

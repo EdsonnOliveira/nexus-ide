@@ -26,7 +26,17 @@ const defaultState: AppState = {
   sidebarVideoLastLink: null,
 };
 
-function normalizePane(tab: Tab): Tab {
+function resolveAgentPaneRootPath(projectPath: string): string {
+  const trimmed = projectPath.trim();
+
+  if (!trimmed) {
+    return projectPath;
+  }
+
+  return trimmed.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+function normalizePane(tab: Tab, projectPath?: string): Tab {
   const shared = {
     ...(tab.pinned !== undefined ? { pinned: tab.pinned } : {}),
     ...(tab.badgeColorIndex !== undefined ? { badgeColorIndex: tab.badgeColorIndex } : {}),
@@ -91,7 +101,7 @@ function normalizePane(tab: Tab): Tab {
       ptyId: null,
       turns: Array.isArray(tab.turns) ? tab.turns : [],
       ...(tab.restoreCommand !== undefined ? { restoreCommand: tab.restoreCommand } : {}),
-      ...(tab.workingDirectory !== undefined ? { workingDirectory: tab.workingDirectory } : {}),
+      workingDirectory: projectPath ? resolveAgentPaneRootPath(projectPath) : tab.workingDirectory,
       ...(Array.isArray(tab.messages) && tab.messages.length > 0 ? { messages: tab.messages } : {}),
       ...shared,
     };
@@ -164,7 +174,7 @@ function normalizeTask(task: ProjectTask): ProjectTask {
   };
 }
 
-function normalizeTabBarItem(tab: TabBarItem): TabBarItem {
+function normalizeTabBarItem(tab: TabBarItem, projectPath?: string): TabBarItem {
   if (tab.type === 'split') {
     return {
       id: tab.id,
@@ -172,13 +182,13 @@ function normalizeTabBarItem(tab: TabBarItem): TabBarItem {
       type: 'split',
       layout: tab.layout,
       activePaneId: tab.activePaneId ?? tab.panes[0]?.id ?? null,
-      panes: tab.panes.map((pane) => normalizePane(pane)),
+      panes: tab.panes.map((pane) => normalizePane(pane, projectPath)),
       ...(tab.pinned !== undefined ? { pinned: tab.pinned } : {}),
       ...(tab.badgeColorIndex !== undefined ? { badgeColorIndex: tab.badgeColorIndex } : {}),
     };
   }
 
-  return normalizePane(tab);
+  return normalizePane(tab, projectPath);
 }
 
 function stripRuntimeFieldsFromTabs(tabs: TabBarItem[]): TabBarItem[] {
@@ -218,7 +228,7 @@ function normalizeProject(project: Project & { layout?: unknown }, fallbackWorks
     agentGitGroups: project.agentGitGroups ?? [],
     agentResponseSkills: project.agentResponseSkills ?? [],
     flag: project.flag ?? null,
-    tabs: (project.tabs ?? []).map((tab) => normalizeTabBarItem(tab as TabBarItem)),
+    tabs: (project.tabs ?? []).map((tab) => normalizeTabBarItem(tab as TabBarItem, project.path)),
   };
 }
 
