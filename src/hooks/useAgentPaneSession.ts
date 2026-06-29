@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useTerminalPasteImageStore } from '@/stores/useTerminalPasteImageStore';
-import type { AgentActivity, AgentFollowUp, AgentPromptAttachment, AgentPromptSubmitOptions, AgentQuestionAnswers, AgentTab, AgentTurn, AgentUserMessage } from '@/types';
+import { isAgentSkillSlashCommand } from '@/utils/agentSkillDisplay';
 import type { AutomationAgentMode } from '@/constants/agentModes';
+import type { AgentActivity, AgentFollowUp, AgentPromptAttachment, AgentPromptSubmitOptions, AgentQuestionAnswers, AgentTab, AgentTurn, AgentUserMessage } from '@/types';
 import { registerAgentPaneHandlers } from '@/utils/agentPaneRegistry';
 import { cliAgentToTerminalAgent, resolveAgentTabCli } from '@/utils/agentTabHelpers';
 import { trackAgentGitPrompt } from '@/utils/agentGitTurn';
@@ -857,9 +858,61 @@ export function useAgentPaneSession({
         .filter(Boolean);
 
       const paneId = paneIdRef.current;
+      const user = createUserMessage(
+        item.content,
+        item.attachments,
+        item.mode ?? resolvePaneAgentMode(paneId),
+      );
+      const hasRunningTurn = turnsRef.current.some((turn) => turn.running);
+
+      if (hasRunningTurn) {
+        if (usesStreamJson) {
+          return false;
+        }
+
+        const session = useTerminalSessionStore.getState();
+
+        writeToPty(PTY_CLEAR_INPUT);
+
+        if (item.content) {
+          if (shouldMarkAgentAwaiting(paneId, item.content, session.activeAgentByPane)) {
+            session.setLastCommand(paneId, item.content);
+            trackAgentGitPrompt(paneId, item.content);
+            session.markAwaitingResponse(paneId);
+          } else {
+            session.setLastCommand(paneId, item.content);
+          }
+
+          writeToPty(item.content);
+        }
+
+        for (const reference of imageRefs) {
+          writeToPty(` ${reference}`);
+        }
+
+        if (item.content || imageRefs.length > 0) {
+          writeToPty('\n');
+        }
+
+        appendPendingFollowUpTurn(user);
+        return true;
+      }
+
+      const turn = createTurn(user);
 
       if (usesStreamJson) {
-        streamJsonStateRef.current = createAgentStreamJsonParserState();
+        turn.activities = createInitialTurnActivities();
+      }
+
+      turnOutputStartRef.current = outputTailRef.current.length;
+      turnOutputBufferRef.current = '';
+      parserStateRef.current = createAgentTranscriptParserState();
+      streamJsonStateRef.current = createAgentStreamJsonParserState();
+      persistTurns([...turnsRef.current, turn]);
+      resetAgentReadyDetectors(paneId);
+      setIsAgentReady(false);
+
+      if (usesStreamJson) {
         startStreamJsonAgentRun(item.content, imageRefs);
       } else {
         const session = useTerminalSessionStore.getState();
@@ -887,32 +940,9 @@ export function useAgentPaneSession({
         }
       }
 
-      const user = createUserMessage(
-        item.content,
-        item.attachments,
-        item.mode ?? resolvePaneAgentMode(paneId),
-      );
-      const hasRunningTurn = turnsRef.current.some((turn) => turn.running);
-
-      if (hasRunningTurn) {
-        appendPendingFollowUpTurn(user);
-      } else {
-        const turn = createTurn(user);
-
-        if (usesStreamJson) {
-          turn.activities = [];
-        }
-
-        turnOutputStartRef.current = outputTailRef.current.length;
-        turnOutputBufferRef.current = '';
-        persistTurns([...turnsRef.current, turn]);
-        resetAgentReadyDetectors(paneId);
-        setIsAgentReady(false);
-      }
-
       return true;
     },
-    [appendPendingFollowUpTurn, persistTurns, startStreamJsonAgentRun, usesStreamJson, writeToPty],
+    [appendPendingFollowUpTurn, persistTurns, resetAgentReadyDetectors, startStreamJsonAgentRun, usesStreamJson, writeToPty],
   );
 
   const tryFlushFollowUpQueue = useCallback(
@@ -920,6 +950,10 @@ export function useAgentPaneSession({
       const queue = followUpsRef.current;
 
       if (queue.length === 0) {
+        return false;
+      }
+
+      if (turnsRef.current.some((turn) => turn.running)) {
         return false;
       }
 
@@ -1071,13 +1105,17 @@ export function useAgentPaneSession({
         parserStateRef.current = createAgentTranscriptParserState();
         streamJsonStateRef.current = createAgentStreamJsonParserState();
 
+        const resolvedSkillLabel =
+          options?.skillLabel?.trim() ||
+          (isAgentSkillSlashCommand(displayContent) ? displayContent : undefined);
+
         const user = createUserMessage(
           displayContent,
           attachments,
           resolvePaneAgentMode(paneIdRef.current),
           {
             ...(trimmed !== displayContent ? { agentPrompt: trimmed } : {}),
-            ...(options?.skillLabel ? { skillLabel: options.skillLabel } : {}),
+            ...(resolvedSkillLabel ? { skillLabel: resolvedSkillLabel } : {}),
           },
         );
         const turn = createTurn(user);

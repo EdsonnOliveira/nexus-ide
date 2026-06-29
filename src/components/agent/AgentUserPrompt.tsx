@@ -8,6 +8,7 @@ import iconModePlan from '@/assets/icon-mode-plan.svg';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { getAgentModeOption, type AgentModeBadgeIcon } from '@/constants/agentModes';
 import type { AgentTurn } from '@/types';
+import { resolveAgentSkillDisplayState } from '@/utils/agentSkillDisplay';
 
 const MODE_ICON_SRC: Record<AgentModeBadgeIcon, string> = {
   'mode-agent': iconModeAgent,
@@ -41,8 +42,11 @@ function AgentUserPromptComponent({
 
     return getAgentModeOption(mode) ?? null;
   }, [turn.user.mode]);
-  const skillLabel = turn.user.skillLabel?.trim() ?? '';
+  const { hasSkillPrompt, skillChipLabel } = resolveAgentSkillDisplayState(turn.user);
   const bubbleContent = turn.user.content.trim();
+  const showSkillChip = hasSkillPrompt && skillChipLabel !== bubbleContent;
+  const isMultilineBubble =
+    bubbleContent.includes('\n') || bubbleContent.length > 72;
 
   const handleEditClick = useCallback(() => {
     onEdit?.(turn.id);
@@ -61,14 +65,13 @@ function AgentUserPromptComponent({
       >
         {isEditing ? (
           <span className='agent-view__user-editing-badge app-button--enter'>Editando</span>
+        ) : turn.pendingFollowUp ? (
+          <span className='agent-view__user-queued-badge app-button--enter'>Na fila</span>
         ) : null}
-        {skillLabel ? (
-          <div
-            className='agent-view__user-skill'
-            style={{ '--skill-chip-accent': '#8b5cf6' } as CSSProperties}
-          >
+        {showSkillChip ? (
+          <div className='agent-view__user-skill agent-view__user-skill--skill'>
             <BookOpen size={11} strokeWidth={2} aria-hidden='true' />
-            <span className='agent-view__user-skill-label'>{skillLabel}</span>
+            <span className='agent-view__user-skill-label'>{skillChipLabel}</span>
           </div>
         ) : null}
         {modeOption ? (
@@ -91,7 +94,13 @@ function AgentUserPromptComponent({
         <div
           className={`agent-view__user-prompt${turn.running ? ' agent-view__user-prompt--active' : ''}${turn.pendingFollowUp ? ' agent-view__user-prompt--pending' : ''}${isEditing ? ' agent-view__user-prompt--editing' : ''}`}
         >
-          {bubbleContent ? <div className='agent-view__user-bubble'>{bubbleContent}</div> : null}
+          {bubbleContent ? (
+            <div
+              className={`agent-view__user-bubble${isMultilineBubble ? ' agent-view__user-bubble--multiline' : ''}${hasSkillPrompt ? ' agent-view__user-bubble--skill' : ''}`}
+            >
+              {bubbleContent}
+            </div>
+          ) : null}
           {attachments.length > 0 ? (
             <div className='agent-view__attachments'>
               {attachments.map((attachment) => (

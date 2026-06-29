@@ -200,6 +200,7 @@ function AgentProjectSkillPillsComponent({
       try {
         const submitted = await submitAgentPanePrompt(paneId, prompt, {
           displayContent: skillCommand,
+          skillLabel: skill.label,
           forceNewTurn: true,
         });
 

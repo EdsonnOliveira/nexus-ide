@@ -127,6 +127,8 @@ function AgentTranscriptComponent({
         <AgentTurnView
           key={turn.id}
           turn={turn}
+          turnIndex={index}
+          scrollContainerRef={scrollContainerRef}
           isEditing={turn.id === editingTurnId}
           isLatestTurn={index === turns.length - 1}
           projectId={projectId}

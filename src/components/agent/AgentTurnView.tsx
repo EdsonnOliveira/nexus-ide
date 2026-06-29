@@ -1,11 +1,14 @@
-import { memo } from 'react';
+import { memo, useRef, type RefObject } from 'react';
 import type { AgentQuestionAnswers, AgentTurn } from '@/types';
 import { AgentActivityList } from '@/components/agent/AgentActivityList';
 import { AgentUserPrompt } from '@/components/agent/AgentUserPrompt';
+import { useStickyPromptState } from '@/hooks/useStickyPromptState';
 import { isAgentTurnSummaryVisible } from '@/utils/agentTurnSummary';
 
 interface AgentTurnViewProps {
   turn: AgentTurn;
+  turnIndex: number;
+  scrollContainerRef: RefObject<HTMLDivElement | null>;
   isEditing?: boolean;
   isLatestTurn?: boolean;
   projectId: string;
@@ -18,6 +21,8 @@ interface AgentTurnViewProps {
 
 function AgentTurnViewComponent({
   turn,
+  turnIndex,
+  scrollContainerRef,
   isEditing = false,
   isLatestTurn = false,
   projectId,
@@ -31,10 +36,18 @@ function AgentTurnViewComponent({
     turn.activities.length > 0 ||
     turn.running ||
     isAgentTurnSummaryVisible(turn.summary);
+  const stickySentinelRef = useRef<HTMLDivElement>(null);
+  const isPromptStuck = useStickyPromptState(stickySentinelRef, scrollContainerRef, turn.id);
 
   return (
     <div className='agent-view__turn'>
-      <AgentUserPrompt turn={turn} isEditing={isEditing} onEdit={onEdit} onRedo={onRedo} />
+      <div ref={stickySentinelRef} className='agent-view__user-prompt-sticky-sentinel' aria-hidden='true' />
+      <div
+        className={`agent-view__user-prompt-sticky${isPromptStuck ? ' agent-view__user-prompt-sticky--stuck' : ''}`}
+        style={{ zIndex: turnIndex + 1 }}
+      >
+        <AgentUserPrompt turn={turn} isEditing={isEditing} onEdit={onEdit} onRedo={onRedo} />
+      </div>
       {hasActivities ? (
         <AgentActivityList
           activities={turn.activities}

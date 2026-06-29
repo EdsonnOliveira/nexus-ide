@@ -1,4 +1,5 @@
 import { highlightMarkdownCodeBlock } from '@/utils/codeHighlight';
+import { wrapInlineCodeHtml } from '@/utils/inlineCodeBadge';
 
 export function escapeHtml(value: string): string {
   return value
@@ -21,7 +22,7 @@ function applyInlineMarkdown(value: string): string {
   let html = value;
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = html.replace(/`([^`]+)`/g, (_, code: string) => wrapInlineCodeHtml(code));
   return html;
 }
 
