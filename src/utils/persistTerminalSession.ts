@@ -145,26 +145,34 @@ export async function saveScrollbackForPane(paneId: string, ptyId: string): Prom
   await window.nexus.session.saveScrollbacks({ [paneId]: scrollback });
 }
 
-export async function saveScrollbacksFromProjects(projects: Project[]): Promise<void> {
-  const scrollbacks: Record<string, string> = {};
-
-  for (const project of projects) {
-    for (const pane of collectProjectPanes(project.tabs)) {
+export async function saveScrollbacksForProject(project: Project): Promise<void> {
+  const entries = await Promise.all(
+    collectProjectPanes(project.tabs).map(async (pane) => {
       if (pane.type !== 'terminal' || !pane.ptyId) {
-        continue;
+        return null;
       }
 
       const scrollback = await window.nexus.terminal.getScrollback(pane.ptyId);
 
-      if (scrollback) {
-        scrollbacks[pane.id] = scrollback;
+      if (!scrollback) {
+        return null;
       }
-    }
-  }
+
+      return [pane.id, scrollback] as const;
+    }),
+  );
+
+  const scrollbacks = Object.fromEntries(
+    entries.filter((entry): entry is readonly [string, string] => entry !== null),
+  );
 
   if (Object.keys(scrollbacks).length > 0) {
     await window.nexus.session.saveScrollbacks(scrollbacks);
   }
+}
+
+export async function saveScrollbacksFromProjects(projects: Project[]): Promise<void> {
+  await Promise.all(projects.map((project) => saveScrollbacksForProject(project)));
 }
 
 export async function flushTerminalSessionsForProjectSwitch(projects: Project[]): Promise<void> {

@@ -131,8 +131,22 @@ function AgentUserPromptComponent({
         </div>
       </div>
       {previewUrl ? (
-        <AnimatedModal panelClassName='project-dialog' onClose={() => setPreviewUrl(null)}>
-          {() => <img src={previewUrl} alt='' className='agent-view__attachment-preview' />}
+        <AnimatedModal panelClassName='terminal-paste-image-lightbox' onClose={() => setPreviewUrl(null)}>
+          {(requestClose) => (
+            <button
+              type='button'
+              className='terminal-paste-image-lightbox__close app-button'
+              aria-label='Fechar imagem'
+              onClick={requestClose}
+            >
+              <img
+                src={previewUrl}
+                alt=''
+                className='terminal-paste-image-lightbox__image'
+                draggable={false}
+              />
+            </button>
+          )}
         </AnimatedModal>
       ) : null}
     </>

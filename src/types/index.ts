@@ -496,6 +496,22 @@ export interface VercelActiveDeployment {
   projectAvatarUrl: string | null;
 }
 
+export interface CursorPeriodUsageSnapshot {
+  available: boolean;
+  percent: number;
+  autoPercentUsed: number;
+  apiPercentUsed: number;
+  totalPercentUsed: number;
+  displayMessage: string | null;
+  autoModelSelectedDisplayMessage: string | null;
+  namedModelSelectedDisplayMessage: string | null;
+  billingCycleStartMs: number | null;
+  billingCycleEndMs: number | null;
+  membershipType: string | null;
+  updatedAt: number;
+  error: string | null;
+}
+
 export interface TerminalPasteImageSaved {
   absolutePath: string;
   relativePath: string;
@@ -750,6 +766,9 @@ export interface NexusAPI {
     getActiveDeployment: () => Promise<VercelActiveDeployment | null>;
     listDeployments: () => Promise<VercelActiveDeployment[]>;
     getDeploymentLogs: (deploymentUid: string) => Promise<string>;
+  };
+  cursorUsage: {
+    getCurrentPeriod: (force?: boolean) => Promise<CursorPeriodUsageSnapshot>;
   };
   emulator: {
     getSetupStatus: () => Promise<EmulatorSetupStatus>;

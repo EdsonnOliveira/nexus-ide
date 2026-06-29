@@ -13,6 +13,7 @@ import { registerGitHandlers } from './ipc/git';
 import { registerMusicHandlers } from './ipc/music';
 import { registerMailHandlers } from './ipc/mail';
 import { registerVercelHandlers } from './ipc/vercel';
+import { registerCursorUsageHandlers } from './ipc/cursorUsage';
 import { registerWhatsAppHandlers } from './ipc/whatsapp';
 import { registerSessionHandlers } from './ipc/session';
 import { registerTaskHandlers } from './ipc/tasks';
@@ -245,6 +246,7 @@ app.whenReady().then(() => {
   registerMusicHandlers();
   registerMailHandlers();
   registerVercelHandlers();
+  registerCursorUsageHandlers();
   registerWhatsAppHandlers();
   registerEmulatorHandlers(() => win);
   registerSessionHandlers(() => {

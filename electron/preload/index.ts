@@ -295,6 +295,9 @@ const nexusApi = {
     getDeploymentLogs: (deploymentUid) =>
       ipcRenderer.invoke('vercel:getDeploymentLogs', deploymentUid),
   },
+  cursorUsage: {
+    getCurrentPeriod: (force) => ipcRenderer.invoke('cursorUsage:getCurrentPeriod', force),
+  },
   emulator: {
     getSetupStatus: () => ipcRenderer.invoke('emulator:getSetupStatus'),
     listDevices: (platform) => ipcRenderer.invoke('emulator:listDevices', platform),

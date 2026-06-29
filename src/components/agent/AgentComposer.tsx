@@ -19,8 +19,10 @@ import {
 } from '@/components/agent/AgentHintBar';
 import { AgentLiveStatus } from '@/components/agent/AgentLiveStatus';
 import { AgentContextUsageIndicator } from '@/components/agent/AgentContextUsageIndicator';
+import { AgentCursorUsageIndicator } from '@/components/agent/AgentCursorUsageIndicator';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { useAgentComposerShortcuts } from '@/hooks/useAgentComposerShortcuts';
+import { useCursorUsage } from '@/hooks/useCursorUsage';
 import { useTerminalPasteImageStore } from '@/stores/useTerminalPasteImageStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { TERMINAL_AGENTS } from '@/constants/terminalAgents';
@@ -83,6 +85,8 @@ function AgentComposerComponent({
   );
   const activeModeOption = getAgentModeOption(activeMode);
   const modelHints = useAgentModelHints(paneId, projectPath, isVisible);
+  const { usage: cursorUsage, isLoading: cursorUsageLoading, refresh: refreshCursorUsage } =
+    useCursorUsage(isVisible);
 
   const inputPlaceholder = useMemo(() => {
     if (activeMode !== 'agent') {
@@ -292,6 +296,12 @@ function AgentComposerComponent({
                 isVisible={isVisible}
                 onRunCommand={onRunCommand}
               />
+              <AgentCursorUsageIndicator
+                usage={cursorUsage}
+                isLoading={cursorUsageLoading}
+                visible={isVisible}
+                onRefresh={() => void refreshCursorUsage(true)}
+              />
               {showWaitingStatus ? (
                 <AgentLiveStatus label={waitingLabel} />
               ) : null}
@@ -323,8 +333,22 @@ function AgentComposerComponent({
         </div>
       </div>
       {previewUrl ? (
-        <AnimatedModal panelClassName='project-dialog' onClose={() => setPreviewUrl(null)}>
-          {() => <img src={previewUrl} alt='' className='agent-view__attachment-preview' />}
+        <AnimatedModal panelClassName='terminal-paste-image-lightbox' onClose={() => setPreviewUrl(null)}>
+          {(requestClose) => (
+            <button
+              type='button'
+              className='terminal-paste-image-lightbox__close app-button'
+              aria-label='Fechar imagem'
+              onClick={requestClose}
+            >
+              <img
+                src={previewUrl}
+                alt=''
+                className='terminal-paste-image-lightbox__image'
+                draggable={false}
+              />
+            </button>
+          )}
         </AnimatedModal>
       ) : null}
     </>

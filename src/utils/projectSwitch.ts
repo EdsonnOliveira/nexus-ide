@@ -1,4 +1,10 @@
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
+import type { Project } from '@/types';
+import { flushAgentGitGroupsForLeavingProject } from '@/utils/persistAgentGitGroups';
+import {
+  flushPendingTerminalSessionsToDisk,
+  saveScrollbacksForProject,
+} from '@/utils/persistTerminalSession';
 
 let projectSwitchInFlight = false;
 
@@ -21,8 +27,9 @@ export async function endProjectSwitch(): Promise<void> {
   }
 
   projectSwitchInFlight = false;
-  const { drainDeferredAgentGitTurns } = await import('@/utils/agentGitTurn');
-  await drainDeferredAgentGitTurns();
+  void import('@/utils/agentGitTurn').then(({ drainDeferredAgentGitTurns }) =>
+    drainDeferredAgentGitTurns(),
+  );
 }
 
 export function countBusyAgentPanes(): number {
@@ -42,4 +49,32 @@ export function countBusyAgentPanes(): number {
   }
 
   return counted.size;
+}
+
+export function persistLeavingProjectState(projects: Project[], leavingProjectId: string): void {
+  const leavingProject = projects.find((project) => project.id === leavingProjectId);
+
+  if (!leavingProject) {
+    return;
+  }
+
+  void (async () => {
+    try {
+      await flushPendingTerminalSessionsToDisk(projects);
+      await Promise.all([
+        saveScrollbacksForProject(leavingProject),
+        flushAgentGitGroupsForLeavingProject(leavingProjectId, projects),
+      ]);
+      await window.nexus.projects.update(leavingProject.id, {
+        tabs: leavingProject.tabs,
+        activeTabId: leavingProject.activeTabId,
+        activePaneId: leavingProject.activePaneId,
+      });
+    } catch (error) {
+      console.error('[project-switch] background persist failed', {
+        leavingProjectId,
+        error,
+      });
+    }
+  })();
 }

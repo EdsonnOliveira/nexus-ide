@@ -113,6 +113,37 @@ export async function flushAgentGitGroupsForProjectSwitch(projects: Project[]): 
   await flushAgentGitGroupsToDisk(projects);
 }
 
+export async function flushAgentGitGroupsForLeavingProject(
+  leavingProjectId: string,
+  projects: Project[],
+): Promise<void> {
+  clearPendingAgentGitFlushTimer();
+
+  const projectIds = new Set<string>([leavingProjectId]);
+
+  for (const projectId of pendingProjectIds) {
+    projectIds.add(projectId);
+  }
+
+  pendingProjectIds.clear();
+
+  const groupsByProject = useAgentGitChangeStore.getState().groupsByProject;
+
+  await Promise.all(
+    [...projectIds].map(async (projectId) => {
+      const project = projects.find((entry) => entry.id === projectId);
+
+      if (!project) {
+        return;
+      }
+
+      await window.nexus.projects.update(projectId, {
+        agentGitGroups: groupsByProject[projectId] ?? [],
+      });
+    }),
+  );
+}
+
 export async function flushAgentGitGroupsNow(): Promise<void> {
   clearPendingAgentGitFlushTimer();
 
