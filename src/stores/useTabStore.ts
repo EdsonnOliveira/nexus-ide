@@ -4,7 +4,8 @@ import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { bumpFileExternalRevision } from '@/utils/fileExternalRevision';
 import type { AgentTab, ApiTab, BrowserTab, EmulatorPlatform, EmulatorTab, FileTab, Tab, TabBarItem, TabType, TerminalAgent } from '@/types';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
-import { resolveAgentTabCli, terminalAgentToCli } from '@/utils/agentTabHelpers';
+import { isAgentPaneTab, isLegacyAgentTerminalTab, resolveAgentTabCli, terminalAgentToCli } from '@/utils/agentTabHelpers';
+import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
 import { normalizeBrowserUrl } from '@/utils/browserUrl';
 import { createBadgeColorIndex } from '@/utils/tabBadge';
 import {
@@ -27,6 +28,7 @@ import { updateSplitRatioAtPath } from '@/utils/splitLayout';
 export interface TabStoreActions {
   addTab: (type: TabType) => Promise<void>;
   addAgentTab: (command: string) => Promise<void>;
+  replaceAgentTab: (tabId: string) => Promise<void>;
   openBrowserTab: (url: string) => Promise<void>;
   openFileTab: (filePath: string, fileName: string) => Promise<void>;
   openFilePreviewTab: (filePath: string, fileName: string) => Promise<void>;
@@ -58,7 +60,9 @@ export interface TabStoreActions {
   ) => Promise<void>;
   updateAgentTab: (
     tabId: string,
-    patch: Partial<Pick<AgentTab, 'turns' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'>>,
+    patch: Partial<
+      Pick<AgentTab, 'turns' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title' | 'messages'>
+    >,
   ) => Promise<void>;
   setSplitRatio: (
     splitTabId: string,
@@ -122,6 +126,38 @@ export function useTabActions(): TabStoreActions {
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
 
   const getProjectSnapshot = () => getActiveProject();
+
+  const focusPane = async (paneId: string) => {
+    const project = getProjectSnapshot();
+
+    if (!project) {
+      return;
+    }
+
+    const splitTab = project.tabs.find(
+      (item) => item.type === 'split' && item.panes.some((pane) => pane.id === paneId),
+    );
+
+    if (splitTab?.type === 'split') {
+      await updateProject(project.id, {
+        activeTabId: splitTab.id,
+        activePaneId: paneId,
+        tabs: project.tabs.map((item) =>
+          item.id === splitTab.id && item.type === 'split'
+            ? { ...item, activePaneId: paneId }
+            : item,
+        ),
+      });
+      useProjectNotificationStore.getState().clearNotificationForPane(paneId);
+      return;
+    }
+
+    await updateProject(project.id, {
+      activeTabId: paneId,
+      activePaneId: null,
+    });
+    useProjectNotificationStore.getState().clearNotificationForPane(paneId);
+  };
 
   return {
     addTab: async (type) => {
@@ -227,6 +263,85 @@ export function useTabActions(): TabStoreActions {
         activeTabId: tabId,
         activePaneId: null,
       });
+    },
+    replaceAgentTab: async (tabId) => {
+      const project = getProjectSnapshot();
+
+      if (!project) {
+        return;
+      }
+
+      const pane = findPaneTab(project.tabs, tabId);
+
+      if (!pane) {
+        return;
+      }
+
+      const isDedicatedAgent = isAgentPaneTab(pane);
+      const isTerminalAgent = isLegacyAgentTerminalTab(pane);
+
+      if (!isDedicatedAgent && !isTerminalAgent) {
+        return;
+      }
+
+      const rawCommand = await resolveAgentLaunchCommand(project.path);
+      let cliAgent = extractCliAgentCommand(rawCommand.trim()) ?? 'cursor-agent';
+
+      if (isDedicatedAgent && pane.type === 'agent') {
+        cliAgent = extractCliAgentCommand(rawCommand.trim()) ?? pane.cliAgent;
+      } else if (isTerminalAgent && pane.type === 'terminal') {
+        cliAgent = extractCliAgentCommand(rawCommand.trim()) ?? terminalAgentToCli(pane.agent);
+      }
+
+      const launchCommand = rawCommand.trim() || cliAgent;
+
+      const session = useTerminalSessionStore.getState();
+
+      useProjectNotificationStore.getState().clearNotificationForPane(tabId);
+      session.resetAgentWorkload(tabId);
+
+      if (isDedicatedAgent && pane.type === 'agent') {
+        window.nexus.agentPrint.stop(tabId);
+      }
+
+      if (isTerminalAgent && pane.type === 'terminal') {
+        await session.resumeAgentSession(tabId, launchCommand, focusPane);
+        return;
+      }
+
+      if (!isDedicatedAgent || pane.type !== 'agent') {
+        return;
+      }
+
+      if (pane.ptyId) {
+        window.nexus.terminal.kill(pane.ptyId);
+      }
+
+      const nextTabs = updatePaneInTabs(project.tabs, tabId, (entry) =>
+        entry.type === 'agent'
+          ? {
+              ...entry,
+              turns: [],
+              messages: [],
+              restoreCommand: launchCommand,
+              cliAgent,
+              ptyId: null,
+            }
+          : entry,
+      );
+
+      useProjectStore.setState((state) => ({
+        projects: state.projects.map((entry) =>
+          entry.id === project.id ? { ...entry, tabs: nextTabs } : entry,
+        ),
+      }));
+
+      await updateProject(project.id, {
+        tabs: nextTabs,
+      });
+
+      session.setPendingLaunchCommand(tabId, launchCommand);
+      await focusPane(tabId);
     },
     openBrowserTab: async (url) => {
       const project = getProjectSnapshot();
@@ -596,35 +711,7 @@ export function useTabActions(): TabStoreActions {
       }
     },
     selectPane: async (paneId) => {
-      const project = getProjectSnapshot();
-
-      if (!project) {
-        return;
-      }
-
-      const splitTab = project.tabs.find(
-        (item) => item.type === 'split' && item.panes.some((pane) => pane.id === paneId),
-      );
-
-      if (splitTab?.type === 'split') {
-        await updateProject(project.id, {
-          activeTabId: splitTab.id,
-          activePaneId: paneId,
-          tabs: project.tabs.map((item) =>
-            item.id === splitTab.id && item.type === 'split'
-              ? { ...item, activePaneId: paneId }
-              : item,
-          ),
-        });
-        useProjectNotificationStore.getState().clearNotificationForPane(paneId);
-        return;
-      }
-
-      await updateProject(project.id, {
-        activeTabId: paneId,
-        activePaneId: null,
-      });
-      useProjectNotificationStore.getState().clearNotificationForPane(paneId);
+      await focusPane(paneId);
     },
     splitTab: async (sourceTabId, targetTabId, side) => {
       const project = getProjectSnapshot();

@@ -21,7 +21,7 @@ function AgentGitChangePillComponent({ projectId, paneId }: AgentGitChangePillPr
   const groups = useAgentGitGroupsForProject(projectId);
   const group =
     groups.find((entry) => entry.paneId === paneId && entry.files.length > 0) ?? null;
-  const setSidePanel = useProjectStore((state) => state.setSidePanel);
+  const openExplorerGit = useProjectStore((state) => state.openExplorerGit);
   const setFocusedGroupId = useAgentGitChangeStore((state) => state.setFocusedGroupId);
 
   const handleClick = useCallback(() => {
@@ -30,8 +30,8 @@ function AgentGitChangePillComponent({ projectId, paneId }: AgentGitChangePillPr
     }
 
     setFocusedGroupId(group.id);
-    setSidePanel('git');
-  }, [group, setFocusedGroupId, setSidePanel]);
+    openExplorerGit();
+  }, [group, openExplorerGit, setFocusedGroupId]);
 
   if (!group || group.files.length === 0) {
     return null;

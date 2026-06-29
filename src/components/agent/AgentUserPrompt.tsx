@@ -59,6 +59,9 @@ function AgentUserPromptComponent({
       <div
         className={`agent-view__user-prompt-wrap${isEditing ? ' agent-view__user-prompt-wrap--editing' : ''}`}
       >
+        {isEditing ? (
+          <span className='agent-view__user-editing-badge app-button--enter'>Editando</span>
+        ) : null}
         {skillLabel ? (
           <div
             className='agent-view__user-skill'

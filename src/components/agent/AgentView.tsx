@@ -10,6 +10,7 @@ import {
 import { Bot } from 'lucide-react';
 import { AgentComposer } from '@/components/agent/AgentComposer';
 import { AgentFollowUpQueue } from '@/components/agent/AgentFollowUpQueue';
+import { AgentPlanReviewDock } from '@/components/agent/AgentPlanReviewDock';
 import { AgentProjectSkillPills } from '@/components/agent/AgentProjectSkillPills';
 import { AgentTranscript } from '@/components/agent/AgentTranscript';
 import { EmptyState } from '@/components/overlay/EmptyState';
@@ -78,12 +79,19 @@ function AgentViewComponent({
     stopAgent,
     runCommand,
     editAgentTurn,
+    cancelAgentTurnEdit,
     editingTurnId,
     redoAgentTurn,
     followUps,
     editFollowUp,
     sendFollowUpNow,
     removeFollowUp,
+    submitQuestionAnswers,
+    hasPendingQuestion,
+    acceptPlan,
+    rejectPlan,
+    hasPendingPlan,
+    pendingPlanActivity,
     isBusy,
     isBootstrapping,
     isSubmitting,
@@ -121,6 +129,19 @@ function AgentViewComponent({
     [submitPrompt],
   );
 
+  const handleRejectPlan = useCallback(
+    (activityId: string) => {
+      const accepted = rejectPlan(activityId);
+
+      if (accepted) {
+        inputRef.current?.focus();
+      }
+
+      return accepted;
+    },
+    [rejectPlan],
+  );
+
   const emptyState = useMemo(
     () => (
       <EmptyState
@@ -153,11 +174,14 @@ function AgentViewComponent({
             paneId={tab.id}
             onEdit={editAgentTurn}
             onRedo={redoAgentTurn}
+            onSubmitQuestion={submitQuestionAnswers}
           />
         )}
       </div>
 
-      <div className={`agent-view__footer${turns.length === 0 ? ' agent-view__footer--idle' : ''}`}>
+      <div
+        className={`agent-view__footer${turns.length === 0 ? ' agent-view__footer--idle' : ''}${hasPendingPlan ? ' agent-view__footer--plan-pending' : ''}${editingTurnId ? ' agent-view__footer--editing' : ''}`}
+      >
         <div className='agent-git-change-pill-slot'>
           <AgentGitChangePill projectId={projectId} paneId={tab.id} />
         </div>
@@ -180,6 +204,15 @@ function AgentViewComponent({
           </div>
         ) : null}
 
+        {pendingPlanActivity && hasPendingPlan ? (
+          <AgentPlanReviewDock
+            activity={pendingPlanActivity}
+            isBusy={isBusy}
+            onAccept={acceptPlan}
+            onReject={handleRejectPlan}
+          />
+        ) : null}
+
         <AgentComposer
           paneId={tab.id}
           projectPath={projectPath}
@@ -198,6 +231,10 @@ function AgentViewComponent({
           onStop={stopAgent}
           onRunCommand={runCommand}
           onRequestContextUsageReport={requestContextUsageReport}
+          questionPending={hasPendingQuestion}
+          planPending={hasPendingPlan}
+          isEditing={Boolean(editingTurnId)}
+          onCancelEdit={cancelAgentTurnEdit}
         />
       </div>
     </div>

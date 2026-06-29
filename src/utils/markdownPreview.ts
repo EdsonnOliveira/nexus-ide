@@ -122,7 +122,7 @@ function renderMarkdownTable(tableLines: string[]): string {
   }
 
   const [header, ...body] = rows;
-  const thead = `<thead><tr>${header.map((cell) => `<th>${applyInlineMarkdown(escapeHtml(cell))}</th>`).join('')}</tr></thead>`;
+  const thead = `<thead><tr>${header.map((cell) => `<th><span class="markdown-table-th-knockout">${applyInlineMarkdown(escapeHtml(cell))}</span></th>`).join('')}</tr></thead>`;
   const tbody =
     body.length > 0
       ? `<tbody>${body

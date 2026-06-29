@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, type RefObject } from 'react';
-import type { AgentTurn } from '@/types';
+import type { AgentQuestionAnswers, AgentTurn } from '@/types';
 import { AgentTurnView } from '@/components/agent/AgentTurnView';
 
 interface AgentTranscriptProps {
@@ -12,6 +12,7 @@ interface AgentTranscriptProps {
   paneId: string;
   onEdit?: (turnId: string) => void;
   onRedo?: (turnId: string) => void;
+  onSubmitQuestion?: (activityId: string, answers: AgentQuestionAnswers) => boolean | Promise<boolean>;
 }
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 48;
@@ -37,6 +38,7 @@ function AgentTranscriptComponent({
   paneId,
   onEdit,
   onRedo,
+  onSubmitQuestion,
 }: AgentTranscriptProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -132,6 +134,7 @@ function AgentTranscriptComponent({
           paneId={paneId}
           onEdit={onEdit}
           onRedo={onRedo}
+          onSubmitQuestion={onSubmitQuestion}
         />
       ))}
     </div>

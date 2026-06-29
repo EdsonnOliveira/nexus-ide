@@ -1,7 +1,8 @@
-import { Fragment, memo, useMemo, type ReactNode } from 'react';
-import type { AgentActivity, AgentTurnSummary } from '@/types';
+import { Fragment, memo, useCallback, useMemo, useRef, type MouseEvent, type ReactNode } from 'react';
+import type { AgentActivity, AgentQuestionAnswers, AgentTurnSummary } from '@/types';
 import { AgentFileActivityRow } from '@/components/agent/AgentFileActivityRow';
 import { AgentThoughtBlock } from '@/components/agent/AgentThoughtBlock';
+import { AgentQuestionCard } from '@/components/agent/AgentQuestionCard';
 import { AgentResponseActions } from '@/components/agent/AgentResponseActions';
 import { AgentTurnSummaryLine } from '@/components/agent/AgentTurnSummaryLine';
 import {
@@ -20,6 +21,7 @@ interface AgentActivityListProps {
   projectPath: string;
   paneId: string;
   isLatestTurn?: boolean;
+  onSubmitQuestion?: (activityId: string, answers: AgentQuestionAnswers) => boolean | Promise<boolean>;
 }
 
 function getSanitizedResponseLabel(label: string): string {
@@ -27,8 +29,16 @@ function getSanitizedResponseLabel(label: string): string {
 }
 
 function isRenderableActivity(activity: AgentActivity, running: boolean): boolean {
-  if (activity.kind === 'live_status' || activity.kind === 'section' || activity.kind === 'status') {
+  if (activity.kind === 'section') {
     return false;
+  }
+
+  if (activity.kind === 'live_status') {
+    return running;
+  }
+
+  if (activity.kind === 'status') {
+    return Boolean(activity.label.trim());
   }
 
   if (activity.kind === 'file_read' || activity.kind === 'file_edit') {
@@ -53,14 +63,78 @@ function isRenderableActivity(activity: AgentActivity, running: boolean): boolea
     return Boolean(getSanitizedResponseLabel(activity.label).trim());
   }
 
+  if (activity.kind === 'question') {
+    return Boolean(activity.questions && activity.questions.length > 0);
+  }
+
+  if (activity.kind === 'plan') {
+    return activity.planStatus !== 'pending';
+  }
+
   return true;
+}
+
+function findAgentResponseInlineCode(element: EventTarget | null): HTMLElement | null {
+  if (!(element instanceof HTMLElement)) {
+    return null;
+  }
+
+  const code = element.closest('code');
+
+  if (!code || code.classList.contains('hljs') || code.closest('pre')) {
+    return null;
+  }
+
+  return code;
 }
 
 const AgentResponseBody = memo(function AgentResponseBody({ content }: { content: string }) {
   const html = useMemo(() => renderMarkdownPreview(content), [content]);
+  const copiedTimeoutRef = useRef<number | null>(null);
+
+  const handleClick = useCallback(async (event: MouseEvent<HTMLDivElement>) => {
+    const code = findAgentResponseInlineCode(event.target);
+
+    if (!code) {
+      return;
+    }
+
+    const value = code.textContent?.trim() ?? '';
+
+    if (!value) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    try {
+      await navigator.clipboard.writeText(value);
+
+      if (copiedTimeoutRef.current !== null) {
+        window.clearTimeout(copiedTimeoutRef.current);
+      }
+
+      code.classList.add('markdown-preview__inline-code--copied');
+      code.setAttribute('title', 'Copiado');
+
+      copiedTimeoutRef.current = window.setTimeout(() => {
+        code.classList.remove('markdown-preview__inline-code--copied');
+        code.removeAttribute('title');
+        copiedTimeoutRef.current = null;
+      }, 1600);
+    } catch {
+      code.classList.remove('markdown-preview__inline-code--copied');
+      code.removeAttribute('title');
+    }
+  }, []);
 
   return (
-    <div className='agent-view__response-body markdown-preview' dangerouslySetInnerHTML={{ __html: html }} />
+    <div
+      className='agent-view__response-body markdown-preview'
+      onClick={(event) => void handleClick(event)}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   );
 });
 
@@ -87,6 +161,7 @@ function AgentActivityListComponent({
   projectPath,
   paneId,
   isLatestTurn = false,
+  onSubmitQuestion,
 }: AgentActivityListProps) {
   const visibleActivities = useMemo(
     () => activities.filter((activity) => isRenderableActivity(activity, running)),
@@ -94,6 +169,11 @@ function AgentActivityListComponent({
   );
 
   const showSummary = !running && isAgentTurnSummaryVisible(summary);
+
+  const hasVisibleResponse = useMemo(
+    () => visibleActivities.some((activity) => activity.kind === 'response'),
+    [visibleActivities],
+  );
 
   const finalResponseText = useMemo(
     () => extractAgentFinalResponseText(activities),
@@ -157,6 +237,39 @@ function AgentActivityListComponent({
           );
         }
 
+        if (activity.kind === 'question') {
+          return (
+            <AgentQuestionCard
+              key={activity.id}
+              activity={activity}
+              interactive={
+                Boolean(onSubmitQuestion) &&
+                isLatestTurn &&
+                !running &&
+                activity.questionStatus === 'pending'
+              }
+              onSubmit={onSubmitQuestion ?? (async () => false)}
+            />
+          );
+        }
+
+        if (activity.kind === 'plan') {
+          const statusLabel =
+            activity.planStatus === 'building'
+              ? 'Executando plano…'
+              : activity.planStatus === 'accepted'
+                ? 'Plano aceito'
+                : activity.planStatus === 'rejected'
+                  ? 'Plano descartado'
+                  : activity.planName ?? 'Plano';
+
+          return (
+            <div key={activity.id} className='agent-view__plan-summary app-button--enter'>
+              {statusLabel}
+            </div>
+          );
+        }
+
         if (activity.kind === 'status') {
           return (
             <div key={activity.id} className='agent-view__status-line app-button--enter'>
@@ -165,8 +278,27 @@ function AgentActivityListComponent({
           );
         }
 
+        if (activity.kind === 'live_status') {
+          return (
+            <div
+              key={activity.id}
+              className='agent-view__status-line agent-view__status-line--live app-button--enter'
+            >
+              {activity.label}
+            </div>
+          );
+        }
+
         return null;
       })}
+      {running && visibleActivities.length === 0 ? (
+        <div className='agent-view__status-line agent-view__status-line--live app-button--enter'>
+          Executando agent…
+        </div>
+      ) : null}
+      {showSummary && summary && !hasVisibleResponse ? (
+        <AgentTurnSummaryLine summary={summary} />
+      ) : null}
       {showCopyPill ? (
         <AgentResponseActions
           projectId={projectId}

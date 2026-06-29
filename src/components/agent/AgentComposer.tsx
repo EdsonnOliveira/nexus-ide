@@ -1,12 +1,13 @@
 import {
   memo,
   useCallback,
+  useLayoutEffect,
   useMemo,
   useState,
   type ChangeEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
-import { ArrowUp, Square, X } from 'lucide-react';
+import { ArrowUp, Pencil, Square, X } from 'lucide-react';
 import {
   AGENT_MODE_INPUT_PLACEHOLDERS,
   getAgentModeOption,
@@ -53,9 +54,21 @@ interface AgentComposerProps {
   onStop: () => boolean;
   onRunCommand: (command: string) => boolean;
   onRequestContextUsageReport: () => void;
+  questionPending?: boolean;
+  planPending?: boolean;
+  isEditing?: boolean;
+  onCancelEdit?: () => void;
 }
 
 const EMPTY_PASTE_IMAGES: never[] = [];
+const COMPOSER_INPUT_MAX_HEIGHT = 160;
+
+function resizeComposerInput(textarea: HTMLTextAreaElement): void {
+  textarea.style.height = 'auto';
+  const nextHeight = Math.min(textarea.scrollHeight, COMPOSER_INPUT_MAX_HEIGHT);
+  textarea.style.height = `${nextHeight}px`;
+  textarea.style.overflowY = textarea.scrollHeight > COMPOSER_INPUT_MAX_HEIGHT ? 'auto' : 'hidden';
+}
 
 function AgentComposerComponent({
   paneId,
@@ -75,8 +88,13 @@ function AgentComposerComponent({
   onStop,
   onRunCommand,
   onRequestContextUsageReport,
+  questionPending = false,
+  planPending = false,
+  isEditing = false,
+  onCancelEdit,
 }: AgentComposerProps) {
   const agentConfig = TERMINAL_AGENTS[terminalAgent];
+  const interactionPending = questionPending || planPending;
   const images = useTerminalPasteImageStore((state) => state.imagesByPane[paneId] ?? EMPTY_PASTE_IMAGES);
   const removeImage = useTerminalPasteImageStore((state) => state.removeImage);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -88,13 +106,39 @@ function AgentComposerComponent({
   const { usage: cursorUsage, isLoading: cursorUsageLoading, refresh: refreshCursorUsage } =
     useCursorUsage(isVisible);
 
+  const syncComposerInputHeight = useCallback(() => {
+    const textarea = inputRef.current;
+
+    if (!textarea) {
+      return;
+    }
+
+    resizeComposerInput(textarea);
+  }, [inputRef]);
+
+  useLayoutEffect(() => {
+    syncComposerInputHeight();
+  }, [draft, syncComposerInputHeight]);
+
   const inputPlaceholder = useMemo(() => {
+    if (isEditing) {
+      return 'Edite a mensagem e envie para substituir a resposta';
+    }
+
+    if (questionPending) {
+      return 'Responda as perguntas acima';
+    }
+
+    if (planPending) {
+      return 'Planeje e desenhe antes de...';
+    }
+
     if (activeMode !== 'agent') {
       return AGENT_MODE_INPUT_PLACEHOLDERS[activeMode];
     }
 
     return agentConfig.inputPlaceholder;
-  }, [activeMode, agentConfig.inputPlaceholder]);
+  }, [activeMode, agentConfig.inputPlaceholder, isEditing, planPending, questionPending]);
 
   const handleClearMode = useCallback(() => {
     onRunCommand('/agent\n');
@@ -103,13 +147,17 @@ function AgentComposerComponent({
 
   const canStop = isBusy && !draft.trim();
   const hasDraft = Boolean(draft.trim()) || images.length > 0;
-  const canSend = hasDraft && !canStop;
+  const canSend = hasDraft && !canStop && !interactionPending;
   const isActionDisabled = !canStop && !canSend;
   const waitingLabel = isSubmitting ? 'Enviando…' : 'Iniciando agent…';
   const showWaitingStatus = isSubmitting || isBootstrapping;
   const showContextUsage = Boolean(contextUsage) || contextUsageLoading || canStop;
 
   const handleSubmit = useCallback(() => {
+    if (interactionPending) {
+      return;
+    }
+
     if (canStop) {
       onStop();
       return;
@@ -122,9 +170,13 @@ function AgentComposerComponent({
         onDraftChange('');
       }
     })();
-  }, [canStop, draft, onDraftChange, onStop, onSubmit]);
+  }, [canStop, draft, interactionPending, onDraftChange, onStop, onSubmit]);
 
   const handleForceSubmit = useCallback(() => {
+    if (interactionPending) {
+      return;
+    }
+
     void (async () => {
       const result = await onSubmit(draft);
 
@@ -132,7 +184,7 @@ function AgentComposerComponent({
         onDraftChange('');
       }
     })();
-  }, [draft, onDraftChange, onSubmit]);
+  }, [draft, interactionPending, onDraftChange, onSubmit]);
 
   const handleModeChange = useCallback(
     (mode: typeof activeMode) => {
@@ -160,17 +212,24 @@ function AgentComposerComponent({
 
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+      if (isEditing && event.key === 'Escape') {
+        event.preventDefault();
+        onCancelEdit?.();
+        return;
+      }
+
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
         handleStopOrSubmit();
       }
     },
-    [handleStopOrSubmit],
+    [handleStopOrSubmit, isEditing, onCancelEdit],
   );
 
   const handleDraftChange = useCallback(
     (event: ChangeEvent<HTMLTextAreaElement>) => {
       onDraftChange(event.target.value);
+      resizeComposerInput(event.target);
     },
     [onDraftChange],
   );
@@ -257,8 +316,25 @@ function AgentComposerComponent({
 
   return (
     <>
-      <div className='agent-view__composer'>
-        <div className='agent-view__composer-card'>
+      <div className={`agent-view__composer${isEditing ? ' agent-view__composer--editing' : ''}`}>
+        {isEditing ? (
+          <div className='agent-view__composer-edit-bar app-button--enter'>
+            <div className='agent-view__composer-edit-bar-main'>
+              <Pencil size={14} strokeWidth={2} aria-hidden='true' />
+              <span className='agent-view__composer-edit-bar-title'>Editando mensagem</span>
+            </div>
+            <button
+              type='button'
+              className='agent-view__composer-edit-cancel app-button app-button--enter'
+              onClick={onCancelEdit}
+            >
+              Cancelar
+            </button>
+          </div>
+        ) : null}
+        <div
+          className={`agent-view__composer-card${isEditing ? ' agent-view__composer-card--editing' : ''}`}
+        >
           {pendingImages.length > 0 ? (
             <div className='agent-view__composer-attachments'>{pendingImages}</div>
           ) : null}
@@ -269,6 +345,7 @@ function AgentComposerComponent({
               value={draft}
               rows={1}
               placeholder={inputPlaceholder}
+              disabled={interactionPending}
               onChange={handleDraftChange}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
@@ -310,7 +387,7 @@ function AgentComposerComponent({
               <button
                 type='button'
                 className={`agent-view__composer-send app-button app-button--enter${canStop ? ' agent-view__composer-send--stop' : ''}${canSend || canStop ? ' agent-view__composer-send--ready' : ''}`}
-                aria-label={canStop ? 'Parar agent' : 'Enviar prompt'}
+                aria-label={canStop ? 'Parar agent' : isEditing ? 'Salvar edição' : 'Enviar prompt'}
                 disabled={isActionDisabled}
                 onClick={handleSubmit}
               >

@@ -45,7 +45,33 @@ export type AgentActivityKind =
   | 'file_edit'
   | 'file_read'
   | 'live_status'
-  | 'response';
+  | 'response'
+  | 'question'
+  | 'plan';
+
+export interface AgentPlanTodo {
+  id: string;
+  content: string;
+  status?: 'pending' | 'done';
+}
+
+export type AgentPlanStatus = 'pending' | 'accepted' | 'rejected' | 'building';
+
+export interface AgentQuestionOption {
+  id: string;
+  label: string;
+}
+
+export interface AgentQuestionItem {
+  id: string;
+  prompt: string;
+  allowMultiple?: boolean;
+  options?: AgentQuestionOption[];
+}
+
+export type AgentQuestionStatus = 'pending' | 'answered' | 'skipped';
+
+export type AgentQuestionAnswers = Record<string, string | string[]>;
 
 export interface AgentActivity {
   id: string;
@@ -58,6 +84,16 @@ export interface AgentActivity {
   createdAt: number;
   collapsed?: boolean;
   streaming?: boolean;
+  questionTitle?: string;
+  questions?: AgentQuestionItem[];
+  questionStatus?: AgentQuestionStatus;
+  questionAnswers?: AgentQuestionAnswers;
+  planName?: string;
+  planOverview?: string;
+  planBody?: string;
+  planTodos?: AgentPlanTodo[];
+  planStatus?: AgentPlanStatus;
+  planUri?: string;
 }
 
 export interface AgentTurnSummaryFileRef {

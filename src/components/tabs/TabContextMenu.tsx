@@ -1,4 +1,5 @@
 import {
+  Bot,
   ChevronRight,
   Columns2,
   History,
@@ -81,7 +82,7 @@ function TabContextMenuComponent({
   const restartingPaneIds = useTerminalSessionStore((state) => state.restartingPaneIds);
   const restartTerminalPane = useTerminalSessionStore((state) => state.restartTerminalPane);
   const resumeAgentSession = useTerminalSessionStore((state) => state.resumeAgentSession);
-  const { selectPane } = useTabActions();
+  const { selectPane, replaceAgentTab } = useTabActions();
   const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
     onClose,
     (menu) => positionDropdownAtPointer(menu, x, y),
@@ -214,6 +215,17 @@ function TabContextMenuComponent({
     [restartTerminalPane, runAction, selectPane],
   );
 
+  const handleNewAgent = useCallback(
+    runAction(() => {
+      if (!agentPane) {
+        return;
+      }
+
+      void replaceAgentTab(agentPane.id);
+    }),
+    [agentPane, replaceAgentTab, runAction],
+  );
+
   const handleResumeSession = useCallback(
     (entry: CursorAgentHistoryEntry) =>
       runAction(() => {
@@ -300,6 +312,22 @@ function TabContextMenuComponent({
       {showAgentHistory ? (
         <>
           <div className='context-menu__separator' />
+          <button
+            type='button'
+            className='context-menu__item'
+            role='menuitem'
+            disabled={Boolean(agentPane && restartingPaneIds[agentPane.id])}
+            onMouseDown={
+              agentPane && restartingPaneIds[agentPane.id] ? undefined : handleNewAgent
+            }
+          >
+            {agentPane && restartingPaneIds[agentPane.id] ? (
+              <Loader2 size={14} strokeWidth={2} className='context-menu__spinner' aria-hidden />
+            ) : (
+              <Bot size={14} strokeWidth={2} aria-hidden />
+            )}
+            <span>Novo agent</span>
+          </button>
           <div
             ref={historyRowRef}
             className={`context-menu__submenu-row${historyOpen ? ' context-menu__submenu-row--open' : ''}`}

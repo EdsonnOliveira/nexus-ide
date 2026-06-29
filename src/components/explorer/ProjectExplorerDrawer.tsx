@@ -1,5 +1,6 @@
-import { ChevronDown, ChevronRight, FilePlus, FolderOpen, FolderPlus, Search } from 'lucide-react';
+import { ChevronDown, ChevronRight, FilePlus, FolderOpen, FolderPlus, GitBranch, Search } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ProjectGitDrawer } from '@/components/git/ProjectGitDrawer';
 import { ExplorerEntryContextMenu } from '@/components/explorer/ExplorerEntryContextMenu';
 import {
   ExplorerDirectoryIcon,
@@ -12,6 +13,7 @@ import { useProjectStore } from '@/stores/useProjectStore';
 import { usePendingExplorerCreateStore } from '@/stores/usePendingExplorerCreateStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useExplorerGitDecorations } from '@/hooks/useExplorerGitDecorations';
+import { useGitChangeCount } from '@/hooks/useGitChangeCount';
 import type { ExplorerGitDecoration } from '@/hooks/useExplorerGitDecorations';
 import { useDelayedHoverHint } from '@/hooks/useDelayedHoverHint';
 import {
@@ -41,6 +43,10 @@ interface ProjectExplorerDrawerProps {
   onOpenFile: (entry: ProjectDirectoryEntry) => void;
   onOpenFileCode: (entry: ProjectDirectoryEntry) => void;
   onSelectPane: (paneId: string) => Promise<void>;
+  onOpenDiff: (
+    filePath: string,
+    options: { staged: boolean; untracked?: boolean; repoPath?: string; agentPrompt?: string },
+  ) => void;
 }
 
 interface ExplorerContextMenuState {
@@ -524,8 +530,13 @@ function ProjectExplorerDrawerComponent({
   onOpenFile,
   onOpenFileCode,
   onSelectPane,
+  onOpenDiff,
 }: ProjectExplorerDrawerProps) {
   const project = useProjectStore((state) => state.projects.find((item) => item.id === projectId) ?? null);
+  const explorerView = useProjectStore((state) => state.explorerView);
+  const toggleExplorerGit = useProjectStore((state) => state.toggleExplorerGit);
+  const gitChangeCount = useGitChangeCount(rootPath);
+  const isGitView = explorerView === 'git';
   const activeAgentByPane = useTerminalSessionStore((state) => state.activeAgentByPane);
   const resolveGitDecoration = useExplorerGitDecorations(rootPath);
   const [rootEntries, setRootEntries] = useState<ProjectDirectoryEntry[]>([]);
@@ -1073,31 +1084,57 @@ function ProjectExplorerDrawerComponent({
           <div className='project-explorer__header-actions'>
             <button
               type='button'
-              className='project-explorer__header-btn app-button app-button--enter'
-              aria-label='Novo arquivo'
-              onClick={() => setCreatePromptMode('file')}
+              className={`project-explorer__header-btn project-explorer__header-btn--git app-button app-button--enter${isGitView ? ' project-explorer__header-btn--active' : ''}`}
+              aria-label='Controle de versão'
+              onClick={toggleExplorerGit}
             >
-              <FilePlus size={14} strokeWidth={2} />
+              <GitBranch size={14} strokeWidth={2} />
+              {gitChangeCount > 0 ? (
+                <span className='project-explorer__header-badge' aria-hidden='true'>
+                  {gitChangeCount > 99 ? '99+' : gitChangeCount}
+                </span>
+              ) : null}
             </button>
-            <button
-              type='button'
-              className='project-explorer__header-btn app-button app-button--enter'
-              aria-label='Nova pasta'
-              onClick={() => setCreatePromptMode('folder')}
-            >
-              <FolderPlus size={14} strokeWidth={2} />
-            </button>
-            <button
-              type='button'
-              className={`project-explorer__header-btn app-button app-button--enter${searchOpen ? ' project-explorer__header-btn--active' : ''}`}
-              aria-label='Buscar arquivos'
-              onClick={handleToggleSearch}
-            >
-              <Search size={14} strokeWidth={2} />
-            </button>
+            {!isGitView ? (
+              <>
+                <button
+                  type='button'
+                  className='project-explorer__header-btn app-button app-button--enter'
+                  aria-label='Novo arquivo'
+                  onClick={() => setCreatePromptMode('file')}
+                >
+                  <FilePlus size={14} strokeWidth={2} />
+                </button>
+                <button
+                  type='button'
+                  className='project-explorer__header-btn app-button app-button--enter'
+                  aria-label='Nova pasta'
+                  onClick={() => setCreatePromptMode('folder')}
+                >
+                  <FolderPlus size={14} strokeWidth={2} />
+                </button>
+                <button
+                  type='button'
+                  className={`project-explorer__header-btn app-button app-button--enter${searchOpen ? ' project-explorer__header-btn--active' : ''}`}
+                  aria-label='Buscar arquivos'
+                  onClick={handleToggleSearch}
+                >
+                  <Search size={14} strokeWidth={2} />
+                </button>
+              </>
+            ) : null}
           </div>
         </div>
 
+        {isGitView ? (
+          <ProjectGitDrawer
+            embedded
+            projectId={projectId}
+            rootPath={rootPath}
+            onOpenDiff={onOpenDiff}
+          />
+        ) : (
+          <>
         <div className={`project-explorer__search${searchOpen ? ' project-explorer__search--open' : ''}`}>
           <div className='project-explorer__search-inner'>
             <div className='project-explorer__search-field'>
@@ -1200,6 +1237,8 @@ function ProjectExplorerDrawerComponent({
             : null}
           </div>
         </div>
+          </>
+        )}
 
         {createPromptMode ? (
           <ProjectPromptDialog

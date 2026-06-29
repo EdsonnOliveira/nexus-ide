@@ -1,7 +1,8 @@
 import { memo } from 'react';
-import type { AgentTurn } from '@/types';
+import type { AgentQuestionAnswers, AgentTurn } from '@/types';
 import { AgentActivityList } from '@/components/agent/AgentActivityList';
 import { AgentUserPrompt } from '@/components/agent/AgentUserPrompt';
+import { isAgentTurnSummaryVisible } from '@/utils/agentTurnSummary';
 
 interface AgentTurnViewProps {
   turn: AgentTurn;
@@ -12,6 +13,7 @@ interface AgentTurnViewProps {
   paneId: string;
   onEdit?: (turnId: string) => void;
   onRedo?: (turnId: string) => void;
+  onSubmitQuestion?: (activityId: string, answers: AgentQuestionAnswers) => boolean | Promise<boolean>;
 }
 
 function AgentTurnViewComponent({
@@ -23,8 +25,12 @@ function AgentTurnViewComponent({
   paneId,
   onEdit,
   onRedo,
+  onSubmitQuestion,
 }: AgentTurnViewProps) {
-  const hasActivities = turn.activities.length > 0 || turn.running;
+  const hasActivities =
+    turn.activities.length > 0 ||
+    turn.running ||
+    isAgentTurnSummaryVisible(turn.summary);
 
   return (
     <div className='agent-view__turn'>
@@ -38,6 +44,7 @@ function AgentTurnViewComponent({
           projectPath={projectPath}
           paneId={paneId}
           isLatestTurn={isLatestTurn}
+          onSubmitQuestion={onSubmitQuestion}
         />
       ) : null}
     </div>

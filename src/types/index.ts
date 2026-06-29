@@ -108,7 +108,33 @@ export type AgentActivityKind =
   | 'file_edit'
   | 'file_read'
   | 'live_status'
-  | 'response';
+  | 'response'
+  | 'question'
+  | 'plan';
+
+export interface AgentPlanTodo {
+  id: string;
+  content: string;
+  status?: 'pending' | 'done';
+}
+
+export type AgentPlanStatus = 'pending' | 'accepted' | 'rejected' | 'building';
+
+export interface AgentQuestionOption {
+  id: string;
+  label: string;
+}
+
+export interface AgentQuestionItem {
+  id: string;
+  prompt: string;
+  allowMultiple?: boolean;
+  options?: AgentQuestionOption[];
+}
+
+export type AgentQuestionStatus = 'pending' | 'answered' | 'skipped';
+
+export type AgentQuestionAnswers = Record<string, string | string[]>;
 
 export interface AgentActivity {
   id: string;
@@ -121,6 +147,16 @@ export interface AgentActivity {
   createdAt: number;
   collapsed?: boolean;
   streaming?: boolean;
+  questionTitle?: string;
+  questions?: AgentQuestionItem[];
+  questionStatus?: AgentQuestionStatus;
+  questionAnswers?: AgentQuestionAnswers;
+  planName?: string;
+  planOverview?: string;
+  planBody?: string;
+  planTodos?: AgentPlanTodo[];
+  planStatus?: AgentPlanStatus;
+  planUri?: string;
 }
 
 export interface AgentFollowUp {
@@ -554,11 +590,17 @@ export interface NexusAPI {
       model?: string | null;
       mode?: 'plan' | 'ask';
       continueSession?: boolean;
+      runToken: string;
     }) => Promise<void>;
     stop: (paneId: string) => void;
-    onData: (callback: (paneId: string, data: string) => void) => () => void;
+    onData: (
+      callback: (paneId: string, data: string, runToken: string) => void,
+    ) => () => void;
     onDone: (
-      callback: (paneId: string, payload: { code: number; error?: string }) => void,
+      callback: (
+        paneId: string,
+        payload: { code: number; error?: string; runToken: string },
+      ) => void,
     ) => () => void;
   };
   dialog: {

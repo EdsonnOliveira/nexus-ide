@@ -140,12 +140,15 @@ function SidebarVercelDeployCardComponent({ deployment, onDismiss }: SidebarVerc
   );
 
   const cardClassName = `sidebar-vercel-deploy-card app-button--enter${canCopyLogs ? ` sidebar-vercel-deploy-card--copyable app-button${logsCopied ? ' sidebar-vercel-deploy-card--copied app-button--enter' : ''}` : ''}`;
+  const cardTitle = canCopyLogs
+    ? 'Copiar logs do deploy'
+    : `${deployment.projectName} · ${statusLabel}`;
 
   return (
     <>
       <section
         className={cardClassName}
-        title={canCopyLogs ? 'Copiar logs do deploy' : undefined}
+        title={cardTitle}
         onClick={canCopyLogs ? copyLogs : undefined}
       >
       <div className='sidebar-vercel-deploy-card__header'>

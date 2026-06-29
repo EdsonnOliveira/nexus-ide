@@ -1,6 +1,20 @@
-import type { AgentActivity, AgentTurn, AgentTurnSummary, AgentTurnSummaryFileRef } from '@/types';
+import type {
+  AgentActivity,
+  AgentPlanTodo,
+  AgentQuestionItem,
+  AgentQuestionOption,
+  AgentTurn,
+  AgentTurnSummary,
+  AgentTurnSummaryFileRef,
+} from '@/types';
 import { isAgentTurnSummaryVisible } from '@/utils/agentTurnSummary';
 import { sanitizeResponseText } from '@/utils/agentTranscriptParser';
+import { ensureOtherOption } from '@/utils/agentQuestionPrompt';
+import {
+  deduplicatePlanResponseActivities,
+  normalizePlanTodos,
+  parsePlanTodosFromMarkdown,
+} from '@/utils/agentPlanPrompt';
 
 export interface AgentStreamJsonUsage {
   inputTokens: number;
@@ -28,6 +42,10 @@ export interface AgentStreamJsonParserState {
   pendingResponseText: string;
   pendingUsage: AgentStreamJsonUsage | null;
   shouldFinalize: boolean;
+  pendingQuestion: boolean;
+  questionActivityId: string | null;
+  pendingPlan: boolean;
+  planActivityId: string | null;
 }
 
 export interface StreamJsonTurnUpdate {
@@ -72,6 +90,10 @@ export function createAgentStreamJsonParserState(): AgentStreamJsonParserState {
     pendingResponseText: '',
     pendingUsage: null,
     shouldFinalize: false,
+    pendingQuestion: false,
+    questionActivityId: null,
+    pendingPlan: false,
+    planActivityId: null,
   };
 }
 
@@ -249,12 +271,304 @@ function captureResponseLeadBeforeTools(state: AgentStreamJsonParserState): void
   }
 }
 
+function normalizeQuestionOption(raw: unknown): AgentQuestionOption | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const option = raw as Record<string, unknown>;
+  const id = typeof option.id === 'string' ? option.id.trim() : '';
+  const label = typeof option.label === 'string' ? option.label.trim() : '';
+
+  if (!id || !label) {
+    return null;
+  }
+
+  return { id, label };
+}
+
+function normalizeQuestionItem(raw: unknown): AgentQuestionItem | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const item = raw as Record<string, unknown>;
+  const id = typeof item.id === 'string' ? item.id.trim() : '';
+  const prompt = typeof item.prompt === 'string' ? item.prompt.trim() : '';
+
+  if (!id || !prompt) {
+    return null;
+  }
+
+  const allowMultiple =
+    item.allowMultiple === true ||
+    item.allow_multiple === true ||
+    item.allowMultiple === 'true' ||
+    item.allow_multiple === 'true';
+
+  const rawOptions = Array.isArray(item.options) ? item.options : [];
+  const options = rawOptions
+    .map((entry) => normalizeQuestionOption(entry))
+    .filter((entry): entry is AgentQuestionOption => Boolean(entry));
+
+  return {
+    id,
+    prompt,
+    ...(allowMultiple ? { allowMultiple: true } : {}),
+    ...(options.length > 0 ? { options: ensureOtherOption(options) } : {}),
+  };
+}
+
+function extractAskQuestionArgs(toolCall: Record<string, unknown>): {
+  title?: string;
+  questions: AgentQuestionItem[];
+} | null {
+  const askQuestionToolCall = toolCall.askQuestionToolCall as Record<string, unknown> | undefined;
+  const askQuestion = toolCall.askQuestion as Record<string, unknown> | undefined;
+  const payload = askQuestionToolCall ?? askQuestion;
+
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const args = (payload.args ?? payload) as Record<string, unknown>;
+  const title = typeof args.title === 'string' ? args.title.trim() : undefined;
+  const rawQuestions = Array.isArray(args.questions) ? args.questions : [];
+  const questions = rawQuestions
+    .map((entry) => normalizeQuestionItem(entry))
+    .filter((entry): entry is AgentQuestionItem => Boolean(entry));
+
+  if (questions.length === 0) {
+    return null;
+  }
+
+  return {
+    ...(title ? { title } : {}),
+    questions,
+  };
+}
+
+function upsertQuestionActivity(
+  state: AgentStreamJsonParserState,
+  payload: { title?: string; questions: AgentQuestionItem[] },
+): void {
+  settleThought(state);
+  state.pendingQuestion = true;
+
+  const label = payload.title?.trim() || payload.questions[0]?.prompt.trim() || 'Pergunta';
+
+  if (state.questionActivityId) {
+    state.activities = state.activities.map((entry) =>
+      entry.id === state.questionActivityId
+        ? {
+            ...entry,
+            label,
+            questionTitle: payload.title,
+            questions: payload.questions,
+            questionStatus: 'pending',
+          }
+        : entry,
+    );
+    return;
+  }
+
+  const question = createActivity('question', label, {
+    questionTitle: payload.title,
+    questions: payload.questions,
+    questionStatus: 'pending',
+  });
+
+  state.questionActivityId = question.id;
+  state.activities = [...state.activities.filter((entry) => entry.kind !== 'question'), question];
+}
+
+function readPlanStringField(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return '';
+}
+
+function extractCreatePlanArgs(toolCall: Record<string, unknown>): {
+  planName?: string;
+  planOverview?: string;
+  planBody: string;
+  planTodos: AgentPlanTodo[];
+  planUri?: string;
+} | null {
+  const createPlanToolCall = toolCall.createPlanToolCall as Record<string, unknown> | undefined;
+  const createPlan = toolCall.createPlan as Record<string, unknown> | undefined;
+  const payload = createPlanToolCall ?? createPlan;
+
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const args = (payload.args ?? payload) as Record<string, unknown>;
+  const planName = readPlanStringField(args, ['name', 'title']) || undefined;
+  const planOverview = readPlanStringField(args, ['overview', 'description']) || undefined;
+  const rawPlan = args.plan;
+  const planBody =
+    typeof rawPlan === 'string'
+      ? rawPlan.trim()
+      : Array.isArray(rawPlan)
+        ? rawPlan.map((entry) => String(entry)).join('\n').trim()
+        : '';
+  let planTodos = normalizePlanTodos(args.todos);
+
+  if (planTodos.length === 0 && planBody) {
+    planTodos = parsePlanTodosFromMarkdown(planBody);
+  }
+
+  const result = payload.result as Record<string, unknown> | undefined;
+  const success = result?.success as Record<string, unknown> | undefined;
+  const planUri =
+    readPlanStringField(result ?? {}, ['planUri', 'plan_uri']) ||
+    readPlanStringField(success ?? {}, ['planUri', 'plan_uri']) ||
+    undefined;
+
+  if (!planBody && !planOverview && !planName && !planUri) {
+    return null;
+  }
+
+  return {
+    ...(planName ? { planName } : {}),
+    ...(planOverview ? { planOverview } : {}),
+    planBody,
+    planTodos,
+    ...(planUri ? { planUri } : {}),
+  };
+}
+
+function upsertPlanActivity(
+  state: AgentStreamJsonParserState,
+  payload: {
+    planName?: string;
+    planOverview?: string;
+    planBody: string;
+    planTodos: AgentPlanTodo[];
+    planUri?: string;
+  },
+): void {
+  settleThought(state);
+  state.pendingPlan = true;
+
+  const label = payload.planName?.trim() || payload.planOverview?.trim() || 'Plano';
+
+  if (state.planActivityId) {
+    state.activities = state.activities.map((entry) =>
+      entry.id === state.planActivityId
+        ? {
+            ...entry,
+            label,
+            planName: payload.planName,
+            planOverview: payload.planOverview,
+            planBody: payload.planBody,
+            planTodos: payload.planTodos,
+            planUri: payload.planUri,
+            planStatus: 'pending',
+          }
+        : entry,
+    );
+    return;
+  }
+
+  const plan = createActivity('plan', label, {
+    planName: payload.planName,
+    planOverview: payload.planOverview,
+    planBody: payload.planBody,
+    planTodos: payload.planTodos,
+    planUri: payload.planUri,
+    planStatus: 'pending',
+  });
+
+  state.planActivityId = plan.id;
+  state.activities = [...state.activities.filter((entry) => entry.kind !== 'plan'), plan];
+}
+
+function isRenderableStreamJsonActivity(entry: AgentActivity): boolean {
+  if (entry.kind === 'question') {
+    return Boolean(entry.questions && entry.questions.length > 0);
+  }
+
+  if (entry.kind === 'plan') {
+    return Boolean(
+      entry.planBody?.trim() ||
+        entry.planOverview?.trim() ||
+        entry.planName?.trim() ||
+        entry.planUri?.trim(),
+    );
+  }
+
+  if (entry.kind === 'response') {
+    return sanitizeResponseText(entry.label).trim().length > 0;
+  }
+
+  return false;
+}
+
+export function hasPendingAgentPlanFromActivities(activities: AgentActivity[]): boolean {
+  return activities.some((entry) => entry.kind === 'plan' && entry.planStatus === 'pending');
+}
+
+export function hasPendingAgentQuestionFromActivities(activities: AgentActivity[]): boolean {
+  return activities.some(
+    (entry) => entry.kind === 'question' && entry.questionStatus === 'pending',
+  );
+}
+
+function trackFileMutationToolCall(
+  state: AgentStreamJsonParserState,
+  toolCall:
+    | {
+        args?: { path?: string };
+        result?: { success?: { path?: string; linesAdded?: number; linesRemoved?: number } };
+      }
+    | undefined,
+  fallbackDeletions = 0,
+): void {
+  if (!toolCall?.result?.success) {
+    return;
+  }
+
+  const success = toolCall.result.success;
+  const path = success.path ?? toolCall.args?.path ?? '';
+
+  trackEditedFile(
+    state,
+    path,
+    success.linesAdded ?? 0,
+    success.linesRemoved ?? fallbackDeletions,
+  );
+}
+
 function handleToolCallCompleted(state: AgentStreamJsonParserState, toolCall: unknown): void {
   if (!toolCall || typeof toolCall !== 'object') {
     return;
   }
 
   const payload = toolCall as Record<string, unknown>;
+  const askQuestionPayload = extractAskQuestionArgs(payload);
+
+  if (askQuestionPayload) {
+    return;
+  }
+
+  const createPlanPayload = extractCreatePlanArgs(payload);
+
+  if (createPlanPayload) {
+    if (createPlanPayload.planUri || createPlanPayload.planBody || createPlanPayload.planOverview) {
+      upsertPlanActivity(state, createPlanPayload);
+    }
+
+    return;
+  }
+
   const editToolCall = payload.editToolCall as
     | {
         args?: { path?: string };
@@ -263,10 +577,7 @@ function handleToolCallCompleted(state: AgentStreamJsonParserState, toolCall: un
     | undefined;
 
   if (editToolCall?.result?.success) {
-    const success = editToolCall.result.success;
-    const path = success.path ?? editToolCall.args?.path ?? '';
-
-    trackEditedFile(state, path, success.linesAdded ?? 0, success.linesRemoved ?? 0);
+    trackFileMutationToolCall(state, editToolCall);
     return;
   }
 
@@ -278,15 +589,38 @@ function handleToolCallCompleted(state: AgentStreamJsonParserState, toolCall: un
     | undefined;
 
   if (writeToolCall?.result?.success) {
-    const success = writeToolCall.result.success;
-    const path = success.path ?? writeToolCall.args?.path ?? '';
-
-    trackEditedFile(state, path, success.linesAdded ?? 0, success.linesRemoved ?? 0);
+    trackFileMutationToolCall(state, writeToolCall);
     return;
   }
 
-  if (payload.shellToolCall) {
-    state.shellCommandCount += 1;
+  const applyAgentDiffToolCall = payload.applyAgentDiffToolCall as
+    | {
+        args?: { path?: string };
+        result?: { success?: { path?: string; linesAdded?: number; linesRemoved?: number } };
+      }
+    | undefined;
+
+  if (applyAgentDiffToolCall?.result?.success) {
+    trackFileMutationToolCall(state, applyAgentDiffToolCall);
+    return;
+  }
+
+  const deleteToolCall = payload.deleteToolCall as
+    | {
+        args?: { path?: string };
+        result?: { success?: { path?: string; linesAdded?: number; linesRemoved?: number } };
+      }
+    | undefined;
+
+  if (deleteToolCall?.result?.success) {
+    trackFileMutationToolCall(state, deleteToolCall, 1);
+    return;
+  }
+
+  if (payload.mcpToolCall || payload.shellToolCall) {
+    if (!payload.mcpToolCall) {
+      state.shellCommandCount += 1;
+    }
   }
 }
 
@@ -298,6 +632,20 @@ function handleToolCallStarted(state: AgentStreamJsonParserState, toolCall: unkn
   }
 
   const payload = toolCall as Record<string, unknown>;
+  const askQuestionPayload = extractAskQuestionArgs(payload);
+
+  if (askQuestionPayload) {
+    upsertQuestionActivity(state, askQuestionPayload);
+    return;
+  }
+
+  const createPlanPayload = extractCreatePlanArgs(payload);
+
+  if (createPlanPayload) {
+    upsertPlanActivity(state, createPlanPayload);
+    return;
+  }
+
   const readToolCall = payload.readToolCall as { args?: { path?: string } } | undefined;
 
   if (readToolCall?.args?.path) {
@@ -326,6 +674,11 @@ function handleToolCallStarted(state: AgentStreamJsonParserState, toolCall: unkn
     const path = grepToolCall.args.path?.trim();
     const label = path ? `Grep ${pattern} in ${basenamePath(path)}` : `Grep ${pattern}`;
     upsertFileRead(state, path ?? pattern, label);
+    return;
+  }
+
+  if (payload.mcpToolCall) {
+    state.shellCommandCount += 1;
   }
 }
 
@@ -398,7 +751,10 @@ function handleStreamJsonEvent(state: AgentStreamJsonParserState, event: Record<
     if (event.subtype === 'success') {
       const resultText = typeof event.result === 'string' ? event.result : state.pendingResponseText;
       upsertResponse(state, resultText, false);
-      state.shouldFinalize = true;
+
+      if (!state.pendingQuestion && !state.pendingPlan) {
+        state.shouldFinalize = true;
+      }
     }
   }
 }
@@ -549,14 +905,37 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
     ];
   }
 
-  activities = activities.filter(
-    (entry) => entry.kind === 'response' && sanitizeResponseText(entry.label).trim().length > 0,
-  );
+  activities = activities.filter((entry) => isRenderableStreamJsonActivity(entry));
+  activities = deduplicatePlanResponseActivities(activities);
 
   const summary = buildAgentTurnSummaryFromStreamJsonState(state);
 
   if (activities.length === 0 && isAgentTurnSummaryVisible(summary)) {
-    activities = [createActivity('response', 'Skill executada.')];
+    activities = [
+      createActivity(
+        'response',
+        state.responseLead?.trim() || summary?.responseLead?.trim() || 'Alterações aplicadas.',
+      ),
+    ];
+  } else if (activities.length === 0) {
+    activities = [
+      createActivity(
+        'response',
+        'O agent não retornou resposta. Verifique se o cursor-agent está instalado e tente novamente.',
+      ),
+    ];
+  } else if (
+    activities.length > 0 &&
+    !activities.some((entry) => entry.kind === 'response') &&
+    isAgentTurnSummaryVisible(summary)
+  ) {
+    activities = [
+      ...activities,
+      createActivity(
+        'response',
+        state.responseLead?.trim() || summary?.responseLead?.trim() || 'Alterações aplicadas.',
+      ),
+    ];
   }
 
   return {
@@ -586,4 +965,8 @@ export function resetAgentStreamJsonTurn(state: AgentStreamJsonParserState): voi
   state.pendingResponseText = '';
   state.pendingUsage = null;
   state.shouldFinalize = false;
+  state.pendingQuestion = false;
+  state.questionActivityId = null;
+  state.pendingPlan = false;
+  state.planActivityId = null;
 }

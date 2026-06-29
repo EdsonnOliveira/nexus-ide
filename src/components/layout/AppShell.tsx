@@ -28,12 +28,6 @@ const ProjectExplorerDrawer = lazy(() =>
   })),
 );
 
-const ProjectGitDrawer = lazy(() =>
-  import('@/components/git/ProjectGitDrawer').then((module) => ({
-    default: module.ProjectGitDrawer,
-  })),
-);
-
 const ProjectAutomationsDrawer = lazy(() =>
   import('@/components/automations/ProjectAutomationsDrawer').then((module) => ({
     default: module.ProjectAutomationsDrawer,
@@ -267,15 +261,13 @@ function AppShellComponent() {
           <Suspense
             fallback={
               <div className='project-explorer__loading'>
-                {sidePanel === 'git'
-                  ? 'Carregando Git...'
-                  : sidePanel === 'passwords'
-                    ? 'Carregando formulário...'
-                    : sidePanel === 'automations'
-                      ? 'Carregando automações...'
-                      : sidePanel === 'tasks'
-                        ? 'Carregando tarefas...'
-                        : 'Carregando explorador...'}
+                {sidePanel === 'passwords'
+                  ? 'Carregando formulário...'
+                  : sidePanel === 'automations'
+                    ? 'Carregando automações...'
+                    : sidePanel === 'tasks'
+                      ? 'Carregando tarefas...'
+                      : 'Carregando explorador...'}
               </div>
             }
           >
@@ -286,12 +278,6 @@ function AppShellComponent() {
                 onOpenFile={handleOpenExplorerFile}
                 onOpenFileCode={handleOpenExplorerFileCode}
                 onSelectPane={selectPane}
-              />
-            ) : null}
-            {sidePanel === 'git' ? (
-              <ProjectGitDrawer
-                projectId={activeProject.id}
-                rootPath={activeProject.path}
                 onOpenDiff={handleOpenGitDiff}
               />
             ) : null}

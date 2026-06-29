@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useTerminalPasteImageStore } from '@/stores/useTerminalPasteImageStore';
-import type { AgentActivity, AgentFollowUp, AgentPromptAttachment, AgentPromptSubmitOptions, AgentTab, AgentTurn, AgentUserMessage } from '@/types';
+import type { AgentActivity, AgentFollowUp, AgentPromptAttachment, AgentPromptSubmitOptions, AgentQuestionAnswers, AgentTab, AgentTurn, AgentUserMessage } from '@/types';
 import type { AutomationAgentMode } from '@/constants/agentModes';
 import { registerAgentPaneHandlers } from '@/utils/agentPaneRegistry';
 import { cliAgentToTerminalAgent, resolveAgentTabCli } from '@/utils/agentTabHelpers';
@@ -41,6 +41,18 @@ import {
   feedAgentStreamJsonChunk,
   finalizeStreamJsonTurn,
 } from '@/utils/agentStreamJsonParser';
+import {
+  buildAgentPlanImplementPrompt,
+  findPendingAgentPlanActivity,
+  hasPendingAgentPlan,
+  parsePlanTodosFromMarkdown,
+  resolvePlanBodyFromUri,
+} from '@/utils/agentPlanPrompt';
+import {
+  buildAgentQuestionAnswerPrompt,
+  hasPendingAgentQuestion,
+  isAgentQuestionAnswerComplete,
+} from '@/utils/agentQuestionPrompt';
 import { waitForActiveAgent, waitForAgentPaneReady } from '@/utils/waitForAgentPaneReady';
 import { createNexusCwdStreamParser } from '@/utils/terminalCwd';
 import {
@@ -152,6 +164,8 @@ export function useAgentPaneSession({
   const parserStateRef = useRef(createAgentTranscriptParserState());
   const streamJsonStateRef = useRef(createAgentStreamJsonParserState());
   const cursorAgentContinueRef = useRef(false);
+  const agentPrintRunActiveRef = useRef(false);
+  const agentPrintRunTokenRef = useRef('');
   const outputTailRef = useRef('');
   const onTurnsChangeRef = useRef(onTurnsChange);
   const onPtyCreatedRef = useRef(onPtyCreated);
@@ -208,6 +222,36 @@ export function useAgentPaneSession({
     () => turnsRef.current.some((turn) => turn.running),
     [turnsRevision, tab.turns],
   );
+  const hasPendingQuestion = useMemo(() => {
+    const turns = turnsRef.current;
+    const latestTurn = turns[turns.length - 1];
+
+    if (!latestTurn || latestTurn.running) {
+      return false;
+    }
+
+    return hasPendingAgentQuestion(latestTurn.activities);
+  }, [turnsRevision, tab.turns]);
+  const hasPendingPlan = useMemo(() => {
+    const turns = turnsRef.current;
+    const latestTurn = turns[turns.length - 1];
+
+    if (!latestTurn || latestTurn.running || hasPendingAgentQuestion(latestTurn.activities)) {
+      return false;
+    }
+
+    return hasPendingAgentPlan(latestTurn.activities);
+  }, [turnsRevision, tab.turns]);
+  const pendingPlanActivity = useMemo(() => {
+    const turns = turnsRef.current;
+    const latestTurn = turns[turns.length - 1];
+
+    if (!latestTurn || latestTurn.running) {
+      return undefined;
+    }
+
+    return findPendingAgentPlanActivity(latestTurn.activities);
+  }, [turnsRevision, tab.turns]);
   const isAwaiting = useTerminalSessionStore((state) =>
     Boolean(state.awaitingResponseByPane[tab.id]),
   );
@@ -261,7 +305,34 @@ export function useAgentPaneSession({
   }, []);
 
   useEffect(() => {
-    turnsRef.current = tab.turns ?? [];
+    const incoming = tab.turns ?? [];
+
+    if (incoming.length === 0) {
+      cursorAgentContinueRef.current = false;
+      streamJsonStateRef.current = createAgentStreamJsonParserState();
+      turnsRef.current = incoming;
+      setTurnsRevision((revision) => revision + 1);
+      return;
+    }
+
+    const localTurns = turnsRef.current;
+    const localRunning = localTurns.some((turn) => turn.running);
+    const incomingRunning = incoming.some((turn) => turn.running);
+
+    if (agentPrintRunActiveRef.current && localRunning) {
+      return;
+    }
+
+    if (
+      localRunning &&
+      !incomingRunning &&
+      incoming.length > 0 &&
+      incoming.length <= localTurns.length
+    ) {
+      return;
+    }
+
+    turnsRef.current = incoming;
     setTurnsRevision((revision) => revision + 1);
   }, [tab.turns]);
 
@@ -410,6 +481,9 @@ export function useAgentPaneSession({
       }
 
       streamJsonStateRef.current = createAgentStreamJsonParserState();
+      streamJsonStateRef.current.activities = createInitialTurnActivities();
+
+      const hasCompletedTurn = turnsRef.current.some((turn) => !turn.running && !turn.pendingFollowUp);
 
       if (shouldMarkAgentAwaiting(paneId, fullPrompt, session.activeAgentByPane)) {
         session.setLastCommand(paneId, fullPrompt);
@@ -420,19 +494,23 @@ export function useAgentPaneSession({
       }
 
       session.setAgentBusy(paneId, true);
+      agentPrintRunActiveRef.current = true;
+      const runToken = crypto.randomUUID();
+      agentPrintRunTokenRef.current = runToken;
 
       void window.nexus.agentPrint.start({
         paneId,
-        cwd: cwdRef.current,
+        cwd: cwdRef.current?.trim() || projectPath,
         prompt: fullPrompt,
         model,
         mode,
-        continueSession: cursorAgentContinueRef.current,
+        continueSession: cursorAgentContinueRef.current && hasCompletedTurn,
+        runToken,
       });
 
       return true;
     },
-    [],
+    [projectPath],
   );
 
   const clearContextUsageReportTimer = useCallback(() => {
@@ -636,6 +714,8 @@ export function useAgentPaneSession({
 
     if (ptyId) {
       if (usesStreamJson) {
+        agentPrintRunActiveRef.current = false;
+        agentPrintRunTokenRef.current = '';
         window.nexus.agentPrint.stop(paneId);
       }
 
@@ -1046,6 +1126,220 @@ export function useAgentPaneSession({
     ],
   );
 
+  const submitQuestionAnswers = useCallback(
+    async (activityId: string, answers: AgentQuestionAnswers): Promise<boolean> => {
+      const turns = turnsRef.current;
+      const latestTurn = turns[turns.length - 1];
+
+      if (!latestTurn || latestTurn.running || turns.some((turn) => turn.running)) {
+        return false;
+      }
+
+      const activity = latestTurn.activities.find((entry) => entry.id === activityId);
+
+      if (
+        !activity ||
+        activity.kind !== 'question' ||
+        activity.questionStatus !== 'pending' ||
+        !activity.questions ||
+        !isAgentQuestionAnswerComplete(activity.questions, answers)
+      ) {
+        return false;
+      }
+
+      const prompt = buildAgentQuestionAnswerPrompt(activity.questions, answers);
+
+      if (!prompt.trim()) {
+        return false;
+      }
+
+      const nextTurns = turns.map((turn, index) => {
+        if (index !== turns.length - 1) {
+          return turn;
+        }
+
+        return {
+          ...turn,
+          activities: turn.activities.map((entry) =>
+            entry.id === activityId
+              ? {
+                  ...entry,
+                  questionStatus: 'answered' as const,
+                  questionAnswers: answers,
+                }
+              : entry,
+          ),
+        };
+      });
+
+      persistTurns(nextTurns);
+
+      return submitPrompt(prompt);
+    },
+    [persistTurns, submitPrompt],
+  );
+
+  const acceptPlan = useCallback(
+    async (activityId: string): Promise<boolean> => {
+      const turns = turnsRef.current;
+      const latestTurn = turns[turns.length - 1];
+
+      if (!latestTurn || latestTurn.running || turns.some((turn) => turn.running)) {
+        return false;
+      }
+
+      const activity = latestTurn.activities.find((entry) => entry.id === activityId);
+
+      if (!activity || activity.kind !== 'plan' || activity.planStatus !== 'pending') {
+        return false;
+      }
+
+      let planBody = activity.planBody?.trim() ?? '';
+
+      if (!planBody && activity.planUri) {
+        const resolved = await resolvePlanBodyFromUri(activity.planUri);
+        planBody = resolved?.trim() ?? '';
+      }
+
+      if (!planBody) {
+        planBody = activity.planOverview?.trim() ?? '';
+      }
+
+      if (!planBody) {
+        return false;
+      }
+
+      const nextTurns = turns.map((turn, index) => {
+        if (index !== turns.length - 1) {
+          return turn;
+        }
+
+        return {
+          ...turn,
+          activities: turn.activities.map((entry) =>
+            entry.id === activityId
+              ? {
+                  ...entry,
+                  planStatus: 'building' as const,
+                  ...(entry.planBody ? {} : { planBody }),
+                }
+              : entry,
+          ),
+        };
+      });
+
+      persistTurns(nextTurns);
+      runCommand('/agent\n');
+
+      const submitted = await submitPrompt(buildAgentPlanImplementPrompt(planBody, activity.planName));
+
+      if (!submitted) {
+        persistTurns(
+          turns.map((turn, index) => {
+            if (index !== turns.length - 1) {
+              return turn;
+            }
+
+            return {
+              ...turn,
+              activities: turn.activities.map((entry) =>
+                entry.id === activityId ? { ...entry, planStatus: 'pending' as const } : entry,
+              ),
+            };
+          }),
+        );
+      }
+
+      return submitted;
+    },
+    [persistTurns, runCommand, submitPrompt],
+  );
+
+  const rejectPlan = useCallback(
+    (activityId: string): boolean => {
+      const turns = turnsRef.current;
+      const latestTurn = turns[turns.length - 1];
+
+      if (!latestTurn || latestTurn.running || turns.some((turn) => turn.running)) {
+        return false;
+      }
+
+      const activity = latestTurn.activities.find((entry) => entry.id === activityId);
+
+      if (!activity || activity.kind !== 'plan' || activity.planStatus !== 'pending') {
+        return false;
+      }
+
+      const nextTurns = turns.map((turn, index) => {
+        if (index !== turns.length - 1) {
+          return turn;
+        }
+
+        return {
+          ...turn,
+          activities: turn.activities.map((entry) =>
+            entry.id === activityId ? { ...entry, planStatus: 'rejected' as const } : entry,
+          ),
+        };
+      });
+
+      persistTurns(nextTurns);
+      return true;
+    },
+    [persistTurns],
+  );
+
+  useEffect(() => {
+    const turns = turnsRef.current;
+    const latestTurn = turns[turns.length - 1];
+
+    if (!latestTurn || latestTurn.running) {
+      return;
+    }
+
+    const pendingPlan = findPendingAgentPlanActivity(latestTurn.activities);
+
+    if (!pendingPlan?.planUri || pendingPlan.planBody?.trim()) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void resolvePlanBodyFromUri(pendingPlan.planUri).then((planBody) => {
+      if (cancelled || !planBody?.trim()) {
+        return;
+      }
+
+      const nextTurns = turnsRef.current.map((turn, index) => {
+        if (index !== turnsRef.current.length - 1) {
+          return turn;
+        }
+
+        return {
+          ...turn,
+          activities: turn.activities.map((entry) =>
+            entry.id === pendingPlan.id
+              ? {
+                  ...entry,
+                  planBody,
+                  planTodos:
+                    entry.planTodos && entry.planTodos.length > 0
+                      ? entry.planTodos
+                      : parsePlanTodosFromMarkdown(planBody),
+                }
+              : entry,
+          ),
+        };
+      });
+
+      persistTurns(nextTurns);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [persistTurns, pendingPlanActivity?.id, pendingPlanActivity?.planUri, turnsRevision, tab.turns]);
+
   const editAgentTurn = useCallback(
     (turnId: string): boolean => {
       const target = turnsRef.current.find((turn) => turn.id === turnId);
@@ -1080,6 +1374,18 @@ export function useAgentPaneSession({
     },
     [projectPath, runCommand, stopAgent],
   );
+
+  const cancelAgentTurnEdit = useCallback((): boolean => {
+    if (!editingTurnIdRef.current) {
+      return false;
+    }
+
+    editingTurnIdRef.current = null;
+    setEditingTurnId(null);
+    onRestoreDraftRef.current?.('');
+    useTerminalPasteImageStore.getState().clearPaneImages(paneIdRef.current);
+    return true;
+  }, []);
 
   const redoAgentTurn = useCallback(
     async (turnId: string) => {
@@ -1422,14 +1728,19 @@ export function useAgentPaneSession({
       return;
     }
 
-    const paneId = paneIdRef.current;
-
-    const unsubscribeData = window.nexus.agentPrint.onData((incomingPaneId, data) => {
-      if (incomingPaneId !== paneId) {
+    const unsubscribeData = window.nexus.agentPrint.onData((incomingPaneId, data, runToken) => {
+      if (incomingPaneId !== paneIdRef.current) {
         return;
       }
 
-      if (!turnsRef.current.some((turn) => turn.running)) {
+      if (runToken !== agentPrintRunTokenRef.current) {
+        return;
+      }
+
+      if (
+        !agentPrintRunActiveRef.current &&
+        !turnsRef.current.some((turn) => turn.running)
+      ) {
         return;
       }
 
@@ -1437,13 +1748,25 @@ export function useAgentPaneSession({
     });
 
     const unsubscribeDone = window.nexus.agentPrint.onDone((incomingPaneId, payload) => {
-      if (incomingPaneId !== paneId) {
+      if (incomingPaneId !== paneIdRef.current) {
+        return;
+      }
+
+      if (payload.runToken !== agentPrintRunTokenRef.current) {
+        return;
+      }
+
+      agentPrintRunActiveRef.current = false;
+
+      if (applyStreamJsonChunk('')) {
         return;
       }
 
       if (!turnsRef.current.some((turn) => turn.running)) {
         return;
       }
+
+      const paneId = paneIdRef.current;
 
       if (payload.error && !streamJsonStateRef.current.shouldFinalize) {
         updateActiveTurn((turn) => ({
@@ -1477,7 +1800,9 @@ export function useAgentPaneSession({
                 !(entry.kind === 'thought' && !entry.label.trim()) &&
                 entry.kind !== 'live_status',
             ),
-            createFailedPromptActivity('Não foi possível executar a skill.'),
+            createFailedPromptActivity(
+              payload.error ?? 'Não foi possível executar o agent. Verifique se o cursor-agent está instalado.',
+            ),
           ],
         }));
         finalizeActiveTurn();
@@ -1506,6 +1831,7 @@ export function useAgentPaneSession({
     applyStreamJsonChunk,
     finalizeActiveTurn,
     finalizeStreamJsonTurnFromEvent,
+    tab.id,
     updateActiveTurn,
     usesStreamJson,
   ]);
@@ -1591,11 +1917,18 @@ export function useAgentPaneSession({
     runCommand,
     redoAgentTurn,
     editAgentTurn,
+    cancelAgentTurnEdit,
     editingTurnId,
     followUps,
     editFollowUp,
     sendFollowUpNow,
     removeFollowUp,
+    submitQuestionAnswers,
+    hasPendingQuestion,
+    acceptPlan,
+    rejectPlan,
+    hasPendingPlan,
+    pendingPlanActivity,
     isBusy,
     isBootstrapping,
     isSubmitting,

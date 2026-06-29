@@ -79,24 +79,33 @@ const nexusApi = {
       model?: string | null;
       mode?: 'plan' | 'ask';
       continueSession?: boolean;
+      runToken: string;
     }): Promise<void> => ipcRenderer.invoke('agent:printStart', options),
     stop: (paneId: string): void => {
       ipcRenderer.send('agent:printStop', paneId);
     },
-    onData: (callback: (paneId: string, data: string) => void): (() => void) => {
-      const listener = (_: Electron.IpcRendererEvent, payload: { paneId: string; data: string }) => {
-        callback(payload.paneId, payload.data);
+    onData: (
+      callback: (paneId: string, data: string, runToken: string) => void,
+    ): (() => void) => {
+      const listener = (
+        _: Electron.IpcRendererEvent,
+        payload: { paneId: string; data: string; runToken: string },
+      ) => {
+        callback(payload.paneId, payload.data, payload.runToken);
       };
 
       ipcRenderer.on('agent:printData', listener);
       return () => ipcRenderer.off('agent:printData', listener);
     },
     onDone: (
-      callback: (paneId: string, payload: { code: number; error?: string }) => void,
+      callback: (
+        paneId: string,
+        payload: { code: number; error?: string; runToken: string },
+      ) => void,
     ): (() => void) => {
       const listener = (
         _: Electron.IpcRendererEvent,
-        payload: { paneId: string; code: number; error?: string },
+        payload: { paneId: string; code: number; error?: string; runToken: string },
       ) => {
         callback(payload.paneId, payload);
       };

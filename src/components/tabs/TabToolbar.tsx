@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FolderTree, GitBranch, ListTodo, Lock, Plus, Search, Workflow } from 'lucide-react';
+import { FolderTree, ListTodo, Lock, Plus, Search, Workflow } from 'lucide-react';
 import { GLOBAL_SEARCH_NAME } from '@/constants/globalSearch';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
@@ -38,7 +38,6 @@ function TabToolbarComponent() {
   const projects = useProjectStore((state) => state.projects);
   const sidePanel = useProjectStore((state) => state.sidePanel);
   const toggleExplorer = useProjectStore((state) => state.toggleExplorer);
-  const toggleGitPanel = useProjectStore((state) => state.toggleGitPanel);
   const togglePasswords = useProjectStore((state) => state.togglePasswords);
   const toggleAutomations = useProjectStore((state) => state.toggleAutomations);
   const toggleTasks = useProjectStore((state) => state.toggleTasks);
@@ -112,19 +111,11 @@ function TabToolbarComponent() {
         </button>
         <button
           type='button'
-          className={`tool-btn${sidePanel === 'explorer' ? ' tool-btn--active' : ''}`}
+          className={`tool-btn tool-btn--explorer${sidePanel === 'explorer' ? ' tool-btn--active' : ''}`}
           aria-label='Explorador de arquivos'
           onClick={toggleExplorer}
         >
           <FolderTree size={15} />
-        </button>
-        <button
-          type='button'
-          className={`tool-btn tool-btn--git${sidePanel === 'git' ? ' tool-btn--active' : ''}`}
-          aria-label='Controle de versão'
-          onClick={toggleGitPanel}
-        >
-          <GitBranch size={15} />
           {gitChangeCount > 0 ? (
             <span className='tool-btn__badge' aria-hidden='true'>
               {gitChangeCount > 99 ? '99+' : gitChangeCount}

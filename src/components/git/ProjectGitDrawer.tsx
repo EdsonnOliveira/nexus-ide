@@ -7,6 +7,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -14,7 +15,6 @@ import {
   CheckCheck,
   ChevronDown,
   Download,
-  File,
   GitBranch,
   MoreHorizontal,
   RefreshCw,
@@ -25,6 +25,10 @@ import {
 import { GitDiscardConfirmDialog } from '@/components/git/GitDiscardConfirmDialog';
 import { AgentGitPromptLabel, AgentGitPromptModal } from '@/components/git/AgentGitPromptChip';
 import { ExplorerEntryContextMenu } from '@/components/explorer/ExplorerEntryContextMenu';
+import {
+  ExplorerDirectoryIcon,
+  ExplorerFileIcon,
+} from '@/components/explorer/ExplorerTreeIcon';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import { AppCheckbox } from '@/components/overlay/AppCheckbox';
 import { EXPLORER_ENTRY_DRAG_MIME } from '@/constants/explorerDrag';
@@ -237,6 +241,26 @@ function GitMoreMenu({
   );
 }
 
+function resolveGitChangeEntry(path: string): { name: string; isDirectory: boolean } {
+  const normalized = path.replace(/\\/g, '/');
+  const isDirectory = normalized.endsWith('/');
+  const trimmed = isDirectory ? normalized.slice(0, -1) : normalized;
+  const segments = trimmed.split('/').filter(Boolean);
+  const name = segments[segments.length - 1] ?? trimmed;
+
+  return { name, isDirectory };
+}
+
+const GitChangeEntryIcon = memo(function GitChangeEntryIconComponent({ path }: { path: string }) {
+  const { name, isDirectory } = useMemo(() => resolveGitChangeEntry(path), [path]);
+
+  return (
+    <span className='git-scm__file-icon' aria-hidden>
+      {isDirectory ? <ExplorerDirectoryIcon folderName={name} /> : <ExplorerFileIcon name={name} />}
+    </span>
+  );
+});
+
 interface GitChangeRowProps {
   change: GitFlatChange;
   absolutePath: string | null;
@@ -356,7 +380,7 @@ const GitChangeRow = memo(function GitChangeRowComponent({
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
-      <File size={14} strokeWidth={2} className='git-scm__file-icon' aria-hidden />
+      <GitChangeEntryIcon path={change.path} />
       <span className='git-scm__file-path app-button__label'>{change.path}</span>
       <span className='git-scm__file-stats'>
         {change.additions > 0 ? (
@@ -395,13 +419,42 @@ interface GitChangeContextMenuState {
 interface ProjectGitDrawerProps {
   projectId: string;
   rootPath: string;
+  embedded?: boolean;
   onOpenDiff: (
     filePath: string,
     options: { staged: boolean; untracked?: boolean; repoPath?: string; agentPrompt?: string },
   ) => void;
 }
 
-function ProjectGitDrawerComponent({ projectId, rootPath, onOpenDiff }: ProjectGitDrawerProps) {
+function GitDrawerShell({
+  embedded = false,
+  className = '',
+  children,
+}: {
+  embedded?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  if (embedded) {
+    return <div className={`git-panel git-panel--embedded ${className}`.trim()}>{children}</div>;
+  }
+
+  return (
+    <aside
+      className={`project-explorer-drawer git-panel ${className}`.trim()}
+      aria-label='Controle de versão'
+    >
+      {children}
+    </aside>
+  );
+}
+
+function ProjectGitDrawerComponent({
+  projectId,
+  rootPath,
+  embedded = false,
+  onOpenDiff,
+}: ProjectGitDrawerProps) {
   const project = useProjectStore((state) => state.projects.find((item) => item.id === projectId) ?? null);
   const activeAgentByPane = useTerminalSessionStore((state) => state.activeAgentByPane);
   const { selectPane } = useTabActions();
@@ -827,35 +880,35 @@ function ProjectGitDrawerComponent({ projectId, rootPath, onOpenDiff }: ProjectG
 
   if (discovering || (loading && !status && selectedRepoPath)) {
     return (
-      <aside className='project-explorer-drawer git-panel' aria-label='Controle de versão'>
+      <GitDrawerShell embedded={embedded}>
         <div className='git-panel__loading'>Carregando Git...</div>
-      </aside>
+      </GitDrawerShell>
     );
   }
 
   if (discoveredRepos.length === 0) {
     return (
-      <aside className='project-explorer-drawer git-panel' aria-label='Controle de versão'>
+      <GitDrawerShell embedded={embedded}>
         <EmptyState
           icon={GitBranch}
           message='Nenhum repositório Git encontrado neste projeto.'
           compact
           className='git-panel__empty'
         />
-      </aside>
+      </GitDrawerShell>
     );
   }
 
   if (!status?.repo.isRepo) {
     return (
-      <aside className='project-explorer-drawer git-panel' aria-label='Controle de versão'>
+      <GitDrawerShell embedded={embedded}>
         <EmptyState
           icon={GitBranch}
           message='Este projeto não é um repositório Git.'
           compact
           className='git-panel__empty'
         />
-      </aside>
+      </GitDrawerShell>
     );
   }
 
@@ -864,7 +917,7 @@ function ProjectGitDrawerComponent({ projectId, rootPath, onOpenDiff }: ProjectG
   const currentBranch = status.repo.branch ?? 'HEAD';
 
   return (
-    <aside className='project-explorer-drawer git-panel git-scm' aria-label='Controle de versão'>
+    <GitDrawerShell embedded={embedded} className='git-scm'>
       <div className='git-scm__toolbar'>
         {hasMultipleRepos ? (
           <button
@@ -1141,7 +1194,7 @@ function ProjectGitDrawerComponent({ projectId, rootPath, onOpenDiff }: ProjectG
           onCopyRelativePath={handleCopyRelativePath}
         />
       ) : null}
-    </aside>
+    </GitDrawerShell>
   );
 }
 

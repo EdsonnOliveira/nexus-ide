@@ -1,11 +1,13 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const packageJson = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+const version = packageJson.version;
 const appPath = path.join(root, 'release/mac-universal/Nexus IDE.app');
-const dmgPath = path.join(root, 'release/Nexus IDE-1.0.0-universal.dmg');
+const dmgPath = path.join(root, `release/Nexus IDE-${version}-universal.dmg`);
 
 function run(command, args) {
   execFileSync(command, args, { stdio: 'inherit' });

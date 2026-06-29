@@ -42,7 +42,9 @@ function hasMissingBadgeColorIndex(tabs: TabBarItem[]): boolean {
   return false;
 }
 
-export type SidePanel = 'explorer' | 'git' | 'passwords' | 'automations' | 'tasks' | null;
+export type ExplorerView = 'tree' | 'git';
+
+export type SidePanel = 'explorer' | 'passwords' | 'automations' | 'tasks' | null;
 
 interface ProjectStoreState {
   projects: Project[];
@@ -52,6 +54,7 @@ interface ProjectStoreState {
   selectingProjectId: string | null;
   sidebarCollapsed: boolean;
   sidePanel: SidePanel;
+  explorerView: ExplorerView;
   sidebarVideoSession: SidebarVideoSession | null;
   sidebarVideoLastLink: string | null;
   initialized: boolean;
@@ -68,11 +71,12 @@ interface ProjectStoreState {
   moveProjectToWorkspace: (projectId: string, workspaceId: string) => Promise<void>;
   toggleSidebar: () => Promise<void>;
   toggleExplorer: () => void;
-  toggleGitPanel: () => void;
+  toggleExplorerGit: () => void;
+  openExplorerGit: () => void;
   togglePasswords: () => void;
   toggleAutomations: () => void;
   toggleTasks: () => void;
-  setSidePanel: (panel: SidePanel) => void;
+  setSidePanel: (panel: SidePanel | 'git') => void;
   startSidebarVideoSession: (session: SidebarVideoSession) => Promise<void>;
   closeSidebarVideoSession: () => Promise<void>;
   setActiveProjectWhatsAppLink: (link: string | null) => Promise<void>;
@@ -276,6 +280,7 @@ async function performSelectProject(
     set({
       activeProjectId: id,
       sidePanel: null,
+      explorerView: 'tree',
       selectingProjectId: null,
     });
 
@@ -306,6 +311,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   selectingProjectId: null,
   sidebarCollapsed: false,
   sidePanel: null,
+  explorerView: 'tree',
   sidebarVideoSession: null,
   sidebarVideoLastLink: null,
   initialized: false,
@@ -564,11 +570,26 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   },
   toggleExplorer: () => {
     const current = get().sidePanel;
-    set({ sidePanel: current === 'explorer' ? null : 'explorer' });
+
+    if (current === 'explorer') {
+      set({ sidePanel: null, explorerView: 'tree' });
+      return;
+    }
+
+    set({ sidePanel: 'explorer', explorerView: 'tree' });
   },
-  toggleGitPanel: () => {
-    const current = get().sidePanel;
-    set({ sidePanel: current === 'git' ? null : 'git' });
+  toggleExplorerGit: () => {
+    const { sidePanel, explorerView } = get();
+
+    if (sidePanel === 'explorer' && explorerView === 'git') {
+      set({ explorerView: 'tree' });
+      return;
+    }
+
+    set({ sidePanel: 'explorer', explorerView: 'git' });
+  },
+  openExplorerGit: () => {
+    set({ sidePanel: 'explorer', explorerView: 'git' });
   },
   togglePasswords: () => {
     const current = get().sidePanel;
@@ -583,7 +604,15 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     set({ sidePanel: current === 'tasks' ? null : 'tasks' });
   },
   setSidePanel: (panel) => {
-    set({ sidePanel: panel });
+    if (panel === 'git') {
+      set({ sidePanel: 'explorer', explorerView: 'git' });
+      return;
+    }
+
+    set({
+      sidePanel: panel,
+      explorerView: panel === 'explorer' ? get().explorerView : 'tree',
+    });
   },
   startSidebarVideoSession: async (session) => {
     await window.nexus.projects.setSidebarVideoSession(toPersistedSidebarVideoSession(session));
