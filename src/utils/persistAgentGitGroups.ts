@@ -19,8 +19,60 @@ export function hydrateAgentGitGroupsFromProjects(projects: Project[]): void {
   useAgentGitChangeStore.setState({ groupsByProject });
 }
 
+function clearPendingAgentGitFlushTimer(): void {
+  if (flushTimer !== null) {
+    window.clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+}
+
+function collectAgentGitProjectIds(projects: Project[]): Set<string> {
+  const projectIds = new Set<string>();
+
+  for (const project of projects) {
+    projectIds.add(project.id);
+  }
+
+  const groupsByProject = useAgentGitChangeStore.getState().groupsByProject;
+
+  for (const projectId of Object.keys(groupsByProject)) {
+    projectIds.add(projectId);
+  }
+
+  for (const projectId of pendingProjectIds) {
+    projectIds.add(projectId);
+  }
+
+  return projectIds;
+}
+
+export async function flushAgentGitGroupsToDisk(projects: Project[]): Promise<void> {
+  clearPendingAgentGitFlushTimer();
+
+  const projectIds = collectAgentGitProjectIds(projects);
+  pendingProjectIds.clear();
+
+  if (projectIds.size === 0) {
+    return;
+  }
+
+  const groupsByProject = useAgentGitChangeStore.getState().groupsByProject;
+
+  for (const projectId of projectIds) {
+    const project = projects.find((entry) => entry.id === projectId);
+
+    if (!project) {
+      continue;
+    }
+
+    await window.nexus.projects.update(projectId, {
+      agentGitGroups: groupsByProject[projectId] ?? [],
+    });
+  }
+}
+
 async function flushPendingAgentGitGroups(): Promise<void> {
-  flushTimer = null;
+  clearPendingAgentGitFlushTimer();
 
   if (pendingProjectIds.size === 0) {
     return;
@@ -57,11 +109,12 @@ export function schedulePersistAgentGitGroups(projectId: string): void {
   }, 400);
 }
 
+export async function flushAgentGitGroupsForProjectSwitch(projects: Project[]): Promise<void> {
+  await flushAgentGitGroupsToDisk(projects);
+}
+
 export async function flushAgentGitGroupsNow(): Promise<void> {
-  if (flushTimer !== null) {
-    window.clearTimeout(flushTimer);
-    flushTimer = null;
-  }
+  clearPendingAgentGitFlushTimer();
 
   const { projects } = useProjectStore.getState();
   const groupsByProject = useAgentGitChangeStore.getState().groupsByProject;

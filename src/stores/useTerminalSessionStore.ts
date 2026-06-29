@@ -26,6 +26,7 @@ interface TerminalSessionState {
   restartingPaneIds: Record<string, boolean>;
   awaitingResponseByPane: Record<string, boolean>;
   agentNotifyEligibleByPane: Record<string, boolean>;
+  agentModelByPane: Record<string, string>;
   setLastCommand: (paneId: string, command: string) => void;
   setActiveAgent: (paneId: string, agent: string | null) => void;
   setAgentBusy: (paneId: string, busy: boolean) => void;
@@ -131,6 +132,7 @@ export const useTerminalSessionStore = create<TerminalSessionState>((set, get) =
   restartingPaneIds: {},
   awaitingResponseByPane: {},
   agentNotifyEligibleByPane: {},
+  agentModelByPane: {},
   setActiveAgent: (paneId, agent) => {
     set((state) => {
       const nextSince = { ...state.activeAgentSinceByPane };
@@ -299,6 +301,7 @@ export const useTerminalSessionStore = create<TerminalSessionState>((set, get) =
       restartingPaneIds: omitPaneRecord(state.restartingPaneIds, paneId),
       awaitingResponseByPane: omitPaneRecord(state.awaitingResponseByPane, paneId),
       agentNotifyEligibleByPane: omitPaneRecord(state.agentNotifyEligibleByPane, paneId),
+      agentModelByPane: omitPaneRecord(state.agentModelByPane, paneId),
     }));
   },
   setLastCommand: (paneId, command) => {
@@ -306,12 +309,29 @@ export const useTerminalSessionStore = create<TerminalSessionState>((set, get) =
     const modeCommand = parseAgentModeCommand(trimmed);
 
     if (modeCommand) {
+      get().resetAgentWorkload(paneId);
       set((state) => ({
         activeAgentModeByPane: {
           ...state.activeAgentModeByPane,
           [paneId]: modeCommand,
         },
       }));
+      return;
+    }
+
+    if (/^\/model(\s|$)/i.test(trimmed)) {
+      get().resetAgentWorkload(paneId);
+      const modelId = trimmed.replace(/^\/model\s+/i, '').trim();
+
+      if (modelId) {
+        set((state) => ({
+          agentModelByPane: {
+            ...state.agentModelByPane,
+            [paneId]: modelId,
+          },
+        }));
+      }
+
       return;
     }
 

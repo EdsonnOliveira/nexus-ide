@@ -1,4 +1,5 @@
 import type {
+  AgentTab,
   ApiTab,
   BrowserTab,
   EmulatorPlatform,
@@ -10,6 +11,8 @@ import type {
   TerminalTab,
 } from '@/types';
 import type { Automation, AutomationStep } from '@/types/automation';
+import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
+import { terminalAgentToCli } from '@/utils/agentTabHelpers';
 import { AUTOMATION_API_COLLECTION_ID } from '@/utils/automationApiRequest';
 import { normalizeAutomation } from '@/utils/normalizeAutomation';
 import { normalizeBrowserUrl } from '@/utils/browserUrl';
@@ -160,9 +163,29 @@ export async function buildTabFromStep(
   const terminalCwd = resolveStepCwd(step, projectPath);
   const command = step.command?.trim() ?? '';
   const isAgent = step.type === 'agent';
-  const defaultTitle = isAgent
-    ? `Agent ${countPanesByType(existingTabs, 'terminal') + 1 + badgeOffset}`
-    : `Terminal ${countPanesByType(existingTabs, 'terminal') + 1 + badgeOffset}`;
+
+  if (isAgent) {
+    const cliAgent = extractCliAgentCommand(command) ?? terminalAgentToCli('cursor');
+    const nextTab: AgentTab = {
+      id: step.id,
+      title: resolveStepTabTitle(
+        step,
+        `Agent ${countPanesByType(existingTabs, 'agent') + 1 + badgeOffset}`,
+      ),
+      type: 'agent',
+      cliAgent,
+      ptyId: null,
+      messages: [],
+      turns: [],
+      restoreCommand: command || cliAgent,
+      workingDirectory: terminalCwd ?? projectPath,
+      ...shared,
+    };
+
+    return nextTab;
+  }
+
+  const defaultTitle = `Terminal ${countPanesByType(existingTabs, 'terminal') + 1 + badgeOffset}`;
 
   const nextTab: TerminalTab = {
     id: step.id,
@@ -174,10 +197,6 @@ export async function buildTabFromStep(
     ...(command ? { restoreCommand: command } : {}),
     ...shared,
   };
-
-  if (isAgent && !command) {
-    return nextTab;
-  }
 
   return nextTab;
 }

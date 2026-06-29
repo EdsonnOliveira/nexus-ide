@@ -82,6 +82,21 @@ function normalizePane(tab: Tab): Tab {
     };
   }
 
+  if (tab.type === 'agent') {
+    return {
+      id: tab.id,
+      title: tab.title,
+      type: 'agent',
+      cliAgent: tab.cliAgent ?? 'cursor-agent',
+      ptyId: null,
+      turns: Array.isArray(tab.turns) ? tab.turns : [],
+      ...(tab.restoreCommand !== undefined ? { restoreCommand: tab.restoreCommand } : {}),
+      ...(tab.workingDirectory !== undefined ? { workingDirectory: tab.workingDirectory } : {}),
+      ...(Array.isArray(tab.messages) && tab.messages.length > 0 ? { messages: tab.messages } : {}),
+      ...shared,
+    };
+  }
+
   return {
     id: tab.id,
     title: tab.title,
@@ -201,6 +216,7 @@ function normalizeProject(project: Project & { layout?: unknown }, fallbackWorks
     tasks: (project.tasks ?? []).map((task) => normalizeTask(task as ProjectTask)),
     taskIntegration: project.taskIntegration ?? null,
     agentGitGroups: project.agentGitGroups ?? [],
+    agentResponseSkills: project.agentResponseSkills ?? [],
     flag: project.flag ?? null,
     tabs: (project.tabs ?? []).map((tab) => normalizeTabBarItem(tab as TabBarItem)),
   };

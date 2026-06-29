@@ -1,11 +1,17 @@
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import type { Project, Tab } from '@/types';
+import { isAgentPaneTab, resolveAgentTabCli } from '@/utils/agentTabHelpers';
+import { isAgentSetupCommand } from '@/utils/parseAgentModeCommand';
 import { collectProjectPanes, findPaneTab } from '@/utils/tabGroups';
 
 export function resolvePaneAgentCommand(
   pane: Tab,
   activeAgentByPane: Record<string, string | null>,
 ): string | null {
+  if (pane.type === 'agent') {
+    return resolveAgentTabCli(pane);
+  }
+
   if (pane.type !== 'terminal') {
     return null;
   }
@@ -51,6 +57,10 @@ export function hasLaunchedAgentCli(
   pane: Tab,
   activeAgentByPane: Record<string, string | null>,
 ): boolean {
+  if (isAgentPaneTab(pane)) {
+    return true;
+  }
+
   if (pane.type !== 'terminal') {
     return false;
   }
@@ -67,6 +77,10 @@ export function shouldMarkAgentAwaiting(
   command: string,
   activeAgentByPane: Record<string, string | null>,
 ): boolean {
+  if (isAgentSetupCommand(command)) {
+    return false;
+  }
+
   if (extractCliAgentCommand(command)) {
     return true;
   }
@@ -80,6 +94,10 @@ export function isPaneAgentLoading(
   activeAgentByPane: Record<string, string | null>,
   agentBusyByPane: Record<string, boolean>,
 ): boolean {
+  if (pane.type === 'agent') {
+    return (pane.turns ?? []).some((turn) => turn.running);
+  }
+
   if (!hasLaunchedAgentCli(pane, activeAgentByPane)) {
     return false;
   }

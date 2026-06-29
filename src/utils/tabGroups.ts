@@ -8,6 +8,7 @@ export function isSplitTab(item: TabBarItem): item is SplitTab {
 export function isPaneTab(item: TabBarItem): item is Tab {
   return (
     item.type === 'terminal' ||
+    item.type === 'agent' ||
     item.type === 'browser' ||
     item.type === 'file' ||
     item.type === 'emulator' ||

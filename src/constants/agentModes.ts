@@ -21,3 +21,16 @@ export const AGENT_MODE_OPTIONS: AgentModeOption[] = [
   { id: 'multitask', label: 'Multitask', badgeIcon: 'mode-multitask', badgeColor: '#a855f7' },
   { id: 'ask', label: 'Ask', badgeIcon: 'mode-ask', badgeColor: '#06b6d4' },
 ];
+
+export type NonAgentMode = Exclude<AutomationAgentMode, 'agent'>;
+
+export const AGENT_MODE_INPUT_PLACEHOLDERS: Record<NonAgentMode, string> = {
+  plan: 'Planeje e desenhe antes de...',
+  debug: 'Descreva o que precisa depurar...',
+  multitask: 'Descreva as tarefas em paralelo...',
+  ask: 'Pergunte sobre o projeto...',
+};
+
+export function getAgentModeOption(mode: AutomationAgentMode): AgentModeOption | undefined {
+  return AGENT_MODE_OPTIONS.find((entry) => entry.id === mode);
+}

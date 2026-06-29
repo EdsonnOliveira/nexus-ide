@@ -18,6 +18,20 @@ export function parseAgentModeCommand(command: string): AutomationAgentMode | nu
   return mode as AutomationAgentMode;
 }
 
+export function isAgentSetupCommand(command: string): boolean {
+  const trimmed = command.trim();
+
+  if (!trimmed.startsWith('/')) {
+    return false;
+  }
+
+  if (parseAgentModeCommand(trimmed)) {
+    return true;
+  }
+
+  return /^\/model(\s|$)/i.test(trimmed);
+}
+
 export function shouldShowAgentSkillHints(mode: AutomationAgentMode): boolean {
   return mode === 'agent' || mode === 'multitask';
 }

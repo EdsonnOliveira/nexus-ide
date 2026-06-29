@@ -1,12 +1,14 @@
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import type { Project } from '@/types';
+import { submitAgentPanePrompt, hasAgentPaneSubmit } from '@/utils/agentPaneRegistry';
 import { attachAgentPromptImagesToPane } from '@/utils/attachAgentPromptImage';
 import { collectOpenAgentPanes } from '@/utils/collectOpenAgentPanes';
 import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
 import { getTerminalHandle } from '@/utils/terminalHandleRegistry';
 import { resetAgentReadyDetectors } from '@/utils/terminalTaskCompletion';
-import { collectProjectPanes } from '@/utils/tabGroups';
+import { findPaneTab } from '@/utils/tabGroups';
+import { waitForAgentPaneReady } from '@/utils/waitForAgentPaneReady';
 
 const PANE_FOCUS_DELAY_MS = 100;
 const SETUP_COMMAND_DELAY_MS = 220;
@@ -19,82 +21,41 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-function waitForWritableHandle(
-  paneId: string,
-  attempts = 120,
-): Promise<NonNullable<ReturnType<typeof getTerminalHandle>> | null> {
+async function waitForWritablePane(paneId: string, attempts = 150): Promise<'agent-ui' | 'terminal' | null> {
   return new Promise((resolve) => {
     let remaining = attempts;
 
-    const tryResolve = () => {
+    const tryResolve = async () => {
+      if (hasAgentPaneSubmit(paneId)) {
+        const project = useProjectStore.getState().getActiveProject();
+        const pane = project ? findPaneTab(project.tabs, paneId) : null;
+
+        if (pane?.type === 'agent' && pane.ptyId && (await window.nexus.terminal.has(pane.ptyId))) {
+          resolve('agent-ui');
+          return;
+        }
+      }
+
       const handle = getTerminalHandle(paneId);
 
       if (handle?.isWritable()) {
-        resolve(handle);
+        resolve('terminal');
         return;
       }
 
       remaining -= 1;
 
       if (remaining <= 0) {
-        resolve(handle);
+        resolve(null);
         return;
       }
 
-      window.requestAnimationFrame(tryResolve);
+      window.requestAnimationFrame(() => {
+        void tryResolve();
+      });
     };
 
-    tryResolve();
-  });
-}
-
-function waitForActiveAgent(paneId: string, attempts = 150): Promise<boolean> {
-  return new Promise((resolve) => {
-    let remaining = attempts;
-
-    const tryResolve = () => {
-      if (useTerminalSessionStore.getState().activeAgentByPane[paneId]) {
-        resolve(true);
-        return;
-      }
-
-      remaining -= 1;
-
-      if (remaining <= 0) {
-        resolve(false);
-        return;
-      }
-
-      window.requestAnimationFrame(tryResolve);
-    };
-
-    tryResolve();
-  });
-}
-
-function waitForIdleAgent(paneId: string, attempts = 150): Promise<boolean> {
-  return new Promise((resolve) => {
-    let remaining = attempts;
-
-    const tryResolve = () => {
-      const session = useTerminalSessionStore.getState();
-
-      if (!session.agentBusyByPane[paneId] && !session.awaitingResponseByPane[paneId]) {
-        resolve(true);
-        return;
-      }
-
-      remaining -= 1;
-
-      if (remaining <= 0) {
-        resolve(false);
-        return;
-      }
-
-      window.requestAnimationFrame(tryResolve);
-    };
-
-    tryResolve();
+    void tryResolve();
   });
 }
 
@@ -159,18 +120,38 @@ export async function executeAgentPrompt({
   await selectPane(paneId);
   await delay(PANE_FOCUS_DELAY_MS);
 
-  const handle = await waitForWritableHandle(paneId);
+  const writableMode = await waitForWritablePane(paneId);
+
+  if (!writableMode) {
+    return false;
+  }
+
+  await waitForAgentPaneReady(paneId, { delayMs: SETUP_COMMAND_DELAY_MS });
+
+  if (writableMode === 'agent-ui') {
+    if (hasImages) {
+      await attachAgentPromptImagesToPane(project.path, paneId, imageDataUrls, false);
+      await delay(PROMPT_EXTRA_DELAY_MS);
+    }
+
+    if (!trimmedPrompt && !hasImages) {
+      return false;
+    }
+
+    if (trimmedPrompt) {
+      return await submitAgentPanePrompt(paneId, trimmedPrompt);
+    }
+
+    return true;
+  }
+
+  const handle = getTerminalHandle(paneId);
 
   if (!handle?.isWritable()) {
     return false;
   }
 
-  await waitForActiveAgent(paneId);
-  await waitForIdleAgent(paneId);
   handle.focus();
-
-  resetAgentReadyDetectors(paneId);
-  await delay(SETUP_COMMAND_DELAY_MS);
 
   if (trimmedPrompt) {
     handle.write(trimmedPrompt);

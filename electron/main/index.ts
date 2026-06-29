@@ -18,11 +18,14 @@ import { registerSessionHandlers } from './ipc/session';
 import { registerTaskHandlers } from './ipc/tasks';
 import { registerPasswordHandlers } from './ipc/passwords';
 import { registerTerminalHandlers } from './ipc/terminal';
+import { registerAgentPrintHandlers } from './ipc/agentPrint';
 import {
   registerLocalFileProtocol,
   registerLocalFileScheme,
 } from './protocol/localFiles';
+import { attachBrowserWebviewContextMenu } from './services/browserWebviewContextMenu';
 import { ptyManager } from './services/ptyManager';
+import { agentPrintRunner } from './services/agentPrintRunner';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -42,6 +45,26 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
   process.exit(0);
 }
+
+function registerProcessDiagnostics(): void {
+  process.on('uncaughtException', (error) => {
+    console.error('[main] uncaughtException', error);
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    console.error('[main] unhandledRejection', reason);
+  });
+
+  app.on('render-process-gone', (_event, _webContents, details) => {
+    console.error('[main] render-process-gone', details);
+  });
+
+  app.on('child-process-gone', (_event, details) => {
+    console.error('[main] child-process-gone', details);
+  });
+}
+
+registerProcessDiagnostics();
 
 let win: BrowserWindow | null = null;
 let isQuitting = false;
@@ -70,9 +93,14 @@ async function createWindow() {
   });
 
   ptyManager.setWindow(win);
+  agentPrintRunner.setWindow(win);
 
   win.webContents.on('preload-error', (_, preloadPath, error) => {
     console.error('Preload error:', preloadPath, error);
+  });
+
+  win.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[window] render-process-gone', details);
   });
 
   win.once('ready-to-show', () => {
@@ -101,6 +129,7 @@ async function createWindow() {
 
   win.on('closed', () => {
     ptyManager.setWindow(null);
+    agentPrintRunner.setWindow(null);
     win = null;
   });
 
@@ -206,6 +235,7 @@ app.whenReady().then(() => {
   registerProjectHandlers();
   registerFileHandlers(() => win);
   registerTerminalHandlers();
+  registerAgentPrintHandlers();
   registerTaskHandlers();
   registerPasswordHandlers();
   registerDialogHandlers(() => win);
@@ -222,6 +252,7 @@ app.whenReady().then(() => {
 
     if (flushMode === 'close') {
       ptyManager.killAll();
+      agentPrintRunner.stopAll();
       win?.destroy();
       isQuitting = false;
       flushMode = 'quit';
@@ -240,6 +271,8 @@ function registerWebviewHandlers(): void {
     if (contents.getType() !== 'webview') {
       return;
     }
+
+    attachBrowserWebviewContextMenu(contents);
 
     contents.on('before-input-event', (event, input) => {
       if (isBrowserReloadShortcut(input)) {
@@ -269,6 +302,7 @@ function registerWebviewHandlers(): void {
 app.on('window-all-closed', () => {
   globalShortcut.unregisterAll();
   ptyManager.killAll();
+  agentPrintRunner.stopAll();
   void cleanupEmulatorSessions();
 
   if (process.platform !== 'darwin') {
@@ -295,6 +329,7 @@ app.on('activate', () => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   ptyManager.killAll();
+  agentPrintRunner.stopAll();
   void cleanupEmulatorSessions();
 });
 

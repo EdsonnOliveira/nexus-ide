@@ -225,9 +225,10 @@ function BrowserViewComponent({
 
   const handlePasswordInputFocus = useCallback(
     (_payload: PasswordInputFocusPayload | null | undefined) => {
-      const activeId = usePasswordAutofillStore.getState().activeByProject[projectId] ?? null;
+      const autofillState = usePasswordAutofillStore.getState();
+      const activeId = autofillState.activeByProject[projectId] ?? null;
 
-      if (!activeId) {
+      if (!activeId || !autofillState.isCredentialPickerArmed(projectId)) {
         return;
       }
 
@@ -308,7 +309,10 @@ function BrowserViewComponent({
   const handleCredentialPickerClose = useCallback(() => {
     setCredentialPickerOpen(false);
     setCredentialValues({});
-  }, []);
+    const autofillStore = usePasswordAutofillStore.getState();
+    autofillStore.dismissCredentialPicker(projectId);
+    autofillStore.setActiveCollection(projectId, null);
+  }, [projectId]);
 
   const applyLocalProbeResult = useCallback((reachable: boolean) => {
     if (reachable) {

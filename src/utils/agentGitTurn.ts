@@ -4,10 +4,12 @@ import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { resolveRepoPathForAgentTurn } from '@/utils/agentGitDiff';
 import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
 import { persistTerminalCommand } from '@/utils/persistTerminalSession';
+import { isProjectSwitching } from '@/utils/projectSwitch';
 import { resolvePaneAgentForGitTurn } from '@/utils/projectAgentStatus';
 import { sanitizeAgentPrompt } from '@/utils/terminalShellPrompt';
 
 const finalizeTurnInFlight = new Map<string, Promise<void>>();
+const deferredFinalizePaneIds = new Set<string>();
 
 async function beginAgentGitTurn(paneId: string, prompt: string): Promise<void> {
   const projectId = findProjectIdByPaneId(paneId);
@@ -29,6 +31,23 @@ async function beginAgentGitTurn(paneId: string, prompt: string): Promise<void> 
   }
 
   await useAgentGitChangeStore.getState().beginTurn(paneId, projectId, prompt, repoPath);
+}
+
+function runFinalizeAgentGitTurn(paneId: string): void {
+  const existing = finalizeTurnInFlight.get(paneId);
+
+  if (existing) {
+    return;
+  }
+
+  const task = useAgentGitChangeStore.getState().finalizeTurn(paneId);
+  finalizeTurnInFlight.set(paneId, task);
+
+  void task.finally(() => {
+    if (finalizeTurnInFlight.get(paneId) === task) {
+      finalizeTurnInFlight.delete(paneId);
+    }
+  });
 }
 
 export function trackAgentGitPrompt(paneId: string, prompt: string): void {
@@ -59,18 +78,23 @@ export function trackAgentGitPrompt(paneId: string, prompt: string): void {
 }
 
 export function completeAgentGitTurn(paneId: string): void {
-  const existing = finalizeTurnInFlight.get(paneId);
-
-  if (existing) {
+  if (isProjectSwitching()) {
+    deferredFinalizePaneIds.add(paneId);
     return;
   }
 
-  const task = useAgentGitChangeStore.getState().finalizeTurn(paneId);
-  finalizeTurnInFlight.set(paneId, task);
+  runFinalizeAgentGitTurn(paneId);
+}
 
-  void task.finally(() => {
-    if (finalizeTurnInFlight.get(paneId) === task) {
-      finalizeTurnInFlight.delete(paneId);
-    }
-  });
+export async function drainDeferredAgentGitTurns(): Promise<void> {
+  if (deferredFinalizePaneIds.size === 0) {
+    return;
+  }
+
+  const paneIds = [...deferredFinalizePaneIds];
+  deferredFinalizePaneIds.clear();
+
+  for (const paneId of paneIds) {
+    runFinalizeAgentGitTurn(paneId);
+  }
 }

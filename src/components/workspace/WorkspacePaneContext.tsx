@@ -1,5 +1,5 @@
 import { createContext, memo, useContext, type ReactNode, type RefObject } from 'react';
-import type { ApiTab, EmulatorTab, Project } from '@/types';
+import type { AgentTab, ApiTab, EmulatorTab, Project } from '@/types';
 import type { XTermViewHandle } from '@/components/terminal/XTermView';
 
 export interface WorkspacePaneContextValue {
@@ -18,6 +18,10 @@ export interface WorkspacePaneContextValue {
   onUpdateApiTab: (
     tabId: string,
     patch: Partial<Pick<ApiTab, 'requestId' | 'collectionId' | 'title'>>,
+  ) => void;
+  onUpdateAgentTab: (
+    tabId: string,
+    patch: Partial<Pick<AgentTab, 'turns' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'>>,
   ) => void;
   isPaneVisible: (paneId: string) => boolean;
   isPaneFocused: (paneId: string) => boolean;

@@ -1,6 +1,7 @@
 import type { Project } from '@/types';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { getTerminalHandle } from '@/utils/terminalHandleRegistry';
+import { hasAgentPaneSubmit, writeAgentPaneDraft } from '@/utils/agentPaneRegistry';
 import { resolvePaneAgentCommand } from '@/utils/projectAgentStatus';
 import { collectProjectPanes, resolveActiveTabBarItem } from '@/utils/tabGroups';
 import { toProjectRelativePath } from '@/utils/explorerRelativePath';
@@ -70,13 +71,18 @@ export async function mentionExplorerEntryInPane(
 
   const handle = await waitForTerminalHandle(paneId);
 
-  if (!handle) {
-    return false;
+  if (handle) {
+    handle.focus();
+    handle.write(`${mention} `);
+    return true;
   }
 
-  handle.focus();
-  handle.write(`${mention} `);
-  return true;
+  if (hasAgentPaneSubmit(paneId)) {
+    writeAgentPaneDraft(paneId, `${mention} `);
+    return true;
+  }
+
+  return false;
 }
 
 export async function mentionExplorerEntryInAgent(

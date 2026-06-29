@@ -2,7 +2,102 @@ import type { AgentGitChangeGroup } from './agentGit';
 
 export type TerminalAgent = 'cursor' | 'claude' | 'composer' | 'shell';
 
-export type TabType = 'terminal' | 'browser' | 'emulator' | 'api';
+export type TabType = 'terminal' | 'agent' | 'browser' | 'emulator' | 'api';
+
+export type AgentMessageRole = 'user' | 'assistant';
+
+export interface AgentMessage {
+  id: string;
+  role: AgentMessageRole;
+  content: string;
+  createdAt: number;
+  streaming?: boolean;
+}
+
+export interface AgentPromptAttachment {
+  id: string;
+  label: string;
+  dataUrl: string;
+  relativePath?: string;
+}
+
+export interface AgentUserMessage {
+  id: string;
+  role: 'user';
+  content: string;
+  createdAt: number;
+  attachments?: AgentPromptAttachment[];
+  mode?: 'agent' | 'plan' | 'debug' | 'multitask' | 'ask';
+  agentPrompt?: string;
+  skillLabel?: string;
+}
+
+export interface AgentPromptSubmitOptions {
+  displayContent?: string;
+  skillLabel?: string;
+  forceNewTurn?: boolean;
+}
+
+export type AgentActivityKind =
+  | 'thought'
+  | 'status'
+  | 'section'
+  | 'file_edit'
+  | 'file_read'
+  | 'live_status'
+  | 'response';
+
+export interface AgentActivity {
+  id: string;
+  kind: AgentActivityKind;
+  label: string;
+  filePath?: string;
+  additions?: number;
+  deletions?: number;
+  durationMs?: number;
+  createdAt: number;
+  collapsed?: boolean;
+  streaming?: boolean;
+}
+
+export interface AgentTurnSummaryFileRef {
+  path: string;
+}
+
+export interface AgentTurnSummary {
+  editedFileCount: number;
+  exploredFileCount: number;
+  commandCount: number;
+  additions: number;
+  deletions: number;
+  responseLead?: string;
+  exploredFiles?: AgentTurnSummaryFileRef[];
+  editedFiles?: AgentTurnSummaryFileRef[];
+}
+
+export interface AgentTurn {
+  id: string;
+  user: AgentUserMessage;
+  activities: AgentActivity[];
+  running: boolean;
+  startedAt: number;
+  completedAt?: number;
+  summary?: AgentTurnSummary;
+}
+
+export interface AgentTab {
+  id: string;
+  title: string;
+  type: 'agent';
+  cliAgent: string;
+  ptyId: string | null;
+  turns: AgentTurn[];
+  messages?: AgentMessage[];
+  restoreCommand?: string | null;
+  workingDirectory?: string | null;
+  pinned?: boolean;
+  badgeColorIndex?: number;
+}
 
 export type {
   ApiAuthType,
@@ -117,7 +212,7 @@ export interface FileTab {
   badgeColorIndex?: number;
 }
 
-export type Tab = TerminalTab | BrowserTab | FileTab | EmulatorTab | ApiTab;
+export type Tab = TerminalTab | AgentTab | BrowserTab | FileTab | EmulatorTab | ApiTab;
 
 export type SplitLayoutNode =
   | { type: 'tab'; tabId: string }
@@ -206,6 +301,13 @@ export interface Workspace {
   name: string;
 }
 
+export interface ProjectAgentResponseSkill {
+  id: string;
+  hintId: string;
+  label: string;
+  command: string;
+}
+
 export interface ProjectFlag {
   reason: string;
   createdAt: number;
@@ -231,6 +333,7 @@ export interface Project {
   tasks?: ProjectTask[];
   taskIntegration?: TaskIntegrationConfig | null;
   agentGitGroups?: AgentGitChangeGroup[];
+  agentResponseSkills?: ProjectAgentResponseSkill[];
   flag?: ProjectFlag | null;
 }
 
@@ -266,6 +369,7 @@ export interface ProjectUpdatePayload {
   tasks?: ProjectTask[];
   taskIntegration?: TaskIntegrationConfig | null;
   agentGitGroups?: AgentGitChangeGroup[];
+  agentResponseSkills?: ProjectAgentResponseSkill[];
   flag?: ProjectFlag | null;
 }
 

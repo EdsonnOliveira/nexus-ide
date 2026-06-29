@@ -3,7 +3,23 @@ import { buildCliPathEnv } from '../utils/cliPathEnv';
 import type { TerminalCommandHint } from './terminalHints';
 
 const MAX_MODEL_HINTS = 8;
-const MODEL_BADGE_COLOR = '#6366f1';
+
+type ModelBadgeIcon = NonNullable<TerminalCommandHint['badgeIcon']>;
+
+const MODEL_BADGE_COLORS: Record<ModelBadgeIcon, string> = {
+  cursor: '#6366f1',
+  claude: '#cc785c',
+  codex: '#10a37f',
+  gemini: '#1c69ff',
+  expo: '#7c3aed',
+  apple: '#2563eb',
+  android: '#059669',
+  'mode-agent': '#3b82f6',
+  'mode-plan': '#22c55e',
+  'mode-ask': '#06b6d4',
+  'mode-debug': '#f97316',
+  'mode-multitask': '#a855f7',
+};
 
 interface AgentModelEntry {
   id: string;
@@ -141,15 +157,63 @@ function shortenModelLabel(label: string): string {
     .trim();
 }
 
+function resolveModelBadgeIcon(modelId: string, label: string): ModelBadgeIcon {
+  const id = modelId.toLowerCase();
+  const text = label.toLowerCase();
+
+  if (id === 'auto' || text === 'auto') {
+    return 'cursor';
+  }
+
+  if (id.includes('composer') || text.includes('composer')) {
+    return 'cursor';
+  }
+
+  if (
+    id.includes('claude') ||
+    id.includes('opus') ||
+    id.includes('sonnet') ||
+    id.includes('haiku') ||
+    text.includes('opus') ||
+    text.includes('claude') ||
+    text.includes('sonnet') ||
+    text.includes('haiku')
+  ) {
+    return 'claude';
+  }
+
+  if (
+    id.includes('codex') ||
+    id.includes('gpt') ||
+    id.includes('o3') ||
+    id.includes('o4') ||
+    text.includes('codex') ||
+    text.includes('gpt')
+  ) {
+    return 'codex';
+  }
+
+  if (id.includes('gemini') || text.includes('gemini')) {
+    return 'gemini';
+  }
+
+  return 'cursor';
+}
+
 export function getAgentModelHints(): TerminalCommandHint[] {
   const models = prioritizeModels(loadAvailableModels());
 
-  return models.map((model) => ({
-    id: `model-${model.id}`,
-    badge: 'M',
-    badgeColor: MODEL_BADGE_COLOR,
-    label: shortenModelLabel(model.label),
-    command: `/model ${model.id}\n`,
-    hintKind: 'model',
-  }));
+  return models.map((model) => {
+    const badgeIcon = resolveModelBadgeIcon(model.id, model.label);
+
+    return {
+      id: `model-${model.id}`,
+      badge: badgeIcon === 'cursor' ? 'C' : badgeIcon === 'claude' ? 'A' : badgeIcon === 'codex' ? 'O' : 'G',
+      badgeIcon,
+      badgeColor: MODEL_BADGE_COLORS[badgeIcon],
+      label: shortenModelLabel(model.label),
+      command: `/model ${model.id}\n`,
+      hintKind: 'model',
+    };
+  });
 }

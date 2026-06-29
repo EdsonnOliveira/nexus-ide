@@ -2,12 +2,18 @@ import type { AutomationAgentMode } from '@/constants/agentModes';
 import { useTerminalPasteImageStore } from '@/stores/useTerminalPasteImageStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import type { Project, ProjectTask } from '@/types';
+import {
+  hasAgentPaneSubmit,
+  runAgentPaneCommand,
+  submitAgentPanePrompt,
+} from '@/utils/agentPaneRegistry';
 import { toProjectRelativePath } from '@/utils/explorerRelativePath';
 import { resolvePaneAgentCommand } from '@/utils/projectAgentStatus';
 import { getTerminalHandle } from '@/utils/terminalHandleRegistry';
 import { buildImagePathReference } from '@/utils/terminalPasteImageTokens';
 import { resetAgentReadyDetectors } from '@/utils/terminalTaskCompletion';
 import { collectProjectPanes } from '@/utils/tabGroups';
+import { waitForActiveAgent, waitForAgentPaneReady } from '@/utils/waitForAgentPaneReady';
 
 interface ExecuteTaskInAgentOptions {
   project: Project;
@@ -56,12 +62,12 @@ function waitForWritableHandle(
   });
 }
 
-function waitForActiveAgent(paneId: string, attempts = 150): Promise<boolean> {
+async function waitForAgentUiPane(paneId: string, attempts = 150): Promise<boolean> {
   return new Promise((resolve) => {
     let remaining = attempts;
 
     const tryResolve = () => {
-      if (useTerminalSessionStore.getState().activeAgentByPane[paneId]) {
+      if (hasAgentPaneSubmit(paneId)) {
         resolve(true);
         return;
       }
@@ -155,8 +161,32 @@ export async function executeTaskInAgent({
     return false;
   }
 
+  const pane = collectProjectPanes(project.tabs).find((item) => item.id === paneId);
+  const isAgentUi = pane?.type === 'agent';
+
   await selectPane(paneId);
   await delay(PANE_FOCUS_DELAY_MS);
+
+  if (isAgentUi) {
+    const ready = await waitForAgentUiPane(paneId);
+
+    if (!ready) {
+      return false;
+    }
+
+    await waitForAgentPaneReady(paneId, { delayMs: SETUP_COMMAND_DELAY_MS });
+
+    const prompt = await buildTaskPrompt(project, task, paneId);
+
+    if (!prompt) {
+      return false;
+    }
+
+    runAgentPaneCommand(paneId, `/${agentMode}\n`);
+    await delay(PROMPT_EXTRA_DELAY_MS);
+
+    return await submitAgentPanePrompt(paneId, prompt);
+  }
 
   const handle = await waitForWritableHandle(paneId);
 

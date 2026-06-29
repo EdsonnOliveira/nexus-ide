@@ -11,16 +11,26 @@ type TerminalSessionPatch = Partial<
 const pendingUpdates = new Map<string, TerminalSessionPatch>();
 let flushTimer: number | null = null;
 
-async function flushPendingTerminalSessions(): Promise<void> {
-  flushTimer = null;
-
-  if (pendingUpdates.size === 0) {
-    return;
+function clearPendingTerminalFlushTimer(): void {
+  if (flushTimer !== null) {
+    window.clearTimeout(flushTimer);
+    flushTimer = null;
   }
+}
 
+function takePendingTerminalUpdates(): Map<string, TerminalSessionPatch> {
+  clearPendingTerminalFlushTimer();
   const updates = new Map(pendingUpdates);
   pendingUpdates.clear();
-  const { projects, updateProject } = useProjectStore.getState();
+  return updates;
+}
+
+function applyTerminalPatchesToProjects(
+  projects: Project[],
+  updates: Map<string, TerminalSessionPatch>,
+): Map<string, Project> {
+  const nextById = new Map(projects.map((project) => [project.id, project]));
+  const touchedProjectIds = new Set<string>();
 
   for (const [key, patch] of updates) {
     const separatorIndex = key.indexOf(':');
@@ -31,17 +41,60 @@ async function flushPendingTerminalSessions(): Promise<void> {
 
     const projectId = key.slice(0, separatorIndex);
     const paneId = key.slice(separatorIndex + 1);
-    const project = projects.find((entry) => entry.id === projectId);
+    const project = nextById.get(projectId);
 
     if (!project) {
       continue;
     }
 
-    await updateProject(projectId, {
+    nextById.set(projectId, {
+      ...project,
       tabs: updatePaneInTabs(project.tabs, paneId, (pane) =>
         pane.type === 'terminal' ? { ...pane, ...patch } : pane,
       ),
     });
+    touchedProjectIds.add(projectId);
+  }
+
+  const touched = new Map<string, Project>();
+
+  for (const projectId of touchedProjectIds) {
+    const project = nextById.get(projectId);
+
+    if (project) {
+      touched.set(projectId, project);
+    }
+  }
+
+  return touched;
+}
+
+export async function flushPendingTerminalSessionsToDisk(projects: Project[]): Promise<void> {
+  const updates = takePendingTerminalUpdates();
+
+  if (updates.size === 0) {
+    return;
+  }
+
+  const touchedProjects = applyTerminalPatchesToProjects(projects, updates);
+
+  for (const [projectId, project] of touchedProjects) {
+    await window.nexus.projects.update(projectId, { tabs: project.tabs });
+  }
+}
+
+async function flushPendingTerminalSessions(): Promise<void> {
+  const { projects, updateProject } = useProjectStore.getState();
+  const updates = takePendingTerminalUpdates();
+
+  if (updates.size === 0) {
+    return;
+  }
+
+  const touchedProjects = applyTerminalPatchesToProjects(projects, updates);
+
+  for (const [projectId, project] of touchedProjects) {
+    await updateProject(projectId, { tabs: project.tabs });
   }
 }
 
@@ -114,12 +167,13 @@ export async function saveScrollbacksFromProjects(projects: Project[]): Promise<
   }
 }
 
-export async function flushTerminalSessionsNow(): Promise<void> {
-  if (flushTimer !== null) {
-    window.clearTimeout(flushTimer);
-    flushTimer = null;
-  }
+export async function flushTerminalSessionsForProjectSwitch(projects: Project[]): Promise<void> {
+  await flushPendingTerminalSessionsToDisk(projects);
+  await saveScrollbacksFromProjects(projects);
+}
 
+export async function flushTerminalSessionsNow(): Promise<void> {
+  clearPendingTerminalFlushTimer();
   await flushPendingTerminalSessions();
 
   const { projects } = useProjectStore.getState();

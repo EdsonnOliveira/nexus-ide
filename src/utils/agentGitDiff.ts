@@ -45,9 +45,11 @@ export async function resolveRepoPathForAgentTurn(
     useProjectStore.getState().projects.find((entry) => entry.id === projectId) ?? null;
   const pane = project ? findPaneTab(project.tabs, paneId) : null;
   const cwd =
-    pane?.type === 'terminal' && pane.terminalCwd
-      ? pane.terminalCwd
-      : (project?.path ?? projectPath);
+    pane?.type === 'agent' && pane.workingDirectory
+      ? pane.workingDirectory
+      : pane?.type === 'terminal' && pane.terminalCwd
+        ? pane.terminalCwd
+        : (project?.path ?? projectPath);
   const normalizedCwd = cwd.replace(/\\/g, '/').replace(/\/+$/, '');
 
   const sortedRepos = [...repos].sort(

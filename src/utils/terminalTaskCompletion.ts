@@ -61,21 +61,25 @@ export function stripAnsi(text: string): string {
 }
 
 export function isAgentBusyInPlain(plain: string): boolean {
-  if (AGENT_BUSY_MARKERS.some((marker) => plain.includes(marker))) {
+  const recentTail = getRecentTailLines(plain).join('\n');
+
+  if (!recentTail.trim()) {
+    return false;
+  }
+
+  if (AGENT_BUSY_MARKERS.some((marker) => recentTail.includes(marker))) {
     return true;
   }
 
-  const recentPlain = plain.slice(-RUNNING_STATUS_TAIL_SIZE);
-
-  if (/\bRunning\b/.test(recentPlain)) {
+  if (/\bRunning\b/.test(recentTail)) {
     return true;
   }
 
-  if (/\[\d+\/\d+\]/.test(plain)) {
+  if (/\[\d+\/\d+\]/.test(recentTail)) {
     return true;
   }
 
-  if (/(?:Working|Grepping|Reading|Running)\s+[\d.]+\s*k?\s*tokens/i.test(plain)) {
+  if (/(?:Working|Grepping|Reading|Running)\s+[\d.]+\s*k?\s*tokens/i.test(recentTail)) {
     return true;
   }
 
@@ -172,6 +176,16 @@ export function detectAgentReadyInChunk(turnBuffer: string): boolean {
   return hasAgentReadyMarker(tailPlain) || hasAgentQuestionMarker(tailPlain);
 }
 
+export function detectAgentFollowUpReadyInChunk(turnBuffer: string): boolean {
+  const tailPlain = stripAnsi(turnBuffer.slice(-TURN_TAIL_SIZE));
+
+  if (hasAgentReadyMarker(tailPlain) || hasAgentQuestionMarker(tailPlain)) {
+    return true;
+  }
+
+  return isShellPromptInTail(tailPlain);
+}
+
 export function syncAgentBusyFromTail(
   paneId: string,
   tail: string,
@@ -200,6 +214,12 @@ export function syncAgentBusyFromTail(
   const session = useTerminalSessionStore.getState();
   const isAwaitingTurn = Boolean(session.awaitingResponseByPane[paneId]);
 
+  if (detectAgentReadyInChunk(tail) || detectAgentFollowUpReadyInChunk(tail)) {
+    setAgentBusy(paneId, false);
+    onAgentReady?.();
+    return;
+  }
+
   if (detectAgentBusyInChunk(tail)) {
     setAgentBusy(paneId, true);
     onLiveAgentBusy?.();
@@ -214,11 +234,6 @@ export function syncAgentBusyFromTail(
     setAgentBusy(paneId, true);
     onLiveAgentBusy?.();
     return;
-  }
-
-  if (detectAgentReadyInChunk(tail)) {
-    setAgentBusy(paneId, false);
-    onAgentReady?.();
   }
 }
 

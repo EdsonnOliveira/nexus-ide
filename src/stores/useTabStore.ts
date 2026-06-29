@@ -2,7 +2,9 @@ import { useProjectStore } from '@/stores/useProjectStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { bumpFileExternalRevision } from '@/utils/fileExternalRevision';
-import type { ApiTab, BrowserTab, EmulatorPlatform, EmulatorTab, FileTab, Tab, TabBarItem, TabType, TerminalAgent } from '@/types';
+import type { AgentTab, ApiTab, BrowserTab, EmulatorPlatform, EmulatorTab, FileTab, Tab, TabBarItem, TabType, TerminalAgent } from '@/types';
+import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
+import { resolveAgentTabCli, terminalAgentToCli } from '@/utils/agentTabHelpers';
 import { normalizeBrowserUrl } from '@/utils/browserUrl';
 import { createBadgeColorIndex } from '@/utils/tabBadge';
 import {
@@ -54,6 +56,10 @@ export interface TabStoreActions {
     tabId: string,
     patch: Partial<Pick<ApiTab, 'requestId' | 'collectionId' | 'title'>>,
   ) => Promise<void>;
+  updateAgentTab: (
+    tabId: string,
+    patch: Partial<Pick<AgentTab, 'turns' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'>>,
+  ) => Promise<void>;
   setSplitRatio: (
     splitTabId: string,
     path: readonly number[],
@@ -76,7 +82,7 @@ function countPanesByType(tabs: TabBarItem[], type: TabType): number {
 
 function killTabBarItem(item: TabBarItem): void {
   for (const pane of item.type === 'split' ? item.panes : [item]) {
-    if (pane.type === 'terminal') {
+    if (pane.type === 'terminal' || pane.type === 'agent') {
       useProjectNotificationStore.getState().clearNotificationForPane(pane.id);
       useTerminalSessionStore.getState().disposePaneSession(pane.id);
 
@@ -180,7 +186,7 @@ export function useTabActions(): TabStoreActions {
               title: `Terminal ${countPanesByType(project.tabs, 'terminal') + 1}`,
               type: 'terminal',
               ptyId: null,
-              agent: 'cursor',
+              agent: 'shell',
               badgeColorIndex,
             };
 
@@ -199,17 +205,22 @@ export function useTabActions(): TabStoreActions {
 
       const tabId = crypto.randomUUID();
       const badgeColorIndex = createBadgeColorIndex(project.tabs);
-      const nextTab: Tab = {
+      const trimmed = command.trim();
+      const cliAgent = extractCliAgentCommand(trimmed) ?? terminalAgentToCli('cursor');
+      const nextTab: AgentTab = {
         id: tabId,
-        title: `Agent ${countPanesByType(project.tabs, 'terminal') + 1}`,
-        type: 'terminal',
+        title: `Agent ${countPanesByType(project.tabs, 'agent') + 1}`,
+        type: 'agent',
+        cliAgent,
         ptyId: null,
-        agent: 'shell',
-        restoreCommand: command,
+        messages: [],
+        turns: [],
+        restoreCommand: trimmed || cliAgent,
+        workingDirectory: project.path,
         badgeColorIndex,
       };
 
-      useTerminalSessionStore.getState().setPendingLaunchCommand(tabId, command);
+      useTerminalSessionStore.getState().setPendingLaunchCommand(tabId, trimmed || cliAgent);
 
       await updateProject(project.id, {
         tabs: [...project.tabs, nextTab],
@@ -736,14 +747,30 @@ export function useTabActions(): TabStoreActions {
         window.nexus.terminal.kill(pane.ptyId);
       }
 
+      if (pane?.type === 'agent' && pane.ptyId) {
+        window.nexus.terminal.kill(pane.ptyId);
+      }
+
       if (activeProjectId) {
         setTabPtyId(activeProjectId, tabId, null);
       }
 
       await updateProject(project.id, {
-        tabs: updatePaneInTabs(project.tabs, tabId, (entry) =>
-          entry.type === 'terminal' ? { ...entry, agent, ptyId: null } : entry,
-        ),
+        tabs: updatePaneInTabs(project.tabs, tabId, (entry) => {
+          if (entry.type === 'terminal') {
+            return { ...entry, agent, ptyId: null };
+          }
+
+          if (entry.type === 'agent') {
+            return {
+              ...entry,
+              cliAgent: terminalAgentToCli(agent),
+              ptyId: null,
+            };
+          }
+
+          return entry;
+        }),
       });
     },
     updateBrowserUrl: async (tabId, url) => {
@@ -783,6 +810,27 @@ export function useTabActions(): TabStoreActions {
         tabs: updatePaneInTabs(project.tabs, tabId, (entry) =>
           entry.type === 'api' ? { ...entry, ...patch } : entry,
         ),
+      });
+    },
+    updateAgentTab: async (tabId, patch) => {
+      const project = getProjectSnapshot();
+
+      if (!project) {
+        return;
+      }
+
+      const nextTabs = updatePaneInTabs(project.tabs, tabId, (entry) =>
+        entry.type === 'agent' ? { ...entry, ...patch } : entry,
+      );
+
+      useProjectStore.setState((state) => ({
+        projects: state.projects.map((entry) =>
+          entry.id === project.id ? { ...entry, tabs: nextTabs } : entry,
+        ),
+      }));
+
+      await updateProject(project.id, {
+        tabs: nextTabs,
       });
     },
     setSplitRatio: async (splitTabId, path, ratio) => {

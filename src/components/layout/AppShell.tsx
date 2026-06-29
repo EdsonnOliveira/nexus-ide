@@ -9,6 +9,7 @@ import { useProjectStore } from '@/stores/useProjectStore';
 import { useTabActions } from '@/stores/useTabStore';
 import { isMarkdownFile } from '@/utils/explorerRelativePath';
 import { EmptyState } from '@/components/overlay/EmptyState';
+import { PaneErrorBoundary } from '@/components/overlay/PaneErrorBoundary';
 import { ProjectSidebar } from '@/components/sidebar/ProjectSidebar';
 import { StatusBar } from '@/components/layout/StatusBar';
 import { GlobalSearchPalette } from '@/components/search/GlobalSearchPalette';
@@ -245,9 +246,11 @@ function AppShellComponent() {
       <div className='app-main'>
         {activeProject ? (
           <div className='glass-panel glass-panel--main'>
-            <Suspense fallback={<div className='empty-state'>Carregando...</div>}>
-              <TerminalPanel />
-            </Suspense>
+            <PaneErrorBoundary>
+              <Suspense fallback={<div className='empty-state'>Carregando...</div>}>
+                <TerminalPanel />
+              </Suspense>
+            </PaneErrorBoundary>
           </div>
         ) : (
           <div className='glass-panel glass-panel--empty'>

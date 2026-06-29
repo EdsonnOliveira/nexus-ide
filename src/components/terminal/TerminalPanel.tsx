@@ -5,6 +5,7 @@ import { useTabActions } from '@/stores/useTabStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
 import { ApiView } from '@/components/api/ApiView';
+import { AgentView } from '@/components/agent/AgentView';
 import { BrowserView } from '@/components/browser/BrowserView';
 import { EmulatorView } from '@/components/emulator/EmulatorView';
 import { FileView } from '@/components/file/FileView';
@@ -62,7 +63,7 @@ import {
   resolvePaneAgentCommand,
   shouldMarkAgentAwaiting,
 } from '@/utils/projectAgentStatus';
-import type { ApiTab, EmulatorTab, Project, SplitLayoutNode, Tab, TabBarItem } from '@/types';
+import type { ApiTab, EmulatorTab, Project, SplitLayoutNode, Tab, TabBarItem, AgentTab } from '@/types';
 
 interface WorkspaceSplitProps {
   node: SplitLayoutNode;
@@ -92,6 +93,10 @@ interface TabPaneProps {
     tabId: string,
     patch: Partial<Pick<ApiTab, 'requestId' | 'collectionId' | 'title'>>,
   ) => void;
+  onUpdateAgentTab: (
+    tabId: string,
+    patch: Partial<Pick<AgentTab, 'turns' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'>>,
+  ) => void;
 }
 
 const TabPane = memo(function TabPaneComponent({
@@ -109,9 +114,11 @@ const TabPane = memo(function TabPaneComponent({
   onOpenLinkInBrowser,
   onUpdateEmulatorTab,
   onUpdateApiTab,
+  onUpdateAgentTab,
 }: TabPaneProps) {
   const { selectPane } = useTabActions();
-  const isAgentTab = tab.type === 'terminal' && tab.agent !== 'shell';
+  const isDedicatedAgentTab = tab.type === 'agent';
+  const isAgentTab = isDedicatedAgentTab || (tab.type === 'terminal' && tab.agent !== 'shell');
   const terminalHandleRef = useRef<XTermViewHandle | null>(null);
   const [terminalCwd, setTerminalCwd] = useState(
     tab.type === 'terminal' && tab.terminalCwd ? tab.terminalCwd : projectPath,
@@ -122,6 +129,10 @@ const TabPane = memo(function TabPaneComponent({
   const hintsCountRef = useRef(0);
   const storedActiveAgent = useTerminalSessionStore((state) => state.activeAgentByPane[tab.id] ?? null);
   const activeAgent = useMemo(() => {
+    if (tab.type === 'agent') {
+      return tab.cliAgent;
+    }
+
     if (tab.type !== 'terminal') {
       return null;
     }
@@ -130,7 +141,7 @@ const TabPane = memo(function TabPaneComponent({
 
     return fromRestore ?? storedActiveAgent ?? null;
   }, [storedActiveAgent, tab]);
-  const isAgentSession = isAgentTab || Boolean(activeAgent);
+  const isAgentSession = isDedicatedAgentTab || isAgentTab || Boolean(activeAgent);
 
   useEffect(() => {
     if (tab.type === 'terminal' && tab.terminalCwd) {
@@ -382,6 +393,35 @@ const TabPane = memo(function TabPaneComponent({
     );
   }
 
+  if (tab.type === 'agent') {
+    return (
+      <div
+        className={`workspace-pane workspace-pane--agent-slot${explorerDropActive ? ' workspace-pane--explorer-drop-target' : ''}`}
+        onMouseDown={handleMouseDown}
+        onDragOver={handleExplorerDragOver}
+        onDragLeave={handleExplorerDragLeave}
+        onDrop={handleExplorerDrop}
+      >
+        <AgentView
+          tab={tab}
+          projectId={projectId}
+          projectPath={projectPath}
+          isVisible={isVisible}
+          isRuntimeActive={isRuntimeActive}
+          isFocused={isFocused}
+          onFocusPane={() => onFocusPane(tab.id)}
+          onPtyCreated={onPtyCreated}
+          onPtyLost={onPtyLost}
+          onUpdateTab={(patch) => onUpdateAgentTab(tab.id, patch)}
+        />
+      </div>
+    );
+  }
+
+  if (tab.type !== 'terminal') {
+    return null;
+  }
+
   return (
     <div
       className={`workspace-pane terminal-panel__shell terminal-panel__shell--${tab.agent}${explorerDropActive ? ' workspace-pane--explorer-drop-target' : ''}`}
@@ -446,6 +486,7 @@ const ProjectPaneSlot = memo(function ProjectPaneSlotComponent({ paneId }: { pan
     onOpenLinkInBrowser,
     onUpdateEmulatorTab,
     onUpdateApiTab,
+    onUpdateAgentTab,
     isPaneVisible,
     isPaneFocused,
     isPaneRuntimeActive,
@@ -482,6 +523,7 @@ const ProjectPaneSlot = memo(function ProjectPaneSlotComponent({ paneId }: { pan
         onOpenLinkInBrowser={onOpenLinkInBrowser}
         onUpdateEmulatorTab={onUpdateEmulatorTab}
         onUpdateApiTab={onUpdateApiTab}
+        onUpdateAgentTab={onUpdateAgentTab}
       />
     </div>
   );
@@ -655,6 +697,10 @@ interface ProjectWorkspaceProps {
     tabId: string,
     patch: Partial<Pick<ApiTab, 'requestId' | 'collectionId' | 'title'>>,
   ) => void;
+  onUpdateAgentTab: (
+    tabId: string,
+    patch: Partial<Pick<AgentTab, 'turns' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'>>,
+  ) => void;
   onSplitRatioCommit: (
     splitTabId: string,
     path: readonly number[],
@@ -673,6 +719,7 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
   onOpenLinkInBrowser,
   onUpdateEmulatorTab,
   onUpdateApiTab,
+  onUpdateAgentTab,
   onSplitRatioCommit,
 }: ProjectWorkspaceProps) {
   const activeTabItem = useMemo(
@@ -707,6 +754,7 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
       onOpenLinkInBrowser,
       onUpdateEmulatorTab,
       onUpdateApiTab,
+      onUpdateAgentTab,
       isPaneVisible: isPaneVisibleForProject,
       isPaneFocused: isPaneFocusedForProject,
       isPaneRuntimeActive: isPaneRuntimeActiveForProject,
@@ -722,6 +770,7 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
       onPtyCreated,
       onPtyLost,
       onUpdateApiTab,
+      onUpdateAgentTab,
       onUpdateEmulatorTab,
       project,
       terminalRefs,
@@ -787,7 +836,7 @@ function TerminalPanelComponent() {
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const projects = useProjectStore((state) => state.projects);
   const completionTrackersRef = useRef(new Map<string, PaneCompletionTracker>());
-  const { selectPane, updateBrowserUrl, updateEmulatorTab, updateApiTab, splitTab, openBrowserTab, addTab, addAgentTab, setSplitRatio } =
+  const { selectPane, updateBrowserUrl, updateEmulatorTab, updateApiTab, updateAgentTab, splitTab, openBrowserTab, addTab, addAgentTab, setSplitRatio } =
     useTabActions();
   const setTabPtyId = useProjectStore((state) => state.setTabPtyId);
   const terminalRefs = useRef<Record<string, XTermViewHandle | null>>({});
@@ -945,6 +994,16 @@ function TerminalPanelComponent() {
     [updateApiTab],
   );
 
+  const handleUpdateAgentTab = useCallback(
+    (
+      tabId: string,
+      patch: Partial<Pick<AgentTab, 'turns' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'>>,
+    ) => {
+      void updateAgentTab(tabId, patch);
+    },
+    [updateAgentTab],
+  );
+
   const handleAddApi = useCallback(() => {
     void addTab('api');
   }, [addTab]);
@@ -988,7 +1047,11 @@ function TerminalPanelComponent() {
       for (const pane of collectProjectPanes(project.tabs)) {
         paneById.set(pane.id, pane);
 
-        if (pane.type !== 'terminal' || !pane.ptyId) {
+        if (pane.type !== 'terminal' && pane.type !== 'agent') {
+          continue;
+        }
+
+        if (!pane.ptyId) {
           continue;
         }
 
@@ -1098,7 +1161,7 @@ function TerminalPanelComponent() {
     }
 
     for (const pane of collectProjectPanes(activeProject.tabs)) {
-      if (pane.type !== 'terminal' || !pane.ptyId) {
+      if ((pane.type !== 'terminal' && pane.type !== 'agent') || !pane.ptyId) {
         continue;
       }
 
@@ -1258,6 +1321,7 @@ function TerminalPanelComponent() {
               onOpenLinkInBrowser={handleOpenLinkInBrowser}
               onUpdateEmulatorTab={handleUpdateEmulatorTab}
               onUpdateApiTab={handleUpdateApiTab}
+              onUpdateAgentTab={handleUpdateAgentTab}
               onSplitRatioCommit={handleSplitRatioCommit}
             />
           ))}

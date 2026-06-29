@@ -622,9 +622,20 @@ function truncateSuggestionText(text: string, maxLength = 72): string {
 }
 
 function resolveAgentPreviousPrompt(
-  pane: TerminalTab,
+  pane: Tab,
   lastRestartCommands: Record<string, string>,
 ): string | null {
+  if (pane.type === 'agent') {
+    const turns = pane.turns ?? [];
+    const lastUser = turns[turns.length - 1]?.user.content.trim();
+
+    return lastUser || null;
+  }
+
+  if (pane.type !== 'terminal') {
+    return null;
+  }
+
   const lastCommand = pane.lastCommand?.trim() || lastRestartCommands[pane.id]?.trim() || '';
 
   if (!lastCommand || extractCliAgentCommand(lastCommand)) {
@@ -640,10 +651,6 @@ function buildAgentSessionSuggestions(project: Project): GlobalSearchResult[] {
   const results: GlobalSearchResult[] = [];
 
   for (const entry of openAgents) {
-    if (entry.pane.type !== 'terminal') {
-      continue;
-    }
-
     const lastPrompt = resolveAgentPreviousPrompt(entry.pane, lastRestartCommands);
 
     results.push({

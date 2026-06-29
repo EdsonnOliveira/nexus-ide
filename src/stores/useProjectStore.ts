@@ -6,11 +6,13 @@ import { useAgentGitChangeStore } from '@/stores/useAgentGitChangeStore';
 import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
-import { flushTerminalSessionsNow, saveScrollbacksFromProjects } from '@/utils/persistTerminalSession';
+import { flushTerminalSessionsNow, flushTerminalSessionsForProjectSwitch, saveScrollbacksFromProjects } from '@/utils/persistTerminalSession';
 import {
   flushAgentGitGroupsNow,
+  flushAgentGitGroupsForProjectSwitch,
   hydrateAgentGitGroupsFromProjects,
 } from '@/utils/persistAgentGitGroups';
+import { countBusyAgentPanes, beginProjectSwitch, endProjectSwitch } from '@/utils/projectSwitch';
 import { updatePaneInTabs } from '@/utils/tabGroups';
 import {
   restoreSidebarVideoSession,
@@ -124,6 +126,7 @@ function migrateAppState(appState: AppState): AppState {
         whatsappLink: legacyProject.whatsappLink ?? null,
         mailInbox: legacyProject.mailInbox ?? null,
         agentGitGroups: legacyProject.agentGitGroups ?? [],
+        agentResponseSkills: legacyProject.agentResponseSkills ?? [],
         flag: legacyProject.flag ?? null,
       };
     }),
@@ -149,8 +152,10 @@ function buildTerminalPtyIdMap(projects: Project[]): Map<string, Map<string, str
       const panes = item.type === 'split' ? item.panes : [item];
 
       for (const pane of panes) {
-        if (pane.type === 'terminal' && pane.ptyId) {
-          paneMap.set(pane.id, pane.ptyId);
+        if (pane.type === 'terminal' || pane.type === 'agent') {
+          if (pane.ptyId) {
+            paneMap.set(pane.id, pane.ptyId);
+          }
         }
       }
     }
@@ -174,7 +179,7 @@ function mergePtyIdsIntoTabs(
         panes: item.panes.map((pane) => {
           const ptyId = paneMap.get(pane.id);
 
-          if (pane.type === 'terminal' && ptyId) {
+          if ((pane.type === 'terminal' || pane.type === 'agent') && ptyId) {
             return { ...pane, ptyId };
           }
 
@@ -185,7 +190,7 @@ function mergePtyIdsIntoTabs(
 
     const ptyId = paneMap.get(item.id);
 
-    if (item.type === 'terminal' && ptyId) {
+    if ((item.type === 'terminal' || item.type === 'agent') && ptyId) {
       return { ...item, ptyId };
     }
 
@@ -231,6 +236,70 @@ function getWorkspaceProjects(projects: Project[], workspaceId: string | null): 
   }
 
   return projects.filter((project) => project.workspaceId === workspaceId);
+}
+
+async function performSelectProject(
+  set: (state: Partial<ProjectStoreState>) => void,
+  get: () => ProjectStoreState,
+  id: string,
+  options?: { syncWorkspace?: boolean },
+): Promise<void> {
+  set({ selectingProjectId: id });
+
+  try {
+    const prevState = get();
+    const leavingProjectId = prevState.activeProjectId;
+    const selectedProject = prevState.projects.find((project) => project.id === id);
+
+    console.info('[project-switch] start', {
+      leavingProjectId,
+      newProjectId: id,
+      agentPanesBusy: countBusyAgentPanes(),
+    });
+
+    if (
+      options?.syncWorkspace !== false &&
+      selectedProject?.workspaceId &&
+      prevState.activeWorkspaceId !== null &&
+      selectedProject.workspaceId !== prevState.activeWorkspaceId
+    ) {
+      await window.nexus.projects.selectWorkspace(selectedProject.workspaceId);
+    }
+
+    if (leavingProjectId && leavingProjectId !== id) {
+      const leavingProject = prevState.projects.find((project) => project.id === leavingProjectId);
+
+      if (leavingProject) {
+        await saveScrollbacksFromProjects(prevState.projects);
+        await window.nexus.projects.update(leavingProject.id, {
+          tabs: leavingProject.tabs,
+          activeTabId: leavingProject.activeTabId,
+          activePaneId: leavingProject.activePaneId,
+        });
+      }
+    }
+
+    await flushTerminalSessionsForProjectSwitch(prevState.projects);
+    await flushAgentGitGroupsForProjectSwitch(prevState.projects);
+    await window.nexus.projects.select(id);
+    const appState = migrateAppState(await window.nexus.projects.list());
+    applyStatePreservingRuntime(set, appState, prevState);
+    hydrateAgentGitGroupsFromProjects(appState.projects);
+    restoreActiveAgentsFromProjects(appState.projects);
+    set({ sidePanel: null });
+
+    console.info('[project-switch] complete', {
+      leavingProjectId,
+      newProjectId: id,
+    });
+  } catch (error) {
+    console.error('[project-switch] failed', {
+      newProjectId: id,
+      error,
+    });
+  } finally {
+    set({ selectingProjectId: null });
+  }
 }
 
 export const useProjectStore = create<ProjectStoreState>((set, get) => ({
@@ -366,45 +435,19 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     });
   },
   selectProject: async (id, options) => {
-    set({ selectingProjectId: id });
+    if (id === get().activeProjectId) {
+      return;
+    }
+
+    if (!beginProjectSwitch()) {
+      console.warn('[project-switch] skipped concurrent selectProject', { newProjectId: id });
+      return;
+    }
 
     try {
-      const prevState = get();
-      const leavingProjectId = prevState.activeProjectId;
-      const selectedProject = prevState.projects.find((project) => project.id === id);
-
-      if (
-        options?.syncWorkspace !== false &&
-        selectedProject?.workspaceId &&
-        prevState.activeWorkspaceId !== null &&
-        selectedProject.workspaceId !== prevState.activeWorkspaceId
-      ) {
-        await window.nexus.projects.selectWorkspace(selectedProject.workspaceId);
-      }
-
-      if (leavingProjectId && leavingProjectId !== id) {
-        const leavingProject = prevState.projects.find((project) => project.id === leavingProjectId);
-
-        if (leavingProject) {
-          await saveScrollbacksFromProjects(prevState.projects);
-          await window.nexus.projects.update(leavingProject.id, {
-            tabs: leavingProject.tabs,
-            activeTabId: leavingProject.activeTabId,
-            activePaneId: leavingProject.activePaneId,
-          });
-        }
-      }
-
-      await flushTerminalSessionsNow();
-      await flushAgentGitGroupsNow();
-      await window.nexus.projects.select(id);
-      const appState = migrateAppState(await window.nexus.projects.list());
-      applyStatePreservingRuntime(set, appState, prevState);
-      hydrateAgentGitGroupsFromProjects(appState.projects);
-      restoreActiveAgentsFromProjects(appState.projects);
-      set({ sidePanel: null });
+      await performSelectProject(set, get, id, options);
     } finally {
-      set({ selectingProjectId: null });
+      await endProjectSwitch();
     }
   },
   leaveActiveProject: async () => {
@@ -412,6 +455,10 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     const leavingProjectId = prevState.activeProjectId;
 
     if (!leavingProjectId) {
+      return;
+    }
+
+    if (!beginProjectSwitch()) {
       return;
     }
 
@@ -429,14 +476,17 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
         });
       }
 
-      await flushTerminalSessionsNow();
-      await flushAgentGitGroupsNow();
+      await flushTerminalSessionsForProjectSwitch(prevState.projects);
+      await flushAgentGitGroupsForProjectSwitch(prevState.projects);
       await window.nexus.projects.clearActiveProject();
       const appState = migrateAppState(await window.nexus.projects.list());
       applyStatePreservingRuntime(set, appState, prevState);
       set({ sidePanel: null });
+    } catch (error) {
+      console.error('[project-switch] leaveActiveProject failed', { error });
     } finally {
       set({ selectingProjectId: null });
+      await endProjectSwitch();
     }
   },
   updateProject: async (id, data) => {
@@ -462,43 +512,54 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
       return;
     }
 
-    const filteredProjects = getWorkspaceProjects(prevState.projects, id);
-    const targetProjectId = filteredProjects[0]?.id ?? null;
-
-    await window.nexus.projects.selectWorkspace(id);
-    const workspaceAppState = migrateAppState(await window.nexus.projects.list());
-    applyStatePreservingRuntime(set, workspaceAppState, prevState);
-
-    if (targetProjectId) {
-      await get().selectProject(targetProjectId, { syncWorkspace: false });
+    if (!beginProjectSwitch()) {
       return;
     }
 
-    set({ selectingProjectId: prevState.activeProjectId });
-
     try {
-      const leavingProjectId = prevState.activeProjectId;
+      const filteredProjects = getWorkspaceProjects(prevState.projects, id);
+      const targetProjectId = filteredProjects[0]?.id ?? null;
 
-      if (leavingProjectId) {
-        const leavingProject = prevState.projects.find((project) => project.id === leavingProjectId);
+      await window.nexus.projects.selectWorkspace(id);
+      const workspaceAppState = migrateAppState(await window.nexus.projects.list());
+      applyStatePreservingRuntime(set, workspaceAppState, prevState);
 
-        if (leavingProject) {
-          await saveScrollbacksFromProjects(prevState.projects);
-          await window.nexus.projects.update(leavingProject.id, {
-            tabs: leavingProject.tabs,
-            activeTabId: leavingProject.activeTabId,
-            activePaneId: leavingProject.activePaneId,
-          });
-        }
+      if (targetProjectId) {
+        await performSelectProject(set, get, targetProjectId, { syncWorkspace: false });
+        return;
       }
 
-      await flushTerminalSessionsNow();
-      await window.nexus.projects.clearActiveProject();
-      const appState = migrateAppState(await window.nexus.projects.list());
-      applyStatePreservingRuntime(set, appState, prevState);
-      set({ sidePanel: null });
+      set({ selectingProjectId: prevState.activeProjectId });
+
+      try {
+        const leavingProjectId = prevState.activeProjectId;
+
+        if (leavingProjectId) {
+          const leavingProject = prevState.projects.find((project) => project.id === leavingProjectId);
+
+          if (leavingProject) {
+            await saveScrollbacksFromProjects(prevState.projects);
+            await window.nexus.projects.update(leavingProject.id, {
+              tabs: leavingProject.tabs,
+              activeTabId: leavingProject.activeTabId,
+              activePaneId: leavingProject.activePaneId,
+            });
+          }
+        }
+
+        await flushTerminalSessionsForProjectSwitch(prevState.projects);
+        await flushAgentGitGroupsForProjectSwitch(prevState.projects);
+        await window.nexus.projects.clearActiveProject();
+        const appState = migrateAppState(await window.nexus.projects.list());
+        applyStatePreservingRuntime(set, appState, prevState);
+        set({ sidePanel: null });
+      } catch (error) {
+        console.error('[project-switch] selectWorkspace failed', { error });
+      } finally {
+        set({ selectingProjectId: null });
+      }
     } finally {
-      set({ selectingProjectId: null });
+      await endProjectSwitch();
     }
   },
   removeWorkspace: async (id) => {
@@ -578,13 +639,17 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     return projects.find((project) => project.id === activeProjectId) ?? null;
   },
   setTabPtyId: (projectId, tabId, ptyId) => {
+    if (ptyId) {
+      useTerminalSessionStore.getState().takePendingLaunchCommand(tabId);
+    }
+
     set((state) => ({
       projects: state.projects.map((project) =>
         project.id === projectId
           ? {
               ...project,
               tabs: updatePaneInTabs(project.tabs, tabId, (pane) =>
-                pane.type === 'terminal' ? { ...pane, ptyId } : pane,
+                pane.type === 'terminal' || pane.type === 'agent' ? { ...pane, ptyId } : pane,
               ),
             }
           : project,

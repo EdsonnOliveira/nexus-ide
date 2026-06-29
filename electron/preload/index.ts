@@ -71,6 +71,40 @@ const nexusApi = {
       return () => ipcRenderer.off('terminal:exit', listener);
     },
   },
+  agentPrint: {
+    start: (options: {
+      paneId: string;
+      cwd: string;
+      prompt: string;
+      model?: string | null;
+      mode?: 'plan' | 'ask';
+      continueSession?: boolean;
+    }): Promise<void> => ipcRenderer.invoke('agent:printStart', options),
+    stop: (paneId: string): void => {
+      ipcRenderer.send('agent:printStop', paneId);
+    },
+    onData: (callback: (paneId: string, data: string) => void): (() => void) => {
+      const listener = (_: Electron.IpcRendererEvent, payload: { paneId: string; data: string }) => {
+        callback(payload.paneId, payload.data);
+      };
+
+      ipcRenderer.on('agent:printData', listener);
+      return () => ipcRenderer.off('agent:printData', listener);
+    },
+    onDone: (
+      callback: (paneId: string, payload: { code: number; error?: string }) => void,
+    ): (() => void) => {
+      const listener = (
+        _: Electron.IpcRendererEvent,
+        payload: { paneId: string; code: number; error?: string },
+      ) => {
+        callback(payload.paneId, payload);
+      };
+
+      ipcRenderer.on('agent:printDone', listener);
+      return () => ipcRenderer.off('agent:printDone', listener);
+    },
+  },
   dialog: {
     openDirectory: (): Promise<string | null> => ipcRenderer.invoke('dialog:openDirectory'),
     openImage: (): Promise<string | null> => ipcRenderer.invoke('dialog:openImage'),

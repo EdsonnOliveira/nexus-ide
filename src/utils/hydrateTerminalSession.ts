@@ -1,6 +1,7 @@
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import type { Project } from '@/types';
+import { resolveAgentTabCli } from '@/utils/agentTabHelpers';
 import { collectProjectPanes } from '@/utils/tabGroups';
 
 export function hydrateTerminalSessionFromProjects(projects: Project[]): void {
@@ -11,6 +12,13 @@ export function hydrateTerminalSessionFromProjects(projects: Project[]): void {
 
   for (const project of projects) {
     for (const pane of collectProjectPanes(project.tabs)) {
+      if (pane.type === 'agent') {
+        const cliAgent = resolveAgentTabCli(pane);
+        activeAgentByPane[pane.id] = cliAgent;
+        activeAgentSinceByPane[pane.id] = Date.now();
+        continue;
+      }
+
       if (pane.type !== 'terminal') {
         continue;
       }
@@ -51,6 +59,12 @@ export function restoreActiveAgentsFromProjects(projects: Project[]): void {
 
     for (const project of projects) {
       for (const pane of collectProjectPanes(project.tabs)) {
+        if (pane.type === 'agent') {
+          activeAgentByPane[pane.id] = resolveAgentTabCli(pane);
+          activeAgentSinceByPane[pane.id] = state.activeAgentSinceByPane[pane.id] ?? Date.now();
+          continue;
+        }
+
         if (pane.type !== 'terminal' || !pane.restoreCommand) {
           continue;
         }

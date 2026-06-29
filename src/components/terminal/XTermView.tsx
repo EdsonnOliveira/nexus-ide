@@ -44,6 +44,7 @@ import {
   parseImageTokenIds,
 } from '@/utils/terminalPasteImageTokens';
 import { readShellPromptInput, sanitizeAgentPrompt } from '@/utils/terminalShellPrompt';
+import { isProjectSwitching } from '@/utils/projectSwitch';
 
 export interface XTermViewHandle {
   focus: () => void;
@@ -141,6 +142,10 @@ async function fetchTerminalScrollback(ptyId: string, paneId: string): Promise<s
   return scrollback;
 }
 
+function canUseTerminal(terminal: Terminal | null, disposedRef: { current: boolean }): terminal is Terminal {
+  return Boolean(terminal && !disposedRef.current);
+}
+
 async function forceReplayTerminalScrollback(
   terminal: Terminal,
   ptyId: string,
@@ -148,10 +153,11 @@ async function forceReplayTerminalScrollback(
   parseStream: (data: string) => string,
   suppressShellPromptClearRef: { current: boolean },
   stickToBottomRef: { current: boolean },
+  disposedRef: { current: boolean },
 ): Promise<void> {
   const scrollback = await fetchTerminalScrollback(ptyId, paneId);
 
-  if (!scrollback) {
+  if (!scrollback || !canUseTerminal(terminal, disposedRef)) {
     return;
   }
 
@@ -174,12 +180,17 @@ async function restoreTerminalScrollback(
   parseStream: (data: string) => string,
   suppressShellPromptClearRef: { current: boolean },
   stickToBottomRef: { current: boolean },
+  disposedRef: { current: boolean },
 ): Promise<void> {
-  if (terminal.buffer.active.length > 1) {
+  if (!canUseTerminal(terminal, disposedRef) || terminal.buffer.active.length > 1) {
     return;
   }
 
   const scrollback = await fetchTerminalScrollback(ptyId, paneId);
+
+  if (!canUseTerminal(terminal, disposedRef)) {
+    return;
+  }
 
   replayTerminalScrollback(
     terminal,
@@ -187,6 +198,7 @@ async function restoreTerminalScrollback(
     parseStream,
     suppressShellPromptClearRef,
     stickToBottomRef,
+    disposedRef,
   );
 }
 
@@ -196,8 +208,9 @@ function replayTerminalScrollback(
   parseStream: (data: string) => string,
   suppressShellPromptClearRef: { current: boolean },
   stickToBottomRef: { current: boolean },
+  disposedRef: { current: boolean },
 ): void {
-  if (!scrollback || terminal.buffer.active.length > 1) {
+  if (!scrollback || !canUseTerminal(terminal, disposedRef) || terminal.buffer.active.length > 1) {
     return;
   }
 
@@ -268,6 +281,8 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
   const syncPasteImagesTimerRef = useRef<number | null>(null);
   const paneIdRef = useRef(paneId);
   const isVisibleRef = useRef(isVisible);
+  const disposedRef = useRef(false);
+  const scrollbackReplayGenerationRef = useRef(0);
   const [linkMenu, setLinkMenu] = useState<{ url: string; x: number; y: number } | null>(null);
 
   paneIdRef.current = paneId;
@@ -467,6 +482,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
           parseStreamRef.current,
           suppressShellPromptClearRef,
           stickToBottomRef,
+          disposedRef,
         );
 
         replayedScrollbackRef.current = { ptyId: createdPtyId, terminal };
@@ -735,19 +751,25 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
 
       agentReadyDetector.feed(data);
 
-      if (!isVisibleRef.current) {
+      if (!isVisibleRef.current || isProjectSwitching()) {
         scheduleSyncPasteImagesFromPromptRef.current(true);
         return;
       }
 
+      const activeTerminal = terminalRef.current;
+
+      if (!canUseTerminal(activeTerminal, disposedRef)) {
+        return;
+      }
+
       const shouldStick = stickToBottomRef.current;
-      terminal.write(parseStream(data));
+      activeTerminal.write(parseStream(data));
 
       if (shouldStick) {
-        terminal.scrollToBottom();
+        activeTerminal.scrollToBottom();
         stickToBottomRef.current = true;
       } else {
-        stickToBottomRef.current = isTerminalAtBottom(terminal);
+        stickToBottomRef.current = isTerminalAtBottom(activeTerminal);
       }
 
       scheduleSyncPasteImagesFromPromptRef.current(true);
@@ -758,7 +780,13 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         return;
       }
 
-      terminal.writeln(`\r\n\x1b[38;5;244m[processo encerrou com código ${code}]\x1b[0m`);
+      const activeTerminal = terminalRef.current;
+
+      if (!canUseTerminal(activeTerminal, disposedRef)) {
+        return;
+      }
+
+      activeTerminal.writeln(`\r\n\x1b[38;5;244m[processo encerrou com código ${code}]\x1b[0m`);
       terminalExitedRef.current = true;
       ptyIdRef.current = null;
       onPtyLostRef.current();
@@ -862,6 +890,8 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     container.addEventListener('focusout', handleFocusOut);
 
     return () => {
+      disposedRef.current = true;
+
       if (syncPasteImagesTimerRef.current !== null) {
         window.clearTimeout(syncPasteImagesTimerRef.current);
         syncPasteImagesTimerRef.current = null;
@@ -920,12 +950,13 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
                 parseStreamRef.current,
                 suppressShellPromptClearRef,
                 stickToBottomRef,
+                disposedRef,
               );
               replayedScrollbackRef.current = { ptyId, terminal };
             }
           }
 
-          if (terminal && fitAddon && isVisible) {
+          if (terminal && fitAddon && isVisible && canUseTerminal(terminal, disposedRef)) {
             scheduleTerminalDisplayRefresh(fitAddon, terminal, ptyId, stickToBottomRef, true);
           }
 
@@ -969,6 +1000,9 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       return;
     }
 
+    const generation = scrollbackReplayGenerationRef.current + 1;
+    scrollbackReplayGenerationRef.current = generation;
+
     const terminal = terminalRef.current;
     const fitAddon = fitAddonRef.current;
     const activePtyId = ptyIdRef.current;
@@ -979,6 +1013,10 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
 
     void (async () => {
       if (activePtyId && (await window.nexus.terminal.has(activePtyId))) {
+        if (generation !== scrollbackReplayGenerationRef.current) {
+          return;
+        }
+
         await forceReplayTerminalScrollback(
           terminal,
           activePtyId,
@@ -986,11 +1024,29 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
           parseStreamRef.current,
           suppressShellPromptClearRef,
           stickToBottomRef,
+          disposedRef,
         );
+
+        if (generation !== scrollbackReplayGenerationRef.current) {
+          return;
+        }
+
         replayedScrollbackRef.current = { ptyId: activePtyId, terminal };
       }
 
-      scheduleTerminalDisplayRefresh(fitAddon, terminal, ptyIdRef.current, stickToBottomRef, true);
+      if (generation !== scrollbackReplayGenerationRef.current) {
+        return;
+      }
+
+      if (canUseTerminal(terminalRef.current, disposedRef) && fitAddonRef.current) {
+        scheduleTerminalDisplayRefresh(
+          fitAddonRef.current,
+          terminalRef.current,
+          ptyIdRef.current,
+          stickToBottomRef,
+          true,
+        );
+      }
     })();
   }, [isVisible]);
 

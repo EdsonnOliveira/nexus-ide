@@ -65,7 +65,111 @@ export type {
 
 export type TerminalAgent = 'cursor' | 'claude' | 'composer' | 'shell';
 
-export type TabType = 'terminal' | 'browser' | 'emulator' | 'api';
+export type TabType = 'terminal' | 'agent' | 'browser' | 'emulator' | 'api';
+
+export type AgentMessageRole = 'user' | 'assistant';
+
+export interface AgentMessage {
+  id: string;
+  role: AgentMessageRole;
+  content: string;
+  createdAt: number;
+  streaming?: boolean;
+}
+
+export interface AgentPromptAttachment {
+  id: string;
+  label: string;
+  dataUrl: string;
+  relativePath?: string;
+}
+
+export interface AgentUserMessage {
+  id: string;
+  role: 'user';
+  content: string;
+  createdAt: number;
+  attachments?: AgentPromptAttachment[];
+  mode?: 'agent' | 'plan' | 'debug' | 'multitask' | 'ask';
+  agentPrompt?: string;
+  skillLabel?: string;
+}
+
+export interface AgentPromptSubmitOptions {
+  displayContent?: string;
+  skillLabel?: string;
+  forceNewTurn?: boolean;
+}
+
+export type AgentActivityKind =
+  | 'thought'
+  | 'status'
+  | 'section'
+  | 'file_edit'
+  | 'file_read'
+  | 'live_status'
+  | 'response';
+
+export interface AgentActivity {
+  id: string;
+  kind: AgentActivityKind;
+  label: string;
+  filePath?: string;
+  additions?: number;
+  deletions?: number;
+  durationMs?: number;
+  createdAt: number;
+  collapsed?: boolean;
+  streaming?: boolean;
+}
+
+export interface AgentFollowUp {
+  id: string;
+  content: string;
+  attachments: AgentPromptAttachment[];
+  createdAt: number;
+  mode?: 'agent' | 'plan' | 'debug' | 'multitask' | 'ask';
+}
+
+export interface AgentTurnSummaryFileRef {
+  path: string;
+}
+
+export interface AgentTurnSummary {
+  editedFileCount: number;
+  exploredFileCount: number;
+  commandCount: number;
+  additions: number;
+  deletions: number;
+  responseLead?: string;
+  exploredFiles?: AgentTurnSummaryFileRef[];
+  editedFiles?: AgentTurnSummaryFileRef[];
+}
+
+export interface AgentTurn {
+  id: string;
+  user: AgentUserMessage;
+  activities: AgentActivity[];
+  running: boolean;
+  startedAt: number;
+  completedAt?: number;
+  pendingFollowUp?: boolean;
+  summary?: AgentTurnSummary;
+}
+
+export interface AgentTab {
+  id: string;
+  title: string;
+  type: 'agent';
+  cliAgent: string;
+  ptyId: string | null;
+  turns: AgentTurn[];
+  messages?: AgentMessage[];
+  restoreCommand?: string | null;
+  workingDirectory?: string | null;
+  pinned?: boolean;
+  badgeColorIndex?: number;
+}
 
 export type EmulatorPlatform = 'android' | 'ios';
 
@@ -163,7 +267,7 @@ export interface FileTab {
   badgeColorIndex?: number;
 }
 
-export type Tab = TerminalTab | BrowserTab | FileTab | EmulatorTab | ApiTab;
+export type Tab = TerminalTab | AgentTab | BrowserTab | FileTab | EmulatorTab | ApiTab;
 
 export interface SplitTab {
   id: string;
@@ -201,6 +305,13 @@ export interface Workspace {
   name: string;
 }
 
+export interface ProjectAgentResponseSkill {
+  id: string;
+  hintId: string;
+  label: string;
+  command: string;
+}
+
 export interface ProjectFlag {
   reason: string;
   createdAt: number;
@@ -226,6 +337,7 @@ export interface Project {
   tasks?: ProjectTask[];
   taskIntegration?: TaskIntegrationConfig | null;
   agentGitGroups?: AgentGitChangeGroup[];
+  agentResponseSkills?: ProjectAgentResponseSkill[];
   flag?: ProjectFlag | null;
 }
 
@@ -261,6 +373,7 @@ export interface ProjectUpdatePayload {
   tasks?: ProjectTask[];
   taskIntegration?: TaskIntegrationConfig | null;
   agentGitGroups?: AgentGitChangeGroup[];
+  agentResponseSkills?: ProjectAgentResponseSkill[];
   flag?: ProjectFlag | null;
 }
 
@@ -416,6 +529,21 @@ export interface NexusAPI {
     kill: (ptyId: string) => void;
     onData: (callback: (ptyId: string, data: string) => void) => () => void;
     onExit: (callback: (ptyId: string, code: number) => void) => () => void;
+  };
+  agentPrint: {
+    start: (options: {
+      paneId: string;
+      cwd: string;
+      prompt: string;
+      model?: string | null;
+      mode?: 'plan' | 'ask';
+      continueSession?: boolean;
+    }) => Promise<void>;
+    stop: (paneId: string) => void;
+    onData: (callback: (paneId: string, data: string) => void) => () => void;
+    onDone: (
+      callback: (paneId: string, payload: { code: number; error?: string }) => void,
+    ) => () => void;
   };
   dialog: {
     openDirectory: () => Promise<string | null>;

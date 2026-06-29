@@ -60,16 +60,31 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
     const map = new Map<string, boolean>();
 
     for (const tab of tabs) {
-      const terminalPanes = getPanesFromItem(tab).filter((pane) => pane.type === 'terminal');
+      const agentPanes = getPanesFromItem(tab).filter(
+        (pane) => pane.type === 'terminal' || pane.type === 'agent',
+      );
       map.set(
         tab.id,
-        terminalPanes.some(
-          (pane) =>
+        agentPanes.some((pane) => {
+          if (pane.type === 'agent') {
+            const hasRunningTurn = (pane.turns ?? []).some((turn) => turn.running);
+            const isBootstrapping = !pane.ptyId && Boolean(pendingLaunchCommands[pane.id]);
+
+            return hasRunningTurn || isBootstrapping;
+          }
+
+          const hasPendingLaunch =
+            Boolean(pendingLaunchCommands[pane.id]) &&
+            pane.type === 'terminal' &&
+            !pane.ptyId;
+
+          return (
             Boolean(restartingPaneIds[pane.id]) ||
             Boolean(executingPaneIds[pane.id]) ||
-            Boolean(pendingLaunchCommands[pane.id]) ||
-            isPaneAgentLoading(pane, awaitingResponseByPane, activeAgentByPane, agentBusyByPane),
-        ),
+            hasPendingLaunch ||
+            isPaneAgentLoading(pane, awaitingResponseByPane, activeAgentByPane, agentBusyByPane)
+          );
+        }),
       );
     }
 

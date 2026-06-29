@@ -53,6 +53,44 @@ export function positionDropdownAboveAnchor(
   menu.style.top = `${Math.max(8, top)}px`;
 }
 
+export function positionContextSubmenuWithinViewport(
+  submenu: HTMLDivElement,
+  rowElement: HTMLElement,
+): void {
+  const viewportPadding = 8;
+  const defaultTopOffset = -12;
+
+  submenu.style.top = `${defaultTopOffset}px`;
+  submenu.style.bottom = 'auto';
+  submenu.style.maxHeight = '';
+
+  const rowRect = rowElement.getBoundingClientRect();
+  let topOffset = defaultTopOffset;
+  const submenuHeight = submenu.offsetHeight;
+  let viewportTop = rowRect.top + topOffset;
+  let viewportBottom = viewportTop + submenuHeight;
+  const maxBottom = window.innerHeight - viewportPadding;
+
+  if (viewportBottom > maxBottom) {
+    topOffset -= viewportBottom - maxBottom;
+    viewportTop = rowRect.top + topOffset;
+    viewportBottom = viewportTop + submenuHeight;
+  }
+
+  if (viewportTop < viewportPadding) {
+    topOffset += viewportPadding - viewportTop;
+    viewportTop = rowRect.top + topOffset;
+  }
+
+  submenu.style.top = `${topOffset}px`;
+
+  const availableHeight = maxBottom - Math.max(viewportPadding, viewportTop);
+
+  if (submenuHeight > availableHeight) {
+    submenu.style.maxHeight = `${Math.max(120, availableHeight)}px`;
+  }
+}
+
 export function useAnchoredDropdownMenu(
   onClose: () => void,
   positionMenu: (menu: HTMLDivElement) => void,

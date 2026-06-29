@@ -1,4 +1,6 @@
 import type { SplitLayoutNode, SplitTab, Tab, TabBarItem } from '@/types';
+import { migrateLegacyAgentTerminalTab, isLegacyAgentTerminalTab } from '@/utils/agentTabHelpers';
+import { migrateMessagesToTurns } from '@/utils/agentTranscriptParser';
 import { getVisibleTabIds } from '@/utils/splitLayout';
 import { ensureTabBarBadgeColorIndexes } from '@/utils/tabBadge';
 import { reconcileSplitLayout } from '@/utils/tabGroups';
@@ -36,6 +38,7 @@ export function migrateLegacyProjectTabs(
   for (const item of normalizedTabs) {
     if (
       (item.type === 'terminal' ||
+        item.type === 'agent' ||
         item.type === 'browser' ||
         item.type === 'emulator' ||
         item.type === 'api') &&
@@ -87,7 +90,13 @@ function normalizeTabBarItem(tab: TabBarItem): TabBarItem {
     };
   }
 
-  if (tab.type === 'browser' || tab.type === 'terminal' || tab.type === 'emulator' || tab.type === 'api') {
+  if (
+    tab.type === 'browser' ||
+    tab.type === 'terminal' ||
+    tab.type === 'agent' ||
+    tab.type === 'emulator' ||
+    tab.type === 'api'
+  ) {
     return normalizePane(tab);
   }
 
@@ -99,6 +108,36 @@ function normalizeTabBarItem(tab: TabBarItem): TabBarItem {
 }
 
 function normalizePane(tab: Tab): Tab {
+  if (tab.type === 'agent') {
+    const legacyMessages = tab.messages ?? [];
+    const turns =
+      tab.turns && tab.turns.length > 0
+        ? tab.turns
+        : legacyMessages.length > 0
+          ? migrateMessagesToTurns(legacyMessages)
+          : [];
+
+    return {
+      ...tab,
+      turns,
+      messages: [],
+      cliAgent: tab.cliAgent ?? 'cursor-agent',
+      ptyId: null,
+    };
+  }
+
+  if (tab.type === 'terminal') {
+    if (isLegacyAgentTerminalTab(tab)) {
+      return migrateLegacyAgentTerminalTab(tab);
+    }
+
+    return {
+      ...tab,
+      ptyId: null,
+      agent: tab.agent ?? 'shell',
+    };
+  }
+
   if (tab.type === 'browser') {
     return {
       ...tab,
@@ -130,9 +169,5 @@ function normalizePane(tab: Tab): Tab {
     };
   }
 
-  return {
-    ...tab,
-    ptyId: null,
-    agent: tab.agent ?? 'cursor',
-  };
+  return tab;
 }

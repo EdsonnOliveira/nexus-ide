@@ -1,4 +1,5 @@
-import type { Project, TabBarItem, TerminalTab } from '@/types';
+import type { AgentTab, Project, Tab, TabBarItem, TerminalTab } from '@/types';
+import { isAgentPaneTab } from '@/utils/agentTabHelpers';
 import { resolvePaneAgentCommand } from '@/utils/projectAgentStatus';
 import { getPanesFromItem, isSplitTab, resolveActiveTabBarItem } from '@/utils/tabGroups';
 
@@ -16,6 +17,10 @@ export function tabHasAgentSession(
   activeAgentByPane: Record<string, string | null>,
 ): boolean {
   return getPanesFromItem(tab).some((pane) => {
+    if (isAgentPaneTab(pane)) {
+      return true;
+    }
+
     if (pane.type !== 'terminal') {
       return false;
     }
@@ -38,6 +43,10 @@ export function resolveTabDisplayTitle(
 
   const number = match[2];
   const isCursorAgent = getPanesFromItem(tab).some((pane) => {
+    if (isAgentPaneTab(pane)) {
+      return true;
+    }
+
     if (pane.type !== 'terminal') {
       return false;
     }
@@ -55,15 +64,29 @@ function isAgentTerminalPane(
   return isCursorAgentTerminalPane(pane, activeAgentByPane);
 }
 
+function isAgentPane(
+  pane: Tab,
+  activeAgentByPane: Record<string, string | null>,
+): pane is AgentTab | TerminalTab {
+  if (isAgentPaneTab(pane)) {
+    return true;
+  }
+
+  if (pane.type !== 'terminal') {
+    return false;
+  }
+
+  return isAgentTerminalPane(pane, activeAgentByPane);
+}
+
 export function resolveAgentPaneForTab(
   tab: TabBarItem,
   project: Project,
   activeAgentByPane: Record<string, string | null>,
-): TerminalTab | null {
-  const terminalPanes = getPanesFromItem(tab).filter(
-    (pane): pane is TerminalTab => pane.type === 'terminal',
+): AgentTab | TerminalTab | null {
+  const agentPanes = getPanesFromItem(tab).filter((pane): pane is AgentTab | TerminalTab =>
+    isAgentPane(pane, activeAgentByPane),
   );
-  const agentPanes = terminalPanes.filter((pane) => isAgentTerminalPane(pane, activeAgentByPane));
 
   if (agentPanes.length === 0) {
     return null;
