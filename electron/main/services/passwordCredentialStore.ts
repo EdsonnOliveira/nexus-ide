@@ -1,26 +1,19 @@
-import { safeStorage } from 'electron';
 import Store from 'electron-store';
+import {
+  decryptCredentialValue,
+  encryptCredentialValue,
+} from './credentialCrypto';
 
 interface CredentialStoreShape {
   secrets: Record<string, Record<string, Record<string, string>>>;
 }
 
-function encryptValue(value: string): string {
-  if (safeStorage.isEncryptionAvailable()) {
-    return safeStorage.encryptString(value).toString('base64');
+function readSecretValue(encrypted: string | undefined): string | undefined {
+  if (!encrypted) {
+    return undefined;
   }
 
-  return Buffer.from(value, 'utf8').toString('base64');
-}
-
-function decryptValue(value: string): string {
-  const buffer = Buffer.from(value, 'base64');
-
-  if (safeStorage.isEncryptionAvailable()) {
-    return safeStorage.decryptString(buffer);
-  }
-
-  return buffer.toString('utf8');
+  return decryptCredentialValue(encrypted) ?? undefined;
 }
 
 class PasswordCredentialStoreService {
@@ -40,7 +33,11 @@ class PasswordCredentialStoreService {
     const values: Record<string, string> = {};
 
     for (const [fieldId, encryptedValue] of Object.entries(encrypted)) {
-      values[fieldId] = decryptValue(encryptedValue);
+      const decrypted = readSecretValue(encryptedValue);
+
+      if (decrypted) {
+        values[fieldId] = decrypted;
+      }
     }
 
     return values;
@@ -58,7 +55,7 @@ class PasswordCredentialStoreService {
         continue;
       }
 
-      encrypted[fieldId] = encryptValue(value);
+      encrypted[fieldId] = encryptCredentialValue(value);
     }
 
     if (!allSecrets[projectId]) {

@@ -1,5 +1,8 @@
-import { safeStorage } from 'electron';
 import Store from 'electron-store';
+import {
+  decryptCredentialValue,
+  encryptCredentialValue,
+} from './credentialCrypto';
 
 export interface TaskCredentialSecrets {
   jiraApiToken?: string;
@@ -9,25 +12,15 @@ export interface TaskCredentialSecrets {
 }
 
 interface CredentialStoreShape {
-  secrets: Record<string, TaskCredentialSecrets>;
+  secrets: Record<string, Record<string, string>>;
 }
 
-function encryptValue(value: string): string {
-  if (safeStorage.isEncryptionAvailable()) {
-    return safeStorage.encryptString(value).toString('base64');
+function readSecretValue(encrypted: string | undefined): string | undefined {
+  if (!encrypted) {
+    return undefined;
   }
 
-  return Buffer.from(value, 'utf8').toString('base64');
-}
-
-function decryptValue(value: string): string {
-  const buffer = Buffer.from(value, 'base64');
-
-  if (safeStorage.isEncryptionAvailable()) {
-    return safeStorage.decryptString(buffer);
-  }
-
-  return buffer.toString('utf8');
+  return decryptCredentialValue(encrypted) ?? undefined;
 }
 
 class TaskCredentialStoreService {
@@ -43,10 +36,10 @@ class TaskCredentialStoreService {
     const encrypted = allSecrets[projectId] ?? {};
 
     return {
-      jiraApiToken: encrypted.jiraApiToken ? decryptValue(encrypted.jiraApiToken) : undefined,
-      trelloApiKey: encrypted.trelloApiKey ? decryptValue(encrypted.trelloApiKey) : undefined,
-      trelloToken: encrypted.trelloToken ? decryptValue(encrypted.trelloToken) : undefined,
-      deepcrmApiToken: encrypted.deepcrmApiToken ? decryptValue(encrypted.deepcrmApiToken) : undefined,
+      jiraApiToken: readSecretValue(encrypted.jiraApiToken),
+      trelloApiKey: readSecretValue(encrypted.trelloApiKey),
+      trelloToken: readSecretValue(encrypted.trelloToken),
+      deepcrmApiToken: readSecretValue(encrypted.deepcrmApiToken),
     };
   }
 
@@ -62,19 +55,19 @@ class TaskCredentialStoreService {
     const encrypted: Record<string, string> = {};
 
     if (merged.jiraApiToken) {
-      encrypted.jiraApiToken = encryptValue(merged.jiraApiToken);
+      encrypted.jiraApiToken = encryptCredentialValue(merged.jiraApiToken);
     }
 
     if (merged.trelloApiKey) {
-      encrypted.trelloApiKey = encryptValue(merged.trelloApiKey);
+      encrypted.trelloApiKey = encryptCredentialValue(merged.trelloApiKey);
     }
 
     if (merged.trelloToken) {
-      encrypted.trelloToken = encryptValue(merged.trelloToken);
+      encrypted.trelloToken = encryptCredentialValue(merged.trelloToken);
     }
 
     if (merged.deepcrmApiToken) {
-      encrypted.deepcrmApiToken = encryptValue(merged.deepcrmApiToken);
+      encrypted.deepcrmApiToken = encryptCredentialValue(merged.deepcrmApiToken);
     }
 
     allSecrets[projectId] = encrypted;

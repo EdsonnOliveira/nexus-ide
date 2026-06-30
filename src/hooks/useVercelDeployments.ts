@@ -39,9 +39,14 @@ export function useVercelDeployments(enabled: boolean) {
       return false;
     }
 
-    const configured = await window.nexus.vercel.getTokenConfigured();
-    setTokenConfigured(configured);
-    return configured;
+    try {
+      const configured = await window.nexus.vercel.getTokenConfigured();
+      setTokenConfigured(configured);
+      return configured;
+    } catch {
+      setTokenConfigured(false);
+      return false;
+    }
   }, []);
 
   const refresh = useCallback(async () => {
@@ -51,10 +56,17 @@ export function useVercelDeployments(enabled: boolean) {
       return null;
     }
 
-    const configured = await window.nexus.vercel.getTokenConfigured();
-    setTokenConfigured(configured);
+    try {
+      const configured = await window.nexus.vercel.getTokenConfigured();
+      setTokenConfigured(configured);
 
-    if (!configured) {
+      if (!configured) {
+        setActiveDeployment(null);
+        setError(null);
+        return null;
+      }
+    } catch {
+      setTokenConfigured(false);
       setActiveDeployment(null);
       setError(null);
       return null;
@@ -77,7 +89,7 @@ export function useVercelDeployments(enabled: boolean) {
       if (requestIdRef.current === requestId) {
         setActiveDeployment(null);
         setError('Não foi possível consultar deploys na Vercel');
-        setTokenConfigured(await window.nexus.vercel.getTokenConfigured());
+        setTokenConfigured(false);
       }
 
       return null;

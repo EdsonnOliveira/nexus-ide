@@ -1,26 +1,11 @@
-import { safeStorage } from 'electron';
 import Store from 'electron-store';
+import {
+  decryptCredentialValue,
+  encryptCredentialValue,
+} from './credentialCrypto';
 
 interface VercelCredentialStoreShape {
   vercelAccessToken: string | null;
-}
-
-function encryptValue(value: string): string {
-  if (safeStorage.isEncryptionAvailable()) {
-    return safeStorage.encryptString(value).toString('base64');
-  }
-
-  return Buffer.from(value, 'utf8').toString('base64');
-}
-
-function decryptValue(value: string): string {
-  const buffer = Buffer.from(value, 'base64');
-
-  if (safeStorage.isEncryptionAvailable()) {
-    return safeStorage.decryptString(buffer);
-  }
-
-  return buffer.toString('utf8');
 }
 
 class VercelCredentialStoreService {
@@ -42,7 +27,14 @@ class VercelCredentialStoreService {
       return null;
     }
 
-    return decryptValue(encrypted);
+    const decrypted = decryptCredentialValue(encrypted);
+
+    if (!decrypted) {
+      this.clearToken();
+      return null;
+    }
+
+    return decrypted;
   }
 
   saveToken(token: string): void {
@@ -53,7 +45,7 @@ class VercelCredentialStoreService {
       return;
     }
 
-    this.store.set('vercelAccessToken', encryptValue(trimmed));
+    this.store.set('vercelAccessToken', encryptCredentialValue(trimmed));
   }
 
   clearToken(): void {

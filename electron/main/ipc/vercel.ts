@@ -8,7 +8,14 @@ import {
 import { vercelCredentialStore } from '../services/vercelCredentialStore';
 
 export function registerVercelHandlers(): void {
-  ipcMain.handle('vercel:getTokenConfigured', () => vercelCredentialStore.isTokenConfigured());
+  ipcMain.handle('vercel:getTokenConfigured', () => {
+    try {
+      return vercelCredentialStore.isTokenConfigured();
+    } catch {
+      vercelCredentialStore.clearToken();
+      return false;
+    }
+  });
 
   ipcMain.handle('vercel:saveToken', async (_, token: string) => {
     const trimmed = token.trim();
@@ -54,7 +61,7 @@ export function registerVercelHandlers(): void {
         vercelCredentialStore.clearToken();
       }
 
-      throw error;
+      return null;
     }
   });
 
