@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { app, BrowserWindow, shell } from 'electron';
+import { app, shell } from 'electron';
 import type { CalendarEventItem, CalendarEventsSnapshot } from '../../types';
 
 const execFileAsync = promisify(execFile);
@@ -47,29 +47,6 @@ function resolveCalendarHelperAppPath(): string | null {
   }
 
   return null;
-}
-
-function resolveCalendarHelperBinaryPath(): string | null {
-  const helperAppPath = resolveCalendarHelperAppPath();
-
-  if (!helperAppPath) {
-    return null;
-  }
-
-  const binaryPath = path.join(helperAppPath, 'Contents/MacOS/CalendarHelper');
-
-  return fs.existsSync(binaryPath) ? binaryPath : null;
-}
-
-export function focusApplicationWindow(): void {
-  app.focus({ steal: true });
-
-  const focusedWindow = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-
-  if (focusedWindow && !focusedWindow.isDestroyed()) {
-    focusedWindow.show();
-    focusedWindow.focus();
-  }
 }
 
 function parseNumber(value: string | undefined): number {
@@ -195,11 +172,19 @@ async function readHelperOutput(outputPath: string): Promise<string | null> {
   return fs.readFileSync(outputPath, 'utf8').trim();
 }
 
-async function runCalendarHelperBinary(binaryPath: string): Promise<string | null> {
+async function runCalendarHelperBinary(helperAppPath: string, background: boolean): Promise<string | null> {
   const outputPath = path.join(os.tmpdir(), `nexus-calendar-${process.pid}-${Date.now()}.txt`);
 
   try {
-    await execFileAsync(binaryPath, [outputPath], {
+    const openArgs = ['/usr/bin/open'];
+
+    if (background) {
+      openArgs.push('-g');
+    }
+
+    openArgs.push('-W', '-a', helperAppPath, '--args', outputPath);
+
+    await execFileAsync(openArgs[0], openArgs.slice(1), {
       timeout: HELPER_TIMEOUT_MS,
     });
 
@@ -214,38 +199,21 @@ async function runCalendarHelperBinary(binaryPath: string): Promise<string | nul
 }
 
 async function runCalendarHelperAppDialog(helperAppPath: string): Promise<string | null> {
-  focusApplicationWindow();
-
-  const outputPath = path.join(os.tmpdir(), `nexus-calendar-${process.pid}-${Date.now()}.txt`);
-
-  try {
-    await execFileAsync('/usr/bin/open', ['-W', '-a', helperAppPath, '--args', outputPath], {
-      timeout: HELPER_TIMEOUT_MS,
-    });
-
-    return readHelperOutput(outputPath);
-  } catch {
-    return null;
-  } finally {
-    if (fs.existsSync(outputPath)) {
-      fs.unlinkSync(outputPath);
-    }
-  }
+  return runCalendarHelperBinary(helperAppPath, false);
 }
 
 async function runCalendarHelperInternal(requestDialog: boolean): Promise<string | null> {
   const helperAppPath = resolveCalendarHelperAppPath();
-  const binaryPath = resolveCalendarHelperBinaryPath();
 
-  if (!helperAppPath || !binaryPath) {
+  if (!helperAppPath) {
     return null;
   }
 
   if (!requestDialog) {
-    return runCalendarHelperBinary(binaryPath);
+    return runCalendarHelperBinary(helperAppPath, true);
   }
 
-  const silentRaw = await runCalendarHelperBinary(binaryPath);
+  const silentRaw = await runCalendarHelperBinary(helperAppPath, true);
 
   if (silentRaw !== null && silentRaw !== 'DENIED') {
     return silentRaw;
@@ -286,6 +254,10 @@ export async function getCalendarEventsSnapshot(): Promise<CalendarEventsSnapsho
   }
 
   const raw = await runCalendarHelper(false);
+
+  if (raw === 'DENIED') {
+    return emptySnapshot(true, false, false, true);
+  }
 
   if (raw !== null) {
     return buildSnapshotFromRaw(raw);

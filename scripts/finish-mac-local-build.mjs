@@ -20,6 +20,17 @@ if (!existsSync(appPath)) {
 
 run('xattr', ['-cr', appPath]);
 
+const calendarHelperAppPath = path.join(appPath, 'Contents/Helpers/CalendarHelper.app');
+const notificationHelperAppPath = path.join(appPath, 'Contents/Helpers/NotificationHelper.app');
+
+for (const helperAppPath of [calendarHelperAppPath, notificationHelperAppPath]) {
+  if (existsSync(helperAppPath)) {
+    run('codesign', ['--force', '-s', '-', helperAppPath]);
+  }
+}
+
+run('codesign', ['--force', '--deep', '-s', '-', appPath]);
+
 if (existsSync(dmgPath)) {
   run('xattr', ['-cr', dmgPath]);
 }

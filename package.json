@@ -1,6 +1,6 @@
 {
   "name": "nexus-ide",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "private": true,
   "description": "Nexus IDE — AI-powered desktop IDE",
   "engines": {
@@ -11,7 +11,7 @@
   "scripts": {
     "dev": "node scripts/patch-electron-branding.mjs && env -u NODE_OPTIONS vite",
     "build": "tsc --noEmit && vite build && electron-builder",
-    "build:local": "tsc --noEmit && vite build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder && node scripts/finish-mac-local-build.mjs",
+    "build:local": "node scripts/build-shell-helpers.mjs && tsc --noEmit && vite build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder && node scripts/finish-mac-local-build.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "postinstall": "node scripts/setup-native.mjs",
@@ -97,7 +97,7 @@
       ],
       "extendInfo": {
         "CFBundleDisplayName": "Nexus",
-        "CFBundleName": "Nexus",
+        "CFBundleName": "Nexus IDE",
         "CFBundleIconName": "Nexus",
         "NSCalendarsUsageDescription": "O Nexus IDE exibe seus eventos do Calendário na barra lateral.",
         "NSCalendarsFullAccessUsageDescription": "O Nexus IDE precisa ler seus eventos do Calendário para exibi-los na barra lateral."
