@@ -242,11 +242,13 @@ async function runCalendarHelperInternal(requestDialog: boolean): Promise<string
   }
 
   if (!requestDialog) {
-    const silentRaw = await runCalendarHelperBinary(binaryPath);
+    return runCalendarHelperBinary(binaryPath);
+  }
 
-    if (silentRaw !== null && silentRaw !== 'DENIED') {
-      return silentRaw;
-    }
+  const silentRaw = await runCalendarHelperBinary(binaryPath);
+
+  if (silentRaw !== null && silentRaw !== 'DENIED') {
+    return silentRaw;
   }
 
   return runCalendarHelperAppDialog(helperAppPath);

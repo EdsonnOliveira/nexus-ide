@@ -4,7 +4,7 @@ import { Bell, Trash2 } from 'lucide-react';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import { TitleBarPopupShell } from '@/components/layout/titlebar/TitleBarPopupShell';
 import { positionDropdownBelowAnchor, useAnchoredDropdownMenu } from '@/hooks/useAnchoredDropdownMenu';
-import { useSystemNotifications } from '@/hooks/useSystemNotifications';
+import type { SystemNotificationsSnapshot } from '@/types';
 import {
   notificationAppIconKey,
   useNotificationAppIcons,
@@ -18,12 +18,18 @@ import { formatNotificationRelativeTime } from '@/utils/notificationRelativeTime
 interface TitleBarNotificationsPopupProps {
   anchorRect: DOMRect;
   anchorRef: React.RefObject<HTMLButtonElement | null>;
+  systemNotifications: SystemNotificationsSnapshot;
+  loading: boolean;
+  onRefresh: () => void;
   onClose: () => void;
 }
 
 function TitleBarNotificationsPopupComponent({
   anchorRect,
   anchorRef,
+  systemNotifications,
+  loading,
+  onRefresh,
   onClose,
 }: TitleBarNotificationsPopupProps) {
   const projects = useProjectStore((state) => state.projects);
@@ -35,7 +41,6 @@ function TitleBarNotificationsPopupComponent({
   const clearProjectNotification = useProjectNotificationStore(
     (state) => state.clearProjectNotification,
   );
-  const { snapshot: systemNotifications, loading, refresh } = useSystemNotifications(true);
   const appIcons = useNotificationAppIcons(systemNotifications.items);
   const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
     onClose,
@@ -111,10 +116,10 @@ function TitleBarNotificationsPopupComponent({
       event.preventDefault();
       event.stopPropagation();
       void window.nexus.systemNotifications.delete(notificationId).then(() => {
-        refresh();
+        onRefresh();
       });
     },
-    [refresh],
+    [onRefresh],
   );
 
   const handleDismissAgentNotification = useCallback(
@@ -140,12 +145,12 @@ function TitleBarNotificationsPopupComponent({
       notifiedProjects.forEach(({ project }) => {
         clearProjectNotification(project.id);
       });
-      refresh();
+      onRefresh();
     });
   }, [
     clearProjectNotification,
     notifiedProjects,
-    refresh,
+    onRefresh,
     systemNotifications.accessGranted,
     systemNotifications.items.length,
   ]);
@@ -179,7 +184,7 @@ function TitleBarNotificationsPopupComponent({
             type='button'
             className='agent-cursor-usage__action app-button app-button--enter'
             onClick={() => {
-              refresh();
+              onRefresh();
             }}
           >
             Atualizar

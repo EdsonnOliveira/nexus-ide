@@ -275,31 +275,29 @@ async function runNotificationHelperInternal(
   action: 'list' | 'delete' | 'delete-all',
   ...params: string[]
 ): Promise<string | null> {
-  const helperAppPath = resolveNotificationHelperAppPath();
   const outputPath = path.join(
     os.tmpdir(),
     `nexus-notif-out-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
   );
 
+  const binaryPath = resolveNotificationHelperBinary();
+  const helperAppPath = resolveNotificationHelperAppPath();
+
   try {
-    if (helperAppPath) {
-      await execFileAsync(
-        '/usr/bin/open',
-        ['-a', helperAppPath, '--args', outputPath, action, ...params],
-        { timeout: 5_000 },
-      );
-      await waitForOutputFile(outputPath, 20_000);
-    } else {
-      const binaryPath = resolveNotificationHelperBinary();
-
-      if (!binaryPath) {
-        return null;
-      }
-
+    if (binaryPath) {
       await execFileAsync(binaryPath, [outputPath, action, ...params], {
         timeout: 20_000,
         maxBuffer: 4 * 1024 * 1024,
       });
+    } else if (helperAppPath) {
+      await execFileAsync(
+        '/usr/bin/open',
+        ['-g', '-a', helperAppPath, '--args', outputPath, action, ...params],
+        { timeout: 5_000 },
+      );
+      await waitForOutputFile(outputPath, 20_000);
+    } else {
+      return null;
     }
 
     return await fs.readFile(outputPath, 'utf8');

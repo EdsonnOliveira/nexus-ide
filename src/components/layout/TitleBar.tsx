@@ -29,7 +29,7 @@ function TitleBarComponent() {
   const notifiedAgentPaneByProject = useProjectNotificationStore(
     (state) => state.notifiedAgentPaneByProject,
   );
-  const { snapshot: systemNotifications } = useSystemNotifications(true);
+  const { snapshot: systemNotifications, loading, refresh: refreshNotifications } = useSystemNotifications(true);
   const volumeButtonRef = useRef<HTMLButtonElement>(null);
   const batteryButtonRef = useRef<HTMLButtonElement>(null);
   const wifiButtonRef = useRef<HTMLButtonElement>(null);
@@ -225,6 +225,9 @@ function TitleBarComponent() {
         <TitleBarNotificationsPopup
           anchorRect={anchorRect}
           anchorRef={clockButtonRef}
+          systemNotifications={systemNotifications}
+          loading={loading}
+          onRefresh={refreshNotifications}
           onClose={handleClosePopup}
         />
       ) : null}
