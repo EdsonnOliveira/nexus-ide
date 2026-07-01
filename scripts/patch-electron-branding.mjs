@@ -15,7 +15,29 @@ const generateIconScript = path.join(rootDir, 'scripts/generate-macos-app-icon.p
 const buildLiquidGlassScript = path.join(rootDir, 'scripts/build-liquid-glass-icon.mjs');
 const assetsCarPath = path.join(rootDir, 'build/Assets.car');
 const nexusAssetsCarPath = path.join(nexusAppPath, 'Contents/Resources/Assets.car');
+const calendarHelperSourcePath = path.join(rootDir, 'resources/shell/macosCalendarHelper.swift');
+const calendarHelperBinaryPath = path.join(rootDir, 'resources/shell/macosCalendarHelper');
+const calendarHelperInfoPlistPath = path.join(rootDir, 'resources/shell/CalendarHelper-Info.plist');
+const notificationReaderSourcePath = path.join(rootDir, 'resources/shell/macosNotificationReader.swift');
+const notificationReaderBinaryPath = path.join(rootDir, 'resources/shell/macosNotificationReader');
+const notificationHelperAppPath = path.join(rootDir, 'resources/shell/NotificationHelper.app');
+const notificationHelperBinaryPath = path.join(
+  notificationHelperAppPath,
+  'Contents/MacOS/NotificationHelper',
+);
+const notificationHelperInfoPlistPath = path.join(rootDir, 'resources/shell/NotificationHelper-Info.plist');
+const nexusNotificationHelperAppPath = path.join(nexusAppPath, 'Contents/Helpers/NotificationHelper.app');
+const nexusNotificationHelperBinaryPath = path.join(
+  nexusNotificationHelperAppPath,
+  'Contents/MacOS/NotificationHelper',
+);
+const nexusCalendarHelperAppPath = path.join(nexusAppPath, 'Contents/Helpers/CalendarHelper.app');
+const nexusCalendarHelperBinaryPath = path.join(
+  nexusCalendarHelperAppPath,
+  'Contents/MacOS/CalendarHelper',
+);
 const dockName = 'Nexus';
+const bundleIdentifier = 'com.nexus.ide';
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -90,6 +112,45 @@ function buildLiquidGlassIcon() {
   }
 }
 
+function buildCalendarHelper() {
+  if (process.platform !== 'darwin' || !existsSync(calendarHelperSourcePath)) {
+    return;
+  }
+
+  run('swiftc', [
+    '-o',
+    calendarHelperBinaryPath,
+    calendarHelperSourcePath,
+    '-framework',
+    'EventKit',
+    '-framework',
+    'AppKit',
+  ]);
+}
+
+function buildNotificationReader() {
+  if (process.platform !== 'darwin' || !existsSync(notificationReaderSourcePath)) {
+    return;
+  }
+
+  run('swiftc', ['-o', notificationReaderBinaryPath, notificationReaderSourcePath, '-l', 'sqlite3']);
+  execFileSync('chmod', ['+x', notificationReaderBinaryPath]);
+
+  run('mkdir', ['-p', path.dirname(notificationHelperBinaryPath)]);
+  copyFileSync(notificationReaderBinaryPath, notificationHelperBinaryPath);
+  execFileSync('chmod', ['+x', notificationHelperBinaryPath]);
+  copyFileSync(
+    notificationHelperInfoPlistPath,
+    path.join(notificationHelperAppPath, 'Contents/Info.plist'),
+  );
+
+  try {
+    execFileSync('codesign', ['--force', '-s', '-', notificationHelperAppPath]);
+  } catch (error) {
+    console.warn('[patch-electron-branding] NotificationHelper codesign skipped:', error.message);
+  }
+}
+
 function patchNexusAppBundle() {
   if (process.platform !== 'darwin') {
     return null;
@@ -109,6 +170,21 @@ function patchNexusAppBundle() {
   try {
     execFileSync('plutil', ['-replace', 'CFBundleDisplayName', '-string', dockName, nexusInfoPlistPath]);
     execFileSync('plutil', ['-replace', 'CFBundleName', '-string', dockName, nexusInfoPlistPath]);
+    execFileSync('plutil', ['-replace', 'CFBundleIdentifier', '-string', bundleIdentifier, nexusInfoPlistPath]);
+    execFileSync('plutil', [
+      '-replace',
+      'NSCalendarsUsageDescription',
+      '-string',
+      'O Nexus IDE exibe seus eventos do Calendário na barra lateral.',
+      nexusInfoPlistPath,
+    ]);
+    execFileSync('plutil', [
+      '-replace',
+      'NSCalendarsFullAccessUsageDescription',
+      '-string',
+      'O Nexus IDE precisa ler seus eventos do Calendário para exibi-los na barra lateral.',
+      nexusInfoPlistPath,
+    ]);
   } catch (error) {
     console.error('[patch-electron-branding] Failed to patch Nexus.app Info.plist', error);
     process.exit(1);
@@ -133,10 +209,34 @@ function patchNexusAppBundle() {
     return null;
   }
 
+  if (existsSync(calendarHelperBinaryPath) && existsSync(calendarHelperInfoPlistPath)) {
+    run('mkdir', ['-p', path.dirname(nexusCalendarHelperBinaryPath)]);
+    copyFileSync(calendarHelperBinaryPath, nexusCalendarHelperBinaryPath);
+    execFileSync('chmod', ['+x', nexusCalendarHelperBinaryPath]);
+    copyFileSync(
+      calendarHelperInfoPlistPath,
+      path.join(nexusCalendarHelperAppPath, 'Contents/Info.plist'),
+    );
+  }
+
+  if (existsSync(notificationHelperAppPath)) {
+    run('mkdir', ['-p', path.dirname(nexusNotificationHelperBinaryPath)]);
+    run('cp', ['-R', notificationHelperAppPath, path.dirname(nexusNotificationHelperAppPath)]);
+    execFileSync('chmod', ['+x', nexusNotificationHelperBinaryPath]);
+  }
+
+  try {
+    execFileSync('codesign', ['--force', '--deep', '-s', '-', nexusAppPath]);
+  } catch (error) {
+    console.warn('[patch-electron-branding] codesign skipped:', error.message);
+  }
+
   console.log(`[patch-electron-branding] Nexus.app ready as "${dockName}".`);
   return nexusBinaryPath;
 }
 
 generateMacAppIcons();
 buildLiquidGlassIcon();
+buildCalendarHelper();
+buildNotificationReader();
 patchNexusAppBundle();

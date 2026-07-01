@@ -1,72 +1,90 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { countGitStatusChanges } from '@/utils/gitFlatChanges';
 import { GIT_REPO_REFRESH_EVENT } from '@/utils/gitRepoRefresh';
 
-export function useGitChangeCount(projectPath: string | null): number {
-  const [count, setCount] = useState(0);
-  const repoPathRef = useRef<string | null>(null);
+export interface GitChangeCounts {
+  total: number;
+  byRepo: Record<string, number>;
+}
+
+export function useGitChangeCounts(projectPath: string | null): GitChangeCounts {
+  const [byRepo, setByRepo] = useState<Record<string, number>>({});
+  const repoPathsRef = useRef<string[]>([]);
 
   useEffect(() => {
     if (!projectPath) {
-      repoPathRef.current = null;
-      setCount(0);
+      repoPathsRef.current = [];
+      setByRepo({});
       return;
     }
 
     let cancelled = false;
 
+    const syncRepoCounts = async (repoPaths: string[]) => {
+      const entries = await Promise.all(
+        repoPaths.map(async (repoPath) => {
+          const status = await window.nexus.git.getStatus(repoPath);
+          return [repoPath, countGitStatusChanges(status)] as const;
+        }),
+      );
+
+      if (!cancelled) {
+        setByRepo(Object.fromEntries(entries));
+      }
+    };
+
     const setup = async () => {
       const repos = await window.nexus.git.discoverRepos(projectPath);
-      const primaryRepo = repos[0]?.path ?? null;
-      repoPathRef.current = primaryRepo;
+      const repoPaths = repos.map((repo) => repo.path);
+      repoPathsRef.current = repoPaths;
 
-      if (!primaryRepo) {
+      if (repoPaths.length === 0) {
         if (!cancelled) {
-          setCount(0);
+          setByRepo({});
         }
 
         return;
       }
 
-      const status = await window.nexus.git.getStatus(primaryRepo);
+      await syncRepoCounts(repoPaths);
 
       if (!cancelled) {
-        setCount(status.staged.length + status.unstaged.length + status.untracked.length);
-      }
-
-      if (!cancelled) {
-        void window.nexus.git.watch(primaryRepo);
+        await Promise.all(repoPaths.map((repoPath) => window.nexus.git.watch(repoPath)));
       }
     };
 
     void setup();
 
-    const unsubscribe = window.nexus.git.onRepoChange((changedPath) => {
-      const activeRepo = repoPathRef.current;
+    const updateRepoCount = (repoPath: string) => {
+      void window.nexus.git
+        .invalidateCache(repoPath)
+        .then(() => window.nexus.git.getStatus(repoPath))
+        .then((status) => {
+          if (!cancelled) {
+            setByRepo((current) => ({
+              ...current,
+              [repoPath]: countGitStatusChanges(status),
+            }));
+          }
+        });
+    };
 
-      if (!activeRepo || changedPath !== activeRepo) {
+    const unsubscribe = window.nexus.git.onRepoChange((changedPath) => {
+      if (!repoPathsRef.current.includes(changedPath)) {
         return;
       }
 
-      void window.nexus.git.getStatus(activeRepo).then((status) => {
-        if (!cancelled) {
-          setCount(status.staged.length + status.unstaged.length + status.untracked.length);
-        }
-      });
+      updateRepoCount(changedPath);
     });
 
     const handleGitRefresh = (event: Event) => {
-      const activeRepo = repoPathRef.current;
       const detail = (event as CustomEvent<{ repoPath: string }>).detail;
 
-      if (!activeRepo || detail.repoPath !== activeRepo) {
+      if (!repoPathsRef.current.includes(detail.repoPath)) {
         return;
       }
 
-      void window.nexus.git.getStatus(activeRepo).then((status) => {
-        if (!cancelled) {
-          setCount(status.staged.length + status.unstaged.length + status.untracked.length);
-        }
-      });
+      updateRepoCount(detail.repoPath);
     };
 
     window.addEventListener(GIT_REPO_REFRESH_EVENT, handleGitRefresh);
@@ -76,13 +94,20 @@ export function useGitChangeCount(projectPath: string | null): number {
       unsubscribe();
       window.removeEventListener(GIT_REPO_REFRESH_EVENT, handleGitRefresh);
 
-      const activeRepo = repoPathRef.current;
-
-      if (activeRepo) {
-        void window.nexus.git.unwatch(activeRepo);
+      for (const repoPath of repoPathsRef.current) {
+        void window.nexus.git.unwatch(repoPath);
       }
     };
   }, [projectPath]);
 
-  return count;
+  const total = useMemo(
+    () => Object.values(byRepo).reduce((sum, count) => sum + count, 0),
+    [byRepo],
+  );
+
+  return { total, byRepo };
+}
+
+export function useGitChangeCount(projectPath: string | null): number {
+  return useGitChangeCounts(projectPath).total;
 }

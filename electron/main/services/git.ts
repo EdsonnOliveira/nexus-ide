@@ -11,6 +11,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { BrowserWindow } from 'electron';
+import { shouldIgnoreWatchPath } from './watchIgnorePaths';
 import { bufferToDataUrl } from './imageLoader';
 import { resolveDirectoryPath } from './directoryListing';
 
@@ -91,32 +92,58 @@ const MAX_UNTRACKED_LINE_COUNT_BYTES = 128 * 1024;
 const MAX_UNTRACKED_LINE_STATS = 400;
 
 const GIT_DISCOVERY_IGNORED_DIRS = new Set([
+  '.cursor',
+  '.expo',
   '.git',
+  '.gradle',
   '.hg',
+  '.netlify',
+  '.nuxt',
+  '.output',
+  '.parcel-cache',
   '.svn',
-  '.next',
+  '.temp',
+  '.terraform',
   '.turbo',
-  '.cache',
-  '.idea',
+  '.vercel',
   '.vscode',
+  '.idea',
+  '.cache',
+  '.next',
   '__pycache__',
+  'DerivedData',
+  'Pods',
+  'build',
   'coverage',
   'dist',
   'dist-electron',
   'node_modules',
+  'out',
   'release',
-  'build',
-  'vendor',
   'target',
+  'temp',
+  'tmp',
+  'vendor',
+  'xcuserdata',
 ]);
+
+const GIT_STATUS_EXCLUDED_BASENAME_PATTERNS = [
+  /^\.DS_Store$/,
+  /\.tsbuildinfo$/,
+  /^worker-[a-f0-9]{8,}\.js$/,
+  /^\.env\.local$/,
+  /^\.env\..+\.local$/,
+];
 
 interface WatchState {
   watcher: FSWatcher;
+  metaWatchers: FSWatcher[];
   debounceTimer: NodeJS.Timeout | null;
   repoPath: string;
 }
 
 const watchStates = new Map<string, WatchState>();
+const watchRefCounts = new Map<string, number>();
 let notifyWindow: (() => BrowserWindow | null) | null = null;
 
 export function setGitWatchWindow(getter: () => BrowserWindow | null): void {
@@ -255,6 +282,12 @@ function invalidateCache(dirPath: string): void {
   statusCache.delete(resolveRepo(dirPath));
 }
 
+function invalidateCacheAndNotify(dirPath: string): void {
+  const resolved = resolveRepo(dirPath);
+  invalidateCache(resolved);
+  notifyRepoChanged(resolved);
+}
+
 export function invalidateGitStatusCache(dirPath: string): void {
   invalidateCache(dirPath);
 }
@@ -333,6 +366,107 @@ function parseBranchLine(line: string): Pick<GitRepoInfo, 'branch' | 'upstream' 
   }
 
   return { branch, upstream, ahead, behind, detached: false };
+}
+
+async function getGitIgnoredPathSet(repoPath: string, paths: string[]): Promise<Set<string>> {
+  const uniquePaths = [...new Set(paths.filter(Boolean))];
+
+  if (uniquePaths.length === 0) {
+    return new Set();
+  }
+
+  const ignored = new Set<string>();
+  const batchSize = 200;
+
+  for (let index = 0; index < uniquePaths.length; index += batchSize) {
+    const batch = uniquePaths.slice(index, index + batchSize);
+
+    try {
+      const { stdout } = await execFileAsync(
+        'git',
+        ['-C', repoPath, 'check-ignore', '--', ...batch],
+        {
+          encoding: 'utf8',
+          maxBuffer: 10 * 1024 * 1024,
+          timeout: 30_000,
+        },
+      );
+
+      for (const line of stdout.split('\n')) {
+        const trimmed = line.trim();
+
+        if (trimmed) {
+          ignored.add(trimmed);
+        }
+      }
+    } catch (error) {
+      const execError = error as NodeJS.ErrnoException & { stdout?: string };
+      const stdout = execError.stdout ?? '';
+
+      for (const line of stdout.split('\n')) {
+        const trimmed = line.trim();
+
+        if (trimmed) {
+          ignored.add(trimmed);
+        }
+      }
+
+      if (execError.code !== 1 && execError.code !== 'ENOENT') {
+        continue;
+      }
+    }
+  }
+
+  return ignored;
+}
+
+function isGitStatusExcludedPath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+  const basename = normalized.split('/').pop() ?? normalized;
+
+  if (GIT_STATUS_EXCLUDED_BASENAME_PATTERNS.some((pattern) => pattern.test(basename))) {
+    return true;
+  }
+
+  return normalized
+    .split('/')
+    .some((segment) => segment && GIT_DISCOVERY_IGNORED_DIRS.has(segment));
+}
+
+function applyGitStatusPathExclusions(result: GitStatusResult): GitStatusResult {
+  const shouldInclude = (entryPath: string) => !isGitStatusExcludedPath(entryPath);
+
+  return {
+    ...result,
+    staged: result.staged.filter((entry) => shouldInclude(entry.path)),
+    unstaged: result.unstaged.filter((entry) => shouldInclude(entry.path)),
+    untracked: result.untracked.filter((entry) => shouldInclude(entry.path)),
+  };
+}
+
+async function filterCommitRelevantStatus(
+  repoPath: string,
+  result: GitStatusResult,
+): Promise<GitStatusResult> {
+  const allPaths = [
+    ...result.staged.map((entry) => entry.path),
+    ...result.unstaged.map((entry) => entry.path),
+    ...result.untracked.map((entry) => entry.path),
+  ];
+
+  if (allPaths.length === 0) {
+    return result;
+  }
+
+  const ignoredPaths = await getGitIgnoredPathSet(repoPath, allPaths);
+  const shouldInclude = (entryPath: string) => !ignoredPaths.has(entryPath);
+
+  return {
+    ...result,
+    staged: result.staged.filter((entry) => shouldInclude(entry.path)),
+    unstaged: result.unstaged.filter((entry) => shouldInclude(entry.path)),
+    untracked: result.untracked.filter((entry) => shouldInclude(entry.path)),
+  };
 }
 
 function parseStatusOutput(output: string, repoPath: string): GitStatusResult {
@@ -558,9 +692,18 @@ export async function getGitStatus(dirPath: string): Promise<GitStatusResult> {
     return empty;
   }
 
-  const output = await runGit(resolved, ['status', '--porcelain=1', '-b']);
+  const output = await runGit(resolved, [
+    'status',
+    '--porcelain=1',
+    '-b',
+    '--',
+    '.',
+    ...Array.from(GIT_DISCOVERY_IGNORED_DIRS).map((segment) => `:(exclude)${segment}/**`),
+  ]);
   const parsed = parseStatusOutput(output, resolved);
-  const result = await enrichStatusWithStats(resolved, parsed);
+  const pathFiltered = applyGitStatusPathExclusions(parsed);
+  const enriched = await enrichStatusWithStats(resolved, pathFiltered);
+  const result = await filterCommitRelevantStatus(resolved, enriched);
   statusCache.set(resolved, { expiresAt: now + CACHE_TTL_MS, result });
 
   return result;
@@ -576,7 +719,7 @@ export async function stageGitPaths(dirPath: string, paths: string[]): Promise<G
       await runGit(resolved, ['add', '--', ...paths]);
     }
 
-    invalidateCache(resolved);
+    invalidateCacheAndNotify(resolved);
     return { ok: true };
   } catch (error) {
     return toCommandResult(error);
@@ -593,7 +736,7 @@ export async function unstageGitPaths(dirPath: string, paths: string[]): Promise
       await runGit(resolved, ['restore', '--staged', '--', ...paths]);
     }
 
-    invalidateCache(resolved);
+    invalidateCacheAndNotify(resolved);
     return { ok: true };
   } catch (error) {
     return toCommandResult(error);
@@ -634,7 +777,7 @@ export async function discardGitPaths(dirPath: string, paths: string[]): Promise
       await runGit(resolved, ['clean', '-fd', '--', ...cleanPaths]);
     }
 
-    invalidateCache(resolved);
+    invalidateCacheAndNotify(resolved);
     return { ok: true };
   } catch (error) {
     return toCommandResult(error);
@@ -651,7 +794,7 @@ export async function commitGit(dirPath: string, message: string): Promise<GitCo
 
   try {
     await runGit(resolved, ['commit', '-m', trimmed]);
-    invalidateCache(resolved);
+    invalidateCacheAndNotify(resolved);
     return { ok: true };
   } catch (error) {
     return toCommandResult(error);
@@ -821,7 +964,7 @@ export async function pullGit(dirPath: string): Promise<GitCommandResult> {
 
   try {
     await runGit(resolved, ['pull']);
-    invalidateCache(resolved);
+    invalidateCacheAndNotify(resolved);
     return { ok: true };
   } catch (error) {
     return toCommandResult(error);
@@ -833,7 +976,7 @@ export async function pushGit(dirPath: string): Promise<GitCommandResult> {
 
   try {
     await runGit(resolved, ['push']);
-    invalidateCache(resolved);
+    invalidateCacheAndNotify(resolved);
     return { ok: true };
   } catch (error) {
     return toCommandResult(error);
@@ -876,7 +1019,7 @@ export async function checkoutGitBranch(dirPath: string, branch: string): Promis
 
   try {
     await runGit(resolved, ['checkout', branch]);
-    invalidateCache(resolved);
+    invalidateCacheAndNotify(resolved);
     return { ok: true };
   } catch (error) {
     return toCommandResult(error);
@@ -891,7 +1034,7 @@ export async function createGitBranch(
 
   try {
     await runGit(resolved, ['checkout', '-b', branch]);
-    invalidateCache(resolved);
+    invalidateCacheAndNotify(resolved);
     return { ok: true };
   } catch (error) {
     return toCommandResult(error);
@@ -904,7 +1047,7 @@ export async function stashGit(dirPath: string, message?: string): Promise<GitCo
   try {
     const args = message?.trim() ? ['stash', 'push', '-m', message.trim()] : ['stash', 'push'];
     await runGit(resolved, args);
-    invalidateCache(resolved);
+    invalidateCacheAndNotify(resolved);
     return { ok: true };
   } catch (error) {
     return toCommandResult(error);
@@ -916,7 +1059,7 @@ export async function stashPopGit(dirPath: string): Promise<GitCommandResult> {
 
   try {
     await runGit(resolved, ['stash', 'pop']);
-    invalidateCache(resolved);
+    invalidateCacheAndNotify(resolved);
     return { ok: true };
   } catch (error) {
     return toCommandResult(error);
@@ -956,7 +1099,14 @@ function notifyRepoChanged(repoPath: string): void {
 export function watchGitRepo(dirPath: string): void {
   const resolved = resolveRepo(dirPath);
 
-  if (!isGitRepo(resolved) || watchStates.has(resolved)) {
+  if (!isGitRepo(resolved)) {
+    return;
+  }
+
+  const nextRefCount = (watchRefCounts.get(resolved) ?? 0) + 1;
+  watchRefCounts.set(resolved, nextRefCount);
+
+  if (watchStates.has(resolved)) {
     return;
   }
 
@@ -974,19 +1124,64 @@ export function watchGitRepo(dirPath: string): void {
     state.debounceTimer = setTimeout(() => {
       invalidateCache(resolved);
       notifyRepoChanged(resolved);
-    }, 300);
+    }, 600);
   };
 
+  const metaWatchers: FSWatcher[] = [];
+  const gitDir = path.join(resolved, '.git');
+
+  if (existsSync(gitDir) && statSync(gitDir).isDirectory()) {
+    for (const metaFile of ['HEAD', 'index'] as const) {
+      const metaPath = path.join(gitDir, metaFile);
+
+      if (!existsSync(metaPath) || !statSync(metaPath).isFile()) {
+        continue;
+      }
+
+      try {
+        metaWatchers.push(watch(metaPath, scheduleNotify));
+      } catch {
+        // ignore metadata watch failures
+      }
+    }
+  }
+
   try {
-    const watcher = watch(resolved, { recursive: true }, scheduleNotify);
-    watchStates.set(resolved, { watcher, debounceTimer: null, repoPath: resolved });
+    const watcher = watch(resolved, { recursive: true }, (_event, filename) => {
+      if (typeof filename === 'string' && filename.length > 0) {
+        const changedPath = path.join(resolved, filename);
+
+        if (shouldIgnoreWatchPath(resolved, changedPath)) {
+          return;
+        }
+      }
+
+      scheduleNotify();
+    });
+    watchStates.set(resolved, { watcher, metaWatchers, debounceTimer: null, repoPath: resolved });
   } catch {
-    return;
+    for (const metaWatcher of metaWatchers) {
+      metaWatcher.close();
+    }
+    watchRefCounts.set(resolved, Math.max(0, (watchRefCounts.get(resolved) ?? 1) - 1));
+
+    if ((watchRefCounts.get(resolved) ?? 0) === 0) {
+      watchRefCounts.delete(resolved);
+    }
   }
 }
 
 export function unwatchGitRepo(dirPath: string): void {
   const resolved = resolveRepo(dirPath);
+  const nextRefCount = Math.max(0, (watchRefCounts.get(resolved) ?? 0) - 1);
+
+  if (nextRefCount > 0) {
+    watchRefCounts.set(resolved, nextRefCount);
+    return;
+  }
+
+  watchRefCounts.delete(resolved);
+
   const state = watchStates.get(resolved);
 
   if (!state) {
@@ -998,5 +1193,10 @@ export function unwatchGitRepo(dirPath: string): void {
   }
 
   state.watcher.close();
+
+  for (const metaWatcher of state.metaWatchers) {
+    metaWatcher.close();
+  }
+
   watchStates.delete(resolved);
 }

@@ -12,6 +12,7 @@ export interface AgentPrintRunOptions {
   model?: string | null;
   mode?: 'plan' | 'ask';
   continueSession?: boolean;
+  resumeChatId?: string | null;
   runToken: string;
 }
 
@@ -78,8 +79,12 @@ class AgentPrintRunner {
 
     const runToken = options.runToken;
     const args = ['-p', '--output-format', 'stream-json', '--trust', '--force'];
+    const resumeChatId = options.resumeChatId?.trim();
 
-    if (options.continueSession) {
+    if (resumeChatId) {
+      args.push('--resume', resumeChatId);
+      args.push('--workspace', resolveAgentPrintCwd(options.cwd));
+    } else if (options.continueSession) {
       args.push('--continue');
     }
 
@@ -93,7 +98,9 @@ class AgentPrintRunner {
       args.push('--model', model);
     }
 
-    args.push(options.prompt);
+    if (options.prompt.trim()) {
+      args.push(options.prompt);
+    }
 
     const executable = resolveCursorAgentExecutable();
     const resolvedCwd = resolveAgentPrintCwd(options.cwd);
@@ -169,6 +176,10 @@ class AgentPrintRunner {
       }
     }, 400);
     this.processes.delete(paneId);
+  }
+
+  isRunning(paneId: string): boolean {
+    return this.processes.has(paneId);
   }
 
   stopAll(): void {

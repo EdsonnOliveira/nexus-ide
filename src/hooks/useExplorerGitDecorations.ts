@@ -96,10 +96,6 @@ export function useExplorerGitDecorations(
       if (!cancelled) {
         applyStatus(status, setChanges);
       }
-
-      if (!cancelled) {
-        void window.nexus.git.watch(primaryRepo);
-      }
     };
 
     void setup();

@@ -25,15 +25,26 @@ export function parseImageTokenIds(text: string): number[] {
 
 export function parseImagePathReferences(text: string): string[] {
   const paths: string[] = [];
+  const seen = new Set<string>();
 
-  for (const match of text.matchAll(/@([^\s]+)/g)) {
-    const candidate = match[1]?.replace(/[),.;:!?"'\]]+$/g, '') ?? '';
+  const pushPath = (candidate: string) => {
+    const normalized = candidate.replace(/\\/g, '/').replace(/^\/+/, '');
 
-    if (!candidate || !isTerminalPasteImagePath(candidate)) {
-      continue;
+    if (!normalized || !isTerminalPasteImagePath(normalized) || seen.has(normalized)) {
+      return;
     }
 
-    paths.push(candidate);
+    seen.add(normalized);
+    paths.push(normalized);
+  };
+
+  for (const match of text.matchAll(/@([^\s]+)/g)) {
+    pushPath(match[1]?.replace(/[),.;:!?"'\]]+$/g, '') ?? '');
+  }
+
+  for (const match of text.matchAll(/(^|[\s(])\.nexus\/terminal-paste\/[^\s)]+/g)) {
+    const candidate = match[0].trim().replace(/^[\s(]+/, '');
+    pushPath(candidate);
   }
 
   return paths;

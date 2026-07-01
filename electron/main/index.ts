@@ -12,6 +12,7 @@ import { registerProjectHandlers } from './ipc/projects';
 import { registerGitHandlers } from './ipc/git';
 import { registerMusicHandlers } from './ipc/music';
 import { registerMailHandlers } from './ipc/mail';
+import { registerCalendarHandlers } from './ipc/calendar';
 import { registerVercelHandlers } from './ipc/vercel';
 import { registerCursorUsageHandlers } from './ipc/cursorUsage';
 import { registerWhatsAppHandlers } from './ipc/whatsapp';
@@ -20,11 +21,14 @@ import { registerTaskHandlers } from './ipc/tasks';
 import { registerPasswordHandlers } from './ipc/passwords';
 import { registerTerminalHandlers } from './ipc/terminal';
 import { registerAgentPrintHandlers } from './ipc/agentPrint';
+import { registerSystemStatusHandlers } from './ipc/systemStatus';
+import { registerSystemNotificationsHandlers } from './ipc/systemNotifications';
 import {
   registerLocalFileProtocol,
   registerLocalFileScheme,
 } from './protocol/localFiles';
 import { attachBrowserWebviewContextMenu } from './services/browserWebviewContextMenu';
+import { registerYouTubeSidebarWebviewSession } from './services/youtubeSidebarWebviewSession';
 import { ptyManager } from './services/ptyManager';
 import { agentPrintRunner } from './services/agentPrintRunner';
 
@@ -300,7 +304,10 @@ app.whenReady().then(() => {
   registerApiHandlers();
   registerGitHandlers(() => win);
   registerMusicHandlers();
+  registerSystemStatusHandlers();
+  registerSystemNotificationsHandlers();
   registerMailHandlers();
+  registerCalendarHandlers();
   registerVercelHandlers();
   registerCursorUsageHandlers();
   registerWhatsAppHandlers();
@@ -320,6 +327,7 @@ app.whenReady().then(() => {
     app.quit();
   });
   registerWebviewHandlers();
+  registerYouTubeSidebarWebviewSession();
   const appIcon = applyAppBranding();
   createWindow(appIcon);
   registerShortcuts();

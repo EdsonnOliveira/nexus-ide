@@ -1,16 +1,23 @@
 import { Fragment, memo, useCallback, useMemo, useRef, type MouseEvent, type ReactNode } from 'react';
 import type { AgentActivity, AgentQuestionAnswers, AgentTurnSummary } from '@/types';
-import { AgentFileActivityRow } from '@/components/agent/AgentFileActivityRow';
+import { useMarkdownCodeHighlight } from '@/hooks/useMarkdownCodeHighlight';
+import {
+  AgentFileActivityRow,
+  AgentFileActivityScrollList,
+} from '@/components/agent/AgentFileActivityRow';
 import { AgentThoughtBlock } from '@/components/agent/AgentThoughtBlock';
 import { AgentQuestionCard } from '@/components/agent/AgentQuestionCard';
+import { AgentPlanReviewDock } from '@/components/agent/AgentPlanReviewDock';
 import { AgentResponseActions } from '@/components/agent/AgentResponseActions';
 import { AgentTurnSummaryLine } from '@/components/agent/AgentTurnSummaryLine';
 import {
   extractAgentFinalResponseText,
   isAgentTurnSummaryVisible,
+  partitionAgentToolActivitiesForResponse,
   splitAgentResponseForSummary,
 } from '@/utils/agentTurnSummary';
 import { sanitizeResponseText, isValidReadFileTarget } from '@/utils/agentTranscriptParser';
+import { parseAgentLiveFileStatus } from '@/utils/agentActivityLabel';
 import { normalizeMarkdownSource, renderMarkdownPreview } from '@/utils/markdownPreview';
 
 interface AgentActivityListProps {
@@ -28,35 +35,55 @@ function getSanitizedResponseLabel(label: string): string {
   return sanitizeResponseText(normalizeMarkdownSource(label));
 }
 
+function resolveThoughtLiveStatus(
+  activities: AgentActivity[],
+  thoughtIndex: number,
+  running: boolean,
+): string | null {
+  if (!running) {
+    return null;
+  }
+
+  for (let index = activities.length - 1; index > thoughtIndex; index -= 1) {
+    const entry = activities[index];
+
+    if (entry?.kind === 'live_status' && entry.label.trim()) {
+      return entry.label.trim();
+    }
+  }
+
+  return null;
+}
+
 function isRenderableActivity(activity: AgentActivity, running: boolean): boolean {
   if (activity.kind === 'section') {
     return false;
   }
 
   if (activity.kind === 'live_status') {
-    return running;
+    return running && Boolean(activity.label.trim());
   }
 
   if (activity.kind === 'status') {
     return Boolean(activity.label.trim());
   }
 
-  if (activity.kind === 'file_read' || activity.kind === 'file_edit') {
+  if (activity.kind === 'file_read') {
+    const target = activity.filePath?.trim() ?? '';
+
+    if (!target) {
+      return false;
+    }
+
     if (!running) {
       return false;
     }
 
-    if (activity.kind === 'file_read') {
-      const target = activity.filePath?.trim() ?? '';
+    return isValidReadFileTarget(target);
+  }
 
-      if (!isValidReadFileTarget(target)) {
-        return false;
-      }
-
-      return true;
-    }
-
-    return false;
+  if (activity.kind === 'file_edit') {
+    return Boolean(activity.filePath?.trim());
   }
 
   if (activity.kind === 'response') {
@@ -90,6 +117,7 @@ function findAgentResponseInlineCode(element: EventTarget | null): HTMLElement |
 
 const AgentResponseBody = memo(function AgentResponseBody({ content }: { content: string }) {
   const html = useMemo(() => renderMarkdownPreview(content), [content]);
+  const bodyRef = useMarkdownCodeHighlight<HTMLDivElement>(html);
   const copiedTimeoutRef = useRef<number | null>(null);
 
   const handleClick = useCallback(async (event: MouseEvent<HTMLDivElement>) => {
@@ -131,7 +159,8 @@ const AgentResponseBody = memo(function AgentResponseBody({ content }: { content
 
   return (
     <div
-      className='agent-view__response-body markdown-preview'
+      ref={bodyRef}
+      className='agent-view__response-body markdown-preview markdown-preview--monokai'
       onClick={(event) => void handleClick(event)}
       dangerouslySetInnerHTML={{ __html: html }}
     />
@@ -153,6 +182,25 @@ function renderResponseBlock(
   );
 }
 
+function renderResponseToolActivities(
+  tools: AgentActivity[],
+  running: boolean,
+  projectPath: string,
+): ReactNode {
+  if (tools.length === 0) {
+    return null;
+  }
+
+  return (
+    <AgentFileActivityScrollList
+      activities={tools}
+      projectPath={projectPath}
+      live={running}
+      stickToBottom={running}
+    />
+  );
+}
+
 function AgentActivityListComponent({
   activities,
   running,
@@ -168,11 +216,16 @@ function AgentActivityListComponent({
     [activities, running],
   );
 
+  const { activities: displayActivities, responseTools } = useMemo(
+    () => partitionAgentToolActivitiesForResponse(visibleActivities),
+    [visibleActivities],
+  );
+
   const showSummary = !running && isAgentTurnSummaryVisible(summary);
 
   const hasVisibleResponse = useMemo(
-    () => visibleActivities.some((activity) => activity.kind === 'response'),
-    [visibleActivities],
+    () => displayActivities.some((activity) => activity.kind === 'response'),
+    [displayActivities],
   );
 
   const finalResponseText = useMemo(
@@ -181,16 +234,26 @@ function AgentActivityListComponent({
   );
 
   const showCopyPill = !running && finalResponseText.length > 0;
+  const showChangesPill = !running && Boolean(summary && (summary.additions > 0 || summary.deletions > 0));
+  const showResponseActions = showCopyPill || showChangesPill;
+  const showInlineSummary = showSummary && responseTools.length === 0;
 
   return (
     <div className='agent-view__activities'>
-      {visibleActivities.map((activity) => {
+      {displayActivities.map((activity, activityIndex) => {
         if (activity.kind === 'thought') {
+          const sourceIndex = activities.findIndex((entry) => entry.id === activity.id);
+
           return (
             <AgentThoughtBlock
               key={activity.id}
               activity={activity}
-              defaultExpanded={!activity.collapsed && !activity.streaming}
+              defaultExpanded={!activity.collapsed}
+              liveStatus={resolveThoughtLiveStatus(
+                activities,
+                sourceIndex === -1 ? activityIndex : sourceIndex,
+                running,
+              )}
             />
           );
         }
@@ -204,7 +267,7 @@ function AgentActivityListComponent({
         }
 
         if (activity.kind === 'file_edit' || activity.kind === 'file_read') {
-          return <AgentFileActivityRow key={activity.id} activity={activity} />;
+          return <AgentFileActivityRow key={activity.id} activity={activity} projectPath={projectPath} />;
         }
 
         if (activity.kind === 'response') {
@@ -223,7 +286,8 @@ function AgentActivityListComponent({
             return (
               <Fragment key={activity.id}>
                 {renderResponseBlock(activity, split.lead, running, 'agent-view__response--lead')}
-                <AgentTurnSummaryLine summary={summary!} />
+                {renderResponseToolActivities(responseTools, running, projectPath)}
+                {showInlineSummary ? <AgentTurnSummaryLine summary={summary!} projectPath={projectPath} /> : null}
                 {renderResponseBlock(activity, split.rest, running, 'agent-view__response--tail')}
               </Fragment>
             );
@@ -231,8 +295,9 @@ function AgentActivityListComponent({
 
           return (
             <Fragment key={activity.id}>
+              {renderResponseToolActivities(responseTools, running, projectPath)}
+              {showInlineSummary && summary ? <AgentTurnSummaryLine summary={summary} projectPath={projectPath} /> : null}
               {renderResponseBlock(activity, label, running)}
-              {showSummary && summary ? <AgentTurnSummaryLine summary={summary} /> : null}
             </Fragment>
           );
         }
@@ -254,20 +319,7 @@ function AgentActivityListComponent({
         }
 
         if (activity.kind === 'plan') {
-          const statusLabel =
-            activity.planStatus === 'building'
-              ? 'Executando plano…'
-              : activity.planStatus === 'accepted'
-                ? 'Plano aceito'
-                : activity.planStatus === 'rejected'
-                  ? 'Plano descartado'
-                  : activity.planName ?? 'Plano';
-
-          return (
-            <div key={activity.id} className='agent-view__plan-summary app-button--enter'>
-              {statusLabel}
-            </div>
-          );
+          return <AgentPlanReviewDock key={activity.id} activity={activity} mode='archive' />;
         }
 
         if (activity.kind === 'status') {
@@ -279,33 +331,53 @@ function AgentActivityListComponent({
         }
 
         if (activity.kind === 'live_status') {
+          const liveFileStatus = parseAgentLiveFileStatus(activity.label);
+
+          if (liveFileStatus) {
+            return (
+              <AgentFileActivityRow
+                key={activity.id}
+                activity={{
+                  ...activity,
+                  kind: 'file_edit',
+                  filePath: liveFileStatus.fileName,
+                }}
+                projectPath={projectPath}
+                verbOverride={liveFileStatus.verb}
+                live
+              />
+            );
+          }
+
           return (
             <div
               key={activity.id}
-              className='agent-view__status-line agent-view__status-line--live app-button--enter'
+              className='agent-view__file-row agent-view__file-row--live app-button--enter'
             >
-              {activity.label}
+              <span className='agent-view__file-verb'>{activity.label.trim()}</span>
             </div>
           );
         }
 
         return null;
       })}
-      {running && visibleActivities.length === 0 ? (
+      {running && displayActivities.length === 0 && responseTools.length === 0 ? (
         <div className='agent-view__status-line agent-view__status-line--live app-button--enter'>
           Executando agent…
         </div>
       ) : null}
-      {showSummary && summary && !hasVisibleResponse ? (
-        <AgentTurnSummaryLine summary={summary} />
+      {showInlineSummary && summary && !hasVisibleResponse ? (
+        <AgentTurnSummaryLine summary={summary} projectPath={projectPath} />
       ) : null}
-      {showCopyPill ? (
+      {showResponseActions ? (
         <AgentResponseActions
           projectId={projectId}
           projectPath={projectPath}
           paneId={paneId}
           content={finalResponseText}
+          summary={summary}
           showSkillPills={isLatestTurn}
+          showCopyPill={showCopyPill}
         />
       ) : null}
     </div>

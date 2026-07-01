@@ -1,7 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
+import { useGitChangeCount } from '@/hooks/useGitChangeCount';
 import type { Project } from '@/types';
 import { getProjectPingTone } from '@/utils/projectPingTone';
+import { countProjectTasksForToolbarBadge } from '@/utils/taskFilters';
 
 interface ProjectListItemProps {
   project: Project;
@@ -77,6 +79,19 @@ function ProjectListItemComponent({
   }, []);
 
   const showLogo = Boolean(logoSrc) && !logoFailed;
+  const gitChangeCount = useGitChangeCount(project.path);
+  const openTaskCount = useMemo(
+    () =>
+      countProjectTasksForToolbarBadge(project.tasks ?? [], {
+        useDefaultFilters: project.taskIntegration?.platform === 'jira',
+        jiraAccountName: project.taskIntegration?.jiraAccountName,
+      }),
+    [project.taskIntegration?.jiraAccountName, project.taskIntegration?.platform, project.tasks],
+  );
+  const showGitBadge = gitChangeCount > 0;
+  const showTaskBadge = openTaskCount > 0;
+  const showStatusIndicators =
+    showGitBadge || showTaskBadge || isAgentRunning || isAutomationRunning;
   const [isEntering, setIsEntering] = useState(false);
 
   useEffect(() => {
@@ -132,8 +147,24 @@ function ProjectListItemComponent({
         </span>
       )}
       <span className='project-item__name'>{project.name}</span>
-      {isAgentRunning || isAutomationRunning ? (
+      {showStatusIndicators ? (
         <span className='project-item__indicators'>
+          {showGitBadge ? (
+            <span
+              className='project-item__stat-badge project-item__stat-badge--git'
+              aria-label={`${gitChangeCount} alterações git`}
+            >
+              {gitChangeCount > 99 ? '99+' : gitChangeCount}
+            </span>
+          ) : null}
+          {showTaskBadge ? (
+            <span
+              className='project-item__stat-badge project-item__stat-badge--tasks'
+              aria-label={`${openTaskCount} tarefas abertas`}
+            >
+              {openTaskCount > 99 ? '99+' : openTaskCount}
+            </span>
+          ) : null}
           {isAutomationRunning ? (
             <span className='project-item__automation project-item__automation--loading' aria-label='Automação em execução' />
           ) : null}

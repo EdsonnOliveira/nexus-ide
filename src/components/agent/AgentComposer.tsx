@@ -68,6 +68,7 @@ interface AgentComposerProps {
   draft: string;
   contextUsage: AgentContextUsageSnapshot | null;
   contextUsageLoading: boolean;
+  promptHistory?: string[];
   onDraftChange: (value: string) => void;
   onSubmit: (draft: string) => boolean | Promise<boolean>;
   onStop: () => boolean;
@@ -81,6 +82,22 @@ interface AgentComposerProps {
 
 const EMPTY_PASTE_IMAGES: never[] = [];
 const COMPOSER_INPUT_MAX_HEIGHT = 160;
+
+function canNavigatePromptHistoryUp(textarea: HTMLTextAreaElement): boolean {
+  if (textarea.selectionStart !== textarea.selectionEnd) {
+    return false;
+  }
+
+  return !textarea.value.slice(0, textarea.selectionStart).includes('\n');
+}
+
+function canNavigatePromptHistoryDown(textarea: HTMLTextAreaElement): boolean {
+  if (textarea.selectionStart !== textarea.selectionEnd) {
+    return false;
+  }
+
+  return !textarea.value.slice(textarea.selectionStart).includes('\n');
+}
 
 function resizeComposerInput(textarea: HTMLTextAreaElement): void {
   textarea.style.height = 'auto';
@@ -320,6 +337,7 @@ function AgentComposerComponent({
   draft,
   contextUsage,
   contextUsageLoading,
+  promptHistory = [],
   onDraftChange,
   onSubmit,
   onStop,
@@ -338,6 +356,9 @@ function AgentComposerComponent({
   const [caretIndex, setCaretIndex] = useState(0);
   const [mentionRepositionToken, setMentionRepositionToken] = useState(0);
   const composerCardRef = useRef<HTMLDivElement>(null);
+  const promptHistoryIndexRef = useRef(-1);
+  const promptHistoryScratchRef = useRef('');
+  const promptHistoryNavigatingRef = useRef(false);
   const [skillHints, setSkillHints] = useState<TerminalCommandHint[]>([]);
   const activeMode = useTerminalSessionStore(
     (state) => state.activeAgentModeByPane[paneId] ?? 'agent',
@@ -531,6 +552,85 @@ function AgentComposerComponent({
   const showWaitingStatus = isSubmitting || isBootstrapping;
   const showContextUsage = Boolean(contextUsage) || contextUsageLoading || canStop;
 
+  const resetPromptHistoryNavigation = useCallback(() => {
+    promptHistoryIndexRef.current = -1;
+    promptHistoryScratchRef.current = '';
+  }, []);
+
+  useEffect(() => {
+    resetPromptHistoryNavigation();
+  }, [paneId, resetPromptHistoryNavigation]);
+
+  const applyPromptHistoryDraft = useCallback(
+    (nextValue: string) => {
+      promptHistoryNavigatingRef.current = true;
+      onDraftChange(nextValue);
+      promptHistoryNavigatingRef.current = false;
+
+      requestAnimationFrame(() => {
+        const textarea = inputRef.current;
+
+        if (!textarea) {
+          return;
+        }
+
+        resizeComposerInput(textarea);
+        const cursor = nextValue.length;
+        textarea.setSelectionRange(cursor, cursor);
+      });
+    },
+    [inputRef, onDraftChange],
+  );
+
+  const navigatePromptHistory = useCallback(
+    (direction: 'up' | 'down') => {
+      if (promptHistory.length === 0) {
+        return;
+      }
+
+      if (direction === 'up') {
+        if (promptHistoryIndexRef.current === -1) {
+          promptHistoryScratchRef.current = draft;
+          promptHistoryIndexRef.current = promptHistory.length - 1;
+        } else if (promptHistoryIndexRef.current > 0) {
+          promptHistoryIndexRef.current -= 1;
+        } else {
+          return;
+        }
+
+        const nextValue = promptHistory[promptHistoryIndexRef.current];
+
+        if (nextValue === undefined) {
+          return;
+        }
+
+        applyPromptHistoryDraft(nextValue);
+        return;
+      }
+
+      if (promptHistoryIndexRef.current === -1) {
+        return;
+      }
+
+      if (promptHistoryIndexRef.current < promptHistory.length - 1) {
+        promptHistoryIndexRef.current += 1;
+        const nextValue = promptHistory[promptHistoryIndexRef.current];
+
+        if (nextValue === undefined) {
+          return;
+        }
+
+        applyPromptHistoryDraft(nextValue);
+        return;
+      }
+
+      promptHistoryIndexRef.current = -1;
+      applyPromptHistoryDraft(promptHistoryScratchRef.current);
+      promptHistoryScratchRef.current = '';
+    },
+    [applyPromptHistoryDraft, draft, promptHistory],
+  );
+
   const handleSubmit = useCallback(() => {
     if (interactionPending) {
       return;
@@ -545,10 +645,11 @@ function AgentComposerComponent({
       const result = await onSubmit(draft);
 
       if (result) {
+        resetPromptHistoryNavigation();
         onDraftChange('');
       }
     })();
-  }, [canStop, draft, interactionPending, onDraftChange, onStop, onSubmit]);
+  }, [canStop, draft, interactionPending, onDraftChange, onStop, onSubmit, resetPromptHistoryNavigation]);
 
   const handleForceSubmit = useCallback(() => {
     if (interactionPending) {
@@ -559,10 +660,11 @@ function AgentComposerComponent({
       const result = await onSubmit(draft);
 
       if (result) {
+        resetPromptHistoryNavigation();
         onDraftChange('');
       }
     })();
-  }, [draft, interactionPending, onDraftChange, onSubmit]);
+  }, [draft, interactionPending, onDraftChange, onSubmit, resetPromptHistoryNavigation]);
 
   const handleModeChange = useCallback(
     (mode: typeof activeMode) => {
@@ -628,6 +730,20 @@ function AgentComposerComponent({
         return;
       }
 
+      const textarea = event.currentTarget;
+
+      if (event.key === 'ArrowUp' && canNavigatePromptHistoryUp(textarea)) {
+        event.preventDefault();
+        navigatePromptHistory('up');
+        return;
+      }
+
+      if (event.key === 'ArrowDown' && canNavigatePromptHistoryDown(textarea)) {
+        event.preventDefault();
+        navigatePromptHistory('down');
+        return;
+      }
+
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
         handleStopOrSubmit();
@@ -639,6 +755,7 @@ function AgentComposerComponent({
       handleStopOrSubmit,
       isEditing,
       mention,
+      navigatePromptHistory,
       onCancelEdit,
     ],
   );
@@ -653,6 +770,10 @@ function AgentComposerComponent({
 
   const handleDraftChange = useCallback(
     (event: ChangeEvent<HTMLTextAreaElement>) => {
+      if (!promptHistoryNavigatingRef.current) {
+        resetPromptHistoryNavigation();
+      }
+
       const nextValue = event.target.value;
 
       if (skillDraft.hasSkill) {
@@ -666,7 +787,7 @@ function AgentComposerComponent({
       setCaretIndex(event.target.selectionStart ?? 0);
       resizeComposerInput(event.target);
     },
-    [onDraftChange, skillDraft],
+    [onDraftChange, resetPromptHistoryNavigation, skillDraft],
   );
 
   const handleAttach = useCallback(async () => {

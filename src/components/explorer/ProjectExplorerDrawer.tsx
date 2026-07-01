@@ -1082,19 +1082,6 @@ function ProjectExplorerDrawerComponent({
         <div className='project-explorer__header'>
           <span className='project-explorer__title'>Explorador</span>
           <div className='project-explorer__header-actions'>
-            <button
-              type='button'
-              className={`project-explorer__header-btn project-explorer__header-btn--git app-button app-button--enter${isGitView ? ' project-explorer__header-btn--active' : ''}`}
-              aria-label='Controle de versão'
-              onClick={toggleExplorerGit}
-            >
-              <GitBranch size={14} strokeWidth={2} />
-              {gitChangeCount > 0 ? (
-                <span className='project-explorer__header-badge' aria-hidden='true'>
-                  {gitChangeCount > 99 ? '99+' : gitChangeCount}
-                </span>
-              ) : null}
-            </button>
             {!isGitView ? (
               <>
                 <button
@@ -1123,6 +1110,19 @@ function ProjectExplorerDrawerComponent({
                 </button>
               </>
             ) : null}
+            <button
+              type='button'
+              className={`project-explorer__header-btn project-explorer__header-btn--git app-button app-button--enter${isGitView ? ' project-explorer__header-btn--active' : ''}`}
+              aria-label='Controle de versão'
+              onClick={toggleExplorerGit}
+            >
+              <GitBranch size={14} strokeWidth={2} />
+              {gitChangeCount > 0 ? (
+                <span className='project-explorer__header-badge' aria-hidden='true'>
+                  {gitChangeCount > 99 ? '99+' : gitChangeCount}
+                </span>
+              ) : null}
+            </button>
           </div>
         </div>
 

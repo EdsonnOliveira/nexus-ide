@@ -12,6 +12,8 @@ dist
 dist-ssr
 dist-electron
 release
+build
+build/liquid-glass-out
 *.local
 
 # Editor directories and files

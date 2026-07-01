@@ -70,7 +70,10 @@ interface XTermViewProps {
   onOpenLinkInBrowser: (url: string) => void;
   onFocusHints?: () => void;
   hintsKeyboardActive?: boolean;
+  restoreCommand?: string | null;
 }
+
+const LAUNCH_COMMAND_DELAY_MS = 350;
 
 function isTerminalAtBottom(terminal: Terminal): boolean {
   const buffer = terminal.buffer.active;
@@ -250,6 +253,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     onOpenLinkInBrowser,
     onFocusHints,
     hintsKeyboardActive = false,
+    restoreCommand = null,
   },
   ref,
 ) {
@@ -280,12 +284,14 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
   const resizeFrameRef = useRef<number | null>(null);
   const syncPasteImagesTimerRef = useRef<number | null>(null);
   const paneIdRef = useRef(paneId);
+  const restoreCommandRef = useRef(restoreCommand);
   const isVisibleRef = useRef(isVisible);
   const disposedRef = useRef(false);
   const scrollbackReplayGenerationRef = useRef(0);
   const [linkMenu, setLinkMenu] = useState<{ url: string; x: number; y: number } | null>(null);
 
   paneIdRef.current = paneId;
+  restoreCommandRef.current = restoreCommand;
   isVisibleRef.current = isVisible;
   isAgentSessionRef.current = isAgentSession;
 
@@ -465,6 +471,10 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     creatingRef.current = true;
 
     try {
+      const queuedLaunchCommand =
+        useTerminalSessionStore.getState().takePendingLaunchCommand(paneIdRef.current) ??
+        restoreCommandRef.current?.trim() ??
+        null;
       const createdPtyId = await window.nexus.terminal.create(cwdRef.current, agentRef.current);
       terminalExitedRef.current = false;
       ptyIdRef.current = createdPtyId;
@@ -493,17 +503,13 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
           return;
         }
 
-        const pendingCommand = useTerminalSessionStore
-          .getState()
-          .takePendingLaunchCommand(paneIdRef.current);
-
-        if (!pendingCommand) {
+        if (!queuedLaunchCommand) {
           return;
         }
 
-        window.nexus.terminal.write(createdPtyId, `${pendingCommand}\n`);
-        useTerminalSessionStore.getState().setLastCommand(paneIdRef.current, pendingCommand);
-      }, 350);
+        window.nexus.terminal.write(createdPtyId, `${queuedLaunchCommand}\n`);
+        useTerminalSessionStore.getState().setLastCommand(paneIdRef.current, queuedLaunchCommand);
+      }, LAUNCH_COMMAND_DELAY_MS);
 
       if (terminal && fitAddon) {
         scheduleTerminalDisplayRefresh(

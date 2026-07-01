@@ -5,6 +5,7 @@ import type {
   AgentQuestionOption,
   AgentTurn,
   AgentTurnSummary,
+  AgentTurnSummaryCommandRef,
   AgentTurnSummaryFileRef,
 } from '@/types';
 import { isAgentTurnSummaryVisible } from '@/utils/agentTurnSummary';
@@ -28,11 +29,13 @@ export interface AgentStreamJsonParserState {
   activities: AgentActivity[];
   thoughtId: string | null;
   thoughtStartedAt: number | null;
+  thoughtSessionStartedAt: number | null;
   responseId: string | null;
   seenReadPaths: Set<string>;
   editedPaths: Set<string>;
   exploredFiles: AgentTurnSummaryFileRef[];
   editedFiles: AgentTurnSummaryFileRef[];
+  shellCommands: AgentTurnSummaryCommandRef[];
   shellCommandCount: number;
   lineAdditions: number;
   lineDeletions: number;
@@ -76,11 +79,13 @@ export function createAgentStreamJsonParserState(): AgentStreamJsonParserState {
     activities: [],
     thoughtId: null,
     thoughtStartedAt: null,
+    thoughtSessionStartedAt: null,
     responseId: null,
     seenReadPaths: new Set(),
     editedPaths: new Set(),
     exploredFiles: [],
     editedFiles: [],
+    shellCommands: [],
     shellCommandCount: 0,
     lineAdditions: 0,
     lineDeletions: 0,
@@ -132,52 +137,123 @@ function extractAssistantText(message: unknown): string {
     .join('');
 }
 
+function getStreamActivitySignature(activities: AgentActivity[]): string {
+  return activities
+    .map(
+      (entry) =>
+        `${entry.id}:${entry.kind}:${entry.label.length}:${entry.streaming ? 1 : 0}:${entry.filePath ?? ''}:${entry.additions ?? ''}:${entry.deletions ?? ''}`,
+    )
+    .join('|');
+}
+
+function findLatestThoughtActivity(state: AgentStreamJsonParserState): AgentActivity | undefined {
+  for (let index = state.activities.length - 1; index >= 0; index -= 1) {
+    const entry = state.activities[index];
+
+    if (entry?.kind === 'thought') {
+      return entry;
+    }
+  }
+
+  return undefined;
+}
+
+function findStreamingThoughtActivity(state: AgentStreamJsonParserState): AgentActivity | undefined {
+  if (state.thoughtId) {
+    const tracked = state.activities.find((entry) => entry.id === state.thoughtId);
+
+    if (tracked?.kind === 'thought') {
+      return tracked;
+    }
+  }
+
+  return state.activities.find((entry) => entry.kind === 'thought' && entry.streaming);
+}
+
+function appendThoughtDelta(currentLabel: string, delta: string): string {
+  if (!currentLabel) {
+    return delta;
+  }
+
+  if (!delta) {
+    return currentLabel;
+  }
+
+  const needsSpace =
+    !currentLabel.endsWith(' ') &&
+    !currentLabel.endsWith('\n') &&
+    !delta.startsWith(' ') &&
+    !/^[,.;:!?)]/.test(delta);
+
+  return `${currentLabel}${needsSpace ? ' ' : ''}${delta}`;
+}
+
 function upsertThought(state: AgentStreamJsonParserState, delta: string): void {
   if (!delta) {
     return;
   }
 
-  if (!state.thoughtId) {
-    const existing = state.activities.find((entry) => entry.kind === 'thought' && entry.streaming);
+  const streamingThought = findStreamingThoughtActivity(state);
 
-    if (existing) {
-      state.thoughtId = existing.id;
-      state.thoughtStartedAt = state.thoughtStartedAt ?? existing.createdAt;
-      state.activities = state.activities.map((entry) =>
-        entry.id === existing.id
-          ? { ...entry, label: `${entry.label}${delta}`.trim() }
-          : entry,
-      );
-      return;
-    }
-
-    const thought = createActivity('thought', delta.trim(), {
-      streaming: true,
-      collapsed: true,
-    });
-    state.thoughtId = thought.id;
-    state.thoughtStartedAt = thought.createdAt;
-    state.activities = [...state.activities.filter((entry) => entry.kind !== 'thought'), thought];
+  if (streamingThought?.streaming) {
+    state.thoughtId = streamingThought.id;
+    state.thoughtStartedAt = state.thoughtSessionStartedAt ?? streamingThought.createdAt;
+    state.thoughtSessionStartedAt = state.thoughtSessionStartedAt ?? streamingThought.createdAt;
+    state.activities = state.activities.map((entry) =>
+      entry.id === streamingThought.id
+        ? {
+            ...entry,
+            label: appendThoughtDelta(entry.label, delta),
+            collapsed: false,
+          }
+        : entry,
+    );
     return;
   }
 
-  state.activities = state.activities.map((entry) =>
-    entry.id === state.thoughtId
-      ? { ...entry, label: `${entry.label}${delta}`.trim() }
-      : entry,
-  );
+  const latestThought = findLatestThoughtActivity(state);
+
+  if (latestThought) {
+    state.thoughtId = latestThought.id;
+    state.thoughtStartedAt = state.thoughtSessionStartedAt ?? latestThought.createdAt;
+    state.thoughtSessionStartedAt = state.thoughtSessionStartedAt ?? latestThought.createdAt;
+    const separator = latestThought.label.trim() ? '\n\n' : '';
+
+    state.activities = state.activities.map((entry) =>
+      entry.id === latestThought.id
+        ? {
+            ...entry,
+            streaming: true,
+            collapsed: false,
+            label: `${entry.label.trim()}${separator}${delta.trim()}`,
+          }
+        : entry,
+    );
+    return;
+  }
+
+  const thought = createActivity('thought', delta.trim(), {
+    streaming: true,
+    collapsed: false,
+  });
+  state.thoughtId = thought.id;
+  state.thoughtStartedAt = thought.createdAt;
+  state.thoughtSessionStartedAt = thought.createdAt;
+  state.activities = [...state.activities, thought];
 }
 
 function settleThought(state: AgentStreamJsonParserState): void {
-  if (!state.thoughtId) {
+  const thought = findStreamingThoughtActivity(state) ?? findLatestThoughtActivity(state);
+
+  if (!thought) {
     return;
   }
 
-  const startedAt = state.thoughtStartedAt ?? Date.now();
+  const startedAt = state.thoughtSessionStartedAt ?? thought.createdAt ?? Date.now();
   const durationMs = Math.max(Date.now() - startedAt, 1000);
 
   state.activities = state.activities.map((entry) =>
-    entry.id === state.thoughtId
+    entry.id === thought.id
       ? {
           ...entry,
           streaming: undefined,
@@ -189,7 +265,6 @@ function settleThought(state: AgentStreamJsonParserState): void {
   );
 
   state.thoughtId = null;
-  state.thoughtStartedAt = null;
 }
 
 function upsertResponse(state: AgentStreamJsonParserState, text: string, streaming: boolean): void {
@@ -256,6 +331,54 @@ function trackEditedFile(
 
   state.lineAdditions += additions;
   state.lineDeletions += deletions;
+}
+
+function upsertFileEdit(
+  state: AgentStreamJsonParserState,
+  filePath: string,
+  additions = 0,
+  deletions = 0,
+): void {
+  const normalized = filePath.trim().toLowerCase();
+
+  if (!normalized) {
+    return;
+  }
+
+  trackEditedFile(state, filePath, additions, deletions);
+  const displayPath = shortenPath(filePath);
+  const existingIndex = state.activities.findIndex(
+    (entry) => entry.kind === 'file_edit' && entry.filePath?.trim().toLowerCase() === normalized,
+  );
+
+  if (existingIndex >= 0) {
+    const existing = state.activities[existingIndex]!;
+    const nextAdditions = (existing.additions ?? 0) + additions;
+    const nextDeletions = (existing.deletions ?? 0) + deletions;
+
+    state.activities = [
+      ...state.activities.slice(0, existingIndex),
+      {
+        ...existing,
+        filePath: displayPath,
+        label: `Edited ${basenamePath(filePath)}`,
+        additions: nextAdditions > 0 ? nextAdditions : undefined,
+        deletions: nextDeletions > 0 ? nextDeletions : undefined,
+      },
+      ...state.activities.slice(existingIndex + 1),
+    ];
+    return;
+  }
+
+  state.activities = [
+    ...state.activities,
+    createActivity('file_edit', 'Edited', {
+      filePath: displayPath,
+      label: `Edited ${basenamePath(filePath)}`,
+      additions: additions > 0 ? additions : undefined,
+      deletions: deletions > 0 ? deletions : undefined,
+    }),
+  ];
 }
 
 function captureResponseLeadBeforeTools(state: AgentStreamJsonParserState): void {
@@ -509,6 +632,18 @@ function isRenderableStreamJsonActivity(entry: AgentActivity): boolean {
     return sanitizeResponseText(entry.label).trim().length > 0;
   }
 
+  if (entry.kind === 'thought') {
+    return Boolean(entry.label.trim()) || Boolean(entry.durationMs);
+  }
+
+  if (entry.kind === 'file_edit') {
+    return Boolean(entry.filePath?.trim());
+  }
+
+  if (entry.kind === 'file_read') {
+    return Boolean(entry.filePath?.trim());
+  }
+
   return false;
 }
 
@@ -539,12 +674,13 @@ function trackFileMutationToolCall(
   const success = toolCall.result.success;
   const path = success.path ?? toolCall.args?.path ?? '';
 
-  trackEditedFile(
+  upsertFileEdit(
     state,
     path,
     success.linesAdded ?? 0,
     success.linesRemoved ?? fallbackDeletions,
   );
+  state.activities = state.activities.filter((entry) => entry.kind !== 'live_status');
 }
 
 function handleToolCallCompleted(state: AgentStreamJsonParserState, toolCall: unknown): void {
@@ -617,11 +753,60 @@ function handleToolCallCompleted(state: AgentStreamJsonParserState, toolCall: un
     return;
   }
 
-  if (payload.mcpToolCall || payload.shellToolCall) {
-    if (!payload.mcpToolCall) {
-      state.shellCommandCount += 1;
-    }
+  const readToolCall = payload.readToolCall as { args?: { path?: string } } | undefined;
+
+  if (readToolCall) {
+    state.activities = state.activities.filter((entry) => entry.kind !== 'live_status');
+    return;
   }
+
+  const globToolCall = payload.globToolCall as { args?: { globPattern?: string } } | undefined;
+
+  if (globToolCall) {
+    state.activities = state.activities.filter((entry) => entry.kind !== 'live_status');
+    return;
+  }
+
+  const grepToolCall = payload.grepToolCall as { args?: { pattern?: string } } | undefined;
+
+  if (grepToolCall) {
+    state.activities = state.activities.filter((entry) => entry.kind !== 'live_status');
+    return;
+  }
+
+  if (payload.mcpToolCall || payload.shellToolCall) {
+    state.activities = state.activities.filter((entry) => entry.kind !== 'live_status');
+  }
+}
+
+function trackShellCommand(state: AgentStreamJsonParserState, command: string): void {
+  const normalized = command.replace(/\s+/g, ' ').trim();
+
+  if (!normalized) {
+    return;
+  }
+
+  state.shellCommands.push({ command: normalized });
+  state.shellCommandCount = state.shellCommands.length;
+}
+
+function upsertLiveStatus(state: AgentStreamJsonParserState, label: string): void {
+  const trimmed = label.trim();
+
+  if (!trimmed) {
+    return;
+  }
+
+  const existing = state.activities.find((entry) => entry.kind === 'live_status');
+
+  if (existing) {
+    state.activities = state.activities.map((entry) =>
+      entry.id === existing.id ? { ...entry, label: trimmed } : entry,
+    );
+    return;
+  }
+
+  state.activities = [...state.activities, createActivity('live_status', trimmed)];
 }
 
 function handleToolCallStarted(state: AgentStreamJsonParserState, toolCall: unknown): void {
@@ -649,7 +834,32 @@ function handleToolCallStarted(state: AgentStreamJsonParserState, toolCall: unkn
   const readToolCall = payload.readToolCall as { args?: { path?: string } } | undefined;
 
   if (readToolCall?.args?.path) {
+    upsertLiveStatus(state, `Reading ${basenamePath(readToolCall.args.path)}`);
     upsertFileRead(state, readToolCall.args.path);
+    return;
+  }
+
+  const editToolCall = payload.editToolCall as { args?: { path?: string } } | undefined;
+
+  if (editToolCall?.args?.path) {
+    upsertLiveStatus(state, `Editing ${basenamePath(editToolCall.args.path)}`);
+    return;
+  }
+
+  const writeToolCall = payload.writeToolCall as { args?: { path?: string } } | undefined;
+
+  if (writeToolCall?.args?.path) {
+    upsertLiveStatus(state, `Writing ${basenamePath(writeToolCall.args.path)}`);
+    return;
+  }
+
+  const shellToolCall = payload.shellToolCall as { args?: { command?: string } } | undefined;
+
+  if (shellToolCall?.args?.command) {
+    const command = shellToolCall.args.command.trim();
+    trackShellCommand(state, command);
+    const preview = command.split(/\s+/).slice(0, 4).join(' ');
+    upsertLiveStatus(state, preview ? `Running ${preview}` : 'Running command');
     return;
   }
 
@@ -663,6 +873,7 @@ function handleToolCallStarted(state: AgentStreamJsonParserState, toolCall: unkn
     const label = directory
       ? `Glob ${pattern} in ${basenamePath(directory)}`
       : `Glob ${pattern}`;
+    upsertLiveStatus(state, label);
     upsertFileRead(state, directory ?? pattern, label);
     return;
   }
@@ -673,12 +884,13 @@ function handleToolCallStarted(state: AgentStreamJsonParserState, toolCall: unkn
     const pattern = grepToolCall.args.pattern.trim();
     const path = grepToolCall.args.path?.trim();
     const label = path ? `Grep ${pattern} in ${basenamePath(path)}` : `Grep ${pattern}`;
+    upsertLiveStatus(state, label);
     upsertFileRead(state, path ?? pattern, label);
     return;
   }
 
   if (payload.mcpToolCall) {
-    state.shellCommandCount += 1;
+    upsertLiveStatus(state, 'Running tool');
   }
 }
 
@@ -748,14 +960,30 @@ function handleStreamJsonEvent(state: AgentStreamJsonParserState, event: Record<
       state.pendingUsage = usage;
     }
 
+    const resultText =
+      typeof event.result === 'string' ? event.result.trim() : state.pendingResponseText.trim();
+
     if (event.subtype === 'success') {
-      const resultText = typeof event.result === 'string' ? event.result : state.pendingResponseText;
-      upsertResponse(state, resultText, false);
+      if (resultText) {
+        upsertResponse(state, resultText, false);
+      }
 
       if (!state.pendingQuestion && !state.pendingPlan) {
         state.shouldFinalize = true;
       }
+
+      return;
     }
+
+    if (resultText) {
+      upsertResponse(state, resultText, false);
+    }
+
+    if (!state.pendingQuestion && !state.pendingPlan) {
+      state.shouldFinalize = true;
+    }
+
+    return;
   }
 }
 
@@ -835,18 +1063,16 @@ export function feedAgentStreamJsonChunk(
   const previousFinalize = state.shouldFinalize;
   const previousActivityCount = state.activities.length;
   const previousResponseText = state.pendingResponseText;
-  const previousThoughtLabel =
-    state.activities.find((entry) => entry.kind === 'thought')?.label ?? '';
+  const previousActivitySignature = getStreamActivitySignature(state.activities);
 
   state.jsonBuffer += chunk;
   consumeJsonObjects(state);
 
-  const nextThoughtLabel =
-    state.activities.find((entry) => entry.kind === 'thought')?.label ?? '';
+  const nextActivitySignature = getStreamActivitySignature(state.activities);
   const hasUpdate =
     state.activities.length !== previousActivityCount ||
     state.pendingResponseText !== previousResponseText ||
-    nextThoughtLabel !== previousThoughtLabel;
+    nextActivitySignature !== previousActivitySignature;
   const shouldFinalize = state.shouldFinalize && !previousFinalize;
 
   return {
@@ -861,15 +1087,18 @@ export function feedAgentStreamJsonChunk(
 export function buildAgentTurnSummaryFromStreamJsonState(
   state: AgentStreamJsonParserState,
 ): AgentTurnSummary | undefined {
+  const resolvedCommandCount =
+    state.shellCommands.length > 0 ? state.shellCommands.length : state.shellCommandCount;
   const summary: AgentTurnSummary = {
     editedFileCount: state.editedPaths.size,
     exploredFileCount: state.seenReadPaths.size,
-    commandCount: state.shellCommandCount,
+    commandCount: resolvedCommandCount,
     additions: state.lineAdditions,
     deletions: state.lineDeletions,
     ...(state.responseLead ? { responseLead: state.responseLead } : {}),
     ...(state.exploredFiles.length > 0 ? { exploredFiles: [...state.exploredFiles] } : {}),
     ...(state.editedFiles.length > 0 ? { editedFiles: [...state.editedFiles] } : {}),
+    ...(state.shellCommands.length > 0 ? { commands: [...state.shellCommands] } : {}),
   };
 
   return isAgentTurnSummaryVisible(summary) ? summary : undefined;
@@ -921,7 +1150,7 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
     activities = [
       createActivity(
         'response',
-        'O agent não retornou resposta. Verifique se o cursor-agent está instalado e tente novamente.',
+        'Nenhuma resposta foi capturada. Tente enviar novamente — ao trocar de projeto, aguarde o agent concluir ou volte à aba antes de reenviar.',
       ),
     ];
   } else if (
@@ -952,11 +1181,13 @@ export function resetAgentStreamJsonTurn(state: AgentStreamJsonParserState): voi
   state.activities = [];
   state.thoughtId = null;
   state.thoughtStartedAt = null;
+  state.thoughtSessionStartedAt = null;
   state.responseId = null;
   state.seenReadPaths.clear();
   state.editedPaths.clear();
   state.exploredFiles = [];
   state.editedFiles = [];
+  state.shellCommands = [];
   state.shellCommandCount = 0;
   state.lineAdditions = 0;
   state.lineDeletions = 0;

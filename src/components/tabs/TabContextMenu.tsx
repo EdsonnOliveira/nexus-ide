@@ -19,7 +19,6 @@ import {
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useTabActions } from '@/stores/useTabStore';
 import type { CursorAgentHistoryEntry, Project, TabBarItem, TerminalTab } from '@/types';
-import { buildCursorAgentResumeCommand } from '@/utils/cursorAgentResume';
 import {
   resolveAgentPaneForTab,
   tabHasAgentSession,
@@ -81,8 +80,7 @@ function TabContextMenuComponent({
   const lastRestartCommands = useTerminalSessionStore((state) => state.lastRestartCommands);
   const restartingPaneIds = useTerminalSessionStore((state) => state.restartingPaneIds);
   const restartTerminalPane = useTerminalSessionStore((state) => state.restartTerminalPane);
-  const resumeAgentSession = useTerminalSessionStore((state) => state.resumeAgentSession);
-  const { selectPane, replaceAgentTab } = useTabActions();
+  const { selectPane, replaceAgentTab, resumeAgentHistorySession } = useTabActions();
   const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
     onClose,
     (menu) => positionDropdownAtPointer(menu, x, y),
@@ -227,16 +225,18 @@ function TabContextMenuComponent({
   );
 
   const handleResumeSession = useCallback(
-    (entry: CursorAgentHistoryEntry) =>
-      runAction(() => {
-        if (!agentPane) {
-          return;
-        }
+    (entry: CursorAgentHistoryEntry) => (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
 
-        const command = buildCursorAgentResumeCommand(entry.id, project.path);
-        void resumeAgentSession(agentPane.id, command, selectPane);
-      }),
-    [agentPane, project.path, resumeAgentSession, runAction, selectPane],
+      if (!agentPane || restartingPaneIds[agentPane.id]) {
+        return;
+      }
+
+      void resumeAgentHistorySession(agentPane.id, entry.id, project.path);
+      requestClose();
+    },
+    [agentPane, project.path, requestClose, resumeAgentHistorySession, restartingPaneIds],
   );
 
   const clearHistoryCloseTimer = useCallback(() => {
@@ -374,11 +374,7 @@ function TabContextMenuComponent({
                       className='context-menu__item context-menu__item--history'
                       role='menuitem'
                       disabled={Boolean(agentPane && restartingPaneIds[agentPane.id])}
-                      onMouseDown={
-                        agentPane && restartingPaneIds[agentPane.id]
-                          ? undefined
-                          : handleResumeSession(entry)
-                      }
+                      onMouseDown={handleResumeSession(entry)}
                     >
                       <span className='context-menu__history-title'>{entry.title}</span>
                       <span className='context-menu__history-date'>

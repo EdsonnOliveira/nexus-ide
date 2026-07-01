@@ -40,7 +40,12 @@ import { clampSplitRatio } from '@/utils/splitLayout';
 import { executeAutomation } from '@/utils/executeAutomation';
 import { handleAutomationPaneShellPrompt } from '@/utils/automationPaneExecution';
 import { completeAgentGitTurn, trackAgentGitPrompt } from '@/utils/agentGitTurn';
+import { useAgentPrintBridge } from '@/hooks/useAgentPrintBridge';
 import { useAgentGitChangeStore } from '@/stores/useAgentGitChangeStore';
+import {
+  isPaneAgentSessionLive,
+  type PaneAgentSessionSnapshot,
+} from '@/utils/paneAgentSession';
 import {
   isOverlayBlockingTerminalHints,
   subscribeOverlayBlockingChange,
@@ -448,6 +453,7 @@ const TabPane = memo(function TabPaneComponent({
           onOpenLinkInBrowser={onOpenLinkInBrowser}
           onFocusHints={handleFocusHintsWhenFocused}
           hintsKeyboardActive={hintsKeyboardActive && isFocused}
+          restoreCommand={tab.restoreCommand}
         />
         {isAgentSession ? (
           <div className='agent-git-change-pill-slot'>
@@ -651,12 +657,21 @@ function isPaneInActiveLayout(project: Project, isProjectActive: boolean, paneId
   return activeItem.id === paneId;
 }
 
-function isPaneRuntimeActive(project: Project, isProjectActive: boolean, paneId: string): boolean {
-  if (!isProjectActive) {
+function isPaneRuntimeActive(
+  project: Project,
+  isProjectActive: boolean,
+  paneId: string,
+  agentSession: PaneAgentSessionSnapshot,
+): boolean {
+  if (findPaneTab(project.tabs, paneId) === null) {
     return false;
   }
 
-  return findPaneTab(project.tabs, paneId) !== null;
+  if (isProjectActive) {
+    return true;
+  }
+
+  return isPaneAgentSessionLive(paneId, agentSession);
 }
 
 function isPaneFocused(project: Project, isProjectActive: boolean, paneId: string): boolean {
@@ -683,6 +698,7 @@ function isPaneFocused(project: Project, isProjectActive: boolean, paneId: strin
 interface ProjectWorkspaceProps {
   project: Project;
   isProjectActive: boolean;
+  agentSession: PaneAgentSessionSnapshot;
   terminalRefs: React.MutableRefObject<Record<string, XTermViewHandle | null>>;
   onFocusPane: (paneId: string) => void;
   onPtyCreated: (projectId: string, tabId: string, ptyId: string) => void;
@@ -711,6 +727,7 @@ interface ProjectWorkspaceProps {
 const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
   project,
   isProjectActive,
+  agentSession,
   terminalRefs,
   onFocusPane,
   onPtyCreated,
@@ -738,8 +755,8 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
   );
 
   const isPaneRuntimeActiveForProject = useCallback(
-    (paneId: string) => isPaneRuntimeActive(project, isProjectActive, paneId),
-    [isProjectActive, project],
+    (paneId: string) => isPaneRuntimeActive(project, isProjectActive, paneId, agentSession),
+    [agentSession, isProjectActive, project],
   );
 
   const workspacePaneContext = useMemo<WorkspacePaneContextValue>(
@@ -833,8 +850,20 @@ interface PaneCompletionTracker {
 }
 
 function TerminalPanelComponent() {
+  useAgentPrintBridge();
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const projects = useProjectStore((state) => state.projects);
+  const agentPrintRunTokenByPane = useTerminalSessionStore((state) => state.agentPrintRunTokenByPane);
+  const agentBusyByPane = useTerminalSessionStore((state) => state.agentBusyByPane);
+  const awaitingResponseByPane = useTerminalSessionStore((state) => state.awaitingResponseByPane);
+  const agentSession = useMemo<PaneAgentSessionSnapshot>(
+    () => ({
+      agentPrintRunTokenByPane,
+      agentBusyByPane,
+      awaitingResponseByPane,
+    }),
+    [agentBusyByPane, agentPrintRunTokenByPane, awaitingResponseByPane],
+  );
   const completionTrackersRef = useRef(new Map<string, PaneCompletionTracker>());
   const { selectPane, updateBrowserUrl, updateEmulatorTab, updateApiTab, updateAgentTab, splitTab, openBrowserTab, addTab, addAgentTab, setSplitRatio } =
     useTabActions();
@@ -1313,6 +1342,7 @@ function TerminalPanelComponent() {
               key={project.id}
               project={project}
               isProjectActive={project.id === activeProjectId}
+              agentSession={agentSession}
               terminalRefs={terminalRefs}
               onFocusPane={handleFocusPane}
               onPtyCreated={handlePtyCreated}

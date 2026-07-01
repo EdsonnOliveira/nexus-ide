@@ -16,6 +16,8 @@ const IGNORED_WATCH_SEGMENTS = new Set([
   'dist-electron',
   'node_modules',
   'release',
+  'build',
+  'liquid-glass-out',
 ]);
 
 export function shouldIgnoreWatchPath(projectPath: string, changedPath?: string): boolean {

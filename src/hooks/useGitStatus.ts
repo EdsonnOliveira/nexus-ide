@@ -102,7 +102,6 @@ export function useGitStatus(repoPath: string | null, enabled: boolean): UseGitS
     }
 
     void refresh();
-    void window.nexus.git.watch(repoPath);
 
     const unsubscribe = window.nexus.git.onRepoChange((changedPath) => {
       if (changedPath === repoPath) {

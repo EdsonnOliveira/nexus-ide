@@ -1,38 +1,51 @@
 import { memo, useCallback, useMemo, useState } from 'react';
-import type { AgentTurnSummary, AgentTurnSummaryFileRef } from '@/types';
+import {
+  AgentCommandActivityScrollList,
+  AgentFileActivityScrollList,
+} from '@/components/agent/AgentFileActivityRow';
+import type { AgentActivity, AgentTurnSummary, AgentTurnSummaryFileRef } from '@/types';
 import {
   buildAgentTurnSummarySegments,
-  getAgentTurnSummaryFileName,
   isAgentTurnSummaryVisible,
   type AgentTurnSummarySegmentKind,
 } from '@/utils/agentTurnSummary';
 
 interface AgentTurnSummaryLineProps {
   summary: AgentTurnSummary;
+  projectPath: string;
+}
+
+function summaryFilesToActivities(
+  files: AgentTurnSummaryFileRef[],
+  verb: 'Read' | 'Edited',
+): AgentActivity[] {
+  return files.map((file) => ({
+    id: file.path,
+    kind: verb === 'Edited' ? 'file_edit' : 'file_read',
+    label: verb,
+    filePath: file.path,
+    createdAt: 0,
+  }));
 }
 
 function AgentTurnSummaryFileList({
   files,
   verb,
+  projectPath,
 }: {
   files: AgentTurnSummaryFileRef[];
   verb: 'Read' | 'Edited';
+  projectPath: string;
 }) {
   return (
-    <div className='agent-view__turn-summary-files app-button--enter'>
-      {files.map((file) => (
-        <div key={file.path} className='agent-view__file-row'>
-          <span className='agent-view__file-verb'>{verb}</span>
-          <span className='agent-view__file-name' title={file.path}>
-            {getAgentTurnSummaryFileName(file.path)}
-          </span>
-        </div>
-      ))}
-    </div>
+    <AgentFileActivityScrollList
+      activities={summaryFilesToActivities(files, verb)}
+      projectPath={projectPath}
+    />
   );
 }
 
-function AgentTurnSummaryLineComponent({ summary }: AgentTurnSummaryLineProps) {
+function AgentTurnSummaryLineComponent({ summary, projectPath }: AgentTurnSummaryLineProps) {
   const segments = useMemo(() => buildAgentTurnSummarySegments(summary), [summary]);
   const [expandedKind, setExpandedKind] = useState<AgentTurnSummarySegmentKind | null>(null);
   const hasDiff = summary.additions > 0 || summary.deletions > 0;
@@ -45,9 +58,13 @@ function AgentTurnSummaryLineComponent({ summary }: AgentTurnSummaryLineProps) {
     return null;
   }
 
-  const expandedSegment = segments.find(
-    (segment) => segment.kind === expandedKind && segment.files && segment.files.length > 0,
-  );
+  const expandedSegment = segments.find((segment) => {
+    if (segment.kind !== expandedKind) {
+      return false;
+    }
+
+    return Boolean(segment.files?.length || segment.commands?.length);
+  });
 
   return (
     <div className='agent-view__turn-summary app-button--enter'>
@@ -55,13 +72,13 @@ function AgentTurnSummaryLineComponent({ summary }: AgentTurnSummaryLineProps) {
         {segments.length > 0 ? (
           <div className='agent-view__turn-summary-text'>
             {segments.map((segment, index) => {
-              const hasFiles = Boolean(segment.files?.length);
+              const hasDropdown = Boolean(segment.files?.length || segment.commands?.length);
               const isOpen = expandedKind === segment.kind;
 
               return (
                 <span key={segment.kind} className='agent-view__turn-summary-segment-wrap'>
                   {index > 0 ? <span className='agent-view__turn-summary-separator'>, </span> : null}
-                  {hasFiles ? (
+                  {hasDropdown ? (
                     <button
                       type='button'
                       className={`agent-view__turn-summary-segment app-button${isOpen ? ' agent-view__turn-summary-segment--open' : ''}`}
@@ -93,7 +110,11 @@ function AgentTurnSummaryLineComponent({ summary }: AgentTurnSummaryLineProps) {
         <AgentTurnSummaryFileList
           files={expandedSegment.files}
           verb={expandedSegment.kind === 'edited' ? 'Edited' : 'Read'}
+          projectPath={projectPath}
         />
+      ) : null}
+      {expandedSegment?.commands ? (
+        <AgentCommandActivityScrollList commands={expandedSegment.commands} />
       ) : null}
     </div>
   );

@@ -13,6 +13,11 @@ import { trackAgentGitPrompt } from '@/utils/agentGitTurn';
 import { resolvePaneAgentForGitTurn } from '@/utils/projectAgentStatus';
 import { resetAgentReadyDetectors } from '@/utils/terminalTaskCompletion';
 
+interface PendingResumeSession {
+  chatId: string;
+  projectPath: string;
+}
+
 interface TerminalSessionState {
   lastRestartCommands: Record<string, string>;
   lastAgentCommand: string | null;
@@ -23,10 +28,14 @@ interface TerminalSessionState {
   pendingLaunchCommands: Record<string, string>;
   pendingAgentSetupByPane: Record<string, string[]>;
   pendingTaskPromptByPane: Record<string, string>;
+  pendingResumeSessionByPane: Record<string, PendingResumeSession>;
+  resumeChatIdByPane: Record<string, string>;
   restartingPaneIds: Record<string, boolean>;
   awaitingResponseByPane: Record<string, boolean>;
   agentNotifyEligibleByPane: Record<string, boolean>;
   agentModelByPane: Record<string, string>;
+  agentPrintRunTokenByPane: Record<string, string>;
+  agentPrintLastModeByPane: Record<string, AutomationAgentMode>;
   setLastCommand: (paneId: string, command: string) => void;
   setActiveAgent: (paneId: string, agent: string | null) => void;
   setAgentBusy: (paneId: string, busy: boolean) => void;
@@ -42,6 +51,12 @@ interface TerminalSessionState {
   setPendingTaskPrompt: (paneId: string, prompt: string) => void;
   takePendingTaskPrompt: (paneId: string) => string | null;
   takePendingLaunchCommand: (paneId: string) => string | null;
+  setResumeChatId: (paneId: string, chatId: string) => void;
+  clearResumeChatId: (paneId: string) => void;
+  setAgentPrintRunToken: (paneId: string, runToken: string | null) => void;
+  setAgentPrintLastMode: (paneId: string, mode: AutomationAgentMode) => void;
+  setPendingResumeSession: (paneId: string, payload: PendingResumeSession) => void;
+  takePendingResumeSession: (paneId: string) => PendingResumeSession | null;
   setRestarting: (paneId: string, restarting: boolean) => void;
   resumeAgentSession: (
     paneId: string,
@@ -129,10 +144,14 @@ export const useTerminalSessionStore = create<TerminalSessionState>((set, get) =
   pendingLaunchCommands: {},
   pendingAgentSetupByPane: {},
   pendingTaskPromptByPane: {},
+  pendingResumeSessionByPane: {},
+  resumeChatIdByPane: {},
   restartingPaneIds: {},
   awaitingResponseByPane: {},
   agentNotifyEligibleByPane: {},
   agentModelByPane: {},
+  agentPrintRunTokenByPane: {},
+  agentPrintLastModeByPane: {},
   setActiveAgent: (paneId, agent) => {
     set((state) => {
       const nextSince = { ...state.activeAgentSinceByPane };
@@ -250,19 +269,19 @@ export const useTerminalSessionStore = create<TerminalSessionState>((set, get) =
   },
   completeTaskIfAwaiting: (paneId) => {
     const state = get();
-    const isAwaiting = Boolean(state.awaitingResponseByPane[paneId]);
+    const shouldNotify = Boolean(state.awaitingResponseByPane[paneId]);
     const isEligible = Boolean(state.agentNotifyEligibleByPane[paneId]);
     const isBusy = Boolean(state.agentBusyByPane[paneId]);
 
-    if (!isAwaiting && !isEligible && !isBusy) {
+    if (!shouldNotify && !isEligible && !isBusy) {
       return;
     }
 
-    if (isBusy) {
+    if (!shouldNotify && isEligible && isBusy) {
       return;
     }
 
-    if (isAwaiting) {
+    if (shouldNotify) {
       const projectId = findProjectIdByPaneId(paneId);
 
       if (projectId) {
@@ -298,11 +317,47 @@ export const useTerminalSessionStore = create<TerminalSessionState>((set, get) =
       pendingLaunchCommands: omitPaneRecord(state.pendingLaunchCommands, paneId),
       pendingAgentSetupByPane: omitPaneRecord(state.pendingAgentSetupByPane, paneId),
       pendingTaskPromptByPane: omitPaneRecord(state.pendingTaskPromptByPane, paneId),
+      pendingResumeSessionByPane: omitPaneRecord(state.pendingResumeSessionByPane, paneId),
+      resumeChatIdByPane: omitPaneRecord(state.resumeChatIdByPane, paneId),
       restartingPaneIds: omitPaneRecord(state.restartingPaneIds, paneId),
       awaitingResponseByPane: omitPaneRecord(state.awaitingResponseByPane, paneId),
       agentNotifyEligibleByPane: omitPaneRecord(state.agentNotifyEligibleByPane, paneId),
       agentModelByPane: omitPaneRecord(state.agentModelByPane, paneId),
+      agentPrintRunTokenByPane: omitPaneRecord(state.agentPrintRunTokenByPane, paneId),
+      agentPrintLastModeByPane: omitPaneRecord(state.agentPrintLastModeByPane, paneId),
     }));
+  },
+  setAgentPrintLastMode: (paneId, mode) => {
+    set((state) => ({
+      agentPrintLastModeByPane: {
+        ...state.agentPrintLastModeByPane,
+        [paneId]: mode,
+      },
+    }));
+  },
+  setAgentPrintRunToken: (paneId, runToken) => {
+    set((state) => {
+      if (!runToken) {
+        if (!(paneId in state.agentPrintRunTokenByPane)) {
+          return state;
+        }
+
+        return {
+          agentPrintRunTokenByPane: omitPaneRecord(state.agentPrintRunTokenByPane, paneId),
+        };
+      }
+
+      if (state.agentPrintRunTokenByPane[paneId] === runToken) {
+        return state;
+      }
+
+      return {
+        agentPrintRunTokenByPane: {
+          ...state.agentPrintRunTokenByPane,
+          [paneId]: runToken,
+        },
+      };
+    });
   },
   setLastCommand: (paneId, command) => {
     const trimmed = command.trim();
@@ -457,6 +512,56 @@ export const useTerminalSessionStore = create<TerminalSessionState>((set, get) =
       delete nextPending[paneId];
       return { pendingLaunchCommands: nextPending };
     });
+
+    return pending;
+  },
+  setResumeChatId: (paneId, chatId) => {
+    const trimmed = chatId.trim();
+
+    if (!trimmed) {
+      return;
+    }
+
+    set((state) => ({
+      resumeChatIdByPane: {
+        ...state.resumeChatIdByPane,
+        [paneId]: trimmed,
+      },
+    }));
+  },
+  clearResumeChatId: (paneId) => {
+    set((state) => ({
+      resumeChatIdByPane: omitPaneRecord(state.resumeChatIdByPane, paneId),
+    }));
+  },
+  setPendingResumeSession: (paneId, payload) => {
+    const chatId = payload.chatId.trim();
+    const projectPath = payload.projectPath.trim();
+
+    if (!chatId || !projectPath) {
+      return;
+    }
+
+    set((state) => ({
+      pendingResumeSessionByPane: {
+        ...state.pendingResumeSessionByPane,
+        [paneId]: {
+          chatId,
+          projectPath,
+        },
+      },
+    }));
+  },
+  takePendingResumeSession: (paneId) => {
+    const pending = get().pendingResumeSessionByPane[paneId];
+
+    if (!pending) {
+      return null;
+    }
+
+    set((state) => ({
+      pendingResumeSessionByPane: omitPaneRecord(state.pendingResumeSessionByPane, paneId),
+    }));
 
     return pending;
   },

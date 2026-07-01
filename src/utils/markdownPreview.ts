@@ -1,4 +1,4 @@
-import { highlightMarkdownCodeBlock } from '@/utils/codeHighlight';
+import { highlightMarkdownCodeBlock, highlightMermaidDiagram } from '@/utils/codeHighlight';
 import { wrapInlineCodeHtml } from '@/utils/inlineCodeBadge';
 
 export function escapeHtml(value: string): string {
@@ -85,6 +85,31 @@ function expandMarkdownLines(source: string): string[] {
   return lines;
 }
 
+function looksLikeMarkdownProseLine(line: string): boolean {
+  const trimmed = line.trim();
+
+  if (/^\*\*[^*\n]+(?::\*\*|\*\*:)/.test(trimmed)) {
+    return true;
+  }
+
+  if (/^\*\*[^*\n]+\*\*\s/.test(trimmed)) {
+    return true;
+  }
+
+  const letterCount = (trimmed.match(/[a-zA-ZáàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ]/g) ?? []).length;
+  const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+
+  if (wordCount >= 10 && letterCount >= 40) {
+    return true;
+  }
+
+  if (wordCount >= 6 && letterCount / Math.max(trimmed.length, 1) > 0.62) {
+    return true;
+  }
+
+  return false;
+}
+
 function looksLikeCodeLine(line: string): boolean {
   const trimmed = line.trim();
 
@@ -92,16 +117,45 @@ function looksLikeCodeLine(line: string): boolean {
     return false;
   }
 
-  if (
-    /^\s*(export|import|const|let|var|function|class|interface|type|return|if|else|for|while|switch|case|await|async|new|throw|default)\b/.test(
-      trimmed,
-    )
+  if (isTableSeparator(trimmed)) {
+    return false;
+  }
+
+  if (/^\s*(export|import|const|let|var|function|class|interface|type|return|if|else|for|while|switch|case|await|async|new|throw|default)\b/.test(
+    trimmed,
+  )
   ) {
     return true;
   }
 
-  if (/[{};]/.test(trimmed)) {
+  if (/^\s*\/\//.test(trimmed)) {
     return true;
+  }
+
+  if (/[{}]/.test(trimmed)) {
+    return true;
+  }
+
+  if (/=>/.test(trimmed)) {
+    return true;
+  }
+
+  if (looksLikeMarkdownProseLine(trimmed)) {
+    return false;
+  }
+
+  if (/;/.test(trimmed)) {
+    if (/^\s*(const|let|var|return|import|export|throw|break|continue|case|default)\b/.test(trimmed)) {
+      return true;
+    }
+
+    if (/=>/.test(trimmed)) {
+      return true;
+    }
+
+    if (/^\s*[\w$.)]+\s*;/.test(trimmed)) {
+      return true;
+    }
   }
 
   if (/=>|\+\+|--|<<|>>|::|\?\./.test(trimmed)) {
@@ -130,12 +184,12 @@ function isTableRow(line: string): boolean {
     return false;
   }
 
-  if (looksLikeCodeLine(trimmed)) {
-    return false;
-  }
-
   if (isTableSeparator(trimmed)) {
     return true;
+  }
+
+  if (looksLikeCodeLine(trimmed)) {
+    return false;
   }
 
   if (trimmed.startsWith('|')) {
@@ -191,6 +245,10 @@ function renderMarkdownTable(tableLines: string[]): string {
 
 function isAgentSectionTitle(line: string, nextLine: string | null): boolean {
   if (line.length < 4 || line.length > 96) {
+    return false;
+  }
+
+  if (looksLikeCodeLine(line)) {
     return false;
   }
 
@@ -261,8 +319,52 @@ function isMermaidDiagramLine(line: string): boolean {
   return (
     /^graph\s+(?:TD|LR|TB|RL|BT)\b/i.test(trimmed) ||
     /^flowchart\s+(?:TD|LR|TB|RL|BT)\b/i.test(trimmed) ||
-    /^sequenceDiagram\b/i.test(trimmed)
+    /^sequenceDiagram\b/i.test(trimmed) ||
+    /^classDiagram\b/i.test(trimmed) ||
+    /^stateDiagram(?:-v2)?\b/i.test(trimmed)
   );
+}
+
+function isMermaidDiagramContentLine(line: string): boolean {
+  const trimmed = line.trim();
+
+  if (!trimmed) {
+    return false;
+  }
+
+  if (isTableSeparator(trimmed) || isTableRow(trimmed)) {
+    return false;
+  }
+
+  if (isMermaidDiagramLine(trimmed)) {
+    return true;
+  }
+
+  if (/^(subgraph|end|classDef|style|linkStyle|click|direction|participant|actor|note)\b/i.test(trimmed)) {
+    return true;
+  }
+
+  if (/(-->|---|-\.->|==>|===|:::)/.test(trimmed)) {
+    return true;
+  }
+
+  if (/^\s*[\w$][\w$-]*(\[[^\]]*\]|\([^)]*\)|\{[^}]*\})/.test(trimmed)) {
+    return true;
+  }
+
+  return false;
+}
+
+function stripMermaidFenceContent(rawCode: string): string {
+  const lines = rawCode.split('\n');
+  const first = lines[0]?.trim() ?? '';
+  const last = lines[lines.length - 1]?.trim() ?? '';
+
+  if (!/^```\s*mermaid/i.test(first)) {
+    return rawCode;
+  }
+
+  return lines.slice(1, last === '```' ? -1 : lines.length).join('\n');
 }
 
 function looksLikeProseLine(trimmed: string): boolean {
@@ -317,11 +419,93 @@ function shouldAutoCloseMarkdownFence(line: string, codeLineCount: number): bool
     }
   }
 
+  if (/^\*\*[^*]+\*\*[:\s]/.test(trimmed) && !looksLikeCodeLine(trimmed)) {
+    return true;
+  }
+
+  if (/^Obs\.(?:\s|$)/i.test(trimmed)) {
+    return true;
+  }
+
   if (looksLikeProseLine(trimmed)) {
     return true;
   }
 
   return false;
+}
+
+function collectCodeBlock(lines: string[], startIndex: number): { block: string[]; nextIndex: number } {
+  const block: string[] = [];
+  let index = startIndex;
+
+  while (index < lines.length) {
+    const current = lines[index]?.trim() ?? '';
+
+    if (!current) {
+      if (block.length > 0) {
+        break;
+      }
+
+      index += 1;
+      continue;
+    }
+
+    if (isMermaidDiagramLine(current)) {
+      break;
+    }
+
+    if (!looksLikeCodeLine(current)) {
+      if (block.length > 0) {
+        break;
+      }
+
+      break;
+    }
+
+    block.push(lines[index] ?? '');
+    index += 1;
+  }
+
+  return { block, nextIndex: index };
+}
+
+function inferMarkdownCodeLanguage(code: string): string {
+  if (/^\s*(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram)\b/m.test(code)) {
+    return 'mermaid';
+  }
+
+  if (/^\s*#!\/usr\/bin\/env\s+bash/m.test(code) || /^\s*(npm|yarn|pnpm|npx|git|cd|curl)\b/m.test(code)) {
+    return 'bash';
+  }
+
+  if (
+    /^\s*(def|class)\s+\w+/m.test(code) ||
+    (/:\s*$/.test(code.split('\n')[0] ?? '') && !/^\s*(export|import|const|let|var|function|class)\b/.test(code))
+  ) {
+    return 'python';
+  }
+
+  if (
+    /^\s*(export|import|const|let|var|function|class|interface|type|enum)\b/m.test(code) ||
+    /^\s*\/\//m.test(code) ||
+    /=>\s*[({]/.test(code)
+  ) {
+    return 'typescript';
+  }
+
+  return 'typescript';
+}
+
+function renderHighlightedCodeBlock(rawCode: string, language: string): string {
+  const resolvedLanguage = language === 'mermaid' ? 'mermaid' : language;
+  const sourceCode = resolvedLanguage === 'mermaid' ? stripMermaidFenceContent(rawCode) : rawCode;
+  const highlightedCode =
+    resolvedLanguage === 'mermaid'
+      ? highlightMermaidDiagram(sourceCode)
+      : highlightMarkdownCodeBlock(sourceCode, resolvedLanguage);
+  const langClass = resolvedLanguage ? ` language-${resolvedLanguage}` : '';
+
+  return `<pre class="hljs"><code class="hljs${langClass}">${highlightedCode}</code></pre>`;
 }
 
 function collectMermaidBlock(lines: string[], startIndex: number): { block: string[]; nextIndex: number } {
@@ -352,11 +536,11 @@ function collectMermaidBlock(lines: string[], startIndex: number): { block: stri
       break;
     }
 
-    if (!isMermaidDiagramLine(current) && block.length > 0) {
+    if (!isMermaidDiagramContentLine(current) && block.length > 0) {
       break;
     }
 
-    if (isMermaidDiagramLine(current)) {
+    if (isMermaidDiagramContentLine(current)) {
       block.push(lines[index] ?? '');
       index += 1;
       continue;
@@ -427,33 +611,16 @@ export function renderMarkdownPreview(source: string): string {
       }
 
       const rawCode = codeLines.join('\n');
+      const resolvedLanguage = safeLanguage || inferMarkdownCodeLanguage(rawCode);
 
       if (isMarkdownFence) {
         blocks.push(renderMarkdownPreview(rawCode));
         continue;
       }
 
-      const highlightedCode = highlightMarkdownCodeBlock(rawCode, safeLanguage);
-      const langClass = safeLanguage ? ` language-${safeLanguage}` : '';
+      const highlightedCode = highlightMarkdownCodeBlock(rawCode, resolvedLanguage);
+      const langClass = resolvedLanguage ? ` language-${resolvedLanguage}` : '';
       blocks.push(`<pre class="hljs"><code class="hljs${langClass}">${highlightedCode}</code></pre>`);
-      continue;
-    }
-
-    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
-
-    if (headingMatch) {
-      const level = headingMatch[1].length;
-      const content = applyInlineMarkdown(escapeHtml(headingMatch[2]));
-      blocks.push(`<h${level}>${content}</h${level}>`);
-      index += 1;
-      continue;
-    }
-
-    if (isMermaidDiagramLine(trimmed)) {
-      const { block, nextIndex } = collectMermaidBlock(lines, index);
-      index = nextIndex;
-      const rawCode = block.join('\n');
-      blocks.push(`<pre class="hljs"><code class="hljs language-mermaid">${escapeHtml(rawCode)}</code></pre>`);
       continue;
     }
 
@@ -471,6 +638,35 @@ export function renderMarkdownPreview(source: string): string {
         blocks.push(tableHtml);
       }
 
+      continue;
+    }
+
+    if (looksLikeCodeLine(trimmed) && !isMermaidDiagramLine(trimmed)) {
+      const { block, nextIndex } = collectCodeBlock(lines, index);
+      index = nextIndex;
+      const rawCode = block.join('\n').trimEnd();
+
+      if (rawCode) {
+        blocks.push(renderHighlightedCodeBlock(rawCode, inferMarkdownCodeLanguage(rawCode)));
+        continue;
+      }
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const content = applyInlineMarkdown(escapeHtml(headingMatch[2]));
+      blocks.push(`<h${level}>${content}</h${level}>`);
+      index += 1;
+      continue;
+    }
+
+    if (isMermaidDiagramLine(trimmed)) {
+      const { block, nextIndex } = collectMermaidBlock(lines, index);
+      index = nextIndex;
+      const rawCode = block.join('\n');
+      blocks.push(renderHighlightedCodeBlock(rawCode, 'mermaid'));
       continue;
     }
 
@@ -497,6 +693,28 @@ export function renderMarkdownPreview(source: string): string {
     const unorderedMatch = trimmed.match(/^(?:[-*+•·]\s+)(.+)$/);
 
     if (unorderedMatch) {
+      const itemText = unorderedMatch[1];
+      const nextNonEmptyLine = (() => {
+        for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+          const candidate = lines[cursor]?.trim() ?? '';
+
+          if (candidate) {
+            return candidate;
+          }
+        }
+
+        return null;
+      })();
+      const nextIsAnotherBullet = nextNonEmptyLine
+        ? /^(?:[-*+•·]\s)/.test(nextNonEmptyLine)
+        : false;
+
+      if (!nextIsAnotherBullet && itemText.length >= 72) {
+        blocks.push(`<p>* ${applyInlineMarkdown(escapeHtml(itemText))}</p>`);
+        index += 1;
+        continue;
+      }
+
       const items: string[] = [];
 
       while (index < lines.length) {
@@ -588,6 +806,10 @@ export function renderMarkdownPreview(source: string): string {
       }
 
       if (isMermaidDiagramLine(current)) {
+        break;
+      }
+
+      if (looksLikeCodeLine(current)) {
         break;
       }
 

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { existsSync, readdirSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -63,4 +64,94 @@ export async function listCursorAgentHistory(
   }
 
   return sessions.sort((left, right) => right.updatedAtMs - left.updatedAtMs).slice(0, MAX_HISTORY_ENTRIES);
+}
+
+function resolveCursorProjectSlug(workspacePath: string): string {
+  return resolveDirectoryPath(workspacePath)
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .replace(/\//g, '-');
+}
+
+function resolveCursorAgentTranscriptPath(workspacePath: string, sessionId: string): string | null {
+  const slug = resolveCursorProjectSlug(workspacePath);
+  const baseDir = join(homedir(), '.cursor', 'projects', slug, 'agent-transcripts');
+  const trimmed = sessionId.trim();
+  const candidates = [
+    join(baseDir, trimmed, `${trimmed}.jsonl`),
+    join(baseDir, `${trimmed}.jsonl`),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function resolveCursorAgentTranscriptPathFallback(
+  baseDir: string,
+  sessionId: string,
+): string | null {
+  const trimmed = sessionId.trim();
+
+  let sessionDirs: string[] = [];
+
+  try {
+    sessionDirs = readdirSync(baseDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    return null;
+  }
+
+  const matchedDir =
+    sessionDirs.find((dir) => dir === trimmed) ??
+    sessionDirs.find((dir) => dir.startsWith(trimmed) || trimmed.startsWith(dir)) ??
+    sessionDirs.find((dir) => dir.slice(0, 8) === trimmed.slice(0, 8));
+
+  if (!matchedDir) {
+    return null;
+  }
+
+  const candidate = join(baseDir, matchedDir, `${matchedDir}.jsonl`);
+
+  return existsSync(candidate) ? candidate : null;
+}
+
+export async function loadCursorAgentSessionTranscript(
+  workspacePath: string,
+  sessionId: string,
+): Promise<string | null> {
+  const trimmed = sessionId.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const directPath = resolveCursorAgentTranscriptPath(workspacePath, trimmed);
+
+  if (directPath) {
+    try {
+      return await readFile(directPath, 'utf8');
+    } catch {
+      return null;
+    }
+  }
+
+  const slug = resolveCursorProjectSlug(workspacePath);
+  const baseDir = join(homedir(), '.cursor', 'projects', slug, 'agent-transcripts');
+  const fallbackPath = resolveCursorAgentTranscriptPathFallback(baseDir, trimmed);
+
+  if (!fallbackPath) {
+    return null;
+  }
+
+  try {
+    return await readFile(fallbackPath, 'utf8');
+  } catch {
+    return null;
+  }
 }

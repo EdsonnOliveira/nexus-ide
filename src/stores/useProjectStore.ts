@@ -17,7 +17,7 @@ import {
   endProjectSwitch,
   persistLeavingProjectState,
 } from '@/utils/projectSwitch';
-import { updatePaneInTabs } from '@/utils/tabGroups';
+import { findPaneTab, updatePaneInTabs } from '@/utils/tabGroups';
 import {
   restoreSidebarVideoSession,
   toPersistedSidebarVideoSession,
@@ -71,13 +71,15 @@ interface ProjectStoreState {
   moveProjectToWorkspace: (projectId: string, workspaceId: string) => Promise<void>;
   toggleSidebar: () => Promise<void>;
   toggleExplorer: () => void;
+  toggleExplorerEntry: (preferGit: boolean) => void;
   toggleExplorerGit: () => void;
   openExplorerGit: () => void;
   togglePasswords: () => void;
   toggleAutomations: () => void;
   toggleTasks: () => void;
   setSidePanel: (panel: SidePanel | 'git') => void;
-  startSidebarVideoSession: (session: SidebarVideoSession) => Promise<void>;
+  startSidebarVideoSession: (session: SidebarVideoSession, lastLink?: string) => Promise<void>;
+  setSidebarVideoLastLink: (link: string | null) => Promise<void>;
   closeSidebarVideoSession: () => Promise<void>;
   setActiveProjectWhatsAppLink: (link: string | null) => Promise<void>;
   setActiveProjectMailInbox: (mailbox: MailMailboxRef | null) => Promise<void>;
@@ -579,6 +581,26 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
 
     set({ sidePanel: 'explorer', explorerView: 'tree' });
   },
+  toggleExplorerEntry: (preferGit) => {
+    const { sidePanel, explorerView } = get();
+
+    if (sidePanel === 'explorer') {
+      if (preferGit && explorerView === 'tree') {
+        set({ explorerView: 'git' });
+        return;
+      }
+
+      set({ sidePanel: null, explorerView: 'tree' });
+      return;
+    }
+
+    if (preferGit) {
+      set({ sidePanel: 'explorer', explorerView: 'git' });
+      return;
+    }
+
+    set({ sidePanel: 'explorer', explorerView: 'tree' });
+  },
   toggleExplorerGit: () => {
     const { sidePanel, explorerView } = get();
 
@@ -615,9 +637,18 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
       explorerView: panel === 'explorer' ? get().explorerView : 'tree',
     });
   },
-  startSidebarVideoSession: async (session) => {
+  startSidebarVideoSession: async (session, lastLink) => {
+    const rememberedLink = lastLink?.trim() || session.sourceUrl;
+
     await window.nexus.projects.setSidebarVideoSession(toPersistedSidebarVideoSession(session));
-    set({ sidebarVideoSession: session, sidebarVideoLastLink: session.sourceUrl });
+    await window.nexus.projects.setSidebarVideoLastLink(rememberedLink);
+    set({ sidebarVideoSession: session, sidebarVideoLastLink: rememberedLink });
+  },
+  setSidebarVideoLastLink: async (link) => {
+    const rememberedLink = link?.trim() || null;
+
+    await window.nexus.projects.setSidebarVideoLastLink(rememberedLink);
+    set({ sidebarVideoLastLink: rememberedLink });
   },
   closeSidebarVideoSession: async () => {
     await window.nexus.projects.setSidebarVideoSession(null);
@@ -646,7 +677,14 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     return projects.find((project) => project.id === activeProjectId) ?? null;
   },
   setTabPtyId: (projectId, tabId, ptyId) => {
-    if (ptyId) {
+    const project = get().projects.find((entry) => entry.id === projectId);
+    const existingPane = project ? findPaneTab(project.tabs, tabId) : null;
+    const hadExistingPty =
+      existingPane &&
+      (existingPane.type === 'terminal' || existingPane.type === 'agent') &&
+      Boolean(existingPane.ptyId);
+
+    if (ptyId && hadExistingPty) {
       useTerminalSessionStore.getState().takePendingLaunchCommand(tabId);
     }
 

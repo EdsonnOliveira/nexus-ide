@@ -6,3 +6,9 @@ export function buildCursorAgentResumeCommand(chatId: string, workspacePath: str
 
   return `cursor-agent --resume ${chatId} --workspace ${shellPath}`;
 }
+
+export function parseResumeChatIdFromCommand(command: string): string | null {
+  const match = command.match(/--resume\s+(\S+)/);
+
+  return match?.[1] ?? null;
+}

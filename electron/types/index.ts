@@ -100,6 +100,10 @@ export interface AgentTurnSummaryFileRef {
   path: string;
 }
 
+export interface AgentTurnSummaryCommandRef {
+  command: string;
+}
+
 export interface AgentTurnSummary {
   editedFileCount: number;
   exploredFileCount: number;
@@ -109,6 +113,7 @@ export interface AgentTurnSummary {
   responseLead?: string;
   exploredFiles?: AgentTurnSummaryFileRef[];
   editedFiles?: AgentTurnSummaryFileRef[];
+  commands?: AgentTurnSummaryCommandRef[];
 }
 
 export interface AgentTurn {
@@ -385,6 +390,7 @@ export interface AppState {
 export interface PersistedSidebarVideoSession {
   sourceUrl: string;
   title: string;
+  isLive?: boolean;
 }
 
 export interface ProjectUpdatePayload {
@@ -441,4 +447,25 @@ export interface MailInboxSnapshot {
   available: boolean;
   mailboxLabel: string;
   messages: MailMessageItem[];
+}
+
+export interface CalendarEventItem {
+  id: string;
+  title: string;
+  startAt: number;
+  endAt: number;
+  location: string;
+  calendarName: string;
+  colorHex: string;
+  allDay: boolean;
+  notes: string;
+  url: string;
+}
+
+export interface CalendarEventsSnapshot {
+  platformSupported: boolean;
+  accessGranted: boolean;
+  available: boolean;
+  permissionDenied: boolean;
+  events: CalendarEventItem[];
 }

@@ -38,6 +38,8 @@ const nexusApi = {
       ipcRenderer.invoke('projects:removeLogo', logoPath),
     setSidebarVideoSession: (session: AppState['sidebarVideoSession']): Promise<void> =>
       ipcRenderer.invoke('projects:setSidebarVideoSession', session),
+    setSidebarVideoLastLink: (link: string | null): Promise<void> =>
+      ipcRenderer.invoke('projects:setSidebarVideoLastLink', link),
   },
   terminal: {
     create: (cwd: string, agent: TerminalAgent): Promise<string> =>
@@ -79,11 +81,14 @@ const nexusApi = {
       model?: string | null;
       mode?: 'plan' | 'ask';
       continueSession?: boolean;
+      resumeChatId?: string | null;
       runToken: string;
     }): Promise<void> => ipcRenderer.invoke('agent:printStart', options),
     stop: (paneId: string): void => {
       ipcRenderer.send('agent:printStop', paneId);
     },
+    isRunning: (paneId: string): Promise<boolean> =>
+      ipcRenderer.invoke('agent:printIsRunning', paneId),
     onData: (
       callback: (paneId: string, data: string, runToken: string) => void,
     ): (() => void) => {
@@ -140,6 +145,8 @@ const nexusApi = {
     getAgentSkillHints: (cwd: string) => ipcRenderer.invoke('files:getAgentSkillHints', cwd),
     listCursorAgentHistory: (cwd: string) =>
       ipcRenderer.invoke('files:listCursorAgentHistory', cwd),
+    loadCursorAgentSessionTranscript: (cwd: string, sessionId: string) =>
+      ipcRenderer.invoke('files:loadCursorAgentSessionTranscript', cwd, sessionId),
     getGitBranch: (dirPath: string): Promise<string | null> =>
       ipcRenderer.invoke('files:getGitBranch', dirPath),
     detectProjectKinds: (dirPaths: string[]) =>
@@ -273,6 +280,34 @@ const nexusApi = {
     ipcRenderer.on('app:flush-session', listener);
     return () => ipcRenderer.off('app:flush-session', listener);
   },
+  systemNotifications: {
+    list: (limit?: number) => ipcRenderer.invoke('systemNotifications:list', limit),
+    getAppIcon: (appId: string, appLabel?: string) =>
+      ipcRenderer.invoke('systemNotifications:getAppIcon', appId, appLabel),
+    delete: (id: string) => ipcRenderer.invoke('systemNotifications:delete', id),
+    deleteAll: (limit?: number) => ipcRenderer.invoke('systemNotifications:deleteAll', limit),
+    openApp: (appId: string) => ipcRenderer.invoke('systemNotifications:openApp', appId),
+    openFullDiskAccessSettings: () =>
+      ipcRenderer.invoke('systemNotifications:openFullDiskAccessSettings'),
+    revealFullDiskAccessApp: () =>
+      ipcRenderer.invoke('systemNotifications:revealFullDiskAccessApp'),
+  },
+  systemStatus: {
+    getSnapshot: () => ipcRenderer.invoke('systemStatus:getSnapshot'),
+    setVolume: (volume: number) => ipcRenderer.invoke('systemStatus:setVolume', volume),
+    setMuted: (muted: boolean) => ipcRenderer.invoke('systemStatus:setMuted', muted),
+    listAudioOutputDevices: () => ipcRenderer.invoke('systemStatus:listAudioOutputDevices'),
+    setAudioOutputDevice: (deviceId: string) =>
+      ipcRenderer.invoke('systemStatus:setAudioOutputDevice', deviceId),
+    getWifiPower: () => ipcRenderer.invoke('systemStatus:getWifiPower'),
+    setWifiPower: (enabled: boolean) => ipcRenderer.invoke('systemStatus:setWifiPower', enabled),
+    listWifiNetworks: () => ipcRenderer.invoke('systemStatus:listWifiNetworks'),
+    getWifiPopupState: () => ipcRenderer.invoke('systemStatus:getWifiPopupState'),
+    getConnectedWifiNetwork: () => ipcRenderer.invoke('systemStatus:getConnectedWifiNetwork'),
+    disconnectWifiNetwork: () => ipcRenderer.invoke('systemStatus:disconnectWifiNetwork'),
+    connectWifiNetwork: (ssid: string, password?: string) =>
+      ipcRenderer.invoke('systemStatus:connectWifiNetwork', ssid, password),
+  },
   music: {
     getNowPlaying: () => ipcRenderer.invoke('music:getNowPlaying'),
     getPlaylists: () => ipcRenderer.invoke('music:getPlaylists'),
@@ -293,6 +328,12 @@ const nexusApi = {
     getMailboxes: () => ipcRenderer.invoke('mail:getMailboxes'),
     getInboxMessages: (mailbox) => ipcRenderer.invoke('mail:getInboxMessages', mailbox),
     openMessage: (mailbox, messageId) => ipcRenderer.invoke('mail:openMessage', mailbox, messageId),
+  },
+  calendar: {
+    getTodayEvents: () => ipcRenderer.invoke('calendar:getTodayEvents'),
+    requestAccess: () => ipcRenderer.invoke('calendar:requestAccess'),
+    openEvent: (startAt) => ipcRenderer.invoke('calendar:openEvent', startAt),
+    openPrivacySettings: () => ipcRenderer.invoke('calendar:openPrivacySettings'),
   },
   vercel: {
     getTokenConfigured: () => ipcRenderer.invoke('vercel:getTokenConfigured'),

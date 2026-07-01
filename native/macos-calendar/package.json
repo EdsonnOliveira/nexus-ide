@@ -1,0 +1,8 @@
+{
+  "name": "macos-calendar",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.cjs",
+  "gypfile": true,
+  "os": ["darwin"]
+}

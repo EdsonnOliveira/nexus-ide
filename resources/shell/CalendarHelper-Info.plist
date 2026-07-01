@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>pt-BR</string>
+  <key>CFBundleDisplayName</key>
+  <string>Nexus</string>
+  <key>CFBundleExecutable</key>
+  <string>CalendarHelper</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.nexus.ide.calendar</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>Nexus Calendar</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>11.0</string>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>O Nexus IDE precisa ler seus eventos do Calendário para exibi-los na barra lateral.</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>O Nexus IDE exibe seus eventos do Calendário na barra lateral.</string>
+</dict>
+</plist>

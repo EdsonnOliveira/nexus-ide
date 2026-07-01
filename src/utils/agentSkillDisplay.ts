@@ -1,4 +1,5 @@
 import type { TerminalCommandHint } from '@/types';
+import { resolvePromptDisplayContent } from '@/utils/agentPromptAttachments';
 
 const SKILL_SLASH_PATTERN = /^\/[^\s/]+(?:\/[^\s/]+)*$/;
 
@@ -116,4 +117,55 @@ export function resolveAgentSkillDisplayState(user: {
   }
 
   return { hasSkillPrompt: false, skillChipLabel: '' };
+}
+
+export function resolveFollowUpEnqueueFields(prompt: string): {
+  content: string;
+  skillLabel?: string;
+  agentPrompt?: string;
+} {
+  const trimmed = prompt.trim();
+  const parsed = parseComposerSkillDraft(prompt, []);
+
+  if (parsed.hasSkill) {
+    const content = resolvePromptDisplayContent(parsed.body);
+
+    return {
+      content,
+      skillLabel: parsed.skillLabel,
+      ...(trimmed !== content ? { agentPrompt: trimmed } : {}),
+    };
+  }
+
+  const skillState = resolveAgentSkillDisplayState({ content: trimmed });
+
+  if (skillState.hasSkillPrompt && isAgentSkillSlashCommand(trimmed)) {
+    return {
+      content: trimmed,
+      skillLabel: skillState.skillChipLabel,
+    };
+  }
+
+  return { content: resolvePromptDisplayContent(trimmed) };
+}
+
+export function resolveFollowUpAgentPrompt(item: {
+  content: string;
+  skillLabel?: string;
+  agentPrompt?: string;
+}): string {
+  const agentPrompt = item.agentPrompt?.trim();
+
+  if (agentPrompt) {
+    return agentPrompt;
+  }
+
+  const content = item.content.trim();
+  const skillLabel = item.skillLabel?.trim() ?? '';
+
+  if (skillLabel && content && normalizeSkillToken(skillLabel) !== normalizeSkillToken(content)) {
+    return `${skillLabel} ${content}`;
+  }
+
+  return content;
 }

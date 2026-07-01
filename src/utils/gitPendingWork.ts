@@ -1,16 +1,15 @@
 import type { GitStatusResult } from '@/types/git';
+import { countGitStatusChanges } from '@/utils/gitFlatChanges';
 
 export function gitRepoHasPendingWork(status: GitStatusResult): boolean {
-  const hasLocalChanges =
-    status.staged.length + status.unstaged.length + status.untracked.length > 0;
+  const hasLocalChanges = countGitStatusChanges(status) > 0;
   const hasUnpushedCommits = status.repo.ahead > 0;
 
   return hasLocalChanges || hasUnpushedCommits;
 }
 
 export function getGitPendingWorkMessage(status: GitStatusResult): string {
-  const hasLocalChanges =
-    status.staged.length + status.unstaged.length + status.untracked.length > 0;
+  const hasLocalChanges = countGitStatusChanges(status) > 0;
   const hasUnpushedCommits = status.repo.ahead > 0;
 
   if (hasLocalChanges && hasUnpushedCommits) {

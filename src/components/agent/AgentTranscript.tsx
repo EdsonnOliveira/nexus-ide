@@ -99,6 +99,7 @@ function AgentTranscriptComponent({
   const atBottomRef = useRef(true);
   const programmaticScrollRef = useRef(false);
   const scrollRafRef = useRef<number | null>(null);
+  const contentHeightRef = useRef(0);
   const onAtBottomChangeRef = useRef(onAtBottomChange);
 
   useEffect(() => {
@@ -117,11 +118,13 @@ function AgentTranscriptComponent({
   useEffect(() => {
     stickToBottomRef.current = true;
     atBottomRef.current = true;
+    contentHeightRef.current = 0;
     onAtBottomChangeRef.current?.(true);
     const container = scrollContainerRef.current;
 
     if (container) {
       scrollContainerToBottom(container);
+      contentHeightRef.current = container.scrollHeight;
     }
   }, [scrollContainerRef, scrollKey]);
 
@@ -194,24 +197,47 @@ function AgentTranscriptComponent({
         return;
       }
 
+      const nextHeight = container.scrollHeight;
+      const previousHeight = contentHeightRef.current;
+      const targetTop = getScrollContainerTargetTop(container);
+      const distanceFromBottom = targetTop - container.scrollTop;
+      const contentGrew = nextHeight > previousHeight + 1;
+
+      contentHeightRef.current = nextHeight;
+
+      if (!contentGrew && distanceFromBottom <= SCROLL_BOTTOM_THRESHOLD_PX) {
+        return;
+      }
+
+      if (!contentGrew && distanceFromBottom > SCROLL_BOTTOM_THRESHOLD_PX) {
+        stickToBottomRef.current = false;
+        notifyAtBottomChange(false);
+        return;
+      }
+
+      if (distanceFromBottom <= 1) {
+        return;
+      }
+
       programmaticScrollRef.current = true;
-      scrollContainerToBottom(container, {
-        onComplete: () => {
-          programmaticScrollRef.current = false;
-          notifyAtBottomChange(true);
-        },
-      });
+      container.scrollTop = targetTop;
+      programmaticScrollRef.current = false;
+      notifyAtBottomChange(true);
     };
 
     const scheduleScrollToBottom = () => {
-      if (!stickToBottomRef.current || scrollRafRef.current !== null) {
+      if (!stickToBottomRef.current) {
+        return;
+      }
+
+      if (scrollRafRef.current !== null) {
         return;
       }
 
       scrollRafRef.current = window.requestAnimationFrame(flushScrollToBottom);
     };
 
-    scheduleScrollToBottom();
+    contentHeightRef.current = container.scrollHeight;
 
     const observer = new ResizeObserver(scheduleScrollToBottom);
     observer.observe(content);

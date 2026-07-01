@@ -6,6 +6,10 @@ import type { AgentTab, ApiTab, BrowserTab, EmulatorPlatform, EmulatorTab, FileT
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import { isAgentPaneTab, isLegacyAgentTerminalTab, resolveAgentPaneRootPath, resolveAgentTabCli, terminalAgentToCli } from '@/utils/agentTabHelpers';
 import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
+import { buildCursorAgentResumeCommand } from '@/utils/cursorAgentResume';
+import { parseCursorAgentHistoryTranscript } from '@/utils/parseCursorAgentHistoryTranscript';
+import { hydrateAgentTurns } from '@/utils/agentPromptAttachments';
+import { stopAgentPane } from '@/utils/agentPaneRegistry';
 import { normalizeBrowserUrl } from '@/utils/browserUrl';
 import { createBadgeColorIndex } from '@/utils/tabBadge';
 import {
@@ -18,6 +22,7 @@ import {
   updatePaneInTabs,
   updateSplitTabLayout,
 } from '@/utils/tabGroups';
+import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
 import { findDiffTabByPath, findFilePreviewTabByPath, findFileTabByPath } from '@/utils/fileTabs';
 import { toGitRelativePath, toRepoAbsolutePath } from '@/utils/gitPaths';
 import { resolveAgentGitPromptForFile } from '@/utils/resolveAgentGitPromptForFile';
@@ -29,6 +34,7 @@ export interface TabStoreActions {
   addTab: (type: TabType) => Promise<void>;
   addAgentTab: (command: string) => Promise<void>;
   replaceAgentTab: (tabId: string) => Promise<void>;
+  resumeAgentHistorySession: (tabId: string, chatId: string, projectPath: string) => Promise<void>;
   openBrowserTab: (url: string) => Promise<void>;
   openFileTab: (filePath: string, fileName: string) => Promise<void>;
   openFilePreviewTab: (filePath: string, fileName: string) => Promise<void>;
@@ -299,10 +305,7 @@ export function useTabActions(): TabStoreActions {
 
       useProjectNotificationStore.getState().clearNotificationForPane(tabId);
       session.resetAgentWorkload(tabId);
-
-      if (isDedicatedAgent && pane.type === 'agent') {
-        window.nexus.agentPrint.stop(tabId);
-      }
+      session.clearResumeChatId(tabId);
 
       if (isTerminalAgent && pane.type === 'terminal') {
         await session.resumeAgentSession(tabId, launchCommand, focusPane);
@@ -312,6 +315,8 @@ export function useTabActions(): TabStoreActions {
       if (!isDedicatedAgent || pane.type !== 'agent') {
         return;
       }
+
+      window.nexus.agentPrint.stop(tabId);
 
       if (pane.ptyId) {
         window.nexus.terminal.kill(pane.ptyId);
@@ -343,6 +348,94 @@ export function useTabActions(): TabStoreActions {
 
       session.setPendingLaunchCommand(tabId, launchCommand);
       await focusPane(tabId);
+    },
+    resumeAgentHistorySession: async (tabId, chatId, projectPath) => {
+      const project = getProjectSnapshot();
+
+      if (!project) {
+        return;
+      }
+
+      const pane = findPaneTab(project.tabs, tabId);
+
+      if (!pane) {
+        return;
+      }
+
+      const isDedicatedAgent = isAgentPaneTab(pane);
+      const isTerminalAgent = isLegacyAgentTerminalTab(pane);
+
+      if (!isDedicatedAgent && !isTerminalAgent) {
+        return;
+      }
+
+      const resumeCommand = buildCursorAgentResumeCommand(chatId, projectPath);
+      const session = useTerminalSessionStore.getState();
+
+      useProjectNotificationStore.getState().clearNotificationForPane(tabId);
+      session.resetAgentWorkload(tabId);
+
+      if (isTerminalAgent && pane.type === 'terminal') {
+        await session.resumeAgentSession(tabId, resumeCommand, focusPane);
+        return;
+      }
+
+      if (!isDedicatedAgent || pane.type !== 'agent') {
+        return;
+      }
+
+      window.nexus.agentPrint.stop(tabId);
+      stopAgentPane(tabId);
+
+      session.setRestarting(tabId, true);
+
+      try {
+        const workspacePath = resolveAgentPaneRootPath(project.path);
+        let transcriptRaw: string | null = null;
+
+        try {
+          transcriptRaw = await window.nexus.files.loadCursorAgentSessionTranscript(
+            workspacePath,
+            chatId,
+          );
+        } catch {
+          transcriptRaw = null;
+        }
+
+        const turns = transcriptRaw ? parseCursorAgentHistoryTranscript(transcriptRaw) : [];
+        const hydratedTurns = await hydrateAgentTurns(workspacePath, turns);
+
+        session.setResumeChatId(tabId, chatId);
+        session.setActiveAgent(tabId, 'cursor-agent');
+        session.takePendingLaunchCommand(tabId);
+
+        const nextTabs = updatePaneInTabs(project.tabs, tabId, (entry) =>
+          entry.type === 'agent'
+            ? {
+                ...entry,
+                turns: hydratedTurns,
+                messages: [],
+                restoreCommand: null,
+                cliAgent: 'cursor-agent',
+                workingDirectory: workspacePath,
+              }
+            : entry,
+        );
+
+        useProjectStore.setState((state) => ({
+          projects: state.projects.map((entry) =>
+            entry.id === project.id ? { ...entry, tabs: nextTabs } : entry,
+          ),
+        }));
+
+        await updateProject(project.id, {
+          tabs: nextTabs,
+        });
+
+        await focusPane(tabId);
+      } finally {
+        session.setRestarting(tabId, false);
+      }
     },
     openBrowserTab: async (url) => {
       const project = getProjectSnapshot();
@@ -901,7 +994,13 @@ export function useTabActions(): TabStoreActions {
       });
     },
     updateAgentTab: async (tabId, patch) => {
-      const project = getProjectSnapshot();
+      const projectId = findProjectIdByPaneId(tabId);
+
+      if (!projectId) {
+        return;
+      }
+
+      const project = useProjectStore.getState().projects.find((entry) => entry.id === projectId);
 
       if (!project) {
         return;

@@ -137,6 +137,48 @@ export function isValidReadFileTarget(target: string): boolean {
   return true;
 }
 
+export function resolveAgentActivityFilePath(projectPath: string, filePath: string): string | null {
+  const trimmed = filePath.trim();
+
+  if (!trimmed || !isValidReadFileTarget(trimmed)) {
+    return null;
+  }
+
+  const normalizedProject = projectPath.replace(/\\/g, '/').replace(/\/+$/, '');
+  let normalized = trimmed.replace(/\\/g, '/');
+
+  if (normalized.startsWith('…') || normalized.startsWith('...')) {
+    normalized = normalized.replace(/^(\.{3}|…)/, '').replace(/^\/+/, '');
+    return `${normalizedProject}/${normalized}`;
+  }
+
+  if (normalized.startsWith('~/')) {
+    const homeRoot = normalizedProject.match(/^(\/Users\/[^/]+)/)?.[1];
+
+    if (!homeRoot) {
+      return null;
+    }
+
+    return `${homeRoot}${normalized.slice(1)}`;
+  }
+
+  if (normalized.startsWith('~')) {
+    const homeRoot = normalizedProject.match(/^(\/Users\/[^/]+)/)?.[1];
+
+    if (!homeRoot) {
+      return null;
+    }
+
+    return normalized.replace(/^~/, homeRoot);
+  }
+
+  if (/^[A-Za-z]:\//.test(normalized) || normalized.startsWith('/')) {
+    return normalized;
+  }
+
+  return `${normalizedProject}/${normalized.replace(/^\/+/, '')}`;
+}
+
 function normalizeReadFileTarget(rawTarget: string): string {
   let target = rawTarget.trim().replace(/^["'`]+|["'`]+$/g, '');
   const inMatch = target.match(/^(.+?)\s+"?\s*in\s+.+$/i);
@@ -220,7 +262,7 @@ export function createInitialTurnActivities(): AgentActivity[] {
   return [
     createActivity('thought', '', {
       streaming: true,
-      collapsed: true,
+      collapsed: false,
       createdAt: startedAt,
     }),
   ];
@@ -354,6 +396,10 @@ function isResponseNoiseLine(line: string): boolean {
   );
 }
 
+function isMarkdownFenceLine(line: string): boolean {
+  return /^```/.test(line.trim());
+}
+
 function sanitizeResponseText(text: string): string {
   const seen = new Set<string>();
   const lines: string[] = [];
@@ -371,11 +417,14 @@ function sanitizeResponseText(text: string): string {
 
     const key = sanitized.toLowerCase();
 
-    if (seen.has(key)) {
+    if (!isMarkdownFenceLine(sanitized) && seen.has(key)) {
       continue;
     }
 
-    seen.add(key);
+    if (!isMarkdownFenceLine(sanitized)) {
+      seen.add(key);
+    }
+
     lines.push(sanitized);
   }
 

@@ -6,7 +6,7 @@ import {
   resolveDirectoryPath,
 } from '../services/directoryListing';
 import { getAgentFooterHints } from '../services/agentFooterHints';
-import { listCursorAgentHistory } from '../services/agentHistory';
+import { listCursorAgentHistory, loadCursorAgentSessionTranscript } from '../services/agentHistory';
 import { getTerminalHints } from '../services/terminalHints';
 import { detectProjectKinds } from '../services/projectKind';
 import { readImageAsDataUrl } from '../services/imageLoader';
@@ -49,6 +49,10 @@ export function registerFileHandlers(getWindow: () => Electron.BrowserWindow | n
 
   ipcMain.handle('files:listCursorAgentHistory', async (_, cwd: string) =>
     listCursorAgentHistory(resolveDirectoryPath(cwd)),
+  );
+
+  ipcMain.handle('files:loadCursorAgentSessionTranscript', async (_, cwd: string, sessionId: string) =>
+    loadCursorAgentSessionTranscript(resolveDirectoryPath(cwd), sessionId),
   );
 
   ipcMain.handle('files:getGitBranch', async (_, dirPath: string) =>

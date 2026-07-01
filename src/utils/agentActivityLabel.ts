@@ -27,3 +27,23 @@ export function resolveAgentActivityLabel(rawOutput: string): string | null {
 
   return null;
 }
+
+const LIVE_FILE_STATUS_PATTERN = /^(Editing|Reading|Writing)\s+(.+)$/i;
+
+export function parseAgentLiveFileStatus(
+  label: string,
+): { verb: string; fileName: string } | null {
+  const trimmed = label.trim();
+  const match = trimmed.match(LIVE_FILE_STATUS_PATTERN);
+
+  if (!match) {
+    return null;
+  }
+
+  const fileName = match[2].trim().split(/[/\\]/).pop() ?? match[2].trim();
+
+  return {
+    verb: match[1],
+    fileName,
+  };
+}

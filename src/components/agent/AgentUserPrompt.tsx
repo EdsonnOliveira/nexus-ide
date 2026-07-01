@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { BookOpen, Pencil, RotateCcw } from 'lucide-react';
 import iconModeAsk from '@/assets/icon-mode-ask.svg';
 import iconModeAgent from '@/assets/icon-mode-agent.svg';
@@ -9,6 +9,7 @@ import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { getAgentModeOption, type AgentModeBadgeIcon } from '@/constants/agentModes';
 import { useFlipMotion } from '@/hooks/useFlipMotion';
 import type { AgentTurn } from '@/types';
+import { hydrateAgentUserMessage, resolvePromptDisplayContent } from '@/utils/agentPromptAttachments';
 import { resolveAgentSkillDisplayState, shouldShowSkillChipAbovePrompt } from '@/utils/agentSkillDisplay';
 
 const MODE_ICON_SRC: Record<AgentModeBadgeIcon, string> = {
@@ -21,6 +22,7 @@ const MODE_ICON_SRC: Record<AgentModeBadgeIcon, string> = {
 
 interface AgentUserPromptProps {
   turn: AgentTurn;
+  projectPath: string;
   isEditing?: boolean;
   isStickyLayout?: boolean;
   onEdit?: (turnId: string) => void;
@@ -29,6 +31,7 @@ interface AgentUserPromptProps {
 
 function AgentUserPromptComponent({
   turn,
+  projectPath,
   isEditing = false,
   isStickyLayout = false,
   onEdit,
@@ -36,7 +39,8 @@ function AgentUserPromptComponent({
 }: AgentUserPromptProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
-  const attachments = turn.user.attachments ?? [];
+  const [attachments, setAttachments] = useState(turn.user.attachments ?? []);
+  const [bubbleContent, setBubbleContent] = useState(resolvePromptDisplayContent(turn.user.content));
   const modeOption = useMemo(() => {
     const mode = turn.user.mode;
 
@@ -47,11 +51,30 @@ function AgentUserPromptComponent({
     return getAgentModeOption(mode) ?? null;
   }, [turn.user.mode]);
   const { hasSkillPrompt, skillChipLabel } = resolveAgentSkillDisplayState(turn.user);
-  const bubbleContent = turn.user.content.trim();
   const showSkillChip =
     hasSkillPrompt && shouldShowSkillChipAbovePrompt(bubbleContent, skillChipLabel);
   const isMultilineBubble =
     bubbleContent.includes('\n') || bubbleContent.length > 72;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    setAttachments(turn.user.attachments ?? []);
+    setBubbleContent(resolvePromptDisplayContent(turn.user.content));
+
+    void hydrateAgentUserMessage(projectPath, turn.user).then((next) => {
+      if (cancelled) {
+        return;
+      }
+
+      setAttachments(next.attachments ?? []);
+      setBubbleContent(resolvePromptDisplayContent(next.content));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectPath, turn.id, turn.user]);
 
   const handleEditClick = useCallback(() => {
     onEdit?.(turn.id);
@@ -100,7 +123,7 @@ function AgentUserPromptComponent({
           </div>
         ) : null}
         <div
-          className={`agent-view__user-prompt${turn.running ? ' agent-view__user-prompt--active' : ''}${turn.pendingFollowUp ? ' agent-view__user-prompt--pending' : ''}${isEditing ? ' agent-view__user-prompt--editing' : ''}`}
+          className={`agent-view__user-prompt${turn.running ? ' agent-view__user-prompt--active' : ''}${turn.pendingFollowUp ? ' agent-view__user-prompt--pending' : ''}${isEditing ? ' agent-view__user-prompt--editing' : ''}${isMultilineBubble ? ' agent-view__user-prompt--multiline' : ''}`}
         >
           {bubbleContent ? (
             <div

@@ -119,6 +119,58 @@ export function findPendingAgentPlanActivity<T extends { kind: string; planStatu
   return undefined;
 }
 
+export function finalizeBuildingAgentPlans<T extends { activities: AgentActivity[] }>(turns: T[]): T[] {
+  return turns.map((turn) => {
+    let turnChanged = false;
+
+    const nextActivities = turn.activities.map((entry) => {
+      if (entry.kind !== 'plan' || entry.planStatus !== 'building') {
+        return entry;
+      }
+
+      turnChanged = true;
+      return { ...entry, planStatus: 'accepted' as const };
+    });
+
+    if (!turnChanged) {
+      return turn;
+    }
+
+    return { ...turn, activities: nextActivities };
+  });
+}
+
+export function hasBuildingAgentPlans(turns: { activities: AgentActivity[] }[]): boolean {
+  return turns.some((turn) =>
+    turn.activities.some((entry) => entry.kind === 'plan' && entry.planStatus === 'building'),
+  );
+}
+
+export function repairStaleBuildingAgentPlans<T extends { activities: AgentActivity[] }>(turns: T[]): T[] {
+  return turns.map((turn, turnIndex) => {
+    if (turnIndex >= turns.length - 1) {
+      return turn;
+    }
+
+    let turnChanged = false;
+
+    const nextActivities = turn.activities.map((entry) => {
+      if (entry.kind !== 'plan' || entry.planStatus !== 'building') {
+        return entry;
+      }
+
+      turnChanged = true;
+      return { ...entry, planStatus: 'accepted' as const };
+    });
+
+    if (!turnChanged) {
+      return turn;
+    }
+
+    return { ...turn, activities: nextActivities };
+  });
+}
+
 function normalizeComparableText(value: string): string {
   return value.trim().replace(/\s+/g, ' ').toLowerCase();
 }

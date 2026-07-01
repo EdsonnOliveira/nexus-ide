@@ -16,18 +16,26 @@ if (existsSync(prebuildsDir)) {
   }
 }
 
-const rebuild = spawnSync(
-  process.platform === 'win32' ? 'npx.cmd' : 'npx',
-  ['@electron/rebuild', '-f', '-w', 'node-pty'],
-  {
-    cwd: rootDir,
-    stdio: 'inherit',
-    env: process.env,
-  },
-);
+const rebuildTargets = ['node-pty'];
 
-if (rebuild.status !== 0) {
-  process.exit(rebuild.status ?? 1);
+if (process.platform === 'darwin') {
+  rebuildTargets.push('macos-calendar');
+}
+
+for (const target of rebuildTargets) {
+  const rebuild = spawnSync(
+    process.platform === 'win32' ? 'npx.cmd' : 'npx',
+    ['@electron/rebuild', '-f', '-w', target],
+    {
+      cwd: rootDir,
+      stdio: 'inherit',
+      env: process.env,
+    },
+  );
+
+  if (rebuild.status !== 0) {
+    process.exit(rebuild.status ?? 1);
+  }
 }
 
 const patchBranding = spawnSync(process.execPath, ['scripts/patch-electron-branding.mjs'], {

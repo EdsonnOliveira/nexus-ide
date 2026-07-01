@@ -21,6 +21,7 @@ import { SidebarWhatsAppIcon } from '@/components/sidebar/SidebarWhatsAppIcon';
 import { SidebarWhatsAppLinkPopup } from '@/components/sidebar/SidebarWhatsAppLinkPopup';
 import { SidebarMailInboxPopup } from '@/components/sidebar/SidebarMailInboxPopup';
 import { SidebarMailPanel } from '@/components/sidebar/SidebarMailPanel';
+import { SidebarCalendarEvents } from '@/components/sidebar/SidebarCalendarEvents';
 import { SidebarVercelDeployCard } from '@/components/sidebar/SidebarVercelDeployCard';
 import { SidebarVercelIcon } from '@/components/sidebar/SidebarVercelIcon';
 import { SidebarVercelTokenPopup } from '@/components/sidebar/SidebarVercelTokenPopup';
@@ -28,6 +29,7 @@ import { WorkspaceMenu } from '@/components/sidebar/WorkspaceMenu';
 import { useVercelDeployments } from '@/hooks/useVercelDeployments';
 import {
   fetchSidebarVideoTitle,
+  isYouTubeLiveUrl,
   type SidebarVideoSession,
 } from '@/utils/sidebarVideoProviders';
 import { openSidebarWhatsAppLink } from '@/utils/sidebarWhatsAppLink';
@@ -62,6 +64,7 @@ function ProjectSidebarComponent() {
   const sidebarCollapsed = useProjectStore((state) => state.sidebarCollapsed);
   const activeVideoSession = useProjectStore((state) => state.sidebarVideoSession);
   const sidebarVideoLastLink = useProjectStore((state) => state.sidebarVideoLastLink);
+  const setSidebarVideoLastLink = useProjectStore((state) => state.setSidebarVideoLastLink);
   const startSidebarVideoSession = useProjectStore((state) => state.startSidebarVideoSession);
   const closeSidebarVideoSession = useProjectStore((state) => state.closeSidebarVideoSession);
   const activeProjectWhatsAppLink = useProjectStore((state) => {
@@ -304,18 +307,31 @@ function ProjectSidebarComponent() {
   }, []);
 
   const handleStartVideoSession = useCallback(
-    async (session: SidebarVideoSession) => {
+    async (session: SidebarVideoSession, lastLink: string) => {
+      const rememberedLink = lastLink.trim() || session.sourceUrl;
+      const isLive = isYouTubeLiveUrl(lastLink) || session.isLive === true;
+
+      await setSidebarVideoLastLink(rememberedLink);
+
       const title = await fetchSidebarVideoTitle(session.sourceUrl, session.provider);
-      await startSidebarVideoSession({ ...session, title });
+      await startSidebarVideoSession(
+        {
+          ...session,
+          title,
+          isLive,
+          useEmbed: session.provider === 'youtube' ? false : isLive ? false : session.useEmbed,
+        },
+        rememberedLink,
+      );
     },
-    [startSidebarVideoSession],
+    [setSidebarVideoLastLink, startSidebarVideoSession],
   );
 
   const handleCloseVideoSession = useCallback(() => {
     void closeSidebarVideoSession();
   }, [closeSidebarVideoSession]);
 
-  const videoPopupInitialLink = activeVideoSession?.sourceUrl ?? sidebarVideoLastLink ?? '';
+  const videoPopupInitialLink = sidebarVideoLastLink ?? activeVideoSession?.sourceUrl ?? '';
 
   const handleToggleMusicPlayer = useCallback(() => {
     setMusicPlayerOpen((current) => !current);
@@ -835,6 +851,8 @@ function ProjectSidebarComponent() {
           <SidebarVercelDeployCard deployment={vercelActiveDeployment} onDismiss={dismissVercelDeployCard} />
         ) : null}
 
+        <SidebarCalendarEvents />
+
         <button type='button' className='sidebar__add app-button app-button--enter' title='Adicionar projeto' onClick={handleAddProject}>
           <Plus size={14} />
           <span className='app-button__label'>Adicionar projeto</span>
@@ -898,6 +916,7 @@ function ProjectSidebarComponent() {
 
       {videoPopupOpen && videoPopupAnchor ? (
         <SidebarVideoLinkPopup
+          key={videoPopupInitialLink || 'sidebar-video-popup'}
           anchorRect={videoPopupAnchor}
           initialLink={videoPopupInitialLink}
           onClose={handleCloseVideoPopup}

@@ -22,6 +22,8 @@ import { useAgentPaneSession } from '@/hooks/useAgentPaneSession';
 import { TERMINAL_AGENTS } from '@/constants/terminalAgents';
 import type { AgentTab, AgentTurn } from '@/types';
 import { cliAgentToTerminalAgent } from '@/utils/agentTabHelpers';
+import { buildAgentPromptHistory } from '@/utils/agentPromptAttachments';
+import { isPaneAgentSessionLive, readPaneAgentSessionSnapshot } from '@/utils/paneAgentSession';
 
 interface AgentViewProps {
   tab: AgentTab;
@@ -56,10 +58,19 @@ function AgentViewComponent({
   const transcriptScrollRef = useRef<AgentTranscriptScrollControl | null>(null);
   const terminalAgent = cliAgentToTerminalAgent(tab.cliAgent);
   const agentConfig = TERMINAL_AGENTS[terminalAgent];
+  const promptHistory = useMemo(() => buildAgentPromptHistory(turns), [turns]);
 
   useEffect(() => {
+    if (turns.some((turn) => turn.running)) {
+      return;
+    }
+
+    if (isPaneAgentSessionLive(tab.id, readPaneAgentSessionSnapshot())) {
+      return;
+    }
+
     setTurns(tab.turns ?? []);
-  }, [tab.id, tab.turns]);
+  }, [tab.id, tab.turns, turns]);
 
   useEffect(() => {
     setIsTranscriptAtBottom(true);
@@ -259,6 +270,7 @@ function AgentViewComponent({
           draft={draft}
           contextUsage={contextUsage}
           contextUsageLoading={contextUsageLoading}
+          promptHistory={promptHistory}
           onDraftChange={setDraft}
           onSubmit={handleSubmit}
           onStop={stopAgent}

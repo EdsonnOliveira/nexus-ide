@@ -9,4 +9,8 @@ export function registerAgentPrintHandlers(): void {
   ipcMain.on('agent:printStop', (_, paneId: string) => {
     agentPrintRunner.stop(paneId);
   });
+
+  ipcMain.handle('agent:printIsRunning', (_, paneId: string) =>
+    agentPrintRunner.isRunning(paneId),
+  );
 }

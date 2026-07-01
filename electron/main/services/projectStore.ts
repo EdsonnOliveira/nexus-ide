@@ -245,6 +245,8 @@ function ensureWorkspaces(state: AppState): AppState {
     workspaces,
     activeProjectId: state.activeProjectId,
     activeWorkspaceId: state.activeWorkspaceId ?? null,
+    sidebarVideoSession: state.sidebarVideoSession ?? null,
+    sidebarVideoLastLink: state.sidebarVideoLastLink ?? null,
   };
 }
 
@@ -520,6 +522,16 @@ class ProjectStoreService {
       ...state,
       sidebarVideoSession: session ?? null,
       ...(session ? { sidebarVideoLastLink: session.sourceUrl } : {}),
+    });
+  }
+
+  setSidebarVideoLastLink(link: string | null): void {
+    const state = this.readState();
+    const normalizedLink = link?.trim() || null;
+
+    this.writeState({
+      ...state,
+      sidebarVideoLastLink: normalizedLink,
     });
   }
 }

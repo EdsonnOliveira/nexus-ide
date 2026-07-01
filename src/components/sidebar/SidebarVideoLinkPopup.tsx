@@ -8,6 +8,7 @@ import {
 import {
   SIDEBAR_VIDEO_PROVIDER_LABELS,
   detectSidebarVideoProvider,
+  isYouTubeLiveUrl,
   parseSidebarVideoLink,
   type SidebarVideoSession,
 } from '@/utils/sidebarVideoProviders';
@@ -16,7 +17,7 @@ interface SidebarVideoLinkPopupProps {
   anchorRect: DOMRect;
   initialLink?: string;
   onClose: () => void;
-  onStart: (session: SidebarVideoSession) => void;
+  onStart: (session: SidebarVideoSession, lastLink: string) => void;
 }
 
 const SUPPORTED_PROVIDERS = ['youtube', 'prime', 'disney', 'netflix'] as const;
@@ -37,7 +38,12 @@ function SidebarVideoLinkPopupComponent({
   );
 
   useEffect(() => {
+    setLinkValue(initialLink);
+  }, [initialLink]);
+
+  useEffect(() => {
     inputRef.current?.focus();
+    inputRef.current?.select();
   }, []);
 
   useEffect(() => {
@@ -83,7 +89,16 @@ function SidebarVideoLinkPopupComponent({
         return;
       }
 
-      onStart(session);
+      const isLive = isYouTubeLiveUrl(linkValue);
+
+      onStart(
+        {
+          ...session,
+          isLive,
+          useEmbed: session.provider === 'youtube' ? false : !isLive,
+        },
+        linkValue.trim(),
+      );
       requestClose();
     },
     [linkValue, onStart, requestClose],
@@ -100,6 +115,10 @@ function SidebarVideoLinkPopupComponent({
   const detectedProvider = useMemo(() => detectSidebarVideoProvider(linkValue), [linkValue]);
 
   const submitLabel = useMemo(() => {
+    if (detectedProvider === 'youtube' && isYouTubeLiveUrl(linkValue)) {
+      return 'Assistir live';
+    }
+
     if (detectedProvider === 'youtube') {
       return 'Assistir vídeo';
     }
@@ -109,7 +128,7 @@ function SidebarVideoLinkPopupComponent({
     }
 
     return 'Abrir PiP';
-  }, [detectedProvider]);
+  }, [detectedProvider, linkValue]);
 
   return createPortal(
     <div
@@ -136,7 +155,7 @@ function SidebarVideoLinkPopupComponent({
             type='url'
             className='sidebar-video-popup__input'
             value={linkValue}
-            placeholder='Cole a URL do YouTube, Prime Video, Disney+ ou Netflix'
+            placeholder='Cole a URL do YouTube (vídeo ou live), Prime Video, Disney+ ou Netflix'
             onChange={(event) => handleLinkChange(event.target.value)}
           />
         </label>

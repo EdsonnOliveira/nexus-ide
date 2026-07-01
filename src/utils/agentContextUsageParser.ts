@@ -18,6 +18,13 @@ export interface AgentContextUsageSnapshot {
   updatedAt: number;
 }
 
+export interface AgentStreamJsonTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 
 const MODE_PERCENT_RE =
@@ -230,4 +237,17 @@ export function mergeAgentContextUsageSnapshots(
 
 export function buildFallbackAgentContextUsage(percent: number): AgentContextUsageSnapshot {
   return estimateSnapshotFromPercent(percent);
+}
+
+export function buildAgentContextUsageFromStreamJsonUsage(
+  usage: AgentStreamJsonTokenUsage,
+): AgentContextUsageSnapshot {
+  const totalTokensUsed = usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+  const contextWindowSize = DEFAULT_CONTEXT_WINDOW;
+  const percent = Math.max(
+    0,
+    Math.min(100, Math.round((totalTokensUsed / contextWindowSize) * 1000) / 10),
+  );
+
+  return buildSnapshotFromParts(percent, totalTokensUsed, contextWindowSize, []);
 }

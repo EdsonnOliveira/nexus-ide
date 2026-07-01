@@ -48,3 +48,7 @@ export function buildFlatChanges(status: GitStatusResult): GitFlatChange[] {
 
   return rows.sort((left, right) => left.path.localeCompare(right.path));
 }
+
+export function countGitStatusChanges(status: GitStatusResult): number {
+  return buildFlatChanges(status).length;
+}

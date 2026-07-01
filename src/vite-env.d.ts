@@ -13,6 +13,7 @@ declare global {
       webview: DetailedHTMLProps<HTMLAttributes<WebviewTag>, WebviewTag> & {
         src?: string;
         partition?: string;
+        useragent?: string;
         allowpopups?: string | boolean;
         httpreferrer?: string;
         webpreferences?: string;

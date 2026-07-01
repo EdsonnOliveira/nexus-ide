@@ -1,5 +1,6 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNexusReady } from '@/hooks/useNexusReady';
+import { useGitChangeCount } from '@/hooks/useGitChangeCount';
 import { useAutomationScheduler } from '@/hooks/useAutomationScheduler';
 import { flushTerminalSessionsNow } from '@/utils/persistTerminalSession';
 import { flushAgentGitGroupsNow } from '@/utils/persistAgentGitGroups';
@@ -11,6 +12,7 @@ import { NexusLogo } from '@/components/overlay/NexusLogo';
 import { PaneErrorBoundary } from '@/components/overlay/PaneErrorBoundary';
 import { ProjectSidebar } from '@/components/sidebar/ProjectSidebar';
 import { StatusBar } from '@/components/layout/StatusBar';
+import { TitleBar } from '@/components/layout/TitleBar';
 import { GlobalSearchPalette } from '@/components/search/GlobalSearchPalette';
 import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
 import { isAnyModalOpen, subscribeOverlayBlockingChange } from '@/utils/overlayBlocking';
@@ -73,7 +75,7 @@ function EmptyWorkspace() {
 function AppShellComponent() {
   const nexusReady = useNexusReady();
   const initialize = useProjectStore((state) => state.initialize);
-  const toggleExplorer = useProjectStore((state) => state.toggleExplorer);
+  const toggleExplorerEntry = useProjectStore((state) => state.toggleExplorerEntry);
   const toggleGlobalSearch = useGlobalSearchStore((state) => state.toggle);
   const [isModalOpen, setIsModalOpen] = useState(isAnyModalOpen);
   const sidebarCollapsed = useProjectStore((state) => state.sidebarCollapsed);
@@ -85,6 +87,7 @@ function AppShellComponent() {
     () => projects.find((project) => project.id === activeProjectId) ?? null,
     [activeProjectId, projects],
   );
+  const gitChangeCount = useGitChangeCount(activeProject?.path ?? null);
   const projectPaths = useMemo(() => projects.map((project) => project.path), [projects]);
   const { openFileTab, openFilePreviewTab, openFileCodeTab, openDiffTab, selectPane } = useTabActions();
 
@@ -201,11 +204,11 @@ function AppShellComponent() {
         return;
       }
 
-      toggleExplorer();
+      toggleExplorerEntry(gitChangeCount > 0);
     });
 
     return unsubscribe;
-  }, [nexusReady, toggleExplorer]);
+  }, [gitChangeCount, nexusReady, toggleExplorerEntry]);
 
   useEffect(() => {
     if (!nexusReady || projectPaths.length === 0) {
@@ -244,7 +247,7 @@ function AppShellComponent() {
 
   return (
     <div className={shellClassName}>
-      {isMac && <div className='titlebar' aria-hidden='true' />}
+      {isMac ? <TitleBar /> : null}
 
       <ProjectSidebar />
 

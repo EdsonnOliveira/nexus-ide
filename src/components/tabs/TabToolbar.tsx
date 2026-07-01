@@ -44,7 +44,7 @@ function TabToolbarComponent() {
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const projects = useProjectStore((state) => state.projects);
   const sidePanel = useProjectStore((state) => state.sidePanel);
-  const toggleExplorer = useProjectStore((state) => state.toggleExplorer);
+  const toggleExplorerEntry = useProjectStore((state) => state.toggleExplorerEntry);
   const togglePasswords = useProjectStore((state) => state.togglePasswords);
   const toggleAutomations = useProjectStore((state) => state.toggleAutomations);
   const toggleTasks = useProjectStore((state) => state.toggleTasks);
@@ -62,6 +62,10 @@ function TabToolbarComponent() {
   }, [activeProject]);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const [menuAnchor, setMenuAnchor] = useState<DOMRect | null>(null);
+
+  const handleToggleExplorer = useCallback(() => {
+    toggleExplorerEntry(gitChangeCount > 0);
+  }, [gitChangeCount, toggleExplorerEntry]);
 
   const handleToggleMenu = useCallback(() => {
     if (menuAnchor) {
@@ -120,7 +124,7 @@ function TabToolbarComponent() {
           type='button'
           className={`tool-btn tool-btn--explorer${sidePanel === 'explorer' ? ' tool-btn--active' : ''}`}
           aria-label='Explorador de arquivos'
-          onClick={toggleExplorer}
+          onClick={handleToggleExplorer}
         >
           <FolderTree size={15} />
           {gitChangeCount > 0 ? (

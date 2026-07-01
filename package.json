@@ -1,6 +1,6 @@
 {
   "name": "nexus-ide",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "Nexus IDE — AI-powered desktop IDE",
   "engines": {
@@ -35,11 +35,13 @@
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.460.0",
     "material-icon-theme": "^5.35.0",
+    "macos-calendar": "file:native/macos-calendar",
     "node-pty": "^1.0.0",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
+    "node-addon-api": "^8.3.1",
     "@types/react": "^19.2.16",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
@@ -70,7 +72,22 @@
     ],
     "asarUnpack": [
       "**/node_modules/node-pty/**/*",
+      "**/node_modules/macos-calendar/**/*",
       "resources/shell/**/*"
+    ],
+    "extraFiles": [
+      {
+        "from": "resources/shell/CalendarHelper-Info.plist",
+        "to": "Helpers/CalendarHelper.app/Contents/Info.plist"
+      },
+      {
+        "from": "resources/shell/macosCalendarHelper",
+        "to": "Helpers/CalendarHelper.app/Contents/MacOS/CalendarHelper"
+      },
+      {
+        "from": "resources/shell/NotificationHelper.app",
+        "to": "Helpers/NotificationHelper.app"
+      }
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
@@ -81,9 +98,11 @@
       "extendInfo": {
         "CFBundleDisplayName": "Nexus",
         "CFBundleName": "Nexus",
-        "CFBundleIconName": "Nexus"
+        "CFBundleIconName": "Nexus",
+        "NSCalendarsUsageDescription": "O Nexus IDE exibe seus eventos do Calendário na barra lateral.",
+        "NSCalendarsFullAccessUsageDescription": "O Nexus IDE precisa ler seus eventos do Calendário para exibi-los na barra lateral."
       },
-      "x64ArchFiles": "**/node-pty/**",
+      "x64ArchFiles": "{**/node-pty/**,**/Contents/Helpers/**,**/macos-calendar/**,**/resources/shell/**}",
       "identity": "-",
       "gatekeeperAssess": false,
       "hardenedRuntime": false,

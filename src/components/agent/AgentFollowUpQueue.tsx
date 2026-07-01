@@ -1,6 +1,11 @@
 import { memo, useCallback } from 'react';
-import { ArrowUp, CornerDownLeft, Pencil, X } from 'lucide-react';
+import { ArrowUp, BookOpen, CornerDownLeft, Pencil, X } from 'lucide-react';
 import type { AgentFollowUp } from '@/types';
+import { resolvePromptDisplayContent } from '@/utils/agentPromptAttachments';
+import {
+  resolveAgentSkillDisplayState,
+  shouldShowSkillChipAbovePrompt,
+} from '@/utils/agentSkillDisplay';
 
 interface AgentFollowUpQueueProps {
   items: AgentFollowUp[];
@@ -51,7 +56,15 @@ function AgentFollowUpQueueComponent({ items, onEdit, onSendNow, onRemove }: Age
         </div>
         <ul className='agent-view__follow-up-list'>
           {items.map((item) => {
-            const isMultiline = item.content.includes('\n') || item.content.length > 72;
+            const displayContent = resolvePromptDisplayContent(item.content);
+            const { hasSkillPrompt, skillChipLabel } = resolveAgentSkillDisplayState({
+              content: displayContent,
+              skillLabel: item.skillLabel,
+              agentPrompt: item.agentPrompt,
+            });
+            const showSkillChip =
+              hasSkillPrompt && shouldShowSkillChipAbovePrompt(displayContent, skillChipLabel);
+            const isMultiline = displayContent.includes('\n') || displayContent.length > 72;
 
             return (
               <li key={item.id} className='agent-view__follow-up-item'>
@@ -68,11 +81,19 @@ function AgentFollowUpQueueComponent({ items, onEdit, onSendNow, onRemove }: Age
                       ))}
                     </div>
                   ) : null}
-                  <p
-                    className={`agent-view__follow-up-text${isMultiline ? ' agent-view__follow-up-text--multiline' : ''}`}
-                  >
-                    {item.content}
-                  </p>
+                  {showSkillChip ? (
+                    <div className='agent-view__user-skill agent-view__user-skill--skill'>
+                      <BookOpen size={11} strokeWidth={2} aria-hidden='true' />
+                      <span className='agent-view__user-skill-label'>{skillChipLabel}</span>
+                    </div>
+                  ) : null}
+                  {displayContent || !hasSkillPrompt ? (
+                    <p
+                      className={`agent-view__follow-up-text${isMultiline ? ' agent-view__follow-up-text--multiline' : ''}${hasSkillPrompt ? ' agent-view__follow-up-text--skill' : ''}`}
+                    >
+                      {displayContent}
+                    </p>
+                  ) : null}
                 </div>
                 <div className='agent-view__follow-up-item-actions'>
                   <button

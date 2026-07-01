@@ -249,6 +249,63 @@ function highlightWithLanguage(content: string, language: string): string {
   return applyShellHighlightEnhancement(result.value, language);
 }
 
+export function highlightMermaidDiagram(content: string): string {
+  if (!content) {
+    return '';
+  }
+
+  const escaped = escapeHtml(content);
+
+  return escaped
+    .replace(
+      /\b(graph|flowchart|subgraph|end|sequenceDiagram|classDiagram|stateDiagram|participant|actor|note)\b/g,
+      (match) => wrapHljsClass('hljs-keyword', match),
+    )
+    .replace(/\b(TD|LR|TB|RL|BT)\b/g, (match) => wrapHljsClass('hljs-type', match))
+    .replace(/(\[[^\]]+\]|\([^)]*\))/g, (match) => wrapHljsClass('hljs-string', match))
+    .replace(/(--&gt;|---|-\.-&gt;|==&gt;|===)/g, (match) => wrapHljsClass('hljs-operator', match));
+}
+
+export function rehighlightMarkdownCodeBlocks(root: ParentNode): void {
+  root.querySelectorAll('pre code').forEach((node) => {
+    if (!(node instanceof HTMLElement)) {
+      return;
+    }
+
+    const text = node.textContent ?? '';
+
+    if (!text.trim()) {
+      return;
+    }
+
+    const languageClass = [...node.classList].find((name) => name.startsWith('language-'));
+    const language = languageClass
+      ? resolveMarkdownFenceLanguage(languageClass.slice('language-'.length))
+      : '';
+    const pre = node.closest('pre');
+
+    node.removeAttribute('data-highlighted');
+
+    try {
+      const highlighted =
+        language === 'mermaid'
+          ? highlightMermaidDiagram(text)
+          : highlightMarkdownCodeBlock(text, language);
+
+      node.innerHTML = highlighted;
+      node.classList.add('hljs');
+
+      if (language && language !== 'mermaid') {
+        node.classList.add(`language-${language}`);
+      }
+
+      pre?.classList.add('hljs');
+    } catch {
+      return;
+    }
+  });
+}
+
 export function highlightMarkdownCodeBlock(content: string, language: string): string {
   if (!content) {
     return '';
@@ -257,6 +314,10 @@ export function highlightMarkdownCodeBlock(content: string, language: string): s
   const resolvedLanguage = resolveMarkdownFenceLanguage(language);
 
   try {
+    if (resolvedLanguage === 'mermaid') {
+      return highlightMermaidDiagram(content);
+    }
+
     if (!resolvedLanguage) {
       return hljs.highlightAuto(content).value;
     }

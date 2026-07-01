@@ -165,10 +165,16 @@ export interface AgentFollowUp {
   attachments: AgentPromptAttachment[];
   createdAt: number;
   mode?: 'agent' | 'plan' | 'debug' | 'multitask' | 'ask';
+  skillLabel?: string;
+  agentPrompt?: string;
 }
 
 export interface AgentTurnSummaryFileRef {
   path: string;
+}
+
+export interface AgentTurnSummaryCommandRef {
+  command: string;
 }
 
 export interface AgentTurnSummary {
@@ -180,6 +186,7 @@ export interface AgentTurnSummary {
   responseLead?: string;
   exploredFiles?: AgentTurnSummaryFileRef[];
   editedFiles?: AgentTurnSummaryFileRef[];
+  commands?: AgentTurnSummaryCommandRef[];
 }
 
 export interface AgentTurn {
@@ -389,6 +396,7 @@ export interface AppState {
 export interface PersistedSidebarVideoSession {
   sourceUrl: string;
   title: string;
+  isLive?: boolean;
 }
 
 export interface ProjectUpdatePayload {
@@ -478,6 +486,61 @@ export interface AppleMusicNowPlaying {
   upcoming: AppleMusicUpcomingTrack[];
 }
 
+export interface SystemNotificationItem {
+  id: string;
+  appId: string;
+  appLabel: string;
+  title: string;
+  body: string;
+  deliveredAt: number;
+  iconUrl: string | null;
+}
+
+export interface SystemNotificationsSnapshot {
+  platformSupported: boolean;
+  accessGranted: boolean;
+  fullDiskAccessAppName: string | null;
+  fullDiskAccessAppPath: string | null;
+  items: SystemNotificationItem[];
+}
+
+export interface SystemStatusSnapshot {
+  platformSupported: boolean;
+  volume: number;
+  muted: boolean;
+  batteryLevel: number | null;
+  batteryCharging: boolean;
+  batteryPresent: boolean;
+  batteryTimeRemaining: string | null;
+  wifiConnected: boolean;
+  wifiNetwork: string | null;
+}
+
+export interface WifiNetworkItem {
+  ssid: string;
+  connected: boolean;
+  secured: boolean;
+}
+
+export interface WifiConnectResult {
+  ok: boolean;
+  error?: string;
+  needsPassword?: boolean;
+}
+
+export interface AudioOutputDeviceItem {
+  id: string;
+  name: string;
+  active: boolean;
+  kind: 'builtin' | 'headphones' | 'tv' | 'virtual' | 'other';
+}
+
+export interface WifiPopupState {
+  wifiEnabled: boolean;
+  connectedNetwork: string | null;
+  networks: WifiNetworkItem[];
+}
+
 export interface MailMailboxRef {
   accountName: string;
   mailboxName: string;
@@ -504,6 +567,27 @@ export interface MailInboxSnapshot {
   available: boolean;
   mailboxLabel: string;
   messages: MailMessageItem[];
+}
+
+export interface CalendarEventItem {
+  id: string;
+  title: string;
+  startAt: number;
+  endAt: number;
+  location: string;
+  calendarName: string;
+  colorHex: string;
+  allDay: boolean;
+  notes: string;
+  url: string;
+}
+
+export interface CalendarEventsSnapshot {
+  platformSupported: boolean;
+  accessGranted: boolean;
+  available: boolean;
+  permissionDenied: boolean;
+  events: CalendarEventItem[];
 }
 
 export type VercelDeploymentState =
@@ -571,6 +655,7 @@ export interface NexusAPI {
     setSidebarVideoSession: (
       session: PersistedSidebarVideoSession | null | undefined,
     ) => Promise<void>;
+    setSidebarVideoLastLink: (link: string | null) => Promise<void>;
   };
   terminal: {
     create: (cwd: string, agent: TerminalAgent) => Promise<string>;
@@ -590,9 +675,11 @@ export interface NexusAPI {
       model?: string | null;
       mode?: 'plan' | 'ask';
       continueSession?: boolean;
+      resumeChatId?: string | null;
       runToken: string;
     }) => Promise<void>;
     stop: (paneId: string) => void;
+    isRunning: (paneId: string) => Promise<boolean>;
     onData: (
       callback: (paneId: string, data: string, runToken: string) => void,
     ) => () => void;
@@ -667,6 +754,7 @@ export interface NexusAPI {
     getTerminalHints: (cwd: string) => Promise<TerminalCommandHint[]>;
     getAgentSkillHints: (cwd: string) => Promise<TerminalCommandHint[]>;
     listCursorAgentHistory: (cwd: string) => Promise<CursorAgentHistoryEntry[]>;
+    loadCursorAgentSessionTranscript: (cwd: string, sessionId: string) => Promise<string | null>;
     getGitBranch: (dirPath: string) => Promise<string | null>;
     detectProjectKinds: (dirPaths: string[]) => Promise<Record<string, ProjectKind | null>>;
     readTextFile: (
@@ -791,6 +879,29 @@ export interface NexusAPI {
     playQueueTrack: (playlistIndex: number) => Promise<void>;
     playPlaylist: (playlistId: string) => Promise<void>;
   };
+  systemNotifications: {
+    list: (limit?: number) => Promise<SystemNotificationsSnapshot>;
+    getAppIcon: (appId: string, appLabel?: string) => Promise<string | null>;
+    delete: (id: string) => Promise<boolean>;
+    deleteAll: (limit?: number) => Promise<boolean>;
+    openApp: (appId: string) => Promise<void>;
+    openFullDiskAccessSettings: () => Promise<void>;
+    revealFullDiskAccessApp: () => Promise<void>;
+  };
+  systemStatus: {
+    getSnapshot: () => Promise<SystemStatusSnapshot>;
+    setVolume: (volume: number) => Promise<void>;
+    setMuted: (muted: boolean) => Promise<void>;
+    listAudioOutputDevices: () => Promise<AudioOutputDeviceItem[]>;
+    setAudioOutputDevice: (deviceId: string) => Promise<boolean>;
+    getWifiPower: () => Promise<boolean>;
+    setWifiPower: (enabled: boolean) => Promise<void>;
+    listWifiNetworks: () => Promise<WifiNetworkItem[]>;
+    getWifiPopupState: () => Promise<WifiPopupState>;
+    getConnectedWifiNetwork: () => Promise<string | null>;
+    disconnectWifiNetwork: () => Promise<boolean>;
+    connectWifiNetwork: (ssid: string, password?: string) => Promise<WifiConnectResult>;
+  };
   whatsapp: {
     isDesktopInstalled: () => Promise<boolean>;
     openLink: (url: string) => Promise<void>;
@@ -799,6 +910,12 @@ export interface NexusAPI {
     getMailboxes: () => Promise<MailMailboxOption[]>;
     getInboxMessages: (mailbox: MailMailboxRef) => Promise<MailInboxSnapshot>;
     openMessage: (mailbox: MailMailboxRef, messageId: string) => Promise<void>;
+  };
+  calendar: {
+    getTodayEvents: () => Promise<CalendarEventsSnapshot>;
+    requestAccess: () => Promise<CalendarEventsSnapshot>;
+    openEvent: (startAt: number) => Promise<void>;
+    openPrivacySettings: () => Promise<void>;
   };
   vercel: {
     getTokenConfigured: () => Promise<boolean>;

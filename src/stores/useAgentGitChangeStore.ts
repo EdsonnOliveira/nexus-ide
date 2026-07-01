@@ -10,7 +10,7 @@ import {
 } from '@/utils/agentGitDiff';
 import { useProjectStore } from '@/stores/useProjectStore';
 import type { AgentGitChangeGroup } from '@/types/agentGit';
-import { emitGitRepoRefresh } from '@/utils/gitRepoRefresh';
+import { emitGitProjectRefresh, emitGitRepoRefresh } from '@/utils/gitRepoRefresh';
 import type { GitFlatChange } from '@/utils/gitFlatChanges';
 import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
 import { findGitFlatChangeByPath } from '@/utils/gitPaths';
@@ -74,6 +74,19 @@ async function waitForPendingSnapshot(
   }
 
   return readPending()[paneId] ?? null;
+}
+
+async function refreshProjectGitCounts(projectId: string, fallbackRepoPath?: string | null): Promise<void> {
+  const project = useProjectStore.getState().projects.find((entry) => entry.id === projectId);
+
+  if (project) {
+    await emitGitProjectRefresh(project.path);
+    return;
+  }
+
+  if (fallbackRepoPath) {
+    await emitGitRepoRefresh(fallbackRepoPath);
+  }
 }
 
 const EMPTY_AGENT_GIT_GROUPS: AgentGitChangeGroup[] = [];
@@ -250,10 +263,11 @@ export const useAgentGitChangeStore = create<AgentGitChangeState>((set, get) => 
   finalizeTurn: async (paneId) => {
     let pending = await waitForPendingSnapshot(paneId, () => get().pendingTurnByPane);
     let repoPathForRefresh: string | null = pending?.repoPath ?? null;
+    const projectIdForRefresh = pending?.projectId ?? findProjectIdByPaneId(paneId);
 
     if (!pending || pending.snapshot === null) {
       const fallbackPrompt = get().lastPromptByPane[paneId];
-      const projectId = findProjectIdByPaneId(paneId);
+      const projectId = projectIdForRefresh;
 
       if (fallbackPrompt && projectId) {
         const project = useProjectStore.getState().projects.find((entry) => entry.id === projectId);
@@ -293,8 +307,8 @@ export const useAgentGitChangeStore = create<AgentGitChangeState>((set, get) => 
         return { pendingTurnByPane: nextPending, lastPromptByPane: nextPrompts };
       });
 
-      if (repoPathForRefresh) {
-        emitGitRepoRefresh(repoPathForRefresh);
+      if (repoPathForRefresh || projectIdForRefresh) {
+        await refreshProjectGitCounts(projectIdForRefresh ?? '', repoPathForRefresh);
       }
 
       return;
@@ -334,7 +348,7 @@ export const useAgentGitChangeStore = create<AgentGitChangeState>((set, get) => 
         return { pendingTurnByPane: nextPending, lastPromptByPane: nextPrompts };
       });
 
-      emitGitRepoRefresh(pending.repoPath);
+      await refreshProjectGitCounts(pending.projectId, pending.repoPath);
     }
   },
   clearProject: (projectId) => {

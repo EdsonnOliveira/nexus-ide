@@ -132,3 +132,45 @@ export function getGitDiffChangeLineIndices(lines: GitDiffLine[]): number[] {
 
   return indices;
 }
+
+export interface GitDiffChangeRegion {
+  kind: 'add' | 'remove';
+  startLineIndex: number;
+  endLineIndex: number;
+}
+
+export function getGitDiffChangeRegions(lines: GitDiffLine[]): GitDiffChangeRegion[] {
+  const regions: GitDiffChangeRegion[] = [];
+  let current: GitDiffChangeRegion | null = null;
+
+  lines.forEach((line, index) => {
+    if (line.kind !== 'add' && line.kind !== 'remove') {
+      if (current) {
+        regions.push(current);
+        current = null;
+      }
+      return;
+    }
+
+    if (current && current.kind === line.kind) {
+      current.endLineIndex = index;
+      return;
+    }
+
+    if (current) {
+      regions.push(current);
+    }
+
+    current = {
+      kind: line.kind,
+      startLineIndex: index,
+      endLineIndex: index,
+    };
+  });
+
+  if (current) {
+    regions.push(current);
+  }
+
+  return regions;
+}

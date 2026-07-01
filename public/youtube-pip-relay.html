@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+      }
+
+      #yt-player {
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="yt-player"></div>
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      const videoId = params.get('v');
+      const origin = window.location.origin.startsWith('http')
+        ? window.location.origin
+        : 'https://www.youtube.com';
+
+      window.__nexusYoutubeEmbedBlocked = false;
+      window.__nexusYoutubeEmbedReady = false;
+
+      if (!videoId) {
+        document.body.textContent = '';
+      } else {
+        window.onYouTubeIframeAPIReady = function () {
+          new YT.Player('yt-player', {
+            width: '100%',
+            height: '100%',
+            videoId: videoId,
+            playerVars: {
+              autoplay: 1,
+              rel: 0,
+              modestbranding: 1,
+              playsinline: 1,
+              fs: 0,
+              iv_load_policy: 3,
+              enablejsapi: 1,
+              origin: origin,
+            },
+            events: {
+              onReady: function () {
+                window.__nexusYoutubeEmbedReady = true;
+              },
+              onError: function () {
+                window.__nexusYoutubeEmbedBlocked = true;
+              },
+            },
+          });
+        };
+
+        const tag = document.createElement('script');
+        tag.src = 'https://www.youtube.com/iframe_api';
+        document.head.appendChild(tag);
+      }
+    </script>
+  </body>
+</html>

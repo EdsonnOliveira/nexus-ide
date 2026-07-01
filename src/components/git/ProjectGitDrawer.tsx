@@ -38,6 +38,7 @@ import {
   useAnchoredDropdownMenu,
 } from '@/hooks/useAnchoredDropdownMenu';
 import { useGitStatus } from '@/hooks/useGitStatus';
+import { useGitChangeCounts } from '@/hooks/useGitChangeCount';
 import { useDelayedHoverHint } from '@/hooks/useDelayedHoverHint';
 import {
   useAgentGitChangeStore,
@@ -76,6 +77,7 @@ interface GitRepoMenuProps {
   anchorRect: DOMRect;
   repos: GitRepoDiscovery[];
   selectedPath: string;
+  changeCounts: Record<string, number>;
   onClose: () => void;
   onSelect: (path: string) => void;
 }
@@ -88,7 +90,14 @@ function formatRepoLabel(relativePath: string): string {
   return relativePath;
 }
 
-function GitRepoMenu({ anchorRect, repos, selectedPath, onClose, onSelect }: GitRepoMenuProps) {
+function GitRepoMenu({
+  anchorRect,
+  repos,
+  selectedPath,
+  changeCounts,
+  onClose,
+  onSelect,
+}: GitRepoMenuProps) {
   const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
     onClose,
     (menu) => positionDropdownBelowAnchor(menu, anchorRect, 'start'),
@@ -115,22 +124,33 @@ function GitRepoMenu({ anchorRect, repos, selectedPath, onClose, onSelect }: Git
   return createPortal(
     <div ref={menuRef} className={`overlay-popup git-panel__repo-menu ${animationClass}`}>
       <div className='git-panel__repo-list'>
-        {repos.map((repo) => (
-          <button
-            key={repo.path}
-            type='button'
-            className={`git-panel__repo-item app-button${repo.path === selectedPath ? ' git-panel__repo-item--active' : ''}`}
-            onClick={() => {
-              onSelect(repo.path);
-              requestClose();
-            }}
-          >
-            <span className='git-panel__repo-item-label'>{formatRepoLabel(repo.relativePath)}</span>
-            {repo.branch ? (
-              <span className='git-panel__repo-item-branch'>{repo.branch}</span>
-            ) : null}
-          </button>
-        ))}
+        {repos.map((repo) => {
+          const changeCount = changeCounts[repo.path] ?? 0;
+
+          return (
+            <button
+              key={repo.path}
+              type='button'
+              className={`git-panel__repo-item app-button${repo.path === selectedPath ? ' git-panel__repo-item--active' : ''}`}
+              onClick={() => {
+                onSelect(repo.path);
+                requestClose();
+              }}
+            >
+              <span className='git-panel__repo-item-label'>{formatRepoLabel(repo.relativePath)}</span>
+              <span className='git-panel__repo-item-meta'>
+                {changeCount > 0 ? (
+                  <span className='git-panel__repo-item-badge' aria-hidden='true'>
+                    {changeCount > 99 ? '99+' : changeCount}
+                  </span>
+                ) : null}
+                {repo.branch ? (
+                  <span className='git-panel__repo-item-branch'>{repo.branch}</span>
+                ) : null}
+              </span>
+            </button>
+          );
+        })}
       </div>
     </div>,
     document.body,
@@ -475,6 +495,7 @@ function ProjectGitDrawerComponent({
   const focusedGroupRef = useRef<HTMLDivElement>(null);
   const promptGroups = useAgentGitGroupsForProject(projectId);
   const focusedGroupId = useAgentGitChangeStore((state) => state.focusedGroupId);
+  const { byRepo: gitChangeCountsByRepo } = useGitChangeCounts(rootPath);
 
   useEffect(() => {
     let cancelled = false;
@@ -914,6 +935,15 @@ function ProjectGitDrawerComponent({
 
   const hasMultipleRepos = discoveredRepos.length > 1;
   const hasChanges = flatChanges.length > 0;
+  const otherRepoChangeCount = selectedRepoPath
+    ? Object.entries(gitChangeCountsByRepo)
+        .filter(([path]) => path !== selectedRepoPath)
+        .reduce((sum, [, count]) => sum + count, 0)
+    : 0;
+  const emptyChangesMessage =
+    otherRepoChangeCount > 0
+      ? `Nenhuma alteração neste repositório (${otherRepoChangeCount} em outros)`
+      : 'Nenhuma alteração';
   const currentBranch = status.repo.branch ?? 'HEAD';
 
   return (
@@ -956,6 +986,7 @@ function ProjectGitDrawerComponent({
           anchorRect={repoAnchor}
           repos={discoveredRepos}
           selectedPath={selectedRepoPath ?? ''}
+          changeCounts={gitChangeCountsByRepo}
           onClose={() => setRepoAnchor(null)}
           onSelect={handleSelectRepo}
         />
@@ -990,7 +1021,7 @@ function ProjectGitDrawerComponent({
 
       <div className='git-panel__body git-scm__body'>
         {!hasChanges ? (
-          <EmptyState icon={CheckCheck} message='Nenhuma alteração' compact className='git-panel__empty'>
+          <EmptyState icon={CheckCheck} message={emptyChangesMessage} compact className='git-panel__empty'>
             <button
               type='button'
               className='git-panel__refresh-btn app-button app-button--enter'

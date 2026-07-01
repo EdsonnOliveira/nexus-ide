@@ -45,6 +45,10 @@ export function registerProjectHandlers(): void {
     },
   );
 
+  ipcMain.handle('projects:setSidebarVideoLastLink', (_, link: string | null) => {
+    projectStore.setSidebarVideoLastLink(link);
+  });
+
   ipcMain.handle('projects:saveLogo', async (_, projectId: string, sourcePath: string) => {
     const project = projectStore.list().projects.find((item) => item.id === projectId);
 

@@ -7,9 +7,18 @@ import { highlightTextLinesByNumber } from '@/utils/codeHighlight';
 import {
   buildGitDiffLines,
   getGitDiffChangeLineIndices,
+  getGitDiffChangeRegions,
   gitDiffHasChanges,
   type GitDiffLine,
 } from '@/utils/gitDiffLines';
+
+interface GitDiffScrollbarMarker {
+  id: string;
+  kind: 'add' | 'remove';
+  top: number;
+  height: number;
+  changeIndex: number;
+}
 import {
   injectAgentPromptsIntoDiffLines,
   type AgentGitFilePromptTurn,
@@ -92,6 +101,34 @@ function GitDiffPromptRow({
   );
 }
 
+function GitDiffScrollbarGutter({
+  markers,
+  onMarkerClick,
+}: {
+  markers: GitDiffScrollbarMarker[];
+  onMarkerClick: (changeIndex: number) => void;
+}) {
+  if (markers.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className='git-diff-view__scrollbar-gutter' aria-hidden='true'>
+      {markers.map((marker) => (
+        <button
+          key={marker.id}
+          type='button'
+          tabIndex={-1}
+          className={`git-diff-view__scrollbar-marker git-diff-view__scrollbar-marker--${marker.kind} app-button`}
+          style={{ top: `${marker.top}px`, height: `${marker.height}px` }}
+          aria-hidden='true'
+          onClick={() => onMarkerClick(marker.changeIndex)}
+        />
+      ))}
+    </div>
+  );
+}
+
 function GitDiffImagePanel({
   label,
   src,
@@ -122,7 +159,10 @@ function GitDiffViewComponent({
   diffUntracked = false,
 }: GitDiffViewProps) {
   const rowRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const [currentChangeIndex, setCurrentChangeIndex] = useState(0);
+  const [scrollbarMarkers, setScrollbarMarkers] = useState<GitDiffScrollbarMarker[]>([]);
   const [expandedPrompt, setExpandedPrompt] = useState<string | null>(null);
   const [pathCopied, setPathCopied] = useState(false);
   const [imageBeforeSrc, setImageBeforeSrc] = useState<string | null>(null);
@@ -313,6 +353,64 @@ function GitDiffViewComponent({
     .filter(Boolean)
     .join(' ');
 
+  const updateScrollbarMarkers = useCallback(() => {
+    const scrollElement = scrollRef.current;
+    const bodyElement = bodyRef.current;
+
+    if (!scrollElement || !bodyElement) {
+      return;
+    }
+
+    const scrollHeight = scrollElement.scrollHeight;
+    const trackHeight = scrollElement.clientHeight;
+
+    if (scrollHeight <= 0 || trackHeight <= 0) {
+      setScrollbarMarkers([]);
+      return;
+    }
+
+    const regions = getGitDiffChangeRegions(lines);
+    const nextMarkers: GitDiffScrollbarMarker[] = [];
+
+    regions.forEach((region) => {
+      const firstRow = bodyElement.children.item(region.startLineIndex) as HTMLElement | null;
+      const lastRow = bodyElement.children.item(region.endLineIndex) as HTMLElement | null;
+
+      if (!firstRow || !lastRow) {
+        return;
+      }
+
+      const top = (firstRow.offsetTop / scrollHeight) * trackHeight;
+      const bottom = ((lastRow.offsetTop + lastRow.offsetHeight) / scrollHeight) * trackHeight;
+      const changeIndex = lineIndexToChangeIndex.get(region.startLineIndex) ?? 0;
+
+      nextMarkers.push({
+        id: `${region.kind}-${region.startLineIndex}-${region.endLineIndex}`,
+        kind: region.kind,
+        top,
+        height: Math.max(3, bottom - top),
+        changeIndex,
+      });
+    });
+
+    setScrollbarMarkers((current) => {
+      if (
+        current.length === nextMarkers.length &&
+        current.every(
+          (marker, index) =>
+            marker.id === nextMarkers[index]?.id &&
+            marker.top === nextMarkers[index]?.top &&
+            marker.height === nextMarkers[index]?.height &&
+            marker.kind === nextMarkers[index]?.kind,
+        )
+      ) {
+        return current;
+      }
+
+      return nextMarkers;
+    });
+  }, [lineIndexToChangeIndex, lines]);
+
   useEffect(() => {
     if (!isVisible || changeCount === 0) {
       return;
@@ -322,12 +420,44 @@ function GitDiffViewComponent({
 
     const frameId = window.requestAnimationFrame(() => {
       scrollToChange(0);
+      updateScrollbarMarkers();
     });
 
     return () => {
       window.cancelAnimationFrame(frameId);
     };
-  }, [after, before, changeCount, isVisible, scrollToChange]);
+  }, [after, before, changeCount, isVisible, scrollToChange, updateScrollbarMarkers]);
+
+  useEffect(() => {
+    const scrollElement = scrollRef.current;
+    const bodyElement = bodyRef.current;
+
+    if (!scrollElement || !bodyElement || !hasChanges) {
+      setScrollbarMarkers([]);
+      return;
+    }
+
+    let frameId = 0;
+
+    const scheduleUpdate = () => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(updateScrollbarMarkers);
+    };
+
+    scheduleUpdate();
+
+    const resizeObserver = new ResizeObserver(scheduleUpdate);
+    resizeObserver.observe(scrollElement);
+    resizeObserver.observe(bodyElement);
+
+    window.addEventListener('resize', scheduleUpdate);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', scheduleUpdate);
+    };
+  }, [hasChanges, updateScrollbarMarkers]);
 
   if (isImageDiff) {
     return (
@@ -395,8 +525,8 @@ function GitDiffViewComponent({
         </button>
       </div>
       <div className='git-diff-view__viewport'>
-        <div className='git-diff-view__scroll'>
-          <div className='git-diff-view__body'>
+        <div ref={scrollRef} className='git-diff-view__scroll'>
+          <div ref={bodyRef} className='git-diff-view__body'>
             {!hasChanges ? (
               <div className='git-diff-view__empty'>Nenhuma alteração neste arquivo</div>
             ) : (
@@ -448,6 +578,10 @@ function GitDiffViewComponent({
             )}
           </div>
         </div>
+        <GitDiffScrollbarGutter
+          markers={scrollbarMarkers}
+          onMarkerClick={navigateToChange}
+        />
         {changeCount > 0 ? (
           <div className='git-diff-view__nav'>
             <div
