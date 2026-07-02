@@ -137,6 +137,7 @@ export interface TaskIntegrationConfig {
   deepcrmPipelineId?: string;
   deepcrmAccountName?: string;
   syncEnabled: boolean;
+  hiddenExternalTaskIds?: string[];
 }
 
 export interface TaskSyncResult {

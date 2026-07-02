@@ -719,7 +719,7 @@ export async function syncDeepcrmTasks(
   const pipelineId = config.deepcrmPipelineId?.trim() ?? '';
 
   if (!apiToken) {
-    throw new Error('Configuração do DeepCRM incompleta');
+    throw new Error('Informe o token da API do DeepCRM');
   }
 
   const rawProjects = await fetchAllProjects(apiToken, pipelineId || undefined);
@@ -946,7 +946,7 @@ export async function fetchDeepcrmProjectDetail(
   }
 
   if (!trimmedToken) {
-    throw new Error('Configuração do DeepCRM incompleta');
+    throw new Error('Informe o token da API do DeepCRM');
   }
 
   const projectDetail = await fetchProjectDetail(trimmedToken, projectId);

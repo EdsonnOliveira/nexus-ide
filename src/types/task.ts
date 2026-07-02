@@ -154,6 +154,7 @@ export interface TaskIntegrationConfig {
   deepcrmPipelineId?: string;
   deepcrmAccountName?: string;
   syncEnabled: boolean;
+  hiddenExternalTaskIds?: string[];
 }
 
 export interface TaskSyncResult {
@@ -167,6 +168,15 @@ export interface TaskCredentialsPayload {
   trelloApiKey?: string;
   trelloToken?: string;
   deepcrmApiToken?: string;
+}
+
+export type TaskCredentialFieldStatus = 'missing' | 'readable' | 'unreadable';
+
+export interface TaskCredentialStatus {
+  jiraApiToken: TaskCredentialFieldStatus;
+  trelloApiKey: TaskCredentialFieldStatus;
+  trelloToken: TaskCredentialFieldStatus;
+  deepcrmApiToken: TaskCredentialFieldStatus;
 }
 
 export interface JiraProjectOption {

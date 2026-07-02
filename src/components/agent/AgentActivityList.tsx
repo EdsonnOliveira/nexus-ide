@@ -1,6 +1,6 @@
 import { Fragment, memo, useCallback, useMemo, useRef, type MouseEvent, type ReactNode } from 'react';
 import type { AgentActivity, AgentQuestionAnswers, AgentTurnSummary } from '@/types';
-import { useMarkdownCodeHighlight } from '@/hooks/useMarkdownCodeHighlight';
+import { useMarkdownCodeHighlight, useDeferredMarkdownHtml } from '@/hooks/useMarkdownCodeHighlight';
 import {
   AgentFileActivityRow,
   AgentFileActivityScrollList,
@@ -18,7 +18,7 @@ import {
 } from '@/utils/agentTurnSummary';
 import { sanitizeResponseText, isValidReadFileTarget } from '@/utils/agentTranscriptParser';
 import { parseAgentLiveFileStatus } from '@/utils/agentActivityLabel';
-import { normalizeMarkdownSource, renderMarkdownPreview } from '@/utils/markdownPreview';
+import { normalizeMarkdownSource } from '@/utils/markdownPreview';
 
 interface AgentActivityListProps {
   activities: AgentActivity[];
@@ -116,7 +116,7 @@ function findAgentResponseInlineCode(element: EventTarget | null): HTMLElement |
 }
 
 const AgentResponseBody = memo(function AgentResponseBody({ content }: { content: string }) {
-  const html = useMemo(() => renderMarkdownPreview(content), [content]);
+  const html = useDeferredMarkdownHtml(content);
   const bodyRef = useMarkdownCodeHighlight<HTMLDivElement>(html);
   const copiedTimeoutRef = useRef<number | null>(null);
 

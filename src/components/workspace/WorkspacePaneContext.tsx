@@ -1,6 +1,6 @@
 import { createContext, memo, useContext, type ReactNode, type RefObject } from 'react';
 import type { AgentTab, ApiTab, EmulatorTab, Project } from '@/types';
-import type { XTermViewHandle } from '@/components/terminal/XTermView';
+import type { XTermViewHandle } from '@/types';
 
 export interface WorkspacePaneContextValue {
   project: Project;

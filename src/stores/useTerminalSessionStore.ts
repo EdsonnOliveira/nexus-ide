@@ -1,15 +1,13 @@
 import { create } from 'zustand';
-import type { XTermViewHandle } from '@/components/terminal/XTermView';
+import type { XTermViewHandle } from '@/types';
 import type { AutomationAgentMode } from '@/constants/agentModes';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import { parseAgentModeCommand } from '@/utils/parseAgentModeCommand';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { schedulePersistTerminalPane, persistTerminalCommand } from '@/utils/persistTerminalSession';
-import { handleAutomationPaneTaskComplete } from '@/utils/automationPaneExecution';
 import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
 import { getTerminalHandle } from '@/utils/terminalHandleRegistry';
-import { trackAgentGitPrompt } from '@/utils/agentGitTurn';
 import { resolvePaneAgentForGitTurn } from '@/utils/projectAgentStatus';
 import { resetAgentReadyDetectors } from '@/utils/terminalTaskCompletion';
 
@@ -303,7 +301,9 @@ export const useTerminalSessionStore = create<TerminalSessionState>((set, get) =
       };
     });
 
-    handleAutomationPaneTaskComplete(paneId);
+    void import('@/utils/automationPaneExecution').then(({ handleAutomationPaneTaskComplete }) => {
+      handleAutomationPaneTaskComplete(paneId);
+    });
   },
   disposePaneSession: (paneId) => {
     resetAgentReadyDetectors(paneId);
@@ -410,7 +410,9 @@ export const useTerminalSessionStore = create<TerminalSessionState>((set, get) =
 
     if (existingAgent) {
       persistTerminalCommand(paneId, trimmed);
-      trackAgentGitPrompt(paneId, trimmed);
+      void import('@/utils/agentGitTurn').then(({ trackAgentGitPrompt }) => {
+        trackAgentGitPrompt(paneId, trimmed);
+      });
       return;
     }
 

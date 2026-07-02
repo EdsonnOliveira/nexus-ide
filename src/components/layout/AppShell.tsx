@@ -1,4 +1,5 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { FolderPlus } from 'lucide-react';
 import { useNexusReady } from '@/hooks/useNexusReady';
 import { useGitChangeCount } from '@/hooks/useGitChangeCount';
 import { useAutomationScheduler } from '@/hooks/useAutomationScheduler';
@@ -9,19 +10,41 @@ import { useProjectStore } from '@/stores/useProjectStore';
 import { useTabActions } from '@/stores/useTabStore';
 import { isMarkdownFile } from '@/utils/explorerRelativePath';
 import { NexusLogo } from '@/components/overlay/NexusLogo';
+import { EmptyState } from '@/components/overlay/EmptyState';
 import { PaneErrorBoundary } from '@/components/overlay/PaneErrorBoundary';
 import { ProjectSidebar } from '@/components/sidebar/ProjectSidebar';
 import { StatusBar } from '@/components/layout/StatusBar';
 import { TitleBar } from '@/components/layout/TitleBar';
 import { GlobalSearchPalette } from '@/components/search/GlobalSearchPalette';
+import { DailyGenerationProvider } from '@/components/home/DailyGenerationProvider';
 import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
+import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
+import { projectHasLiveAgentSession } from '@/utils/paneAgentSession';
 import { isAnyModalOpen, subscribeOverlayBlockingChange } from '@/utils/overlayBlocking';
 
-const TerminalPanel = lazy(() =>
+const LazyHomeDashboard = lazy(() =>
+  import('@/components/home/HomeDashboard').then((module) => ({
+    default: module.HomeDashboard,
+  })),
+);
+
+const LazyTerminalPanel = lazy(() =>
   import('@/components/terminal/TerminalPanel').then((module) => ({
     default: module.TerminalPanel,
   })),
 );
+
+function MainWorkspacePanel({ ready }: { ready: boolean }) {
+  if (!ready) {
+    return <div className='empty-state'>Carregando...</div>;
+  }
+
+  return (
+    <Suspense fallback={<div className='empty-state'>Carregando...</div>}>
+      <LazyTerminalPanel />
+    </Suspense>
+  );
+}
 
 const ProjectExplorerDrawer = lazy(() =>
   import('@/components/explorer/ProjectExplorerDrawer').then((module) => ({
@@ -55,12 +78,11 @@ function EmptyWorkspace() {
   }, [addProject]);
 
   return (
-    <div className='empty-state'>
-      <div className='empty-state__icon' aria-hidden='true'>
-        <NexusLogo size={48} className='nexus-brand-logo' />
-      </div>
-      <span className='empty-state__title'>Nenhum projeto adicionado</span>
-      <span className='empty-state__message'>Adicione um projeto para começar</span>
+    <EmptyState
+      icon={FolderPlus}
+      title='Nenhum projeto adicionado'
+      message='Adicione um projeto para começar'
+    >
       <button
         type='button'
         className='empty-state__action empty-state__action--primary app-button app-button--enter'
@@ -68,7 +90,7 @@ function EmptyWorkspace() {
       >
         Adicionar projeto
       </button>
-    </div>
+    </EmptyState>
   );
 }
 
@@ -82,12 +104,38 @@ function AppShellComponent() {
   const sidePanel = useProjectStore((state) => state.sidePanel);
   const projects = useProjectStore((state) => state.projects);
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
+  const initialized = useProjectStore((state) => state.initialized);
+  const projectsMigrated = useProjectStore((state) => state.projectsMigrated);
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId) ?? null,
     [activeProjectId, projects],
   );
-  const gitChangeCount = useGitChangeCount(activeProject?.path ?? null);
+  const agentPrintRunTokenByPane = useTerminalSessionStore((state) => state.agentPrintRunTokenByPane);
+  const agentBusyByPane = useTerminalSessionStore((state) => state.agentBusyByPane);
+  const awaitingResponseByPane = useTerminalSessionStore((state) => state.awaitingResponseByPane);
+  const needsOffscreenAgentHost = useMemo(() => {
+    if (activeProjectId) {
+      return false;
+    }
+
+    const session = {
+      agentPrintRunTokenByPane,
+      agentBusyByPane,
+      awaitingResponseByPane,
+    };
+
+    return projects.some((project) => projectHasLiveAgentSession(project, session));
+  }, [
+    activeProjectId,
+    agentBusyByPane,
+    agentPrintRunTokenByPane,
+    awaitingResponseByPane,
+    projects,
+  ]);
+  const gitChangeCount = useGitChangeCount(
+    projectsMigrated ? (activeProject?.path ?? null) : null,
+  );
   const projectPaths = useMemo(() => projects.map((project) => project.path), [projects]);
   const { openFileTab, openFilePreviewTab, openFileCodeTab, openDiffTab, selectPane } = useTabActions();
 
@@ -161,6 +209,24 @@ function AppShellComponent() {
   }, []);
 
   useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'AppShell.tsx:AppShellComponent',message:'shell state',data:{nexusReady,initialized,projectsMigrated,activeProjectId,isModalOpen},timestamp:Date.now(),hypothesisId:'H5',runId:'pre-fix'})}).catch(()=>{});
+    // #endregion
+  }, [nexusReady, initialized, projectsMigrated, activeProjectId, isModalOpen]);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target.tagName : 'unknown';
+      // #region agent log
+      fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'AppShell.tsx:pointerdown',message:'pointerdown captured',data:{target,isModalOpen:isAnyModalOpen()},timestamp:Date.now(),hypothesisId:'H6',runId:'pre-fix'})}).catch(()=>{});
+      // #endregion
+    };
+
+    window.addEventListener('pointerdown', onPointerDown, true);
+    return () => window.removeEventListener('pointerdown', onPointerDown, true);
+  }, []);
+
+  useEffect(() => {
     if (!nexusReady) {
       return;
     }
@@ -174,9 +240,18 @@ function AppShellComponent() {
     }
 
     const unsubscribe = window.nexus.onFlushSession(() => {
-      void Promise.all([flushTerminalSessionsNow(), flushAgentGitGroupsNow()]).then(() =>
-        window.nexus.session.flushComplete(),
-      );
+      const timeoutId = window.setTimeout(() => {
+        void window.nexus.session.flushComplete();
+      }, 4000);
+
+      void Promise.all([flushTerminalSessionsNow(), flushAgentGitGroupsNow()])
+        .catch((error) => {
+          console.error('[app-shell] flush session failed', error);
+        })
+        .finally(() => {
+          window.clearTimeout(timeoutId);
+          void window.nexus.session.flushComplete();
+        });
     });
 
     return unsubscribe;
@@ -211,7 +286,7 @@ function AppShellComponent() {
   }, [gitChangeCount, nexusReady, toggleExplorerEntry]);
 
   useEffect(() => {
-    if (!nexusReady || projectPaths.length === 0) {
+    if (!nexusReady || !projectsMigrated || projectPaths.length === 0) {
       return;
     }
 
@@ -232,7 +307,7 @@ function AppShellComponent() {
         void window.nexus.files.unwatchProject(projectPath);
       });
     };
-  }, [nexusReady, projectPaths]);
+  }, [nexusReady, projectPaths, projectsMigrated]);
 
   if (!nexusReady) {
     return (
@@ -246,25 +321,39 @@ function AppShellComponent() {
   }
 
   return (
-    <div className={shellClassName}>
+    <DailyGenerationProvider>
+      <div className={shellClassName}>
       {isMac ? <TitleBar /> : null}
 
       <ProjectSidebar />
 
       <div className='app-main'>
-        {activeProject ? (
-          <div className='glass-panel glass-panel--main'>
-            <PaneErrorBoundary>
-              <Suspense fallback={<div className='empty-state'>Carregando...</div>}>
-                <TerminalPanel />
-              </Suspense>
+        {activeProject || needsOffscreenAgentHost ? (
+          <div
+            className={`glass-panel${activeProject ? ' glass-panel--main' : ' app-shell__hidden-agent-host'}`}
+            hidden={!activeProject || undefined}
+            aria-hidden={!activeProject || undefined}
+          >
+            <PaneErrorBoundary key={activeProjectId ?? 'background-agents'}>
+              {initialized && projectsMigrated ? (
+                <MainWorkspacePanel ready={initialized && projectsMigrated} />
+              ) : (
+                <div className='empty-state'>Carregando...</div>
+              )}
             </PaneErrorBoundary>
           </div>
-        ) : (
-          <div className='glass-panel glass-panel--empty'>
-            <EmptyWorkspace />
+        ) : null}
+        {!activeProject ? (
+          <div className='glass-panel glass-panel--empty glass-panel--home'>
+            {projects.length === 0 ? (
+              <EmptyWorkspace />
+            ) : (
+              <Suspense fallback={<div className='empty-state'>Carregando...</div>}>
+                <LazyHomeDashboard />
+              </Suspense>
+            )}
           </div>
-        )}
+        ) : null}
       </div>
 
       {activeProject ? (
@@ -308,7 +397,8 @@ function AppShellComponent() {
 
       <StatusBar />
       <GlobalSearchPalette />
-    </div>
+      </div>
+    </DailyGenerationProvider>
   );
 }
 

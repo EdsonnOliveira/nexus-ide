@@ -10,6 +10,7 @@ import { cleanupEmulatorSessions, registerEmulatorHandlers } from './ipc/emulato
 import { registerFileHandlers } from './ipc/files';
 import { registerProjectHandlers } from './ipc/projects';
 import { registerGitHandlers } from './ipc/git';
+import { registerHomeDashboardHandlers } from './ipc/homeDashboard';
 import { registerMusicHandlers } from './ipc/music';
 import { registerMailHandlers } from './ipc/mail';
 import { registerCalendarHandlers } from './ipc/calendar';
@@ -55,6 +56,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.setName(DOCK_APP_NAME);
+app.setPath('userData', path.join(app.getPath('appData'), 'nexus-ide'));
 
 function registerProcessDiagnostics(): void {
   process.on('uncaughtException', (error) => {
@@ -79,7 +81,49 @@ registerProcessDiagnostics();
 let win: BrowserWindow | null = null;
 let isQuitting = false;
 let flushMode: 'quit' | 'close' = 'quit';
+let sessionFlushTimer: ReturnType<typeof setTimeout> | null = null;
+const SESSION_FLUSH_TIMEOUT_MS = 5000;
 const preload = path.join(__dirname, '../preload/index.cjs');
+
+function completeSessionFlush(): void {
+  if (sessionFlushTimer) {
+    clearTimeout(sessionFlushTimer);
+    sessionFlushTimer = null;
+  }
+
+  isQuitting = true;
+
+  if (flushMode === 'close') {
+    ptyManager.killAll();
+    agentPrintRunner.stopAll();
+    win?.destroy();
+    isQuitting = false;
+    flushMode = 'quit';
+    return;
+  }
+
+  app.quit();
+}
+
+function requestSessionFlush(mode: 'quit' | 'close'): void {
+  if (!win || win.isDestroyed()) {
+    return;
+  }
+
+  flushMode = mode;
+
+  if (sessionFlushTimer) {
+    clearTimeout(sessionFlushTimer);
+  }
+
+  sessionFlushTimer = setTimeout(() => {
+    console.warn('[session] flush timeout — forcing close');
+    completeSessionFlush();
+  }, SESSION_FLUSH_TIMEOUT_MS);
+
+  win.webContents.send('app:flush-session');
+}
+
 const indexHtml = path.join(RENDERER_DIST, 'index.html');
 
 function resolveAppIcon(): NativeImage | undefined {
@@ -200,8 +244,7 @@ async function createWindow(appIcon?: NativeImage) {
     }
 
     event.preventDefault();
-    flushMode = 'close';
-    win.webContents.send('app:flush-session');
+    requestSessionFlush('close');
   });
 
   registerWindowShortcuts(win);
@@ -247,8 +290,22 @@ function isBrowserReloadShortcut(input: Electron.Input): boolean {
   return primaryModifier && !input.alt && !input.shift;
 }
 
+function isAppReloadShortcut(input: Electron.Input): boolean {
+  if (input.type !== 'keyDown' || input.key.toLowerCase() !== 'r') {
+    return false;
+  }
+
+  const primaryModifier = process.platform === 'darwin' ? input.meta : input.control;
+
+  return primaryModifier && input.shift && !input.alt;
+}
+
+function requestAppReloadFromShortcut(): void {
+  win?.webContents.reload();
+}
+
 function requestBrowserReloadFromShortcut(): void {
-  win?.webContents.send('app:browser-reload');
+  win?.webContents.reload();
 }
 
 function openGlobalSearchFromShortcut(): void {
@@ -265,6 +322,12 @@ function openGlobalSearchFromShortcut(): void {
 function registerWindowShortcuts(window: BrowserWindow): void {
   window.webContents.on('before-input-event', (event, input) => {
     if (!window.isFocused()) {
+      return;
+    }
+
+    if (isAppReloadShortcut(input)) {
+      event.preventDefault();
+      requestAppReloadFromShortcut();
       return;
     }
 
@@ -303,6 +366,7 @@ app.whenReady().then(() => {
   registerBrowserHandlers();
   registerApiHandlers();
   registerGitHandlers(() => win);
+  registerHomeDashboardHandlers();
   registerMusicHandlers();
   registerSystemStatusHandlers();
   registerSystemNotificationsHandlers();
@@ -313,18 +377,7 @@ app.whenReady().then(() => {
   registerWhatsAppHandlers();
   registerEmulatorHandlers(() => win);
   registerSessionHandlers(() => {
-    isQuitting = true;
-
-    if (flushMode === 'close') {
-      ptyManager.killAll();
-      agentPrintRunner.stopAll();
-      win?.destroy();
-      isQuitting = false;
-      flushMode = 'quit';
-      return;
-    }
-
-    app.quit();
+    completeSessionFlush();
   });
   registerWebviewHandlers();
   registerYouTubeSidebarWebviewSession();
@@ -383,8 +436,7 @@ app.on('before-quit', (event) => {
   }
 
   event.preventDefault();
-  flushMode = 'quit';
-  win.webContents.send('app:flush-session');
+  requestSessionFlush('quit');
 });
 
 app.on('activate', () => {

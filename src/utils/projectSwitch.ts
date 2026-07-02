@@ -1,12 +1,13 @@
-import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import type { Project } from '@/types';
-import { flushAgentGitGroupsForLeavingProject } from '@/utils/persistAgentGitGroups';
-import {
-  flushPendingTerminalSessionsToDisk,
-  saveScrollbacksForProject,
-} from '@/utils/persistTerminalSession';
 
 let projectSwitchInFlight = false;
+let projectSwitchStartedAt = 0;
+const PROJECT_SWITCH_STALE_MS = 8000;
+
+export function resetProjectSwitchState(): void {
+  projectSwitchInFlight = false;
+  projectSwitchStartedAt = 0;
+}
 
 export function isProjectSwitching(): boolean {
   return projectSwitchInFlight;
@@ -14,10 +15,21 @@ export function isProjectSwitching(): boolean {
 
 export function beginProjectSwitch(): boolean {
   if (projectSwitchInFlight) {
-    return false;
+    if (Date.now() - projectSwitchStartedAt < PROJECT_SWITCH_STALE_MS) {
+      // #region agent log
+      fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'projectSwitch.ts:beginProjectSwitch',message:'switch denied in flight',data:{ageMs:Date.now()-projectSwitchStartedAt},timestamp:Date.now(),hypothesisId:'H3',runId:'pre-fix'})}).catch(()=>{});
+      // #endregion
+      return false;
+    }
+
+    projectSwitchInFlight = false;
   }
 
   projectSwitchInFlight = true;
+  projectSwitchStartedAt = Date.now();
+  // #region agent log
+  fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'projectSwitch.ts:beginProjectSwitch',message:'switch allowed',data:{},timestamp:Date.now(),hypothesisId:'H3',runId:'pre-fix'})}).catch(()=>{});
+  // #endregion
   return true;
 }
 
@@ -32,7 +44,8 @@ export async function endProjectSwitch(): Promise<void> {
   );
 }
 
-export function countBusyAgentPanes(): number {
+export async function countBusyAgentPanes(): Promise<number> {
+  const { useTerminalSessionStore } = await import('@/stores/useTerminalSessionStore');
   const session = useTerminalSessionStore.getState();
   const counted = new Set<string>();
 
@@ -60,6 +73,14 @@ export function persistLeavingProjectState(projects: Project[], leavingProjectId
 
   void (async () => {
     try {
+      const [
+        { flushPendingTerminalSessionsToDisk, saveScrollbacksForProject },
+        { flushAgentGitGroupsForLeavingProject },
+      ] = await Promise.all([
+        import('@/utils/persistTerminalSession'),
+        import('@/utils/persistAgentGitGroups'),
+      ]);
+
       await flushPendingTerminalSessionsToDisk(projects);
       await Promise.all([
         saveScrollbacksForProject(leavingProject),

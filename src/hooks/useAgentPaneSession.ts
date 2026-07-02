@@ -11,6 +11,7 @@ import type { AutomationAgentMode } from '@/constants/agentModes';
 import type { AgentActivity, AgentFollowUp, AgentPromptAttachment, AgentPromptSubmitOptions, AgentQuestionAnswers, AgentTab, AgentTurn, AgentUserMessage } from '@/types';
 import { registerAgentPaneHandlers } from '@/utils/agentPaneRegistry';
 import { registerAgentPrintPaneHandlers } from '@/utils/agentPrintBridge';
+import { recordHomeDashboardActivity } from '@/utils/recordHomeDashboardActivity';
 import { cliAgentToTerminalAgent, resolveAgentTabCli } from '@/utils/agentTabHelpers';
 import { trackAgentGitPrompt } from '@/utils/agentGitTurn';
 import { isAgentSetupCommand } from '@/utils/parseAgentModeCommand';
@@ -46,6 +47,7 @@ import {
   createAgentStreamJsonParserState,
   feedAgentStreamJsonChunk,
   finalizeStreamJsonTurn,
+  isAgentStreamJsonStateAwaitingCompletion,
 } from '@/utils/agentStreamJsonParser';
 import {
   buildAgentPlanImplementPrompt,
@@ -73,6 +75,8 @@ import {
   type AgentContextUsageSnapshot,
   type AgentStreamJsonTokenUsage,
 } from '@/utils/agentContextUsageParser';
+import { trimAgentTurnHistory, sanitizeAgentTurnHistory } from '@/utils/trimAgentTurnHistory';
+import { shouldPreferLocalAgentTurnHistory } from '@/utils/paneAgentSession';
 
 const LAUNCH_COMMAND_DELAY_MS = 350;
 const PROMPT_CLEAR_DELAY_MS = 50;
@@ -80,6 +84,7 @@ const PTY_CLEAR_INPUT = '\x15';
 const STUCK_TURN_TIMEOUT_MS = 45_000;
 const STUCK_TURN_CHECK_MS = 5_000;
 const STREAM_JSON_ORPHAN_FINALIZE_MS = 4_000;
+const STREAM_JSON_INCOMPLETE_ORPHAN_FINALIZE_MS = 45_000;
 const STREAM_JSON_ABSOLUTE_MAX_MS = 600_000;
 const STREAM_JSON_IDLE_CHECK_MS = 4_000;
 const APPROVAL_CONFIRM_DELAY_MS = 450;
@@ -176,7 +181,7 @@ export function useAgentPaneSession({
 }: UseAgentPaneSessionOptions) {
   const ptyIdRef = useRef<string | null>(tab.ptyId);
   const creatingRef = useRef(false);
-  const turnsRef = useRef<AgentTurn[]>(tab.turns ?? []);
+  const turnsRef = useRef<AgentTurn[]>(sanitizeAgentTurnHistory(tab.turns ?? []));
   const parserStateRef = useRef(createAgentTranscriptParserState());
   const streamJsonStateRef = useRef(createAgentStreamJsonParserState());
   const cursorAgentContinueRef = useRef(false);
@@ -191,6 +196,9 @@ export function useAgentPaneSession({
   const onAppendDraftRef = useRef(onAppendDraft);
   const onRestoreDraftRef = useRef(onRestoreDraft);
   const paneIdRef = useRef(tab.id);
+  const deferAutoSpawnRef = useRef(
+    (tab.turns?.length ?? 0) > 0 && !tab.turns?.some((turn) => turn.running),
+  );
   const agentRootPath = useMemo(() => resolveAgentPaneRootPath(projectPath), [projectPath]);
   const isVisibleRef = useRef(isVisible);
   const isRuntimeActiveRef = useRef(isRuntimeActive);
@@ -231,6 +239,11 @@ export function useAgentPaneSession({
   onAppendDraftRef.current = onAppendDraft;
   onRestoreDraftRef.current = onRestoreDraft;
   followUpsRef.current = followUps;
+
+  useEffect(() => {
+    deferAutoSpawnRef.current =
+      (tab.turns?.length ?? 0) > 0 && !tab.turns?.some((turn) => turn.running);
+  }, [tab.id, tab.turns]);
 
   const usesStreamJson = useMemo(
     () => isCursorAgentStreamJsonCli(resolveAgentTabCli(tab)),
@@ -362,7 +375,7 @@ export function useAgentPaneSession({
   }, [tab.id, usesStreamJson]);
 
   useEffect(() => {
-    const incoming = tab.turns ?? [];
+    const incoming = sanitizeAgentTurnHistory(tab.turns ?? []);
 
     if (incoming.length === 0) {
       const session = useTerminalSessionStore.getState();
@@ -398,6 +411,10 @@ export function useAgentPaneSession({
       return;
     }
 
+    if (shouldPreferLocalAgentTurnHistory(localTurns, incoming)) {
+      return;
+    }
+
     turnsRef.current = incoming;
     setTurnsRevision((revision) => revision + 1);
   }, [tab.turns]);
@@ -410,9 +427,10 @@ export function useAgentPaneSession({
   }, [tab.ptyId]);
 
   const persistTurns = useCallback((nextTurns: AgentTurn[]) => {
-    turnsRef.current = nextTurns;
+    const trimmedTurns = sanitizeAgentTurnHistory(trimAgentTurnHistory(nextTurns));
+    turnsRef.current = trimmedTurns;
     setTurnsRevision((revision) => revision + 1);
-    onTurnsChangeRef.current(nextTurns);
+    onTurnsChangeRef.current(trimmedTurns);
   }, []);
 
   useEffect(() => {
@@ -448,7 +466,7 @@ export function useAgentPaneSession({
     persistTurns(nextTurns);
   }, [persistTurns]);
 
-  const finalizeActiveTurn = useCallback(() => {
+  const finalizeActiveTurn = useCallback((notifyOnComplete = false) => {
     const turns = turnsRef.current;
     const index = [...turns].reverse().findIndex((turn) => turn.running);
     const resolvedIndex = index === -1 ? -1 : turns.length - 1 - index;
@@ -479,8 +497,12 @@ export function useAgentPaneSession({
     }
 
     persistTurns(finalizeBuildingAgentPlans(nextTurns));
+    recordHomeDashboardActivity('agentExecutions');
 
-    useTerminalSessionStore.getState().resetAgentWorkload(paneId);
+    if (notifyOnComplete) {
+      useTerminalSessionStore.getState().completeTaskIfAwaiting(paneId);
+    }
+
     setIsAgentReady(true);
 
     if (!suppressFollowUpFlushRef.current) {
@@ -538,7 +560,7 @@ export function useAgentPaneSession({
     turnOutputBufferRef.current = '';
     clearAgentPrintRunToken(paneId);
     persistTurns(nextTurns);
-    useTerminalSessionStore.getState().resetAgentWorkload(paneId);
+    recordHomeDashboardActivity('agentExecutions');
     useTerminalSessionStore.getState().completeTaskIfAwaiting(paneId);
     setIsAgentReady(true);
     tryFlushFollowUpQueueRef.current({ force: true });
@@ -668,6 +690,8 @@ export function useAgentPaneSession({
           !modeChangedSinceLastPrint,
         runToken,
       });
+
+      recordHomeDashboardActivity('prompts');
 
       return true;
     },
@@ -972,6 +996,7 @@ export function useAgentPaneSession({
 
       if (trimmed || imageRefs.length > 0) {
         writeToPty('\n');
+        recordHomeDashboardActivity('prompts');
       }
     },
     [usesStreamJson, startStreamJsonAgentRun, writeToPty],
@@ -1386,6 +1411,7 @@ export function useAgentPaneSession({
       sendPromptToPty,
       stopAgent,
       waitForComposerAgentReady,
+      usesStreamJson,
     ],
   );
 
@@ -1712,7 +1738,11 @@ export function useAgentPaneSession({
       return;
     }
 
+    deferAutoSpawnRef.current = false;
     creatingRef.current = true;
+    // #region agent log
+    fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'useAgentPaneSession.ts:spawn',message:'spawnAgentPty start',data:{paneId:tab.id},timestamp:Date.now(),hypothesisId:'H14',runId:'post-fix'})}).catch(()=>{});
+    // #endregion
 
     try {
       const terminalAgent = cliAgentToTerminalAgent(resolveAgentTabCli(tab));
@@ -1746,6 +1776,9 @@ export function useAgentPaneSession({
         window.nexus.terminal.write(createdPtyId, `${pendingCommand}\n`);
         useTerminalSessionStore.getState().setLastCommand(paneIdRef.current, pendingCommand);
       }, LAUNCH_COMMAND_DELAY_MS);
+      // #region agent log
+      fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'useAgentPaneSession.ts:spawn',message:'spawnAgentPty done',data:{paneId:tab.id,ptyId:createdPtyId},timestamp:Date.now(),hypothesisId:'H14',runId:'post-fix'})}).catch(()=>{});
+      // #endregion
     } finally {
       creatingRef.current = false;
     }
@@ -1754,6 +1787,13 @@ export function useAgentPaneSession({
   useEffect(() => {
     void (async () => {
       if (!isRuntimeActiveRef.current) {
+        return;
+      }
+
+      if (deferAutoSpawnRef.current) {
+        // #region agent log
+        fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'useAgentPaneSession.ts:spawn',message:'auto spawn deferred idle history',data:{paneId:tab.id,turnCount:tab.turns?.length??0},timestamp:Date.now(),hypothesisId:'H14',runId:'post-fix'})}).catch(()=>{});
+        // #endregion
         return;
       }
 
@@ -1784,7 +1824,8 @@ export function useAgentPaneSession({
     })();
   }, [isRuntimeActive, spawnAgentPty, tab.ptyId]);
 
-  const isBootstrapping = !activePtyId || hasPendingLaunch;
+  const isBootstrapping =
+    !deferAutoSpawnRef.current && (!activePtyId || hasPendingLaunch);
 
   useEffect(() => {
     if (!activePtyId || !isRuntimeActive || isAgentReady) {
@@ -1875,8 +1916,7 @@ export function useAgentPaneSession({
         return;
       }
 
-      finalizeActiveTurn();
-      useTerminalSessionStore.getState().completeTaskIfAwaiting(paneId);
+      finalizeActiveTurn(true);
       syncAgentReadyFromTail(outputTailRef.current);
     };
 
@@ -2073,8 +2113,7 @@ export function useAgentPaneSession({
               createFailedPromptActivity(payload.error),
             ],
           }));
-          finalizeActiveTurn();
-          useTerminalSessionStore.getState().completeTaskIfAwaiting(activePaneId);
+          finalizeActiveTurn(true);
           finishAgentPrintRun();
           return;
         }
@@ -2098,8 +2137,7 @@ export function useAgentPaneSession({
               ),
             ],
           }));
-          finalizeActiveTurn();
-          useTerminalSessionStore.getState().completeTaskIfAwaiting(activePaneId);
+          finalizeActiveTurn(true);
           finishAgentPrintRun();
           return;
         }
@@ -2110,11 +2148,7 @@ export function useAgentPaneSession({
           return;
         }
 
-        finalizeActiveTurn();
-        useTerminalSessionStore.getState().resetAgentWorkload(activePaneId);
-        setIsAgentReady(true);
-        tryFlushFollowUpQueueRef.current({ force: true });
-        promotePendingFollowUpTurnRef.current();
+        finalizeActiveTurn(true);
         finishAgentPrintRun();
       },
     });
@@ -2163,7 +2197,7 @@ export function useAgentPaneSession({
           if (streamJsonStateRef.current.shouldFinalize) {
             finalizeStreamJsonTurnFromEvent();
           } else {
-            finalizeActiveTurn();
+            finalizeActiveTurn(true);
           }
 
           return;
@@ -2173,14 +2207,23 @@ export function useAgentPaneSession({
           return;
         }
 
-        if (idleMs < STREAM_JSON_ORPHAN_FINALIZE_MS) {
+        const awaitingCompletion = isAgentStreamJsonStateAwaitingCompletion(
+          streamJsonStateRef.current,
+        );
+        const orphanThreshold = awaitingCompletion
+          ? STREAM_JSON_INCOMPLETE_ORPHAN_FINALIZE_MS
+          : STREAM_JSON_ORPHAN_FINALIZE_MS;
+
+        if (idleMs < orphanThreshold) {
           return;
         }
+
+        applyStreamJsonChunk('');
 
         if (streamJsonStateRef.current.shouldFinalize) {
           finalizeStreamJsonTurnFromEvent();
         } else {
-          finalizeActiveTurn();
+          finalizeActiveTurn(true);
         }
       });
     }, STREAM_JSON_IDLE_CHECK_MS);
@@ -2189,6 +2232,7 @@ export function useAgentPaneSession({
       window.clearInterval(intervalId);
     };
   }, [
+    applyStreamJsonChunk,
     clearAgentPrintRunToken,
     finalizeActiveTurn,
     finalizeStreamJsonTurnFromEvent,
@@ -2235,8 +2279,7 @@ export function useAgentPaneSession({
       );
 
       if (detectSlashAutocompleteInTail(outputTailRef.current) || !hasProgress) {
-        finalizeActiveTurn();
-        useTerminalSessionStore.getState().completeTaskIfAwaiting(paneIdRef.current);
+        finalizeActiveTurn(true);
         window.clearInterval(intervalId);
       }
     }, STUCK_TURN_CHECK_MS);

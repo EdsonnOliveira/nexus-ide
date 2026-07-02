@@ -195,6 +195,7 @@ export function isImageAttachmentName(name: string): boolean {
 export function mergeProjectTasks(
   currentTasks: ProjectTask[],
   remoteTasks: ProjectTask[],
+  hiddenExternalTaskIds: ReadonlySet<string> = new Set(),
 ): ProjectTask[] {
   const localTasks = currentTasks.filter((task) => task.source === 'local');
   const existingByExternalId = new Map(
@@ -203,18 +204,20 @@ export function mergeProjectTasks(
       .map((task) => [task.externalId!, task]),
   );
 
-  const mergedRemote = remoteTasks.map((remote) => {
-    const existing = remote.externalId ? existingByExternalId.get(remote.externalId) : undefined;
+  const mergedRemote = remoteTasks
+    .filter((remote) => !remote.externalId || !hiddenExternalTaskIds.has(remote.externalId))
+    .map((remote) => {
+      const existing = remote.externalId ? existingByExternalId.get(remote.externalId) : undefined;
 
-    if (!existing) {
-      return remote;
-    }
+      if (!existing) {
+        return remote;
+      }
 
-    return {
-      ...remote,
-      id: existing.id,
-    };
-  });
+      return {
+        ...remote,
+        id: existing.id,
+      };
+    });
 
   return [...localTasks, ...mergedRemote];
 }

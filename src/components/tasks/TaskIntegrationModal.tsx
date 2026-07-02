@@ -3,6 +3,7 @@ import { Eye, EyeOff } from 'lucide-react';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
 import type {
+  TaskCredentialStatus,
   TaskCredentialsPayload,
   TaskIntegrationConfig,
   TaskIntegrationPlatform,
@@ -85,6 +86,7 @@ function TaskIntegrationModalComponent({
   const [trelloBoards, setTrelloBoards] = useState<Array<{ value: string; label: string }>>([]);
   const [deepcrmPipelines, setDeepcrmPipelines] = useState<Array<{ value: string; label: string }>>([]);
   const [error, setError] = useState<string | null>(null);
+  const [credentialStatus, setCredentialStatus] = useState<TaskCredentialStatus | null>(null);
   const [isLoadingOptions, setIsLoadingOptions] = useState(false);
   const [credentialsLoaded, setCredentialsLoaded] = useState(false);
 
@@ -167,14 +169,38 @@ function TaskIntegrationModalComponent({
 
   useEffect(() => {
     void (async () => {
-      const saved = await window.nexus.tasks.getCredentials(projectId);
+      const [saved, status] = await Promise.all([
+        window.nexus.tasks.getCredentials(projectId),
+        window.nexus.tasks.getCredentialStatus(projectId),
+      ]);
       setJiraApiToken(saved.jiraApiToken ?? '');
       setTrelloApiKey(saved.trelloApiKey ?? '');
       setTrelloToken(saved.trelloToken ?? '');
       setDeepcrmApiToken(saved.deepcrmApiToken ?? '');
+      setCredentialStatus(status);
       setCredentialsLoaded(true);
     })();
   }, [projectId]);
+
+  useEffect(() => {
+    if (!credentialsLoaded) {
+      return;
+    }
+
+    if (platform === 'deepcrm' && credentialStatus?.deepcrmApiToken === 'unreadable') {
+      setError('Token salvo não pôde ser lido. Cole o token novamente e clique em Salvar.');
+      return;
+    }
+
+    if (platform === 'jira' && credentialStatus?.jiraApiToken === 'unreadable') {
+      setError('Token salvo não pôde ser lido. Cole o token novamente e clique em Salvar.');
+      return;
+    }
+
+    if (platform === 'trello' && (credentialStatus?.trelloApiKey === 'unreadable' || credentialStatus?.trelloToken === 'unreadable')) {
+      setError('Credenciais salvas não puderam ser lidas. Informe novamente e clique em Salvar.');
+    }
+  }, [credentialStatus, credentialsLoaded, platform]);
 
   useEffect(() => {
     if (!credentialsLoaded || platform === 'none') {

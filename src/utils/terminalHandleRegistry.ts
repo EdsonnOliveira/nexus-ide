@@ -1,4 +1,4 @@
-import type { XTermViewHandle } from '@/components/terminal/XTermView';
+import type { XTermViewHandle } from '@/types';
 
 const terminalHandles = new Map<string, XTermViewHandle>();
 

@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useProjectStore } from '@/stores/useProjectStore';
+import type { TaskIntegrationPlatform } from '@/types/task';
+import { formatDeepcrmIntegrationError } from '@/utils/deepcrmIntegration';
+import { formatTaskIntegrationError } from '@/utils/jiraIntegration';
 import { areProjectTasksEqual, mergeProjectTasks } from '@/utils/taskLabels';
+
+function formatTaskSyncError(error: unknown, platform?: TaskIntegrationPlatform): string {
+  if (platform === 'deepcrm') {
+    return formatDeepcrmIntegrationError(error);
+  }
+
+  return formatTaskIntegrationError(error);
+}
 
 const TASK_SYNC_INTERVAL_MS = 60_000;
 
@@ -44,7 +55,8 @@ export function useTaskSync(projectId: string | null): {
       try {
         const result = await window.nexus.tasks.sync(projectId);
         const currentTasks = project.tasks ?? [];
-        const merged = mergeProjectTasks(currentTasks, result.tasks);
+        const hiddenExternalTaskIds = new Set(project.taskIntegration?.hiddenExternalTaskIds ?? []);
+        const merged = mergeProjectTasks(currentTasks, result.tasks, hiddenExternalTaskIds);
         const currentIntegration = project.taskIntegration;
         const nextIntegration =
           currentIntegration && (result.jiraAccountName || result.deepcrmAccountName)
@@ -75,7 +87,7 @@ export function useTaskSync(projectId: string | null): {
 
         setSyncError(null);
       } catch (error) {
-        setSyncError(error instanceof Error ? error.message : 'Falha ao sincronizar tarefas');
+        setSyncError(formatTaskSyncError(error, project.taskIntegration?.platform));
       } finally {
         isRunningRef.current = false;
 

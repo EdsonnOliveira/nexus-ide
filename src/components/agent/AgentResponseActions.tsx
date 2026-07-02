@@ -1,6 +1,7 @@
 import { memo, useCallback, useMemo } from 'react';
 import { AgentProjectSkillPills } from '@/components/agent/AgentProjectSkillPills';
 import { AgentResponseCopyPill } from '@/components/agent/AgentResponseCopyPill';
+import { AgentResponseGitCommitPill } from '@/components/agent/AgentResponseGitCommitPill';
 import { useProjectStore } from '@/stores/useProjectStore';
 import {
   useAgentGitChangeStore,
@@ -59,6 +60,30 @@ function findGroupForTurn(
   return candidates[0] ?? null;
 }
 
+function buildFallbackCommitGroup(
+  projectId: string,
+  paneId: string,
+  summary: AgentTurnSummary,
+  content: string,
+): AgentGitChangeGroup {
+  return {
+    id: `agent-commit-${paneId}-${summary.additions}-${summary.deletions}`,
+    paneId,
+    projectId,
+    prompt: content.trim() || 'Alterações do agent',
+    files: (summary.editedFiles ?? []).map((file) => ({
+      path: file.path,
+      status: 'modified',
+      staged: false,
+      additions: 0,
+      deletions: 0,
+    })),
+    additions: summary.additions,
+    deletions: summary.deletions,
+    completedAt: Date.now(),
+  };
+}
+
 function AgentResponseChangesPill({
   additions,
   deletions,
@@ -105,6 +130,14 @@ function AgentResponseActionsComponent({
     [groups, paneId, showChangesPill, summary],
   );
 
+  const commitGroup = useMemo(() => {
+    if (!showChangesPill || !summary) {
+      return null;
+    }
+
+    return matchedGroup ?? buildFallbackCommitGroup(projectId, paneId, summary, content);
+  }, [content, matchedGroup, paneId, projectId, showChangesPill, summary]);
+
   const handleOpenChanges = useCallback(() => {
     if (matchedGroup) {
       setFocusedGroupId(matchedGroup.id);
@@ -117,12 +150,21 @@ function AgentResponseActionsComponent({
     <div
       className={`agent-view__response-actions${showSkillPills ? '' : ' agent-view__response-actions--copy-only'}${showChangesPill ? ' agent-view__response-actions--with-changes' : ''}`}
     >
-      {showChangesPill && summary ? (
-        <AgentResponseChangesPill
-          additions={summary.additions}
-          deletions={summary.deletions}
-          onClick={handleOpenChanges}
-        />
+      {showChangesPill && summary && commitGroup ? (
+        <div
+          className={`agent-view__response-actions-leading${showSkillPills ? ' agent-view__response-actions-leading--always-visible' : ''}`}
+        >
+          <AgentResponseChangesPill
+            additions={summary.additions}
+            deletions={summary.deletions}
+            onClick={handleOpenChanges}
+          />
+          <AgentResponseGitCommitPill
+            projectPath={projectPath}
+            paneId={paneId}
+            group={commitGroup}
+          />
+        </div>
       ) : null}
       <div className='agent-view__response-actions-trailing'>
         {showSkillPills ? (

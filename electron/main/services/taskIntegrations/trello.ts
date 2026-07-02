@@ -1,10 +1,11 @@
 import https from 'node:https';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { ProjectTask, TaskAttachment, TaskIntegrationConfig } from '../../../types/task';
 import type { TaskCredentialSecrets } from '../taskCredentialStore';
 import { isImageAttachmentName } from '../../../types/task';
+import { ensureNexusProjectDir } from '../nexusProjectGitignore';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -131,8 +132,7 @@ async function downloadTrelloAttachments(
   taskId: string,
   attachments: TrelloAttachment[],
 ): Promise<TaskAttachment[]> {
-  const targetDir = path.join(projectPath, '.nexus', 'tasks', taskId);
-  await mkdir(targetDir, { recursive: true });
+  const targetDir = await ensureNexusProjectDir(projectPath, 'tasks', taskId);
 
   const saved: TaskAttachment[] = [];
 

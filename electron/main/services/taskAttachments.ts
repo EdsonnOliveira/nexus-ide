@@ -1,8 +1,9 @@
-import { copyFile, mkdir, writeFile } from 'node:fs/promises';
+import { copyFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { TaskAttachment } from '../../types/task';
 import { isImageAttachmentName } from '../../types/task';
+import { ensureNexusProjectDir } from './nexusProjectGitignore';
 
 function resolveImageExtension(mimeType: string): string {
   if (mimeType === 'image/jpeg') {
@@ -25,8 +26,7 @@ export async function saveTaskAttachment(
   taskId: string,
   sourcePath: string,
 ): Promise<TaskAttachment> {
-  const targetDir = path.join(projectPath, '.nexus', 'tasks', taskId);
-  await mkdir(targetDir, { recursive: true });
+  const targetDir = await ensureNexusProjectDir(projectPath, 'tasks', taskId);
 
   const fileName = path.basename(sourcePath);
   const safeName = sanitizeAttachmentName(fileName);
@@ -57,9 +57,7 @@ export async function saveTaskAttachmentFromDataUrl(
   const base64 = match[2];
   const extension = resolveImageExtension(mimeType);
   const fileName = `clipboard-${Date.now()}.${extension}`;
-  const targetDir = path.join(projectPath, '.nexus', 'tasks', taskId);
-
-  await mkdir(targetDir, { recursive: true });
+  const targetDir = await ensureNexusProjectDir(projectPath, 'tasks', taskId);
 
   const targetPath = path.join(targetDir, `${randomUUID()}-${sanitizeAttachmentName(fileName)}`);
 

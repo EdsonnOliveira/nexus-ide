@@ -56,5 +56,9 @@ export function formatTaskIntegrationError(error: unknown): string {
     return 'A API de busca do Jira foi descontinuada. Atualize o Nexus IDE e tente sincronizar novamente.';
   }
 
+  if (/ilegível/i.test(normalized)) {
+    return 'API token do Jira não pôde ser lido. Abra Integração de tarefas, cole o token novamente e salve.';
+  }
+
   return normalized;
 }

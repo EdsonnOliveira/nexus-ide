@@ -1,20 +1,14 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { TaskAgentModeModal } from '@/components/tasks/TaskAgentModeModal';
-import { TaskAgentPickerModal } from '@/components/tasks/TaskAgentPickerModal';
 import { TaskDetailModal } from '@/components/tasks/TaskDetailModal';
 import { TaskFormModal } from '@/components/tasks/TaskFormModal';
 import { TaskIntegrationModal } from '@/components/tasks/TaskIntegrationModal';
 import { TaskJsonModal } from '@/components/tasks/TaskJsonModal';
 import { TaskListView } from '@/components/tasks/TaskListView';
+import { useProjectTaskExecution } from '@/hooks/useProjectTaskExecution';
 import { useTaskSync } from '@/hooks/useTaskSync';
-import type { AutomationAgentMode } from '@/constants/agentModes';
 import { usePendingTaskViewStore } from '@/stores/usePendingTaskViewStore';
 import { useProjectStore } from '@/stores/useProjectStore';
-import { useTabActions } from '@/stores/useTabStore';
 import type { ProjectTask, TaskCredentialsPayload, TaskIntegrationConfig } from '@/types/task';
-import { collectOpenAgentPanes } from '@/utils/collectOpenAgentPanes';
-import { executeTaskInAgent } from '@/utils/executeTaskInAgent';
-import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
 import {
   LOCAL_TASK_STATUS_DONE,
   LOCAL_TASK_STATUS_PENDING,
@@ -28,13 +22,11 @@ interface ProjectTasksDrawerProps {
 function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
   const project = useProjectStore((state) => state.projects.find((item) => item.id === projectId) ?? null);
   const updateProject = useProjectStore((state) => state.updateProject);
-  const { selectPane, addAgentTab } = useTabActions();
+  const { executeTask, executionModals } = useProjectTaskExecution(projectId);
   const { isSyncing, syncError } = useTaskSync(projectId);
   const [formTask, setFormTask] = useState<ProjectTask | null | undefined>(undefined);
   const [detailTask, setDetailTask] = useState<ProjectTask | null>(null);
   const [integrationOpen, setIntegrationOpen] = useState(false);
-  const [executeTarget, setExecuteTarget] = useState<ProjectTask | null>(null);
-  const [selectedPaneId, setSelectedPaneId] = useState<string | null>(null);
   const [importJsonOpen, setImportJsonOpen] = useState(false);
   const pendingTaskView = usePendingTaskViewStore((state) => state.pending);
   const clearPendingTaskView = usePendingTaskViewStore((state) => state.clearPending);
@@ -67,7 +59,6 @@ function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
     setDetailTask(task);
     clearPendingTaskView();
   }, [clearPendingTaskView, pendingTaskView, projectId, tasks]);
-  const openAgents = useMemo(() => (project ? collectOpenAgentPanes(project) : []), [project]);
 
   const persistTasks = useCallback(
     async (nextTasks: ProjectTask[]) => {
@@ -132,9 +123,39 @@ function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
 
   const handleDeleteTask = useCallback(
     async (task: ProjectTask) => {
-      await persistTasks(tasks.filter((item) => item.id !== task.id));
+      if (!project) {
+        return;
+      }
+
+      const nextTasks = tasks.filter((item) => item.id !== task.id);
+
+      if (task.source === 'local' || !task.externalId?.trim()) {
+        await persistTasks(nextTasks);
+        return;
+      }
+
+      const currentIntegration = project.taskIntegration;
+
+      if (!currentIntegration) {
+        await persistTasks(nextTasks);
+        return;
+      }
+
+      const externalId = task.externalId.trim();
+      const hiddenExternalTaskIds = [
+        ...(currentIntegration.hiddenExternalTaskIds ?? []),
+        externalId,
+      ].filter((id, index, array) => array.indexOf(id) === index);
+
+      await updateProject(project.id, {
+        tasks: nextTasks,
+        taskIntegration: {
+          ...currentIntegration,
+          hiddenExternalTaskIds,
+        },
+      });
     },
-    [persistTasks, tasks],
+    [persistTasks, project, tasks, updateProject],
   );
 
   const handleViewTask = useCallback((task: ProjectTask) => {
@@ -196,58 +217,6 @@ function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
     [project, tasks, updateProject],
   );
 
-  const handleExecute = useCallback(
-    (task: ProjectTask) => {
-      void (async () => {
-        if (!project) {
-          return;
-        }
-
-        if (openAgents.length === 0) {
-          const command = await resolveAgentLaunchCommand(project.path);
-          await addAgentTab(command);
-          const freshProject = useProjectStore.getState().projects.find((item) => item.id === project.id);
-          const paneId = freshProject?.activeTabId ?? null;
-
-          setExecuteTarget(task);
-          setSelectedPaneId(paneId);
-          return;
-        }
-
-        setExecuteTarget(task);
-        setSelectedPaneId(openAgents.length === 1 ? openAgents[0].pane.id : null);
-      })();
-    },
-    [addAgentTab, openAgents, project],
-  );
-
-  const handleSelectAgent = useCallback((paneId: string) => {
-    setSelectedPaneId(paneId);
-  }, []);
-
-  const handleSelectMode = useCallback(
-    (mode: AutomationAgentMode) => {
-      if (!project || !executeTarget || !selectedPaneId) {
-        return;
-      }
-
-      const targetTask = executeTarget;
-      const paneId = selectedPaneId;
-
-      setExecuteTarget(null);
-      setSelectedPaneId(null);
-
-      void executeTaskInAgent({
-        project,
-        task: targetTask,
-        paneId,
-        agentMode: mode,
-        selectPane,
-      });
-    },
-    [executeTarget, project, selectPane, selectedPaneId],
-  );
-
   if (!project) {
     return null;
   }
@@ -265,7 +234,7 @@ function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
         onCreate={handleCreate}
         onImportJson={handleImportJson}
         onView={handleViewTask}
-        onExecute={handleExecute}
+        onExecute={executeTask}
         onCopyJson={handleCopyJson}
         onCompleteTask={handleCompleteTask}
         onReopenTask={handleReopenTask}
@@ -287,7 +256,7 @@ function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
                 }
               : undefined
           }
-          onExecute={() => handleExecute(detailTask)}
+          onExecute={() => executeTask(detailTask)}
         />
       ) : null}
       {formTask !== undefined ? (
@@ -315,22 +284,7 @@ function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
           onSave={(integration, credentials) => void handleSaveIntegration(integration, credentials)}
         />
       ) : null}
-      {executeTarget && !selectedPaneId ? (
-        <TaskAgentPickerModal
-          agents={openAgents}
-          onClose={() => setExecuteTarget(null)}
-          onSelect={handleSelectAgent}
-        />
-      ) : null}
-      {executeTarget && selectedPaneId ? (
-        <TaskAgentModeModal
-          onClose={() => {
-            setExecuteTarget(null);
-            setSelectedPaneId(null);
-          }}
-          onSelect={handleSelectMode}
-        />
-      ) : null}
+      {executionModals}
     </aside>
   );
 }

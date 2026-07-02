@@ -13,6 +13,7 @@ import {
   EMPTY_TASK_FILTERS,
   filterProjectTasks,
 } from '@/utils/taskFilters';
+import { formatTaskSource } from '@/utils/taskLabels';
 
 interface TaskListViewProps {
   projectId: string;
@@ -144,6 +145,27 @@ function TaskListViewComponent({
     [deleteTarget, onDeleteTask],
   );
 
+  const deleteTargetMessage = useMemo(() => {
+    if (!deleteTarget) {
+      return null;
+    }
+
+    if (deleteTarget.source === 'local') {
+      return (
+        <>
+          Tem certeza que deseja excluir <strong>{deleteTarget.title}</strong>?
+        </>
+      );
+    }
+
+    return (
+      <>
+        Remover <strong>{deleteTarget.title}</strong> da IDE? A tarefa continuará no{' '}
+        {formatTaskSource(deleteTarget.source)}.
+      </>
+    );
+  }, [deleteTarget]);
+
   return (
     <>
       <div className='project-explorer__header'>
@@ -153,7 +175,14 @@ function TaskListViewComponent({
             <span className='tasks-drawer__sync-status'>Sincronizando…</span>
           ) : null}
           {hasIntegration && syncError ? (
-            <span className='tasks-drawer__sync-error'>{syncError}</span>
+            <button
+              type='button'
+              className='tasks-drawer__sync-error app-button'
+              title={syncError}
+              onClick={onOpenIntegration}
+            >
+              {syncError}
+            </button>
           ) : null}
           <button
             type='button'
@@ -243,10 +272,10 @@ function TaskListViewComponent({
         <AnimatedModal onClose={() => setDeleteTarget(null)} panelClassName='project-dialog'>
           {(requestClose) => (
             <>
-              <span className='project-dialog__title'>Excluir tarefa</span>
-              <p className='project-dialog__message'>
-                Tem certeza que deseja excluir <strong>{deleteTarget.title}</strong>?
-              </p>
+              <span className='project-dialog__title'>
+                {deleteTarget.source === 'local' ? 'Excluir tarefa' : 'Remover da IDE'}
+              </span>
+              <p className='project-dialog__message'>{deleteTargetMessage}</p>
               <div className='project-dialog__actions'>
                 <button
                   type='button'

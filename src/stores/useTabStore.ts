@@ -1,5 +1,6 @@
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
+import { useAgentComposerDraftStore } from '@/stores/useAgentComposerDraftStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { bumpFileExternalRevision } from '@/utils/fileExternalRevision';
 import type { AgentTab, ApiTab, BrowserTab, EmulatorPlatform, EmulatorTab, FileTab, Tab, TabBarItem, TabType, TerminalAgent } from '@/types';
@@ -9,6 +10,7 @@ import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
 import { buildCursorAgentResumeCommand } from '@/utils/cursorAgentResume';
 import { parseCursorAgentHistoryTranscript } from '@/utils/parseCursorAgentHistoryTranscript';
 import { hydrateAgentTurns } from '@/utils/agentPromptAttachments';
+import { sanitizeAgentTurnHistory } from '@/utils/trimAgentTurnHistory';
 import { stopAgentPane } from '@/utils/agentPaneRegistry';
 import { normalizeBrowserUrl } from '@/utils/browserUrl';
 import { createBadgeColorIndex } from '@/utils/tabBadge';
@@ -95,6 +97,10 @@ function killTabBarItem(item: TabBarItem): void {
     if (pane.type === 'terminal' || pane.type === 'agent') {
       useProjectNotificationStore.getState().clearNotificationForPane(pane.id);
       useTerminalSessionStore.getState().disposePaneSession(pane.id);
+
+      if (pane.type === 'agent') {
+        useAgentComposerDraftStore.getState().clearDraft(pane.id);
+      }
 
       if (pane.ptyId) {
         window.nexus.terminal.kill(pane.ptyId);
@@ -403,7 +409,9 @@ export function useTabActions(): TabStoreActions {
         }
 
         const turns = transcriptRaw ? parseCursorAgentHistoryTranscript(transcriptRaw) : [];
-        const hydratedTurns = await hydrateAgentTurns(workspacePath, turns);
+        const hydratedTurns = sanitizeAgentTurnHistory(
+          await hydrateAgentTurns(workspacePath, turns),
+        );
 
         session.setResumeChatId(tabId, chatId);
         session.setActiveAgent(tabId, 'cursor-agent');
@@ -1006,8 +1014,13 @@ export function useTabActions(): TabStoreActions {
         return;
       }
 
+      const patchWithTrim =
+        patch.turns !== undefined
+          ? { ...patch, turns: sanitizeAgentTurnHistory(patch.turns) }
+          : patch;
+
       const nextTabs = updatePaneInTabs(project.tabs, tabId, (entry) =>
-        entry.type === 'agent' ? { ...entry, ...patch } : entry,
+        entry.type === 'agent' ? { ...entry, ...patchWithTrim } : entry,
       );
 
       useProjectStore.setState((state) => ({

@@ -7,7 +7,7 @@ import type {
 import type { Automation } from '@/types/automation';
 import type { PasswordCollection } from '@/types/password';
 import type { AgentGitChangeGroup } from '@/types/agentGit';
-import type { ProjectTask, TaskAttachment, TaskComment, TaskCredentialsPayload, TaskDetailData, TaskIntegrationConfig, TaskSyncResult } from '@/types/task';
+import type { ProjectTask, TaskAttachment, TaskComment, TaskCredentialStatus, TaskCredentialsPayload, TaskDetailData, TaskIntegrationConfig, TaskSyncResult } from '@/types/task';
 import type {
   GitBranchInfo,
   GitCommandResult,
@@ -455,6 +455,7 @@ export interface TerminalCommandHint {
   label: string;
   command: string;
   hintKind?: 'skill' | 'mode' | 'model';
+  skillOrigin?: 'user' | 'builtin';
 }
 
 export interface AppleMusicUpcomingTrack {
@@ -632,11 +633,33 @@ export interface CursorPeriodUsageSnapshot {
   error: string | null;
 }
 
+export interface XTermViewHandle {
+  focus: () => void;
+  write: (data: string) => void;
+  isWritable: () => boolean;
+  interruptAndRun: (command: string) => Promise<void>;
+  removeImageFromPrompt: (imageId: number) => void;
+}
+
 export interface TerminalPasteImageSaved {
   absolutePath: string;
   relativePath: string;
   fileName: string;
 }
+
+export interface HomeDashboardDayStats {
+  commits: number;
+  linesChanged: number;
+  agentExecutions: number;
+  prompts: number;
+}
+
+export interface HomeDashboardActivityComparison {
+  today: HomeDashboardDayStats;
+  yesterday: HomeDashboardDayStats;
+}
+
+export type HomeDashboardActivityKind = 'prompts' | 'agentExecutions';
 
 export interface NexusAPI {
   projects: {
@@ -701,6 +724,7 @@ export interface NexusAPI {
       credentials: TaskCredentialsPayload,
     ) => Promise<void>;
     getCredentials: (projectId: string) => Promise<TaskCredentialsPayload>;
+    getCredentialStatus: (projectId: string) => Promise<TaskCredentialStatus>;
     clearCredentials: (projectId: string) => Promise<void>;
     openExternalUrl: (url: string) => Promise<void>;
     testConnection: (
@@ -861,6 +885,10 @@ export interface NexusAPI {
     unwatch: (dirPath: string) => Promise<void>;
     invalidateCache: (dirPath: string) => Promise<void>;
     onRepoChange: (callback: (repoPath: string) => void) => () => void;
+  };
+  homeDashboard: {
+    getStats: (projectPaths: string[]) => Promise<HomeDashboardActivityComparison>;
+    recordActivity: (kind: HomeDashboardActivityKind) => Promise<void>;
   };
   onToggleExplorer: (callback: () => void) => () => void;
   onOpenTabAddMenu: (callback: () => void) => () => void;

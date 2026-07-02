@@ -59,7 +59,7 @@ function TaskListItemComponent({ task, onView, onExecute, onContextMenu }: TaskL
 
   const handleContextMenu = useCallback(
     (event: React.MouseEvent) => {
-      if (task.source !== 'local' || !onContextMenu) {
+      if (!onContextMenu) {
         return;
       }
 
@@ -71,17 +71,17 @@ function TaskListItemComponent({ task, onView, onExecute, onContextMenu }: TaskL
   );
 
   const isCompleted = isLocalTaskCompleted(task);
-  const isManualTask = task.source === 'local';
+  const isLocalTask = task.source === 'local';
   const descriptionPreview = useMemo(
-    () => (isManualTask ? resolveTaskDescriptionFirstLine(task.description) : ''),
-    [isManualTask, task.description],
+    () => (isLocalTask ? resolveTaskDescriptionFirstLine(task.description) : ''),
+    [isLocalTask, task.description],
   );
 
   const PriorityIcon = priority?.Icon;
 
   return (
     <div
-      className={`tasks-drawer__row${coverVisible ? ' tasks-drawer__row--with-cover' : ''}${isCompleted ? ' tasks-drawer__row--completed' : ''}${isManualTask ? ' tasks-drawer__row--manual' : ''}`}
+      className={`tasks-drawer__row${coverVisible ? ' tasks-drawer__row--with-cover' : ''}${isCompleted ? ' tasks-drawer__row--completed' : ''}${isLocalTask ? ' tasks-drawer__row--manual' : ''}`}
       role='button'
       tabIndex={0}
       onClick={handleRowClick}

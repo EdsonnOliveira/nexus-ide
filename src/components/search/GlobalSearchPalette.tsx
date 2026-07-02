@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { GLOBAL_SEARCH_NAME, GLOBAL_SEARCH_PLACEHOLDER } from '@/constants/globalSearch';
+import { AgentPromptImageIndexBadge } from '@/components/agent/AgentPromptImageBadges';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import { ExplorerFileIcon } from '@/components/explorer/ExplorerTreeIcon';
 import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
@@ -427,6 +428,7 @@ function GlobalSearchPaletteComponent() {
           <div className='global-search__agent-images' role='list' aria-label='Imagens do prompt'>
             {agentPromptImages.map((image, index) => (
               <div key={image.id} className='global-search__agent-image' role='listitem'>
+                <AgentPromptImageIndexBadge index={index + 1} />
                 <button
                   type='button'
                   className='global-search__agent-image-remove app-button app-button--enter'

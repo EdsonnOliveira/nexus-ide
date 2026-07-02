@@ -1,4 +1,5 @@
 import type { ProjectTask, TaskFilterCategory, TaskListFilters } from '@/types/task';
+import { isLocalTaskCompleted, LOCAL_TASK_STATUS_DONE } from '@/utils/taskJson';
 
 export const TASK_FILTER_NONE_PARENT = '__none__';
 export const TASK_FILTER_UNASSIGNED = '__unassigned__';
@@ -235,7 +236,7 @@ export function filterProjectTasks(
 ): ProjectTask[] {
   const normalizedQuery = query.trim().toLowerCase();
 
-  return tasks.filter((task) => {
+  const filtered = tasks.filter((task) => {
     if (normalizedQuery) {
       const haystack = [
         task.title,
@@ -263,6 +264,12 @@ export function filterProjectTasks(
 
     return matchesTaskFilters(task, filters);
   });
+
+  if (filters.status.includes(LOCAL_TASK_STATUS_DONE)) {
+    return filtered;
+  }
+
+  return filtered.filter((task) => !isLocalTaskCompleted(task));
 }
 
 function matchesTaskFilters(task: ProjectTask, filters: TaskListFilters): boolean {

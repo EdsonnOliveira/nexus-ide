@@ -3,7 +3,7 @@ import { ChevronDown, Maximize2, X } from 'lucide-react';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { useMarkdownCodeHighlight } from '@/hooks/useMarkdownCodeHighlight';
 import type { AgentActivity, AgentPlanStatus } from '@/types';
-import { normalizeMarkdownSource, renderMarkdownPreview } from '@/utils/markdownPreview';
+import { useDeferredMarkdownHtml } from '@/hooks/useMarkdownCodeHighlight';
 
 type AgentPlanReviewMode = 'pending' | 'archive';
 
@@ -122,10 +122,7 @@ function AgentPlanReviewDockComponent({
   const isPending = mode === 'pending';
   const isBuilding = activity.planStatus === 'building';
   const previewMarkdown = useMemo(() => buildPlanPreviewMarkdown(activity), [activity]);
-  const previewHtml = useMemo(
-    () => (previewMarkdown ? renderMarkdownPreview(normalizeMarkdownSource(previewMarkdown)) : ''),
-    [previewMarkdown],
-  );
+  const previewHtml = useDeferredMarkdownHtml(previewMarkdown);
   const archiveStatusLabel = useMemo(
     () => resolvePlanArchiveStatusLabel(activity.planStatus),
     [activity.planStatus],

@@ -26,6 +26,7 @@ function collectSkillsFromDirectory(
   skillsRoot: string,
   seen: Set<string>,
   hints: TerminalCommandHint[],
+  skillOrigin: 'user' | 'builtin',
 ): void {
   if (!existsSync(skillsRoot)) {
     return;
@@ -65,6 +66,7 @@ function collectSkillsFromDirectory(
       label: name,
       command: `/${name}\n`,
       hintKind: 'skill',
+      skillOrigin,
     });
   }
 }
@@ -78,11 +80,21 @@ export function getAgentSkillHints(cwd: string): TerminalCommandHint[] {
   const projectRoot = findProjectRoot(resolvedCwd);
 
   if (projectRoot) {
-    collectSkillsFromDirectory(path.join(projectRoot, '.cursor', 'skills'), seen, userHints);
+    collectSkillsFromDirectory(
+      path.join(projectRoot, '.cursor', 'skills'),
+      seen,
+      userHints,
+      'user',
+    );
   }
 
-  collectSkillsFromDirectory(path.join(home, '.cursor', 'skills'), seen, userHints);
-  collectSkillsFromDirectory(path.join(home, '.cursor', 'skills-cursor'), seen, builtinHints);
+  collectSkillsFromDirectory(path.join(home, '.cursor', 'skills'), seen, userHints, 'user');
+  collectSkillsFromDirectory(
+    path.join(home, '.cursor', 'skills-cursor'),
+    seen,
+    builtinHints,
+    'builtin',
+  );
 
   const sortByLabel = (left: TerminalCommandHint, right: TerminalCommandHint) =>
     left.label.localeCompare(right.label);

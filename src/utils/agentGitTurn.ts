@@ -1,6 +1,5 @@
 import { useAgentGitChangeStore } from '@/stores/useAgentGitChangeStore';
 import { useProjectStore } from '@/stores/useProjectStore';
-import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { resolveRepoPathForAgentTurn } from '@/utils/agentGitDiff';
 import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
 import { persistTerminalCommand } from '@/utils/persistTerminalSession';
@@ -57,24 +56,27 @@ export function trackAgentGitPrompt(paneId: string, prompt: string): void {
     return;
   }
 
-  const session = useTerminalSessionStore.getState();
-  const activeAgent = resolvePaneAgentForGitTurn(
-    paneId,
-    useProjectStore.getState().projects,
-    session.activeAgentByPane,
-  );
+  void (async () => {
+    const { useTerminalSessionStore } = await import('@/stores/useTerminalSessionStore');
+    const session = useTerminalSessionStore.getState();
+    const activeAgent = resolvePaneAgentForGitTurn(
+      paneId,
+      useProjectStore.getState().projects,
+      session.activeAgentByPane,
+    );
 
-  if (!activeAgent) {
-    return;
-  }
+    if (!activeAgent) {
+      return;
+    }
 
-  if (!session.activeAgentByPane[paneId]) {
-    session.setActiveAgent(paneId, activeAgent);
-  }
+    if (!session.activeAgentByPane[paneId]) {
+      session.setActiveAgent(paneId, activeAgent);
+    }
 
-  persistTerminalCommand(paneId, trimmed);
-  useAgentGitChangeStore.getState().rememberPrompt(paneId, trimmed);
-  void beginAgentGitTurn(paneId, trimmed);
+    persistTerminalCommand(paneId, trimmed);
+    useAgentGitChangeStore.getState().rememberPrompt(paneId, trimmed);
+    await beginAgentGitTurn(paneId, trimmed);
+  })();
 }
 
 export function completeAgentGitTurn(paneId: string): void {

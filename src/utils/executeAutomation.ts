@@ -5,6 +5,7 @@ import { buildTabsFromAutomation, collectPendingCommands } from '@/utils/buildAu
 import { buildAgentSetupCommands } from '@/utils/buildAgentSetupCommands';
 import { markAutomationPanesFromRun } from '@/utils/automationPaneExecution';
 import { persistAutomationApiRequests, sendAutomationApiRequests } from '@/utils/automationApiRequest';
+import { bootstrapAutomationPtys } from '@/utils/bootstrapAutomationPtys';
 import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
 import type { Automation } from '@/types/automation';
 
@@ -99,6 +100,8 @@ export async function executeAutomation(automation: Automation, projectId: strin
       activeTabId: built.activeTabId,
       activePaneId: built.activePaneId,
     });
+
+    await bootstrapAutomationPtys(projectId, resolved, freshProject.path);
 
     await sendAutomationApiRequests(projectId, resolved.steps);
   } finally {

@@ -1,6 +1,7 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { resolveDirectoryPath } from './directoryListing';
+import { ensureNexusProjectDir } from './nexusProjectGitignore';
 
 export interface SavedTerminalPasteImage {
   absolutePath: string;
@@ -45,11 +46,10 @@ export async function saveTerminalPasteImage(
   const extension = resolveImageExtension(mimeType);
   const resolvedProject = resolveDirectoryPath(projectPath);
   const paneSegment = sanitizePaneSegment(paneId);
-  const targetDir = path.join(resolvedProject, '.nexus', 'terminal-paste', paneSegment);
+  const targetDir = await ensureNexusProjectDir(resolvedProject, 'terminal-paste', paneSegment);
   const fileName = `paste-${imageIndex}.${extension}`;
   const absolutePath = path.join(targetDir, fileName);
 
-  await mkdir(targetDir, { recursive: true });
   await writeFile(absolutePath, Buffer.from(base64, 'base64'));
 
   const relativePath = path

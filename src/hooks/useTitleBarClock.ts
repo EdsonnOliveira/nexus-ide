@@ -6,14 +6,15 @@ const CLOCK_FORMAT: Intl.DateTimeFormatOptions = {
   month: 'short',
   hour: '2-digit',
   minute: '2-digit',
+  second: '2-digit',
 };
 
 function formatClockLabel(date: Date): string {
   return date.toLocaleString('pt-BR', CLOCK_FORMAT).replace(/\./g, '');
 }
 
-function getMsUntilNextMinute(now: Date): number {
-  return (60 - now.getSeconds()) * 1000 - now.getMilliseconds() + 250;
+function getMsUntilNextSecond(now: Date): number {
+  return 1000 - now.getMilliseconds() + 50;
 }
 
 export function useTitleBarClock(enabled: boolean): string {
@@ -28,7 +29,7 @@ export function useTitleBarClock(enabled: boolean): string {
 
     const schedule = () => {
       setLabel(formatClockLabel(new Date()));
-      timeoutId = window.setTimeout(schedule, getMsUntilNextMinute(new Date()));
+      timeoutId = window.setTimeout(schedule, getMsUntilNextSecond(new Date()));
     };
 
     schedule();

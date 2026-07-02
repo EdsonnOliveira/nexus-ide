@@ -35,6 +35,7 @@ function TaskContextMenuComponent({
     [x, y],
   );
   const isCompleted = isLocalTaskCompleted(task);
+  const isLocalTask = task.source === 'local';
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -79,38 +80,42 @@ function TaskContextMenuComponent({
       role='menu'
       onContextMenu={(event) => event.preventDefault()}
     >
-      <button
-        type='button'
-        className='context-menu__item'
-        role='menuitem'
-        onMouseDown={runAction(() => onCopyJson(task))}
-      >
-        <Copy size={14} strokeWidth={2} aria-hidden />
-        <span>Copiar JSON</span>
-      </button>
-      <div className='context-menu__separator' />
-      {isCompleted ? (
-        <button
-          type='button'
-          className='context-menu__item'
-          role='menuitem'
-          onMouseDown={runAction(() => onReopen(task))}
-        >
-          <RotateCcw size={14} strokeWidth={2} aria-hidden />
-          <span>Reabrir</span>
-        </button>
-      ) : (
-        <button
-          type='button'
-          className='context-menu__item'
-          role='menuitem'
-          onMouseDown={runAction(() => onComplete(task))}
-        >
-          <CheckCircle2 size={14} strokeWidth={2} aria-hidden />
-          <span>Concluir</span>
-        </button>
-      )}
-      <div className='context-menu__separator' />
+      {isLocalTask ? (
+        <>
+          <button
+            type='button'
+            className='context-menu__item'
+            role='menuitem'
+            onMouseDown={runAction(() => onCopyJson(task))}
+          >
+            <Copy size={14} strokeWidth={2} aria-hidden />
+            <span>Copiar JSON</span>
+          </button>
+          <div className='context-menu__separator' />
+          {isCompleted ? (
+            <button
+              type='button'
+              className='context-menu__item'
+              role='menuitem'
+              onMouseDown={runAction(() => onReopen(task))}
+            >
+              <RotateCcw size={14} strokeWidth={2} aria-hidden />
+              <span>Reabrir</span>
+            </button>
+          ) : (
+            <button
+              type='button'
+              className='context-menu__item'
+              role='menuitem'
+              onMouseDown={runAction(() => onComplete(task))}
+            >
+              <CheckCircle2 size={14} strokeWidth={2} aria-hidden />
+              <span>Concluir</span>
+            </button>
+          )}
+          <div className='context-menu__separator' />
+        </>
+      ) : null}
       <button
         type='button'
         className='context-menu__item context-menu__item--danger'

@@ -11,9 +11,22 @@ export interface TaskCredentialSecrets {
   deepcrmApiToken?: string;
 }
 
+export type TaskCredentialFieldStatus = 'missing' | 'readable' | 'unreadable';
+
+export interface TaskCredentialStatus {
+  jiraApiToken: TaskCredentialFieldStatus;
+  trelloApiKey: TaskCredentialFieldStatus;
+  trelloToken: TaskCredentialFieldStatus;
+  deepcrmApiToken: TaskCredentialFieldStatus;
+}
+
 interface CredentialStoreShape {
   secrets: Record<string, Record<string, string>>;
 }
+
+type SecretKey = keyof TaskCredentialSecrets;
+
+const SECRET_KEYS: SecretKey[] = ['jiraApiToken', 'trelloApiKey', 'trelloToken', 'deepcrmApiToken'];
 
 function readSecretValue(encrypted: string | undefined): string | undefined {
   if (!encrypted) {
@@ -21,6 +34,14 @@ function readSecretValue(encrypted: string | undefined): string | undefined {
   }
 
   return decryptCredentialValue(encrypted) ?? undefined;
+}
+
+function resolveFieldStatus(encrypted: string | undefined): TaskCredentialFieldStatus {
+  if (!encrypted) {
+    return 'missing';
+  }
+
+  return readSecretValue(encrypted) ? 'readable' : 'unreadable';
 }
 
 class TaskCredentialStoreService {
@@ -31,9 +52,25 @@ class TaskCredentialStoreService {
     },
   });
 
-  getSecrets(projectId: string): TaskCredentialSecrets {
+  private readEncrypted(projectId: string): Record<string, string> {
     const allSecrets = this.store.get('secrets', {}) as Record<string, Record<string, string>>;
-    const encrypted = allSecrets[projectId] ?? {};
+
+    return allSecrets[projectId] ?? {};
+  }
+
+  getCredentialStatus(projectId: string): TaskCredentialStatus {
+    const encrypted = this.readEncrypted(projectId);
+
+    return {
+      jiraApiToken: resolveFieldStatus(encrypted.jiraApiToken),
+      trelloApiKey: resolveFieldStatus(encrypted.trelloApiKey),
+      trelloToken: resolveFieldStatus(encrypted.trelloToken),
+      deepcrmApiToken: resolveFieldStatus(encrypted.deepcrmApiToken),
+    };
+  }
+
+  getSecrets(projectId: string): TaskCredentialSecrets {
+    const encrypted = this.readEncrypted(projectId);
 
     return {
       jiraApiToken: readSecretValue(encrypted.jiraApiToken),
@@ -44,33 +81,33 @@ class TaskCredentialStoreService {
   }
 
   saveSecrets(projectId: string, secrets: TaskCredentialSecrets): void {
-    const current = this.getSecrets(projectId);
-    const merged: TaskCredentialSecrets = {
-      jiraApiToken: secrets.jiraApiToken ?? current.jiraApiToken,
-      trelloApiKey: secrets.trelloApiKey ?? current.trelloApiKey,
-      trelloToken: secrets.trelloToken ?? current.trelloToken,
-      deepcrmApiToken: secrets.deepcrmApiToken ?? current.deepcrmApiToken,
-    };
     const allSecrets = { ...this.store.get('secrets', {}) } as Record<string, Record<string, string>>;
-    const encrypted: Record<string, string> = {};
+    const stored = { ...(allSecrets[projectId] ?? {}) };
+    const current = this.getSecrets(projectId);
 
-    if (merged.jiraApiToken) {
-      encrypted.jiraApiToken = encryptCredentialValue(merged.jiraApiToken);
+    for (const key of SECRET_KEYS) {
+      const incoming = secrets[key];
+
+      if (incoming !== undefined) {
+        if (incoming) {
+          stored[key] = encryptCredentialValue(incoming);
+        } else {
+          delete stored[key];
+        }
+        continue;
+      }
+
+      if (current[key]) {
+        stored[key] = encryptCredentialValue(current[key]!);
+      }
     }
 
-    if (merged.trelloApiKey) {
-      encrypted.trelloApiKey = encryptCredentialValue(merged.trelloApiKey);
+    if (Object.keys(stored).length === 0) {
+      delete allSecrets[projectId];
+    } else {
+      allSecrets[projectId] = stored;
     }
 
-    if (merged.trelloToken) {
-      encrypted.trelloToken = encryptCredentialValue(merged.trelloToken);
-    }
-
-    if (merged.deepcrmApiToken) {
-      encrypted.deepcrmApiToken = encryptCredentialValue(merged.deepcrmApiToken);
-    }
-
-    allSecrets[projectId] = encrypted;
     this.store.set('secrets', allSecrets);
   }
 

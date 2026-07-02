@@ -6,6 +6,10 @@ import iconModeDebug from '@/assets/icon-mode-debug.svg';
 import iconModeMultitask from '@/assets/icon-mode-multitask.svg';
 import iconModePlan from '@/assets/icon-mode-plan.svg';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
+import {
+  AgentPromptImageIndexBadge,
+  AgentPromptImageMentionText,
+} from '@/components/agent/AgentPromptImageBadges';
 import { getAgentModeOption, type AgentModeBadgeIcon } from '@/constants/agentModes';
 import { useFlipMotion } from '@/hooks/useFlipMotion';
 import type { AgentTurn } from '@/types';
@@ -129,12 +133,12 @@ function AgentUserPromptComponent({
             <div
               className={`agent-view__user-bubble${isMultilineBubble ? ' agent-view__user-bubble--multiline' : ''}${hasSkillPrompt ? ' agent-view__user-bubble--skill' : ''}`}
             >
-              {bubbleContent}
+              <AgentPromptImageMentionText text={bubbleContent} />
             </div>
           ) : null}
           {attachments.length > 0 ? (
             <div className='agent-view__attachments'>
-              {attachments.map((attachment) => (
+              {attachments.map((attachment, index) => (
                 <button
                   key={attachment.id}
                   type='button'
@@ -142,6 +146,7 @@ function AgentUserPromptComponent({
                   aria-label={attachment.label}
                   onClick={() => setPreviewUrl(attachment.dataUrl)}
                 >
+                  <AgentPromptImageIndexBadge index={index + 1} />
                   <img src={attachment.dataUrl} alt='' className='agent-view__attachment-thumb' />
                 </button>
               ))}

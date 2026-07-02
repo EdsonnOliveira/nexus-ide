@@ -9,6 +9,7 @@ export interface AttachedAgentPromptImage {
   absolutePath: string;
   dataUrl: string;
   reference: string;
+  imageNumber: number;
 }
 
 export async function saveAgentPromptImage(
@@ -34,6 +35,7 @@ export async function saveAgentPromptImage(
       absolutePath: saved.absolutePath,
       dataUrl,
       reference,
+      imageNumber: nextIndex,
     };
   } catch {
     return null;
@@ -91,7 +93,7 @@ export async function attachAgentPromptImageToPane(
   paneId: string,
   dataUrl: string,
   writeToPrompt = true,
-): Promise<string | null> {
+): Promise<AttachedAgentPromptImage | null> {
   const attached = await saveAgentPromptImage(projectPath, paneId, dataUrl);
 
   if (!attached) {
@@ -106,7 +108,7 @@ export async function attachAgentPromptImageToPane(
     }
   }
 
-  return attached.reference;
+  return attached;
 }
 
 export async function attachAgentPromptImagesToPane(
@@ -114,14 +116,14 @@ export async function attachAgentPromptImagesToPane(
   paneId: string,
   dataUrls: string[],
   writeToPrompt = true,
-): Promise<string[]> {
-  const references: string[] = [];
+): Promise<AttachedAgentPromptImage[]> {
+  const references: AttachedAgentPromptImage[] = [];
 
   for (const dataUrl of dataUrls) {
-    const reference = await attachAgentPromptImageToPane(projectPath, paneId, dataUrl, writeToPrompt);
+    const attached = await attachAgentPromptImageToPane(projectPath, paneId, dataUrl, writeToPrompt);
 
-    if (reference) {
-      references.push(reference);
+    if (attached) {
+      references.push(attached);
     }
   }
 

@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react';
 import type { CalendarEventItem } from '@/types';
 import { stripTrailingUrlChars } from '@/utils/terminalUrlExtract';
 
-export const CALENDAR_EVENT_HIDE_AFTER_MS = 2 * 60 * 60 * 1000;
+export const CALENDAR_EVENT_HIDE_AFTER_MS = 30 * 60 * 1000;
 
 export const CALENDAR_URGENT_BEFORE_MS = 5 * 60 * 1000;
 export const CALENDAR_URGENT_AFTER_MS = 10 * 60 * 1000;
@@ -32,11 +32,11 @@ export type CalendarTextSegment =
 const CALENDAR_TEXT_URL_REGEX = /https?:\/\/[^\s<>"']+/gi;
 
 export function isCalendarEventStillVisible(event: CalendarEventItem, now: number): boolean {
-  if (!Number.isFinite(event.endAt) || event.endAt <= 0) {
+  if (!Number.isFinite(event.startAt) || event.startAt <= 0) {
     return true;
   }
 
-  return now <= event.endAt + CALENDAR_EVENT_HIDE_AFTER_MS;
+  return now <= event.startAt + CALENDAR_EVENT_HIDE_AFTER_MS;
 }
 
 function parseHexColor(hex: string): { r: number; g: number; b: number } | null {

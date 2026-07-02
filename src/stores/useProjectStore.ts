@@ -1,21 +1,15 @@
 import { create } from 'zustand';
 import type { AppState, MailMailboxRef, Project, ProjectUpdatePayload, Tab, TabBarItem, Workspace } from '@/types';
 import { migrateLegacyProjectTabs } from '@/utils/migrateTabs';
-import { hydrateTerminalSessionFromProjects, restoreActiveAgentsFromProjects } from '@/utils/hydrateTerminalSession';
-import { useAgentGitChangeStore } from '@/stores/useAgentGitChangeStore';
+import { rawAgentTurnHistoryNeedsTrim, trimAgentTurnsInTabBarItems } from '@/utils/trimAgentTurnHistory';
 import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
-import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
-import { flushTerminalSessionsNow } from '@/utils/persistTerminalSession';
-import {
-  flushAgentGitGroupsNow,
-  hydrateAgentGitGroupsFromProjects,
-} from '@/utils/persistAgentGitGroups';
 import {
   countBusyAgentPanes,
   beginProjectSwitch,
   endProjectSwitch,
   persistLeavingProjectState,
+  resetProjectSwitchState,
 } from '@/utils/projectSwitch';
 import { findPaneTab, updatePaneInTabs } from '@/utils/tabGroups';
 import {
@@ -58,6 +52,7 @@ interface ProjectStoreState {
   sidebarVideoSession: SidebarVideoSession | null;
   sidebarVideoLastLink: string | null;
   initialized: boolean;
+  projectsMigrated: boolean;
   initialize: () => Promise<void>;
   addProject: () => Promise<void>;
   removeProject: (id: string) => Promise<void>;
@@ -105,6 +100,31 @@ function migrateLegacyGlobalWhatsAppLink(appState: AppState): AppState {
   };
 }
 
+function migrateProject(project: Project, fallbackWorkspaceId: string): Project {
+  const legacyProject = project as Project & { layout?: unknown };
+  const migrated = migrateLegacyProjectTabs(
+    legacyProject.tabs,
+    legacyProject.layout as never,
+    legacyProject.activeTabId,
+    legacyProject.path,
+  );
+
+  return {
+    ...legacyProject,
+    workspaceId: legacyProject.workspaceId ?? fallbackWorkspaceId,
+    iconCustomized: legacyProject.iconCustomized ?? legacyProject.icon.startsWith('preset:'),
+    tabs: trimAgentTurnsInTabBarItems(migrated.tabs),
+    activeTabId: migrated.activeTabId,
+    activePaneId: migrated.activePaneId,
+    automations: legacyProject.automations ?? [],
+    whatsappLink: legacyProject.whatsappLink ?? null,
+    mailInbox: legacyProject.mailInbox ?? null,
+    agentGitGroups: legacyProject.agentGitGroups ?? [],
+    agentResponseSkills: legacyProject.agentResponseSkills ?? [],
+    flag: legacyProject.flag ?? null,
+  };
+}
+
 function migrateAppState(appState: AppState): AppState {
   const workspaces =
     appState.workspaces.length > 0
@@ -117,30 +137,39 @@ function migrateAppState(appState: AppState): AppState {
     ...appState,
     workspaces,
     activeWorkspaceId: appState.activeWorkspaceId ?? null,
-    projects: appState.projects.map((project) => {
-      const legacyProject = project as Project & { layout?: unknown };
-      const migrated = migrateLegacyProjectTabs(
-        legacyProject.tabs,
-        legacyProject.layout as never,
-        legacyProject.activeTabId,
-        legacyProject.path,
-      );
+    projects: appState.projects.map((project) => migrateProject(project, fallbackWorkspaceId)),
+  });
+}
 
-      return {
-        ...legacyProject,
-        workspaceId: legacyProject.workspaceId ?? fallbackWorkspaceId,
-        iconCustomized: legacyProject.iconCustomized ?? legacyProject.icon.startsWith('preset:'),
-        tabs: migrated.tabs,
-        activeTabId: migrated.activeTabId,
-        activePaneId: migrated.activePaneId,
-        automations: legacyProject.automations ?? [],
-        whatsappLink: legacyProject.whatsappLink ?? null,
-        mailInbox: legacyProject.mailInbox ?? null,
-        agentGitGroups: legacyProject.agentGitGroups ?? [],
-        agentResponseSkills: legacyProject.agentResponseSkills ?? [],
-        flag: legacyProject.flag ?? null,
-      };
-    }),
+function yieldToNextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
+async function migrateAppStateChunked(appState: AppState): Promise<AppState> {
+  const workspaces =
+    appState.workspaces.length > 0
+      ? appState.workspaces
+      : [{ id: crypto.randomUUID(), name: 'Padrão' }];
+
+  const fallbackWorkspaceId = workspaces[0]?.id ?? crypto.randomUUID();
+  const migratedProjects: Project[] = [];
+
+  for (let index = 0; index < appState.projects.length; index += 1) {
+    const project = appState.projects[index];
+    migratedProjects.push(migrateProject(project, fallbackWorkspaceId));
+    // #region agent log
+    fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'useProjectStore.ts:migrateAppStateChunked',message:'project migrated',data:{index,projectId:project.id,tabCount:project.tabs.length},timestamp:Date.now(),hypothesisId:'H4',runId:'pre-fix'})}).catch(()=>{});
+    // #endregion
+    await yieldToNextFrame();
+  }
+
+  return migrateLegacyGlobalWhatsAppLink({
+    ...appState,
+    workspaces,
+    activeWorkspaceId: appState.activeWorkspaceId ?? null,
+    projects: migratedProjects,
   });
 }
 
@@ -151,6 +180,71 @@ function applyState(set: (state: Partial<ProjectStoreState>) => void, appState: 
     activeProjectId: appState.activeProjectId,
     activeWorkspaceId: appState.activeWorkspaceId,
   });
+}
+
+function scheduleProjectMigration(
+  set: (state: Partial<ProjectStoreState>) => void,
+  get: () => ProjectStoreState,
+  rawState: AppState,
+): void {
+  void (async () => {
+    try {
+      // #region agent log
+      fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'useProjectStore.ts:scheduleProjectMigration',message:'migration start',data:{projectCount:rawState.projects.length,activeProjectId:rawState.activeProjectId},timestamp:Date.now(),hypothesisId:'H2',runId:'pre-fix'})}).catch(()=>{});
+      // #endregion
+      const shouldPersistBadgeColors = rawState.projects.some((project) =>
+        hasMissingBadgeColorIndex(project.tabs),
+      );
+      const shouldPersistTrimmedAgentHistory = rawState.projects.some((project) =>
+        rawAgentTurnHistoryNeedsTrim(project.tabs),
+      );
+      const appState = await migrateAppStateChunked(rawState);
+      const preservedActiveProjectId = get().activeProjectId;
+      const activeProject = preservedActiveProjectId
+        ? appState.projects.find((project) => project.id === preservedActiveProjectId)
+        : null;
+
+      set({
+        projects: appState.projects,
+        workspaces: appState.workspaces,
+        activeWorkspaceId: appState.activeWorkspaceId ?? null,
+        activeProjectId: preservedActiveProjectId,
+        projectsMigrated: true,
+        sidebarCollapsed: activeProject?.sidebarCollapsed ?? false,
+      });
+      // #region agent log
+      fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'useProjectStore.ts:scheduleProjectMigration',message:'migration complete',data:{projectCount:appState.projects.length,activeProjectId:appState.activeProjectId},timestamp:Date.now(),hypothesisId:'H2',runId:'pre-fix'})}).catch(()=>{});
+      // #endregion
+
+      window.setTimeout(() => {
+        void Promise.all([
+          import('@/utils/hydrateTerminalSession'),
+          import('@/utils/persistAgentGitGroups'),
+        ]).then(([{ hydrateTerminalSessionFromProjects }, { hydrateAgentGitGroupsFromProjects }]) => {
+          hydrateTerminalSessionFromProjects(appState.projects);
+          hydrateAgentGitGroupsFromProjects(appState.projects);
+        });
+      }, 0);
+
+      if (shouldPersistBadgeColors || shouldPersistTrimmedAgentHistory) {
+        for (const project of appState.projects) {
+          const rawProject = rawState.projects.find((entry) => entry.id === project.id);
+
+          if (
+            !shouldPersistBadgeColors &&
+            (!rawProject || !rawAgentTurnHistoryNeedsTrim(rawProject.tabs))
+          ) {
+            continue;
+          }
+
+          await window.nexus.projects.update(project.id, { tabs: project.tabs });
+        }
+      }
+    } catch (error) {
+      console.error('[project-store] migration failed', error);
+      set({ projectsMigrated: true });
+    }
+  })();
 }
 
 function buildTerminalPtyIdMap(projects: Project[]): Map<string, Map<string, string | null>> {
@@ -262,10 +356,12 @@ async function performSelectProject(
     const leavingProjectId = prevState.activeProjectId;
     const selectedProject = prevState.projects.find((project) => project.id === id);
 
-    console.info('[project-switch] start', {
-      leavingProjectId,
-      newProjectId: id,
-      agentPanesBusy: countBusyAgentPanes(),
+    void countBusyAgentPanes().then((agentPanesBusy) => {
+      console.info('[project-switch] start', {
+        leavingProjectId,
+        newProjectId: id,
+        agentPanesBusy,
+      });
     });
 
     if (
@@ -287,6 +383,7 @@ async function performSelectProject(
       selectingProjectId: null,
     });
 
+    const { restoreActiveAgentsFromProjects } = await import('@/utils/hydrateTerminalSession');
     restoreActiveAgentsFromProjects(prevState.projects);
 
     if (leavingProjectId && leavingProjectId !== id) {
@@ -318,40 +415,49 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   sidebarVideoSession: null,
   sidebarVideoLastLink: null,
   initialized: false,
+  projectsMigrated: false,
   initialize: async () => {
     if (get().initialized) {
       return;
     }
 
-    const rawState = await window.nexus.projects.list();
-    const shouldPersistBadgeColors = rawState.projects.some((project) =>
-      hasMissingBadgeColorIndex(project.tabs),
-    );
-    const appState = migrateAppState(rawState);
-    const activeProject = appState.projects.find(
-      (project) => project.id === appState.activeProjectId,
-    );
+    resetProjectSwitchState();
 
-    applyState(set, appState);
-    hydrateTerminalSessionFromProjects(appState.projects);
-    hydrateAgentGitGroupsFromProjects(appState.projects);
-    const restoredVideoSession = appState.sidebarVideoSession
-      ? restoreSidebarVideoSession(appState.sidebarVideoSession)
-      : null;
-    set({
-      initialized: true,
-      sidebarCollapsed: activeProject?.sidebarCollapsed ?? false,
-      sidebarVideoSession: restoredVideoSession,
-      sidebarVideoLastLink:
-        appState.sidebarVideoLastLink ?? appState.sidebarVideoSession?.sourceUrl ?? null,
-    });
+    try {
+      // #region agent log
+      fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'useProjectStore.ts:initialize',message:'initialize start',data:{},timestamp:Date.now(),hypothesisId:'H2',runId:'pre-fix'})}).catch(()=>{});
+      // #endregion
+      const rawState = await window.nexus.projects.list();
+      const appState = migrateAppState(rawState);
+      await window.nexus.projects.clearActiveProject();
+      const workspaces =
+        appState.workspaces.length > 0
+          ? appState.workspaces
+          : [{ id: crypto.randomUUID(), name: 'Padrão' }];
+      const restoredVideoSession = appState.sidebarVideoSession
+        ? restoreSidebarVideoSession(appState.sidebarVideoSession)
+        : null;
 
-    if (shouldPersistBadgeColors) {
-      await Promise.all(
-        appState.projects.map((project) =>
-          window.nexus.projects.update(project.id, { tabs: project.tabs }),
-        ),
-      );
+      set({
+        projects: appState.projects,
+        workspaces,
+        activeProjectId: null,
+        activeWorkspaceId: appState.activeWorkspaceId ?? null,
+        initialized: true,
+        projectsMigrated: false,
+        sidebarCollapsed: false,
+        sidebarVideoSession: restoredVideoSession,
+        sidebarVideoLastLink:
+          appState.sidebarVideoLastLink ?? appState.sidebarVideoSession?.sourceUrl ?? null,
+      });
+
+      // #region agent log
+      fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'useProjectStore.ts:initialize',message:'initialize migrated applied',data:{projectCount:appState.projects.length,activeProjectId:null},timestamp:Date.now(),hypothesisId:'H2',runId:'post-fix'})}).catch(()=>{});
+      // #endregion
+      scheduleProjectMigration(set, get, rawState);
+    } catch (error) {
+      console.error('[project-store] initialize failed', error);
+      set({ initialized: true, projectsMigrated: true });
     }
   },
   addProject: async () => {
@@ -370,6 +476,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     applyStatePreservingRuntime(set, appState, prevState);
   },
   removeProject: async (id) => {
+    const { useTerminalSessionStore } = await import('@/stores/useTerminalSessionStore');
     const project = get().projects.find((item) => item.id === id);
 
     if (project) {
@@ -395,6 +502,8 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     }
 
     const prevState = get();
+    const { useAgentGitChangeStore } = await import('@/stores/useAgentGitChangeStore');
+    const { flushAgentGitGroupsNow } = await import('@/utils/persistAgentGitGroups');
     useAgentGitChangeStore.getState().clearProject(id);
     await flushAgentGitGroupsNow();
     await window.nexus.projects.remove(id);
@@ -402,6 +511,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     applyStatePreservingRuntime(set, appState, prevState);
   },
   stopProject: async (id) => {
+    const { useTerminalSessionStore } = await import('@/stores/useTerminalSessionStore');
     const project = get().projects.find((item) => item.id === id);
 
     if (!project || project.tabs.length === 0) {
@@ -440,6 +550,9 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     });
   },
   selectProject: async (id, options) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'useProjectStore.ts:selectProject',message:'selectProject called',data:{id,activeProjectId:get().activeProjectId,projectsMigrated:get().projectsMigrated},timestamp:Date.now(),hypothesisId:'H3',runId:'pre-fix'})}).catch(()=>{});
+    // #endregion
     if (id === get().activeProjectId) {
       return;
     }
@@ -493,6 +606,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     applyStatePreservingRuntime(set, appState, prevState);
 
     if (data.agentGitGroups !== undefined) {
+      const { hydrateAgentGitGroupsFromProjects } = await import('@/utils/persistAgentGitGroups');
       hydrateAgentGitGroupsFromProjects(appState.projects);
     }
   },
@@ -685,7 +799,9 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
       Boolean(existingPane.ptyId);
 
     if (ptyId && hadExistingPty) {
-      useTerminalSessionStore.getState().takePendingLaunchCommand(tabId);
+      void import('@/stores/useTerminalSessionStore').then(({ useTerminalSessionStore }) => {
+        useTerminalSessionStore.getState().takePendingLaunchCommand(tabId);
+      });
     }
 
     set((state) => ({

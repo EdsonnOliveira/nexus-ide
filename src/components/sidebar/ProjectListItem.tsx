@@ -12,6 +12,7 @@ interface ProjectListItemProps {
   hasNotification?: boolean;
   isAgentRunning?: boolean;
   isAutomationRunning?: boolean;
+  hasAgentDraft?: boolean;
   enterIndex?: number;
   enterAnimationKey?: number;
   onSelect: (id: string) => void;
@@ -25,6 +26,7 @@ function ProjectListItemComponent({
   hasNotification = false,
   isAgentRunning = false,
   isAutomationRunning = false,
+  hasAgentDraft = false,
   enterIndex = 0,
   enterAnimationKey = 0,
   onSelect,
@@ -91,7 +93,7 @@ function ProjectListItemComponent({
   const showGitBadge = gitChangeCount > 0;
   const showTaskBadge = openTaskCount > 0;
   const showStatusIndicators =
-    showGitBadge || showTaskBadge || isAgentRunning || isAutomationRunning;
+    showGitBadge || showTaskBadge || hasAgentDraft || isAgentRunning || isAutomationRunning;
   const [isEntering, setIsEntering] = useState(false);
 
   useEffect(() => {
@@ -149,6 +151,12 @@ function ProjectListItemComponent({
       <span className='project-item__name'>{project.name}</span>
       {showStatusIndicators ? (
         <span className='project-item__indicators'>
+          {hasAgentDraft ? (
+            <span
+              className='project-item__draft'
+              aria-label='Rascunho do agent pendente'
+            />
+          ) : null}
           {showGitBadge ? (
             <span
               className='project-item__stat-badge project-item__stat-badge--git'

@@ -237,6 +237,12 @@ const nexusApi = {
       return () => ipcRenderer.off('git:repo-changed', listener);
     },
   },
+  homeDashboard: {
+    getStats: (projectPaths: string[]) =>
+      ipcRenderer.invoke('homeDashboard:getStats', projectPaths),
+    recordActivity: (kind: 'prompts' | 'agentExecutions') =>
+      ipcRenderer.invoke('homeDashboard:recordActivity', kind),
+  },
   browser: {
     probeUrl: (url: string): Promise<boolean> => ipcRenderer.invoke('browser:probeUrl', url),
     openDevTools: (guestWebContentsId: number, devtoolsWebContentsId: number): Promise<void> =>
@@ -467,6 +473,7 @@ const nexusApi = {
     saveCredentials: (projectId, credentials) =>
       ipcRenderer.invoke('tasks:saveCredentials', projectId, credentials),
     getCredentials: (projectId) => ipcRenderer.invoke('tasks:getCredentials', projectId),
+    getCredentialStatus: (projectId) => ipcRenderer.invoke('tasks:getCredentialStatus', projectId),
     clearCredentials: (projectId) => ipcRenderer.invoke('tasks:clearCredentials', projectId),
     openExternalUrl: (url) => ipcRenderer.invoke('tasks:openExternalUrl', url),
     testConnection: (projectId, config, credentials) =>

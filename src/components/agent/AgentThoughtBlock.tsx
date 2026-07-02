@@ -1,8 +1,7 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { AgentActivity } from '@/types';
-import { useMarkdownCodeHighlight } from '@/hooks/useMarkdownCodeHighlight';
-import { normalizeMarkdownSource, renderMarkdownPreview } from '@/utils/markdownPreview';
+import { useMarkdownCodeHighlight, useDeferredMarkdownHtml } from '@/hooks/useMarkdownCodeHighlight';
 
 interface AgentThoughtBlockProps {
   activity: AgentActivity;
@@ -53,10 +52,7 @@ function AgentThoughtBlockComponent({
   );
 
   const bodyText = activity.label.trim();
-  const bodyHtml = useMemo(
-    () => (bodyText ? renderMarkdownPreview(normalizeMarkdownSource(bodyText)) : ''),
-    [bodyText],
-  );
+  const bodyHtml = useDeferredMarkdownHtml(bodyText);
   const proseRef = useMarkdownCodeHighlight<HTMLDivElement>(bodyHtml);
 
   useEffect(() => {

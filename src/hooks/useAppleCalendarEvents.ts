@@ -17,7 +17,7 @@ export function useAppleCalendarEvents(enabled: boolean) {
   const [hydrated, setHydrated] = useState(false);
   const requestIdRef = useRef(0);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (background = false) => {
     if (!enabled || !window.nexus?.calendar) {
       setHydrated(true);
       setSnapshot(EMPTY_SNAPSHOT);
@@ -26,7 +26,10 @@ export function useAppleCalendarEvents(enabled: boolean) {
 
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
-    setLoading(true);
+
+    if (!background) {
+      setLoading(true);
+    }
 
     try {
       const nextSnapshot = await window.nexus.calendar.getTodayEvents();
@@ -52,10 +55,10 @@ export function useAppleCalendarEvents(enabled: boolean) {
     }
 
     setHydrated(false);
-    void refresh();
+    void refresh(false);
 
     const intervalId = window.setInterval(() => {
-      void refresh();
+      void refresh(true);
     }, POLL_INTERVAL_MS);
 
     return () => {

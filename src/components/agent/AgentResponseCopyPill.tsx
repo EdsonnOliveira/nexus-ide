@@ -3,9 +3,10 @@ import { Check, Copy } from 'lucide-react';
 
 interface AgentResponseCopyPillProps {
   content: string;
+  nexusGo?: boolean;
 }
 
-function AgentResponseCopyPillComponent({ content }: AgentResponseCopyPillProps) {
+function AgentResponseCopyPillComponent({ content, nexusGo = false }: AgentResponseCopyPillProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(async () => {
@@ -25,7 +26,7 @@ function AgentResponseCopyPillComponent({ content }: AgentResponseCopyPillProps)
   return (
     <button
       type='button'
-      className={`agent-view__response-pill agent-view__response-copy app-button app-button--enter${copied ? ' agent-view__response-copy--copied' : ''}`}
+      className={`agent-view__response-pill agent-view__response-copy app-button app-button--enter${nexusGo ? ' nexus-go-surface agent-view__response-copy--nexus-go' : ''}${copied ? ' agent-view__response-copy--copied' : ''}`}
       aria-label={copied ? 'Resposta copiada' : 'Copiar resposta'}
       onClick={() => void handleCopy()}
     >

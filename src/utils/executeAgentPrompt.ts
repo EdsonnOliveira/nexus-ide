@@ -107,10 +107,7 @@ export async function executeAgentPrompt({
       return false;
     }
 
-    paneId =
-      collectOpenAgentPanes(refreshedProject)[0]?.pane.id ??
-      refreshedProject.activeTabId ??
-      null;
+    paneId = refreshedProject.activeTabId ?? null;
   }
 
   if (!paneId) {

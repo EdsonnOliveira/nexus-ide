@@ -16,6 +16,12 @@ export function decryptCredentialValue(value: string): string | null {
       try {
         return safeStorage.decryptString(buffer);
       } catch {
+        const plain = buffer.toString('utf8');
+
+        if (plain && /^[\x20-\x7E]+$/.test(plain)) {
+          return plain;
+        }
+
         return null;
       }
     }

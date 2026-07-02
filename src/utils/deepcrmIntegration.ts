@@ -8,6 +8,14 @@ export function formatDeepcrmIntegrationError(error: unknown): string {
     return 'Token da API inválido ou ausente. Gere um token em Configurações → API e Webhooks no DeepCRM.';
   }
 
+  if (/Configuração do DeepCRM incompleta|Informe o token da API do DeepCRM/i.test(normalized)) {
+    return 'Token da API do DeepCRM não configurado. Abra Integração de tarefas e informe o token gerado em API e Webhooks.';
+  }
+
+  if (/Token da API do DeepCRM ilegível|ilegível/i.test(normalized)) {
+    return 'Token do DeepCRM não pôde ser lido. Abra Integração de tarefas, cole o token novamente e salve.';
+  }
+
   if (/Not Found/i.test(normalized)) {
     return 'Endpoint da API não encontrado. Atualize o Nexus IDE para a versão mais recente.';
   }

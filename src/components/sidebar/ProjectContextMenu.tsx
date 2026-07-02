@@ -1,6 +1,7 @@
 import {
   ArrowRightLeft,
   Copy,
+  Eye,
   Flag,
   FolderOpen,
   ImagePlus,
@@ -8,6 +9,7 @@ import {
   Palette,
   Pencil,
   Shapes,
+  Sparkles,
   Square,
   Trash2,
   type LucideIcon,
@@ -26,6 +28,8 @@ interface ProjectContextMenuProps {
   x: number;
   y: number;
   canMoveWorkspace: boolean;
+  canGenerateDaily?: boolean;
+  hasCachedDaily?: boolean;
   onClose: () => void;
   onSetLogo: (projectId: string) => void;
   onRemoveLogo: (projectId: string) => void;
@@ -34,6 +38,8 @@ interface ProjectContextMenuProps {
   onRename: (projectId: string) => void;
   onCreateFlag: (projectId: string) => void;
   onMove: (projectId: string, anchorRect: DOMRect) => void;
+  onViewDaily: (projectId: string) => void;
+  onGenerateDaily: (projectId: string) => void;
   onStopAll: (projectId: string) => void;
   onDelete: (projectId: string) => void;
 }
@@ -52,6 +58,8 @@ function ProjectContextMenuComponent({
   x,
   y,
   canMoveWorkspace,
+  canGenerateDaily = false,
+  hasCachedDaily = false,
   onClose,
   onSetLogo,
   onRemoveLogo,
@@ -60,6 +68,8 @@ function ProjectContextMenuComponent({
   onRename,
   onCreateFlag,
   onMove,
+  onViewDaily,
+  onGenerateDaily,
   onStopAll,
   onDelete,
 }: ProjectContextMenuProps) {
@@ -209,6 +219,13 @@ function ProjectContextMenuComponent({
         onSelect: handleCopyPathname,
       },
       {
+        id: 'daily',
+        label: hasCachedDaily ? 'Ver Daily' : 'Gerar Daily',
+        icon: hasCachedDaily ? Eye : Sparkles,
+        onSelect: () => (hasCachedDaily ? onViewDaily(project.id) : onGenerateDaily(project.id)),
+        disabled: hasCachedDaily ? false : !canGenerateDaily,
+      },
+      {
         id: 'stop-all',
         label: 'Parar tudo',
         icon: Square,
@@ -227,12 +244,16 @@ function ProjectContextMenuComponent({
     return items;
   }, [
     canMoveWorkspace,
+    canGenerateDaily,
+    hasCachedDaily,
     handleCopyPathname,
     handleRevealInFolder,
     hasCustomIcon,
     hasFlag,
     hasLogo,
     onCreateFlag,
+    onGenerateDaily,
+    onViewDaily,
     onDelete,
     onStopAll,
     onRemoveLogo,
@@ -254,7 +275,10 @@ function ProjectContextMenuComponent({
       {menuItems.map((item) => {
         const Icon = item.icon;
         const showSeparator =
-          item.id === 'rename' || item.id === 'create-flag' || item.id === 'stop-all';
+          item.id === 'rename' ||
+          item.id === 'create-flag' ||
+          item.id === 'daily' ||
+          item.id === 'stop-all';
 
         return (
           <div key={item.id}>

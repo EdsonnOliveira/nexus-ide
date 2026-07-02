@@ -1,5 +1,4 @@
 import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
-import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import type { Automation } from '@/types/automation';
 import { buildAgentSetupCommands } from '@/utils/buildAgentSetupCommands';
 import { collectPendingCommands } from '@/utils/buildAutomationTabs';
@@ -27,20 +26,22 @@ export function markAutomationPanesFromRun(automation: Automation): void {
 }
 
 export function handleAutomationPaneShellPrompt(paneId: string): void {
-  const session = useTerminalSessionStore.getState();
-  const isAgent = Boolean(session.activeAgentByPane[paneId]);
+  void import('@/stores/useTerminalSessionStore').then(({ useTerminalSessionStore }) => {
+    const session = useTerminalSessionStore.getState();
+    const isAgent = Boolean(session.activeAgentByPane[paneId]);
 
-  if (
-    isAgent &&
-    (session.awaitingResponseByPane[paneId] ||
-      session.agentBusyByPane[paneId] ||
-      session.agentNotifyEligibleByPane[paneId] ||
-      session.pendingLaunchCommands[paneId])
-  ) {
-    return;
-  }
+    if (
+      isAgent &&
+      (session.awaitingResponseByPane[paneId] ||
+        session.agentBusyByPane[paneId] ||
+        session.agentNotifyEligibleByPane[paneId] ||
+        session.pendingLaunchCommands[paneId])
+    ) {
+      return;
+    }
 
-  useAutomationExecutionStore.getState().clearAutomationPaneExecuting(paneId);
+    useAutomationExecutionStore.getState().clearAutomationPaneExecuting(paneId);
+  });
 }
 
 export function handleAutomationPaneTaskComplete(paneId: string): void {

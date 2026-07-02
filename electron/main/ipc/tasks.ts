@@ -39,6 +39,34 @@ function getProjectOrThrow(projectId: string) {
   return project;
 }
 
+function assertDeepcrmApiToken(projectId: string): void {
+  const status = taskCredentialStore.getCredentialStatus(projectId);
+
+  if (status.deepcrmApiToken === 'unreadable') {
+    throw new Error(
+      'Token da API do DeepCRM ilegível. Abra Integração de tarefas e salve o token novamente.',
+    );
+  }
+
+  if (status.deepcrmApiToken !== 'readable') {
+    throw new Error('Informe o token da API do DeepCRM');
+  }
+}
+
+function assertJiraApiToken(projectId: string): void {
+  const status = taskCredentialStore.getCredentialStatus(projectId);
+
+  if (status.jiraApiToken === 'unreadable') {
+    throw new Error(
+      'API token do Jira ilegível. Abra Integração de tarefas e salve o token novamente.',
+    );
+  }
+
+  if (status.jiraApiToken !== 'readable') {
+    throw new Error('Informe o API token do Jira');
+  }
+}
+
 export function registerTaskHandlers(): void {
   ipcMain.handle(
     'tasks:saveCredentials',
@@ -46,6 +74,10 @@ export function registerTaskHandlers(): void {
       taskCredentialStore.saveSecrets(projectId, credentials);
     },
   );
+
+  ipcMain.handle('tasks:getCredentialStatus', (_event, projectId: string) => {
+    return taskCredentialStore.getCredentialStatus(projectId);
+  });
 
   ipcMain.handle('tasks:getCredentials', (_event, projectId: string): TaskCredentialsPayload => {
     return taskCredentialStore.getSecrets(projectId);
@@ -72,6 +104,7 @@ export function registerTaskHandlers(): void {
       const secrets = taskCredentialStore.getSecrets(projectId);
 
       if (config.platform === 'jira') {
+        assertJiraApiToken(projectId);
         const email = config.jiraEmail?.trim() ?? '';
         const apiToken = secrets.jiraApiToken?.trim() ?? '';
 
@@ -88,6 +121,7 @@ export function registerTaskHandlers(): void {
       }
 
       if (config.platform === 'deepcrm') {
+        assertDeepcrmApiToken(projectId);
         const deepcrmApiToken = secrets.deepcrmApiToken?.trim() ?? '';
 
         if (!deepcrmApiToken) {
@@ -153,6 +187,7 @@ export function registerTaskHandlers(): void {
     }
 
     if (config.platform === 'deepcrm') {
+      assertDeepcrmApiToken(projectId);
       const apiToken = secrets.deepcrmApiToken ?? '';
       const deepcrmAccountName = await getDeepcrmAccountName(apiToken);
       const tasks = await syncDeepcrmTasks(project.path, config, secrets);

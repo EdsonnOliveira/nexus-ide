@@ -6,7 +6,9 @@ import { useProjectStore } from '@/stores/useProjectStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
+import { useAgentComposerDraftStore } from '@/stores/useAgentComposerDraftStore';
 import { ProjectListItem } from '@/components/sidebar/ProjectListItem';
+import { useDailyGeneration } from '@/components/home/DailyGenerationProvider';
 import { ProjectContextMenu } from '@/components/sidebar/ProjectContextMenu';
 import { ProjectPromptDialog } from '@/components/sidebar/ProjectPromptDialog';
 import { ProjectColorPicker } from '@/components/sidebar/ProjectColorPicker';
@@ -53,6 +55,7 @@ function ProjectSidebarComponent() {
   const activeWorkspaceId = useProjectStore((state) => state.activeWorkspaceId);
   const addProject = useProjectStore((state) => state.addProject);
   const selectProject = useProjectStore((state) => state.selectProject);
+  const leaveActiveProject = useProjectStore((state) => state.leaveActiveProject);
   const updateProject = useProjectStore((state) => state.updateProject);
   const removeProject = useProjectStore((state) => state.removeProject);
   const stopProject = useProjectStore((state) => state.stopProject);
@@ -95,6 +98,7 @@ function ProjectSidebarComponent() {
     () => buildRunningAutomationProjectIdSet(executingAutomationByProject),
     [executingAutomationByProject],
   );
+  const projectIdsWithDraft = useAgentComposerDraftStore((state) => state.projectIdsWithDraft);
 
   const filterButtonRef = useRef<HTMLButtonElement>(null);
   const videoButtonRef = useRef<HTMLButtonElement>(null);
@@ -128,6 +132,8 @@ function ProjectSidebarComponent() {
   } = useVercelDeployments(true);
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const { openDailyDateMenu, viewCached, hasCachedResult, selectedSkill, isSkillAvailableForProject, runningProjectId } =
+    useDailyGeneration();
   const [promptMode, setPromptMode] = useState<ProjectPromptMode | null>(null);
   const [promptProjectId, setPromptProjectId] = useState<string | null>(null);
   const [colorProjectId, setColorProjectId] = useState<string | null>(null);
@@ -540,7 +546,11 @@ function ProjectSidebarComponent() {
 
   const handleSelectProject = useCallback(
     (id: string) => {
+      // #region agent log
+      fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'ProjectSidebar.tsx:handleSelectProject',message:'sidebar project click',data:{id,activeProjectId},timestamp:Date.now(),hypothesisId:'H3',runId:'pre-fix'})}).catch(()=>{});
+      // #endregion
       if (id === activeProjectId) {
+        void leaveActiveProject();
         return;
       }
 
@@ -553,7 +563,7 @@ function ProjectSidebarComponent() {
 
       void selectProject(id);
     },
-    [activeProjectId, projects, selectProject],
+    [activeProjectId, leaveActiveProject, projects, selectProject],
   );
 
   const handleCreateFlag = useCallback((projectId: string) => {
@@ -617,6 +627,39 @@ function ProjectSidebarComponent() {
   const handleCloseContextMenu = useCallback(() => {
     setContextMenu(null);
   }, []);
+
+  const handleViewDaily = useCallback(
+    (projectId: string) => {
+      viewCached(projectId);
+      handleCloseContextMenu();
+    },
+    [handleCloseContextMenu, viewCached],
+  );
+
+  const handleGenerateDaily = useCallback(
+    (projectId: string) => {
+      if (!contextMenu) {
+        return;
+      }
+
+      openDailyDateMenu(projectId, contextMenu.x, contextMenu.y);
+      handleCloseContextMenu();
+    },
+    [contextMenu, handleCloseContextMenu, openDailyDateMenu],
+  );
+
+  const canGenerateDailyForProject = useCallback(
+    (projectId: string) => {
+      const project = projects.find((entry) => entry.id === projectId);
+
+      if (!project || !selectedSkill) {
+        return false;
+      }
+
+      return isSkillAvailableForProject(project.path);
+    },
+    [isSkillAvailableForProject, projects, selectedSkill],
+  );
 
   const handleSetLogo = useCallback(async (projectId: string) => {
     try {
@@ -826,6 +869,7 @@ function ProjectSidebarComponent() {
             hasNotification={Boolean(notifiedAgentPaneByProject[project.id])}
             isAgentRunning={runningAgentProjectIds.has(project.id)}
             isAutomationRunning={runningAutomationProjectIds.has(project.id)}
+            hasAgentDraft={Boolean(projectIdsWithDraft[project.id])}
             enterIndex={index}
             enterAnimationKey={projectListAnimationKey}
             onSelect={handleSelectProject}
@@ -977,6 +1021,10 @@ function ProjectSidebarComponent() {
           x={contextMenu.x}
           y={contextMenu.y}
           canMoveWorkspace={canMoveProject}
+          canGenerateDaily={
+            canGenerateDailyForProject(contextProject.id) && runningProjectId === null
+          }
+          hasCachedDaily={hasCachedResult(contextProject.id)}
           onClose={handleCloseContextMenu}
           onSetLogo={(projectId) => void handleSetLogo(projectId)}
           onRemoveLogo={(projectId) => void handleRemoveLogo(projectId)}
@@ -985,6 +1033,8 @@ function ProjectSidebarComponent() {
           onRename={handleRename}
           onCreateFlag={handleCreateFlag}
           onMove={handleMove}
+          onGenerateDaily={handleGenerateDaily}
+          onViewDaily={handleViewDaily}
           onStopAll={handleStopAll}
           onDelete={handleDelete}
         />

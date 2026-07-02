@@ -6,10 +6,15 @@ import { executeAutomation } from '@/utils/executeAutomation';
 const firedAppOpenTriggers = new Set<string>();
 
 export function useAutomationScheduler(): void {
+  const projectsMigrated = useProjectStore((state) => state.projectsMigrated);
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const projects = useProjectStore((state) => state.projects);
 
   useEffect(() => {
+    if (!projectsMigrated) {
+      return;
+    }
+
     clearAllAutomationSchedulers();
     const project = projects.find((item) => item.id === activeProjectId) ?? null;
     syncAutomationSchedulers(project?.id ?? null, project?.automations ?? []);
@@ -28,5 +33,5 @@ export function useAutomationScheduler(): void {
     return () => {
       clearAllAutomationSchedulers();
     };
-  }, [activeProjectId, projects]);
+  }, [activeProjectId, projects, projectsMigrated]);
 }

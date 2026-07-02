@@ -21,6 +21,10 @@ import {
   AgentComposerPlusMenu,
   useAgentModelHints,
 } from '@/components/agent/AgentHintBar';
+import {
+  AgentPromptImageIndexBadge,
+  AgentPromptImageMentionText,
+} from '@/components/agent/AgentPromptImageBadges';
 import { AgentLiveStatus } from '@/components/agent/AgentLiveStatus';
 import { AgentContextUsageIndicator } from '@/components/agent/AgentContextUsageIndicator';
 import { AgentCursorUsageIndicator } from '@/components/agent/AgentCursorUsageIndicator';
@@ -46,6 +50,10 @@ import {
   readImagePathAsDataUrl,
 } from '@/utils/attachAgentPromptImage';
 import { writeAgentPaneDraft } from '@/utils/agentPaneRegistry';
+import {
+  buildAgentPromptImageMentionAppendFragment,
+  buildAgentPromptImageMentionInsertion,
+} from '@/utils/agentPromptImageBadge';
 import { parseComposerSkillDraft } from '@/utils/agentSkillDisplay';
 import {
   applyComposerMention,
@@ -356,6 +364,7 @@ function AgentComposerComponent({
   const [caretIndex, setCaretIndex] = useState(0);
   const [mentionRepositionToken, setMentionRepositionToken] = useState(0);
   const composerCardRef = useRef<HTMLDivElement>(null);
+  const composerInputMirrorRef = useRef<HTMLDivElement>(null);
   const promptHistoryIndexRef = useRef(-1);
   const promptHistoryScratchRef = useRef('');
   const promptHistoryNavigatingRef = useRef(false);
@@ -515,9 +524,70 @@ function AgentComposerComponent({
     resizeComposerInput(textarea);
   }, [inputRef]);
 
+  const syncComposerInputScroll = useCallback(() => {
+    const textarea = inputRef.current;
+    const mirror = composerInputMirrorRef.current;
+
+    if (!textarea || !mirror) {
+      return;
+    }
+
+    mirror.scrollTop = textarea.scrollTop;
+    mirror.scrollLeft = textarea.scrollLeft;
+  }, [inputRef]);
+
+  const insertImageMention = useCallback(
+    (imageNumber: number) => {
+      const textarea = inputRef.current;
+      const bodyValue = skillDraft.hasSkill ? skillDraft.body : draft;
+      const selectionStart = textarea?.selectionStart ?? bodyValue.length;
+      const selectionEnd = textarea?.selectionEnd ?? selectionStart;
+      const { nextDraft, nextCaret } = buildAgentPromptImageMentionInsertion(
+        bodyValue,
+        selectionStart,
+        selectionEnd,
+        imageNumber,
+      );
+      const nextValue = skillDraft.hasSkill
+        ? nextDraft
+          ? `${skillDraft.skillCommand} ${nextDraft}`
+          : skillDraft.skillCommand
+        : nextDraft;
+
+      onDraftChange(nextValue);
+
+      window.requestAnimationFrame(() => {
+        if (!textarea) {
+          return;
+        }
+
+        textarea.focus();
+        textarea.setSelectionRange(nextCaret, nextCaret);
+        setCaretIndex(nextCaret);
+        resizeComposerInput(textarea);
+        syncComposerInputScroll();
+      });
+    },
+    [draft, inputRef, onDraftChange, skillDraft.body, skillDraft.hasSkill, skillDraft.skillCommand, syncComposerInputScroll],
+  );
+
+  const attachImageWithMention = useCallback(
+    async (dataUrl: string) => {
+      const attached = await attachAgentPromptImageToPane(projectPath, paneId, dataUrl, false);
+
+      if (!attached) {
+        return;
+      }
+
+      insertImageMention(attached.imageNumber);
+    },
+    [insertImageMention, paneId, projectPath],
+  );
+
   useLayoutEffect(() => {
     syncComposerInputHeight();
-  }, [draft, syncComposerInputHeight]);
+    syncComposerInputScroll();
+  }, [composerInputValue, draft, syncComposerInputHeight, syncComposerInputScroll]);
 
   const inputPlaceholder = useMemo(() => {
     if (isEditing) {
@@ -786,8 +856,9 @@ function AgentComposerComponent({
 
       setCaretIndex(event.target.selectionStart ?? 0);
       resizeComposerInput(event.target);
+      syncComposerInputScroll();
     },
-    [onDraftChange, resetPromptHistoryNavigation, skillDraft],
+    [onDraftChange, resetPromptHistoryNavigation, skillDraft, syncComposerInputScroll],
   );
 
   const handleAttach = useCallback(async () => {
@@ -803,8 +874,8 @@ function AgentComposerComponent({
       return;
     }
 
-    await attachAgentPromptImageToPane(projectPath, paneId, dataUrl, false);
-  }, [paneId, projectPath]);
+    await attachImageWithMention(dataUrl);
+  }, [attachImageWithMention]);
 
   const handlePaste = useCallback(
     (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -834,7 +905,7 @@ function AgentComposerComponent({
             const dataUrl = typeof reader.result === 'string' ? reader.result : null;
 
             if (dataUrl) {
-              void attachAgentPromptImageToPane(projectPath, paneId, dataUrl, false);
+              void attachImageWithMention(dataUrl);
             }
           };
 
@@ -843,13 +914,14 @@ function AgentComposerComponent({
         return;
       }
     },
-    [paneId, projectPath],
+    [attachImageWithMention],
   );
 
   const pendingImages = useMemo(
     () =>
-      images.map((image) => (
+      images.map((image, index) => (
         <div key={image.id} className='agent-view__paste-image'>
+          <AgentPromptImageIndexBadge index={index + 1} />
           <button
             type='button'
             className='agent-view__paste-image-thumb-btn app-button'
@@ -863,7 +935,7 @@ function AgentComposerComponent({
             aria-label={`Remover ${image.label}`}
             onClick={() => removeImage(paneId, image.id)}
           >
-            <X size={12} />
+            <X size={14} strokeWidth={2.5} />
           </button>
         </div>
       )),
@@ -914,20 +986,36 @@ function AgentComposerComponent({
                 </button>
               </div>
             ) : null}
-            <textarea
-              ref={inputRef}
-              className='agent-view__composer-input'
-              value={composerInputValue}
-              rows={1}
-              placeholder={inputPlaceholder}
-              disabled={interactionPending}
-              onChange={handleDraftChange}
-              onClick={syncCaretIndex}
-              onKeyUp={syncCaretIndex}
-              onSelect={syncCaretIndex}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-            />
+            <div className='agent-view__composer-input-wrap'>
+              <div
+                ref={composerInputMirrorRef}
+                className='agent-view__composer-input-mirror'
+                aria-hidden='true'
+              >
+                {composerInputValue ? (
+                  <AgentPromptImageMentionText text={composerInputValue} alignWidth />
+                ) : (
+                  <span className='agent-view__composer-input-mirror-placeholder'>
+                    {inputPlaceholder}
+                  </span>
+                )}
+              </div>
+              <textarea
+                ref={inputRef}
+                className='agent-view__composer-input agent-view__composer-input--mirrored'
+                value={composerInputValue}
+                rows={1}
+                placeholder={inputPlaceholder}
+                disabled={interactionPending}
+                onChange={handleDraftChange}
+                onClick={syncCaretIndex}
+                onKeyUp={syncCaretIndex}
+                onSelect={syncCaretIndex}
+                onScroll={syncComposerInputScroll}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+              />
+            </div>
           </div>
           <div className='agent-view__composer-bar'>
             <div className='agent-view__composer-bar-left'>
@@ -1033,9 +1121,20 @@ export async function handleAgentComposerDrop(
   dataTransfer: DataTransfer,
 ): Promise<void> {
   const dataUrls = await readDroppedImageDataUrls(dataTransfer);
+  let mentionDraft = '';
 
   for (const dataUrl of dataUrls) {
-    await attachAgentPromptImageToPane(projectPath, paneId, dataUrl, false);
+    const attached = await attachAgentPromptImageToPane(projectPath, paneId, dataUrl, false);
+
+    if (!attached) {
+      continue;
+    }
+
+    mentionDraft = `${mentionDraft}${buildAgentPromptImageMentionAppendFragment(mentionDraft, attached.imageNumber)}`;
+  }
+
+  if (mentionDraft) {
+    writeAgentPaneDraft(paneId, mentionDraft);
   }
 }
 

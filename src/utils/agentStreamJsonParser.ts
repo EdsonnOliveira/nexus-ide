@@ -1084,6 +1084,38 @@ export function feedAgentStreamJsonChunk(
   };
 }
 
+export function isAgentStreamJsonStateAwaitingCompletion(
+  state: AgentStreamJsonParserState,
+): boolean {
+  if (state.shouldFinalize || state.pendingPlan || state.pendingQuestion) {
+    return false;
+  }
+
+  const hasResponse =
+    Boolean(state.pendingResponseText.trim()) ||
+    state.activities.some((entry) => entry.kind === 'response');
+
+  if (hasResponse) {
+    return false;
+  }
+
+  return state.activities.some(
+    (entry) =>
+      entry.kind === 'file_read' ||
+      entry.kind === 'file_edit' ||
+      entry.kind === 'live_status' ||
+      entry.kind === 'thought',
+  );
+}
+
+function resolveIncompleteStreamJsonResponseFallback(state: AgentStreamJsonParserState): string {
+  if (state.responseLead?.trim() || state.pendingResponseText.trim()) {
+    return 'Alterações aplicadas.';
+  }
+
+  return 'O agente parou antes de concluir a resposta. Envie novamente para continuar.';
+}
+
 export function buildAgentTurnSummaryFromStreamJsonState(
   state: AgentStreamJsonParserState,
 ): AgentTurnSummary | undefined {
@@ -1138,19 +1170,20 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
   activities = deduplicatePlanResponseActivities(activities);
 
   const summary = buildAgentTurnSummaryFromStreamJsonState(state);
+  const incompleteFallback = resolveIncompleteStreamJsonResponseFallback(state);
 
   if (activities.length === 0 && isAgentTurnSummaryVisible(summary)) {
     activities = [
       createActivity(
         'response',
-        state.responseLead?.trim() || summary?.responseLead?.trim() || 'Alterações aplicadas.',
+        state.responseLead?.trim() || summary?.responseLead?.trim() || incompleteFallback,
       ),
     ];
   } else if (activities.length === 0) {
     activities = [
       createActivity(
         'response',
-        'Nenhuma resposta foi capturada. Tente enviar novamente — ao trocar de projeto, aguarde o agent concluir ou volte à aba antes de reenviar.',
+        'Nenhuma resposta foi capturada. Tente enviar novamente.',
       ),
     ];
   } else if (
@@ -1162,7 +1195,7 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
       ...activities,
       createActivity(
         'response',
-        state.responseLead?.trim() || summary?.responseLead?.trim() || 'Alterações aplicadas.',
+        state.responseLead?.trim() || summary?.responseLead?.trim() || incompleteFallback,
       ),
     ];
   }

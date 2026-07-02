@@ -3,28 +3,10 @@ import { Mail } from 'lucide-react';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import { useAppleMailInbox } from '@/hooks/useAppleMailInbox';
 import type { MailMailboxRef } from '@/types';
+import { formatMailDate } from '@/utils/mailLabels';
 
 interface SidebarMailPanelProps {
   mailbox: MailMailboxRef;
-}
-
-function formatMailDate(timestamp: number): string {
-  if (!Number.isFinite(timestamp) || timestamp <= 0) {
-    return '';
-  }
-
-  const date = new Date(timestamp);
-  const now = new Date();
-  const sameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
-
-  if (sameDay) {
-    return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-  }
-
-  return date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
 }
 
 function MailListSkeleton() {

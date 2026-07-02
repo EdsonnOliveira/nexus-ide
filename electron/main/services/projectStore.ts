@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 import type { AppState, Project, ProjectUpdatePayload, Tab, TabBarItem, Workspace } from '../../types';
 import type { ProjectTask, ProjectTaskLocalMeta } from '../../types/task';
+import { agentTurnHistoryChanged, sanitizeAgentTurnHistory } from './trimAgentTurnHistory';
+import { ensureNexusGitignore, hasNexusProjectDir } from './nexusProjectGitignore';
 
 const PROJECT_COLORS = [
   '#7c3aed',
@@ -93,13 +95,15 @@ function normalizePane(tab: Tab, projectPath?: string): Tab {
   }
 
   if (tab.type === 'agent') {
+    const turns = sanitizeAgentTurnHistory(Array.isArray(tab.turns) ? tab.turns : []);
+
     return {
       id: tab.id,
       title: tab.title,
       type: 'agent',
       cliAgent: tab.cliAgent ?? 'cursor-agent',
       ptyId: null,
-      turns: Array.isArray(tab.turns) ? tab.turns : [],
+      turns,
       ...(tab.restoreCommand !== undefined ? { restoreCommand: tab.restoreCommand } : {}),
       workingDirectory: projectPath ? resolveAgentPaneRootPath(projectPath) : tab.workingDirectory,
       ...(Array.isArray(tab.messages) && tab.messages.length > 0 ? { messages: tab.messages } : {}),
@@ -270,48 +274,87 @@ function migrateLegacyWhatsAppLink(state: AppState, legacyLink: string | null): 
 }
 
 class ProjectStoreService {
-  private store = new Store<AppState>({
-    name: 'projects',
-    defaults: defaultState,
-  });
+  private store: Store<AppState> | null = null;
+  private nexusGitignoreEnsured = new Set<string>();
+
+  private ensureNexusGitignoreForProject(projectPath: string, force = false): void {
+    if (!force && this.nexusGitignoreEnsured.has(projectPath)) {
+      return;
+    }
+
+    this.nexusGitignoreEnsured.add(projectPath);
+
+    void hasNexusProjectDir(projectPath).then((exists) => {
+      if (exists) {
+        void ensureNexusGitignore(projectPath);
+      }
+    });
+  }
+
+  private ensureNexusGitignoreForProjects(projects: Project[]): void {
+    for (const project of projects) {
+      this.ensureNexusGitignoreForProject(project.path);
+    }
+  }
+
+  private getStore(): Store<AppState> {
+    if (!this.store) {
+      this.store = new Store<AppState>({
+        name: 'projects',
+        defaults: defaultState,
+      });
+    }
+
+    return this.store;
+  }
 
   private readState(): AppState {
+    const store = this.getStore();
     const legacyWhatsAppLink =
-      (this.store.get('sidebarWhatsAppLink' as keyof AppState) as string | null | undefined) ?? null;
+      (store.get('sidebarWhatsAppLink' as keyof AppState) as string | null | undefined) ?? null;
 
     const state = migrateLegacyWhatsAppLink(
       normalizeState({
-        projects: this.store.get('projects'),
-        workspaces: this.store.get('workspaces') ?? [],
-        activeProjectId: this.store.get('activeProjectId'),
-        activeWorkspaceId: this.store.get('activeWorkspaceId') ?? null,
-        sidebarVideoSession: this.store.get('sidebarVideoSession') ?? null,
-        sidebarVideoLastLink: this.store.get('sidebarVideoLastLink') ?? null,
+        projects: store.get('projects'),
+        workspaces: store.get('workspaces') ?? [],
+        activeProjectId: store.get('activeProjectId'),
+        activeWorkspaceId: store.get('activeWorkspaceId') ?? null,
+        sidebarVideoSession: store.get('sidebarVideoSession') ?? null,
+        sidebarVideoLastLink: store.get('sidebarVideoLastLink') ?? null,
       }),
       legacyWhatsAppLink,
     );
 
     if (legacyWhatsAppLink) {
-      this.store.delete('sidebarWhatsAppLink' as keyof AppState);
+      store.delete('sidebarWhatsAppLink' as keyof AppState);
     }
 
     return state;
   }
 
   private writeState(state: AppState): AppState {
+    const store = this.getStore();
     const normalized = normalizeState(state);
-    this.store.set('projects', normalized.projects);
-    this.store.set('workspaces', normalized.workspaces);
-    this.store.set('activeProjectId', normalized.activeProjectId);
-    this.store.set('activeWorkspaceId', normalized.activeWorkspaceId);
-    this.store.set('sidebarVideoSession', normalized.sidebarVideoSession ?? null);
-    this.store.set('sidebarVideoLastLink', normalized.sidebarVideoLastLink ?? null);
+    store.set('projects', normalized.projects);
+    store.set('workspaces', normalized.workspaces);
+    store.set('activeProjectId', normalized.activeProjectId);
+    store.set('activeWorkspaceId', normalized.activeWorkspaceId);
+    store.set('sidebarVideoSession', normalized.sidebarVideoSession ?? null);
+    store.set('sidebarVideoLastLink', normalized.sidebarVideoLastLink ?? null);
     return normalized;
   }
 
   list(): AppState {
+    const store = this.getStore();
+    const rawProjects = store.get('projects');
     const state = this.readState();
-    this.writeState(state);
+
+    if (agentTurnHistoryChanged(rawProjects, state.projects)) {
+      this.writeState(state);
+    }
+
+    this.ensureNexusGitignoreForProjects(state.projects);
+
     return state;
   }
 
@@ -321,7 +364,8 @@ class ProjectStoreService {
     const existing = projects.find((project) => project.path === projectPath);
 
     if (existing) {
-      this.store.set('activeProjectId', existing.id);
+      this.getStore().set('activeProjectId', existing.id);
+      this.ensureNexusGitignoreForProject(projectPath, true);
       return existing;
     }
 
@@ -361,6 +405,8 @@ class ProjectStoreService {
       projects: [...projects, project],
       activeProjectId: project.id,
     });
+
+    void ensureNexusGitignore(projectPath);
 
     return project;
   }

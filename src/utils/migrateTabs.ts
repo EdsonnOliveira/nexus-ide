@@ -1,6 +1,7 @@
 import type { SplitLayoutNode, SplitTab, Tab, TabBarItem } from '@/types';
 import { migrateLegacyAgentTerminalTab, isLegacyAgentTerminalTab, resolveAgentPaneRootPath } from '@/utils/agentTabHelpers';
 import { migrateMessagesToTurns } from '@/utils/agentTranscriptParser';
+import { sanitizeAgentTurnHistory } from '@/utils/trimAgentTurnHistory';
 import { getVisibleTabIds } from '@/utils/splitLayout';
 import { ensureTabBarBadgeColorIndexes } from '@/utils/tabBadge';
 import { reconcileSplitLayout } from '@/utils/tabGroups';
@@ -111,12 +112,13 @@ function normalizeTabBarItem(tab: TabBarItem, projectPath?: string): TabBarItem 
 function normalizePane(tab: Tab, projectPath?: string): Tab {
   if (tab.type === 'agent') {
     const legacyMessages = tab.messages ?? [];
-    const turns =
+    const rawTurns =
       tab.turns && tab.turns.length > 0
         ? tab.turns
         : legacyMessages.length > 0
           ? migrateMessagesToTurns(legacyMessages)
           : [];
+    const turns = sanitizeAgentTurnHistory(rawTurns);
 
     return {
       ...tab,

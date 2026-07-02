@@ -45,14 +45,7 @@ import {
 } from '@/utils/terminalPasteImageTokens';
 import { readShellPromptInput, sanitizeAgentPrompt } from '@/utils/terminalShellPrompt';
 import { isProjectSwitching } from '@/utils/projectSwitch';
-
-export interface XTermViewHandle {
-  focus: () => void;
-  write: (data: string) => void;
-  isWritable: () => boolean;
-  interruptAndRun: (command: string) => Promise<void>;
-  removeImageFromPrompt: (imageId: number) => void;
-}
+import type { XTermViewHandle } from '@/types';
 
 interface XTermViewProps {
   paneId: string;

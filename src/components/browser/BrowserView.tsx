@@ -366,13 +366,17 @@ function BrowserViewComponent({
         return false;
       }
 
-      if (options.wasOffline || options.hadFailedLoad || !pageReadyRef.current) {
+      if (options.wasOffline || options.hadFailedLoad) {
         return true;
       }
 
-      const currentUrl = webview.getURL();
+      try {
+        const currentUrl = webview.getURL();
 
-      return isBrowserErrorPageUrl(currentUrl) || !isSameLocalDevTarget(currentUrl, targetUrl);
+        return isBrowserErrorPageUrl(currentUrl) || !isSameLocalDevTarget(currentUrl, targetUrl);
+      } catch {
+        return !pageReadyRef.current;
+      }
     },
     [],
   );
@@ -843,6 +847,10 @@ function BrowserViewComponent({
     let cancelled = false;
 
     const checkServer = async () => {
+      if (siteStatusRef.current === 'online' && pageReadyRef.current) {
+        return;
+      }
+
       const reachable = await probeSiteReachable(normalizedUrl);
 
       if (cancelled) {
@@ -853,11 +861,6 @@ function BrowserViewComponent({
 
       if ((currentStatus === 'offline' || currentStatus === 'checking') && reachable) {
         handleServerBecameReachable(normalizedUrl, currentStatus);
-        return;
-      }
-
-      if (currentStatus === 'online' && reachable && !pageReadyRef.current) {
-        reloadWebviewForTarget(normalizedUrl);
         return;
       }
 
@@ -878,7 +881,7 @@ function BrowserViewComponent({
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [applyLocalProbeResult, handleServerBecameReachable, isRuntimeActive, normalizedUrl, reloadWebviewForTarget]);
+  }, [applyLocalProbeResult, handleServerBecameReachable, isRuntimeActive, normalizedUrl]);
 
   useEffect(() => {
     return () => {

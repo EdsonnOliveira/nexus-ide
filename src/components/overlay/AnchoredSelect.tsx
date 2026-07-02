@@ -11,6 +11,7 @@ export interface AnchoredSelectOption<T extends string = string> {
   value: T;
   label: string;
   labelNode?: React.ReactNode;
+  icon?: React.ReactNode;
   subtitle?: string;
   className?: string;
 }
@@ -123,14 +124,21 @@ function AnchoredSelectMenuComponent<T extends string>({
             onMouseDown={handleSelect(option.value)}
           >
             <span className='anchored-select__menu-item-content'>
-              <span
-                className={`anchored-select__menu-label${option.className ? ` ${option.className}` : ''}`}
-              >
-                {option.labelNode ?? option.label}
-              </span>
-              {option.subtitle ? (
-                <span className='anchored-select__menu-subtitle'>{option.subtitle}</span>
+              {option.icon ? (
+                <span className='anchored-select__menu-leading' aria-hidden='true'>
+                  {option.icon}
+                </span>
               ) : null}
+              <span className='anchored-select__menu-item-copy'>
+                <span
+                  className={`anchored-select__menu-label${option.className ? ` ${option.className}` : ''}`}
+                >
+                  {option.labelNode ?? option.label}
+                </span>
+                {option.subtitle ? (
+                  <span className='anchored-select__menu-subtitle'>{option.subtitle}</span>
+                ) : null}
+              </span>
             </span>
             {isSelected ? (
               <Check size={14} strokeWidth={2} className='anchored-select__menu-check' aria-hidden />
@@ -157,6 +165,7 @@ interface AnchoredSelectProps<T extends string = string> {
   className?: string;
   triggerClassName?: string;
   menuClassName?: string;
+  leadingIcon?: React.ReactNode;
 }
 
 function AnchoredSelectComponent<T extends string = string>({
@@ -171,6 +180,7 @@ function AnchoredSelectComponent<T extends string = string>({
   className,
   triggerClassName,
   menuClassName,
+  leadingIcon,
 }: AnchoredSelectProps<T>) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -227,7 +237,14 @@ function AnchoredSelectComponent<T extends string = string>({
         aria-haspopup='menu'
         onClick={handleToggle}
       >
-        <span className='anchored-select__trigger-label'>{selectedContent}</span>
+        <span className='anchored-select__trigger-content'>
+          {leadingIcon ? (
+            <span className='anchored-select__trigger-leading' aria-hidden='true'>
+              {leadingIcon}
+            </span>
+          ) : null}
+          <span className='anchored-select__trigger-label'>{selectedContent}</span>
+        </span>
         <ChevronDown size={14} strokeWidth={2} className='anchored-select__trigger-icon' aria-hidden />
       </button>
       {open && anchorRect ? (

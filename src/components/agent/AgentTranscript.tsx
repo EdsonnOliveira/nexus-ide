@@ -1,9 +1,9 @@
-import { memo, useEffect, useRef, type MutableRefObject, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useRef, type MutableRefObject, type RefObject } from 'react';
 import type { AgentQuestionAnswers, AgentTurn } from '@/types';
 import { AgentTurnView } from '@/components/agent/AgentTurnView';
 
 export interface AgentTranscriptScrollControl {
-  scrollToBottom: () => void;
+  scrollToBottom: (options?: { smooth?: boolean }) => void;
 }
 
 interface AgentTranscriptProps {
@@ -80,6 +80,33 @@ function scrollContainerToBottom(
   window.requestAnimationFrame(step);
 }
 
+function scrollTranscriptToBottomInstant(
+  container: HTMLElement,
+  options?: {
+    programmaticScrollRef?: MutableRefObject<boolean>;
+    contentHeightRef?: MutableRefObject<number>;
+    onAtBottom?: (atBottom: boolean) => void;
+  },
+): void {
+  const targetTop = getScrollContainerTargetTop(container);
+
+  if (options?.programmaticScrollRef) {
+    options.programmaticScrollRef.current = true;
+  }
+
+  container.scrollTop = targetTop;
+
+  if (options?.programmaticScrollRef) {
+    options.programmaticScrollRef.current = false;
+  }
+
+  if (options?.contentHeightRef) {
+    options.contentHeightRef.current = container.scrollHeight;
+  }
+
+  options?.onAtBottom?.(isScrollContainerAtBottom(container));
+}
+
 function AgentTranscriptComponent({
   turns,
   scrollContainerRef,
@@ -101,32 +128,67 @@ function AgentTranscriptComponent({
   const scrollRafRef = useRef<number | null>(null);
   const contentHeightRef = useRef(0);
   const onAtBottomChangeRef = useRef(onAtBottomChange);
+  const lastTurnIdRef = useRef<string | null>(null);
+  const lastScrollKeyRef = useRef(scrollKey ?? '');
 
   useEffect(() => {
     onAtBottomChangeRef.current = onAtBottomChange;
   }, [onAtBottomChange]);
 
-  const notifyAtBottomChange = (atBottom: boolean) => {
+  const notifyAtBottomChange = useCallback((atBottom: boolean) => {
     if (atBottomRef.current === atBottom) {
       return;
     }
 
     atBottomRef.current = atBottom;
     onAtBottomChangeRef.current?.(atBottom);
-  };
+  }, []);
 
-  useEffect(() => {
-    stickToBottomRef.current = true;
-    atBottomRef.current = true;
-    contentHeightRef.current = 0;
-    onAtBottomChangeRef.current?.(true);
+  const pinScrollToBottom = useCallback(() => {
     const container = scrollContainerRef.current;
 
-    if (container) {
-      scrollContainerToBottom(container);
-      contentHeightRef.current = container.scrollHeight;
+    if (!container || !stickToBottomRef.current) {
+      return;
     }
-  }, [scrollContainerRef, scrollKey]);
+
+    scrollTranscriptToBottomInstant(container, {
+      programmaticScrollRef,
+      contentHeightRef,
+      onAtBottom: notifyAtBottomChange,
+    });
+  }, [notifyAtBottomChange, scrollContainerRef]);
+
+  const schedulePinScrollToBottom = useCallback(() => {
+    stickToBottomRef.current = true;
+    atBottomRef.current = true;
+    onAtBottomChangeRef.current?.(true);
+
+    window.requestAnimationFrame(() => {
+      pinScrollToBottom();
+      window.requestAnimationFrame(() => {
+        pinScrollToBottom();
+      });
+    });
+
+    window.setTimeout(() => {
+      pinScrollToBottom();
+    }, 0);
+  }, [pinScrollToBottom]);
+
+  useEffect(() => {
+    lastScrollKeyRef.current = scrollKey ?? '';
+    lastTurnIdRef.current = turns[turns.length - 1]?.id ?? null;
+    contentHeightRef.current = 0;
+    schedulePinScrollToBottom();
+  }, [schedulePinScrollToBottom, scrollKey]);
+
+  useEffect(() => {
+    if (turns.length === 0) {
+      return;
+    }
+
+    schedulePinScrollToBottom();
+  }, [schedulePinScrollToBottom, turns.length]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -150,7 +212,7 @@ function AgentTranscriptComponent({
     return () => {
       container.removeEventListener('scroll', handleScroll);
     };
-  }, [scrollContainerRef, scrollKey]);
+  }, [notifyAtBottomChange, scrollContainerRef, scrollKey]);
 
   useEffect(() => {
     if (!scrollControlRef) {
@@ -158,7 +220,7 @@ function AgentTranscriptComponent({
     }
 
     scrollControlRef.current = {
-      scrollToBottom: () => {
+      scrollToBottom: (options) => {
         const container = scrollContainerRef.current;
 
         if (!container) {
@@ -168,9 +230,10 @@ function AgentTranscriptComponent({
         stickToBottomRef.current = true;
         programmaticScrollRef.current = true;
         scrollContainerToBottom(container, {
-          smooth: true,
+          smooth: options?.smooth ?? true,
           onComplete: () => {
             programmaticScrollRef.current = false;
+            contentHeightRef.current = container.scrollHeight;
             notifyAtBottomChange(isScrollContainerAtBottom(container));
           },
         });
@@ -180,7 +243,39 @@ function AgentTranscriptComponent({
     return () => {
       scrollControlRef.current = null;
     };
-  }, [scrollContainerRef, scrollControlRef, scrollKey]);
+  }, [notifyAtBottomChange, scrollContainerRef, scrollControlRef, scrollKey]);
+
+  const lastTurnId = turns[turns.length - 1]?.id ?? null;
+
+  useEffect(() => {
+    if (!lastTurnId) {
+      return;
+    }
+
+    const container = scrollContainerRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    const previousTurnId = lastTurnIdRef.current;
+    lastTurnIdRef.current = lastTurnId;
+
+    if (!previousTurnId || previousTurnId === lastTurnId) {
+      return;
+    }
+
+    stickToBottomRef.current = true;
+    programmaticScrollRef.current = true;
+    scrollContainerToBottom(container, {
+      smooth: true,
+      onComplete: () => {
+        programmaticScrollRef.current = false;
+        contentHeightRef.current = container.scrollHeight;
+        notifyAtBottomChange(isScrollContainerAtBottom(container));
+      },
+    });
+  }, [lastTurnId, notifyAtBottomChange, scrollContainerRef]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -250,7 +345,7 @@ function AgentTranscriptComponent({
         scrollRafRef.current = null;
       }
     };
-  }, [scrollContainerRef, scrollKey]);
+  }, [notifyAtBottomChange, scrollContainerRef, scrollKey]);
 
   return (
     <div ref={contentRef} className='agent-view__turns'>

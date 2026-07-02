@@ -19,8 +19,15 @@
   --text-muted: #8b8b96;
   --border-subtle: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.14);
+  --surface-1: rgba(30, 30, 38, 0.92);
+  --surface-2: rgba(36, 36, 46, 0.88);
+  --surface-3: rgba(46, 46, 58, 0.84);
   --glass-blur: blur(48px) saturate(180%);
   --glass-shadow: 0 12px 40px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --popup-surface: var(--bg-panel);
+  --popup-blur: var(--glass-blur);
+  --popup-border: var(--border-subtle);
+  --popup-shadow: var(--glass-shadow);
   --sidebar-width: 228px;
   --sidebar-collapsed-width: 52px;
   --explorer-width: 248px;

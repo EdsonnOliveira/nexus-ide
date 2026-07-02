@@ -1,6 +1,10 @@
 import { memo, useCallback } from 'react';
 import { ArrowUp, BookOpen, CornerDownLeft, Pencil, X } from 'lucide-react';
 import type { AgentFollowUp } from '@/types';
+import {
+  AgentPromptImageIndexBadge,
+  AgentPromptImageMentionText,
+} from '@/components/agent/AgentPromptImageBadges';
 import { resolvePromptDisplayContent } from '@/utils/agentPromptAttachments';
 import {
   resolveAgentSkillDisplayState,
@@ -71,13 +75,15 @@ function AgentFollowUpQueueComponent({ items, onEdit, onSendNow, onRemove }: Age
                 <div className='agent-view__follow-up-item-body'>
                   {item.attachments.length > 0 ? (
                     <div className='agent-view__follow-up-attachments'>
-                      {item.attachments.map((attachment) => (
-                        <img
-                          key={attachment.id}
-                          src={attachment.dataUrl}
-                          alt=''
-                          className='agent-view__follow-up-attachment'
-                        />
+                      {item.attachments.map((attachment, index) => (
+                        <div key={attachment.id} className='agent-view__follow-up-attachment-wrap'>
+                          <AgentPromptImageIndexBadge index={index + 1} />
+                          <img
+                            src={attachment.dataUrl}
+                            alt=''
+                            className='agent-view__follow-up-attachment'
+                          />
+                        </div>
                       ))}
                     </div>
                   ) : null}
@@ -91,7 +97,7 @@ function AgentFollowUpQueueComponent({ items, onEdit, onSendNow, onRemove }: Age
                     <p
                       className={`agent-view__follow-up-text${isMultiline ? ' agent-view__follow-up-text--multiline' : ''}${hasSkillPrompt ? ' agent-view__follow-up-text--skill' : ''}`}
                     >
-                      {displayContent}
+                      <AgentPromptImageMentionText text={displayContent} />
                     </p>
                   ) : null}
                 </div>

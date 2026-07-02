@@ -1,11 +1,10 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, Braces, Clock, Globe, Layers, Play, Smartphone, Terminal } from 'lucide-react';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useTabActions } from '@/stores/useTabStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
 import { ApiView } from '@/components/api/ApiView';
-import { AgentView } from '@/components/agent/AgentView';
 import { BrowserView } from '@/components/browser/BrowserView';
 import { EmulatorView } from '@/components/emulator/EmulatorView';
 import { FileView } from '@/components/file/FileView';
@@ -19,7 +18,8 @@ import {
 import { TerminalFooter } from '@/components/terminal/TerminalFooter';
 import { AgentGitChangePill } from '@/components/terminal/AgentGitChangePill';
 import { TerminalPasteImages } from '@/components/terminal/TerminalPasteImages';
-import { XTermView, type XTermViewHandle } from '@/components/terminal/XTermView';
+import { XTermView } from '@/components/terminal/XTermView';
+import type { XTermViewHandle } from '@/types';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import { parseCdCommandLine } from '@/utils/terminalCwd';
 import { collectProjectPanes, findPaneTab, resolveActiveTabBarItem } from '@/utils/tabGroups';
@@ -28,6 +28,7 @@ import { registerTerminalHandle } from '@/utils/terminalHandleRegistry';
 import {
   completeShellIdleTaskIfAwaiting,
   createAgentReadyStreamDetector,
+  dispatchPendingAgentTaskCommands,
   createSettledCallback,
   isPaneTrackingAgentCompletion,
   syncAgentBusyFromTail,
@@ -44,8 +45,13 @@ import { useAgentPrintBridge } from '@/hooks/useAgentPrintBridge';
 import { useAgentGitChangeStore } from '@/stores/useAgentGitChangeStore';
 import {
   isPaneAgentSessionLive,
+  resolveHostedAgentProjects,
   type PaneAgentSessionSnapshot,
 } from '@/utils/paneAgentSession';
+
+// #region agent log
+fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'TerminalPanel.tsx:module',message:'TerminalPanel module evaluated',data:{},timestamp:Date.now(),hypothesisId:'H1',runId:'pre-fix'})}).catch(()=>{});
+// #endregion
 import {
   isOverlayBlockingTerminalHints,
   subscribeOverlayBlockingChange,
@@ -69,6 +75,10 @@ import {
   shouldMarkAgentAwaiting,
 } from '@/utils/projectAgentStatus';
 import type { ApiTab, EmulatorTab, Project, SplitLayoutNode, Tab, TabBarItem, AgentTab } from '@/types';
+
+const LazyAgentView = lazy(() =>
+  import('@/components/agent/AgentView').then((module) => ({ default: module.AgentView })),
+);
 
 interface WorkspaceSplitProps {
   node: SplitLayoutNode;
@@ -407,18 +417,20 @@ const TabPane = memo(function TabPaneComponent({
         onDragLeave={handleExplorerDragLeave}
         onDrop={handleExplorerDrop}
       >
-        <AgentView
-          tab={tab}
-          projectId={projectId}
-          projectPath={projectPath}
-          isVisible={isVisible}
-          isRuntimeActive={isRuntimeActive}
-          isFocused={isFocused}
-          onFocusPane={() => onFocusPane(tab.id)}
-          onPtyCreated={onPtyCreated}
-          onPtyLost={onPtyLost}
-          onUpdateTab={(patch) => onUpdateAgentTab(tab.id, patch)}
-        />
+        <Suspense fallback={null}>
+          <LazyAgentView
+            tab={tab}
+            projectId={projectId}
+            projectPath={projectPath}
+            isVisible={isVisible}
+            isRuntimeActive={isRuntimeActive}
+            isFocused={isFocused}
+            onFocusPane={() => onFocusPane(tab.id)}
+            onPtyCreated={onPtyCreated}
+            onPtyLost={onPtyLost}
+            onUpdateTab={(patch) => onUpdateAgentTab(tab.id, patch)}
+          />
+        </Suspense>
       </div>
     );
   }
@@ -739,6 +751,9 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
   onUpdateAgentTab,
   onSplitRatioCommit,
 }: ProjectWorkspaceProps) {
+  // #region agent log
+  fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'TerminalPanel.tsx:ProjectWorkspace',message:'ProjectWorkspace render',data:{projectId:project.id,tabCount:project.tabs.length},timestamp:Date.now(),hypothesisId:'H11',runId:'post-fix'})}).catch(()=>{});
+  // #endregion
   const activeTabItem = useMemo(
     () => resolveActiveTabBarItem(project.tabs, project.activeTabId),
     [project.activeTabId, project.tabs],
@@ -826,7 +841,7 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
     [activeTabItem?.id, isProjectActive, onSplitRatioCommit],
   );
 
-  if (!project.tabs.length) {
+  if (!project.tabs.length || !activeTabItem) {
     return null;
   }
 
@@ -835,7 +850,7 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
       <div
         className={`terminal-panel__view${isProjectActive ? ' terminal-panel__view--active' : ''}`}
       >
-        {project.tabs.map(renderTabLayout)}
+        {renderTabLayout(activeTabItem)}
       </div>
     </WorkspacePaneProvider>
   );
@@ -850,6 +865,14 @@ interface PaneCompletionTracker {
 }
 
 function TerminalPanelComponent() {
+  // #region agent log
+  fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'TerminalPanel.tsx:render',message:'TerminalPanel render start',data:{},timestamp:Date.now(),hypothesisId:'H7',runId:'post-fix'})}).catch(()=>{});
+  // #endregion
+  useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'TerminalPanel.tsx:mount',message:'TerminalPanel mounted',data:{},timestamp:Date.now(),hypothesisId:'H1',runId:'post-fix'})}).catch(()=>{});
+    // #endregion
+  }, []);
   useAgentPrintBridge();
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const projects = useProjectStore((state) => state.projects);
@@ -870,10 +893,42 @@ function TerminalPanelComponent() {
   const setTabPtyId = useProjectStore((state) => state.setTabPtyId);
   const terminalRefs = useRef<Record<string, XTermViewHandle | null>>({});
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
+  const [paneHostReady, setPaneHostReady] = useState(false);
+
+  useEffect(() => {
+    if (paneHostReady) {
+      return;
+    }
+
+    let cancelled = false;
+    let idleId = 0;
+    const rafId = requestAnimationFrame(() => {
+      idleId = window.requestIdleCallback(
+        () => {
+          if (!cancelled) {
+            setPaneHostReady(true);
+          }
+        },
+        { timeout: 200 },
+      );
+    });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+      if (idleId) {
+        window.cancelIdleCallback(idleId);
+      }
+    };
+  }, [paneHostReady]);
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId) ?? null,
     [activeProjectId, projects],
+  );
+  const hostedProjects = useMemo(
+    () => resolveHostedAgentProjects(projects, activeProjectId, agentSession),
+    [activeProjectId, agentSession, projects],
   );
   const toggleAutomations = useProjectStore((state) => state.toggleAutomations);
   const featuredAutomations = useMemo(
@@ -1068,11 +1123,18 @@ function TerminalPanelComponent() {
   );
 
   useEffect(() => {
+    if (!paneHostReady || !activeProject) {
+      return;
+    }
+
     const ptyToPane = new Map<string, string>();
     const paneById = new Map<string, Tab>();
-    const activePaneIds = new Set<string>();
+    const trackedPaneIds = new Set<string>();
+    const activeProjectPaneIds = activeProject
+      ? new Set(collectProjectPanes(activeProject.tabs).map((pane) => pane.id))
+      : new Set<string>();
 
-    for (const project of projects) {
+    for (const project of activeProject ? [activeProject] : []) {
       for (const pane of collectProjectPanes(project.tabs)) {
         paneById.set(pane.id, pane);
 
@@ -1085,7 +1147,12 @@ function TerminalPanelComponent() {
         }
 
         ptyToPane.set(pane.ptyId, pane.id);
-        activePaneIds.add(pane.id);
+
+        if (!activeProjectPaneIds.has(pane.id)) {
+          continue;
+        }
+
+        trackedPaneIds.add(pane.id);
 
         if (!completionTrackersRef.current.has(pane.id)) {
           const paneId = pane.id;
@@ -1097,6 +1164,23 @@ function TerminalPanelComponent() {
             () => {
               completeAgentGitTurn(paneId);
               useTerminalSessionStore.getState().completeTaskIfAwaiting(paneId);
+
+              const session = useTerminalSessionStore.getState();
+              const paneEntry = paneById.get(paneId);
+
+              if (!paneEntry || (paneEntry.type !== 'terminal' && paneEntry.type !== 'agent')) {
+                return;
+              }
+
+              const ptyId = paneEntry.ptyId;
+
+              if (!ptyId || !session.activeAgentByPane[paneId]) {
+                return;
+              }
+
+              dispatchPendingAgentTaskCommands(paneId, (command) => {
+                window.nexus.terminal.write(ptyId, `${command}\n`);
+              });
             },
             {
               isAwaiting: () => {
@@ -1140,7 +1224,7 @@ function TerminalPanelComponent() {
     }
 
     for (const [paneId, tracker] of completionTrackersRef.current.entries()) {
-      if (!activePaneIds.has(paneId)) {
+      if (!trackedPaneIds.has(paneId)) {
         tracker.disposeReset();
         completionTrackersRef.current.delete(paneId);
       }
@@ -1182,10 +1266,10 @@ function TerminalPanelComponent() {
     });
 
     return unsubscribe;
-  }, [projects]);
+  }, [activeProject, paneHostReady]);
 
   useEffect(() => {
-    if (!activeProject) {
+    if (!paneHostReady || !activeProject) {
       return;
     }
 
@@ -1213,19 +1297,21 @@ function TerminalPanelComponent() {
         );
       });
     }
-  }, [activeProject]);
+  }, [activeProject, hostedProjects, paneHostReady]);
 
-  if (!activeProject) {
+  if (!activeProject && hostedProjects.length === 0) {
     return null;
   }
 
-  const hasActiveProjectTabs = activeProject.tabs.length > 0;
+  const hasActiveProjectTabs = Boolean(activeProject?.tabs.length);
 
   return (
     <div className='terminal-workspace'>
-      <TabStrip onTabDragStart={handleTabDragStart} onTabDragEnd={handleTabDragEnd} />
+      {activeProject ? (
+        <TabStrip onTabDragStart={handleTabDragStart} onTabDragEnd={handleTabDragEnd} />
+      ) : null}
 
-      {!hasActiveProjectTabs ? (
+      {activeProject && !hasActiveProjectTabs ? (
         <div className='terminal-workspace__empty'>
           <div className='empty-state'>
             <div className='empty-state__icon' aria-hidden='true'>
@@ -1337,24 +1423,34 @@ function TerminalPanelComponent() {
         </div>
       ) : (
         <div className='terminal-panel terminal-panel--split'>
-          {projects.map((project) => (
-            <ProjectWorkspace
-              key={project.id}
-              project={project}
-              isProjectActive={project.id === activeProjectId}
-              agentSession={agentSession}
-              terminalRefs={terminalRefs}
-              onFocusPane={handleFocusPane}
-              onPtyCreated={handlePtyCreated}
-              onPtyLost={handlePtyLost}
-              onBrowserUrlChange={handleBrowserUrlChange}
-              onOpenLinkInBrowser={handleOpenLinkInBrowser}
-              onUpdateEmulatorTab={handleUpdateEmulatorTab}
-              onUpdateApiTab={handleUpdateApiTab}
-              onUpdateAgentTab={handleUpdateAgentTab}
-              onSplitRatioCommit={handleSplitRatioCommit}
-            />
-          ))}
+          {paneHostReady ? (
+            <div className='terminal-panel__project-hosts'>
+              {hostedProjects.map((project) => (
+                <div
+                  key={project.id}
+                  className={`terminal-panel__project-host${project.id === activeProjectId ? ' terminal-panel__project-host--active' : ''}`}
+                >
+                  <ProjectWorkspace
+                    project={project}
+                    isProjectActive={project.id === activeProjectId}
+                    agentSession={agentSession}
+                    terminalRefs={terminalRefs}
+                    onFocusPane={handleFocusPane}
+                    onPtyCreated={handlePtyCreated}
+                    onPtyLost={handlePtyLost}
+                    onBrowserUrlChange={handleBrowserUrlChange}
+                    onOpenLinkInBrowser={handleOpenLinkInBrowser}
+                    onUpdateEmulatorTab={handleUpdateEmulatorTab}
+                    onUpdateApiTab={handleUpdateApiTab}
+                    onUpdateAgentTab={handleUpdateAgentTab}
+                    onSplitRatioCommit={handleSplitRatioCommit}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className='terminal-panel__view terminal-panel__view--active' />
+          )}
           {showDropOverlay ? <WorkspaceDropOverlay onDrop={handleWorkspaceDrop} /> : null}
         </div>
       )}

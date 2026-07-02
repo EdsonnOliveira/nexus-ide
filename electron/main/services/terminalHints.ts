@@ -23,6 +23,7 @@ export interface TerminalCommandHint {
   label: string;
   command: string;
   hintKind?: 'skill' | 'mode' | 'model';
+  skillOrigin?: 'user' | 'builtin';
 }
 
 interface PackageJson {

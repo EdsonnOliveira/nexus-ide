@@ -83,6 +83,11 @@ export interface GitRepoDiscovery {
   branch: string | null;
 }
 
+export interface GitDailyStats {
+  commits: number;
+  linesChanged: number;
+}
+
 export type GitCommandResult = { ok: true } | { ok: false; error: string };
 
 const statusCache = new Map<string, { expiresAt: number; result: GitStatusResult }>();
@@ -93,6 +98,7 @@ const MAX_UNTRACKED_LINE_STATS = 400;
 
 const GIT_DISCOVERY_IGNORED_DIRS = new Set([
   '.cursor',
+  '.nexus',
   '.expo',
   '.git',
   '.gradle',
@@ -548,6 +554,96 @@ function parseNumstatOutput(output: string): Map<string, { additions: number; de
   }
 
   return stats;
+}
+
+function sumNumstatLines(output: string): number {
+  let total = 0;
+
+  for (const line of output.split('\n')) {
+    if (!line.trim()) {
+      continue;
+    }
+
+    const parts = line.split('\t');
+
+    if (parts.length < 3) {
+      continue;
+    }
+
+    const additions = parts[0] === '-' ? 0 : Number(parts[0]) || 0;
+    const deletions = parts[1] === '-' ? 0 : Number(parts[1]) || 0;
+    total += additions + deletions;
+  }
+
+  return total;
+}
+
+function formatGitTimestampArg(unixMs: number): string {
+  return `@${Math.floor(unixMs / 1000)}`;
+}
+
+async function getGitDailyStatsForRepo(
+  repoPath: string,
+  sinceMs: number,
+  untilMs: number,
+): Promise<GitDailyStats> {
+  if (!isGitRepo(repoPath)) {
+    return { commits: 0, linesChanged: 0 };
+  }
+
+  try {
+    const since = formatGitTimestampArg(sinceMs);
+    const until = formatGitTimestampArg(untilMs);
+    const commitCountOutput = await runGit(repoPath, [
+      'rev-list',
+      '--count',
+      `--since=${since}`,
+      `--until=${until}`,
+      'HEAD',
+    ]);
+    const commits = Number.parseInt(commitCountOutput.trim(), 10) || 0;
+    const numstatOutput = await runGit(
+      repoPath,
+      ['log', `--since=${since}`, `--until=${until}`, '--pretty=tformat:', '--numstat'],
+      { maxBuffer: 20 * 1024 * 1024 },
+    );
+
+    return {
+      commits,
+      linesChanged: sumNumstatLines(numstatOutput),
+    };
+  } catch {
+    return { commits: 0, linesChanged: 0 };
+  }
+}
+
+export async function aggregateGitDailyStats(
+  projectPaths: string[],
+  sinceMs: number,
+  untilMs: number,
+): Promise<GitDailyStats> {
+  const seenRepos = new Set<string>();
+  let commits = 0;
+  let linesChanged = 0;
+
+  for (const projectPath of projectPaths) {
+    const repos = discoverGitRepos(projectPath);
+
+    for (const repo of repos) {
+      const resolved = path.resolve(repo.path);
+
+      if (seenRepos.has(resolved)) {
+        continue;
+      }
+
+      seenRepos.add(resolved);
+      const stats = await getGitDailyStatsForRepo(resolved, sinceMs, untilMs);
+      commits += stats.commits;
+      linesChanged += stats.linesChanged;
+    }
+  }
+
+  return { commits, linesChanged };
 }
 
 async function getNumstatMap(

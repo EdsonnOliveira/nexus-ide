@@ -40,11 +40,11 @@ export default defineConfig(({ command }) => {
               const child = spawn(nexusElectronBinary, ['.', '--no-sandbox'], {
                 cwd: process.cwd(),
                 stdio: 'inherit',
-                env: process.env,
+                env: { ...process.env, NODE_OPTIONS: undefined },
               });
 
-              child.on('exit', (code) => {
-                process.exit(code ?? 0);
+              child.on('exit', () => {
+                process.electronApp = null;
               });
 
               process.electronApp = child;
@@ -91,7 +91,15 @@ export default defineConfig(({ command }) => {
     ],
     clearScreen: false,
     optimizeDeps: {
-      include: ['react', 'react-dom', 'zustand', 'lucide-react'],
+      include: [
+        'react',
+        'react-dom',
+        'zustand',
+        'lucide-react',
+        '@xterm/xterm',
+        '@xterm/addon-fit',
+        '@uiw/react-codemirror',
+      ],
     },
   };
 });
