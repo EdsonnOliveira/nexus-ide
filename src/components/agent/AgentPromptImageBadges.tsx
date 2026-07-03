@@ -1,6 +1,7 @@
 import { memo, useMemo, type CSSProperties } from 'react';
 import {
   getAgentPromptImageBadgeColor,
+  getAgentPromptPathMentionBadgeColor,
   hasAgentPromptImageMentions,
   splitAgentPromptImageMentions,
 } from '@/utils/agentPromptImageBadge';
@@ -26,6 +27,51 @@ function AgentPromptImageIndexBadgeComponent({ index, className }: AgentPromptIm
 
 export const AgentPromptImageIndexBadge = memo(AgentPromptImageIndexBadgeComponent);
 
+interface AgentPromptMentionBadgeProps {
+  value: string;
+  badgeColor: string;
+  alignWidth?: boolean;
+}
+
+function AgentPromptMentionBadgeComponent({
+  value,
+  badgeColor,
+  alignWidth = false,
+}: AgentPromptMentionBadgeProps) {
+  const mentionStyle = { '--prompt-image-badge-color': badgeColor } as CSSProperties;
+
+  if (alignWidth) {
+    return (
+      <span
+        className='agent-view__prompt-image-mention-wrap agent-view__prompt-image-mention-wrap--composer'
+        style={mentionStyle}
+      >
+        <span
+          className='agent-view__prompt-image-mention-sizer agent-view__prompt-image-mention-sizer--composer'
+          aria-hidden='true'
+        >
+          {value}
+        </span>
+        <span className='agent-view__prompt-image-mention-pill' aria-hidden='true'>
+          <span className='agent-view__prompt-image-mention-pill__bg' />
+          <span className='agent-view__prompt-image-mention-pill__label'>{value}</span>
+        </span>
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className='agent-view__prompt-image-mention app-button--enter'
+      style={mentionStyle}
+    >
+      {value}
+    </span>
+  );
+}
+
+const AgentPromptMentionBadge = memo(AgentPromptMentionBadgeComponent);
+
 interface AgentPromptImageMentionTextProps {
   text: string;
   alignWidth?: boolean;
@@ -35,7 +81,10 @@ function AgentPromptImageMentionTextComponent({
   text,
   alignWidth = false,
 }: AgentPromptImageMentionTextProps) {
-  const segments = useMemo(() => splitAgentPromptImageMentions(text), [text]);
+  const segments = useMemo(
+    () => splitAgentPromptImageMentions(text, { collapseMentionGaps: !alignWidth }),
+    [alignWidth, text],
+  );
   const showMentions = hasAgentPromptImageMentions(text);
 
   if (!showMentions) {
@@ -49,34 +98,18 @@ function AgentPromptImageMentionTextComponent({
           return <span key={`text-${segmentIndex}`}>{segment.value}</span>;
         }
 
-        const badgeColor = getAgentPromptImageBadgeColor(segment.imageNumber);
-        const mentionStyle = { '--prompt-image-badge-color': badgeColor } as CSSProperties;
-
-        if (alignWidth) {
-          return (
-            <span
-              key={`mention-${segmentIndex}`}
-              className='agent-view__prompt-image-mention-wrap'
-              style={mentionStyle}
-            >
-              <span className='agent-view__prompt-image-mention-sizer' aria-hidden='true'>
-                {segment.value}
-              </span>
-              <span className='agent-view__prompt-image-mention agent-view__prompt-image-mention--overlay'>
-                {segment.value}
-              </span>
-            </span>
-          );
-        }
+        const badgeColor =
+          segment.kind === 'path-mention'
+            ? getAgentPromptPathMentionBadgeColor(segment.path)
+            : getAgentPromptImageBadgeColor(segment.imageNumber);
 
         return (
-          <span
+          <AgentPromptMentionBadge
             key={`mention-${segmentIndex}`}
-            className='agent-view__prompt-image-mention app-button--enter'
-            style={mentionStyle}
-          >
-            {segment.value}
-          </span>
+            value={segment.value}
+            badgeColor={badgeColor}
+            alignWidth={alignWidth}
+          />
         );
       })}
     </>

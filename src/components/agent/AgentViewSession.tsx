@@ -29,11 +29,6 @@ import {
   resolveSanitizedAgentTab,
 } from '@/utils/trimAgentTurnHistory';
 import type { AgentViewProps } from '@/components/agent/AgentView';
-
-// #region agent log
-fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'AgentViewSession.tsx:module',message:'AgentViewSession module evaluated',data:{},timestamp:Date.now(),hypothesisId:'H9',runId:'post-fix'})}).catch(()=>{});
-// #endregion
-
 function AgentViewSessionComponent({
   tab,
   projectId,
@@ -48,11 +43,6 @@ function AgentViewSessionComponent({
 }: AgentViewProps) {
   const sessionTab = useMemo(() => resolveSanitizedAgentTab(tab), [tab]);
 
-  useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'AgentViewSession.tsx:mount',message:'AgentViewSession mounted',data:{paneId:tab.id,turnCount:sessionTab.turns?.length??0},timestamp:Date.now(),hypothesisId:'H9',runId:'post-fix'})}).catch(()=>{});
-    // #endregion
-  }, [sessionTab.turns?.length, tab.id]);
   const setPaneDraft = useAgentComposerDraftStore((state) => state.setDraft);
   const clearPaneDraft = useAgentComposerDraftStore((state) => state.clearDraft);
   const [draft, setDraft] = useState(
@@ -63,11 +53,31 @@ function AgentViewSessionComponent({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const transcriptScrollRef = useRef<AgentTranscriptScrollControl | null>(null);
+  const previousTurnCountRef = useRef(sessionTab.turns?.length ?? 0);
   const terminalAgent = cliAgentToTerminalAgent(tab.cliAgent);
   const agentConfig = TERMINAL_AGENTS[terminalAgent];
   const promptHistory = useMemo(() => buildAgentPromptHistory(turns), [turns]);
 
   useEffect(() => {
+    const incomingTurns = sessionTab.turns ?? [];
+    const incomingTurnCount = incomingTurns.length;
+    const hadTurnsBefore = previousTurnCountRef.current > 0;
+
+    previousTurnCountRef.current = incomingTurnCount;
+
+    if (incomingTurnCount === 0) {
+      if (turns.length > 0) {
+        setTurns([]);
+      }
+
+      if (hadTurnsBefore) {
+        setDraft('');
+        clearPaneDraft(tab.id);
+      }
+
+      return;
+    }
+
     if (turns.some((turn) => turn.running)) {
       return;
     }
@@ -76,12 +86,12 @@ function AgentViewSessionComponent({
       return;
     }
 
-    if (shouldPreferLocalAgentTurnHistory(turns, sessionTab.turns ?? [])) {
+    if (shouldPreferLocalAgentTurnHistory(turns, incomingTurns)) {
       return;
     }
 
-    setTurns(sessionTab.turns ?? []);
-  }, [sessionTab.turns, tab.id, turns]);
+    setTurns(incomingTurns);
+  }, [clearPaneDraft, sessionTab.turns, tab.id, turns]);
 
   useEffect(() => {
     setIsTranscriptAtBottom(true);

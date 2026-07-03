@@ -47,6 +47,7 @@ import {
   createAgentStreamJsonParserState,
   feedAgentStreamJsonChunk,
   finalizeStreamJsonTurn,
+  hasPendingStreamJsonInteraction,
   isAgentStreamJsonStateAwaitingCompletion,
 } from '@/utils/agentStreamJsonParser';
 import {
@@ -389,6 +390,9 @@ export function useAgentPaneSession({
       cursorAgentContinueRef.current = false;
       streamJsonStateRef.current = createAgentStreamJsonParserState();
       turnsRef.current = incoming;
+      editingTurnIdRef.current = null;
+      setEditingTurnId(null);
+      setFollowUps([]);
       setTurnsRevision((revision) => revision + 1);
       return;
     }
@@ -615,14 +619,9 @@ export function useAgentPaneSession({
         syncContextUsageFromStreamJson(streamUpdate.usage);
       }
 
-      if (streamUpdate.shouldFinalize) {
-        finalizeStreamJsonTurnFromEvent();
-        return true;
-      }
-
-      return false;
+      return streamUpdate.shouldFinalize;
     },
-    [finalizeStreamJsonTurnFromEvent, syncContextUsageFromStreamJson, updateActiveTurn],
+    [syncContextUsageFromStreamJson, updateActiveTurn],
   );
 
   const writeToPty = useCallback((text: string) => {
@@ -1740,10 +1739,6 @@ export function useAgentPaneSession({
 
     deferAutoSpawnRef.current = false;
     creatingRef.current = true;
-    // #region agent log
-    fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'useAgentPaneSession.ts:spawn',message:'spawnAgentPty start',data:{paneId:tab.id},timestamp:Date.now(),hypothesisId:'H14',runId:'post-fix'})}).catch(()=>{});
-    // #endregion
-
     try {
       const terminalAgent = cliAgentToTerminalAgent(resolveAgentTabCli(tab));
       const createdPtyId = await window.nexus.terminal.create(agentRootPath, terminalAgent);
@@ -1776,9 +1771,6 @@ export function useAgentPaneSession({
         window.nexus.terminal.write(createdPtyId, `${pendingCommand}\n`);
         useTerminalSessionStore.getState().setLastCommand(paneIdRef.current, pendingCommand);
       }, LAUNCH_COMMAND_DELAY_MS);
-      // #region agent log
-      fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'useAgentPaneSession.ts:spawn',message:'spawnAgentPty done',data:{paneId:tab.id,ptyId:createdPtyId},timestamp:Date.now(),hypothesisId:'H14',runId:'post-fix'})}).catch(()=>{});
-      // #endregion
     } finally {
       creatingRef.current = false;
     }
@@ -1791,9 +1783,6 @@ export function useAgentPaneSession({
       }
 
       if (deferAutoSpawnRef.current) {
-        // #region agent log
-        fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'useAgentPaneSession.ts:spawn',message:'auto spawn deferred idle history',data:{paneId:tab.id,turnCount:tab.turns?.length??0},timestamp:Date.now(),hypothesisId:'H14',runId:'post-fix'})}).catch(()=>{});
-        // #endregion
         return;
       }
 
@@ -2207,9 +2196,17 @@ export function useAgentPaneSession({
           return;
         }
 
-        const awaitingCompletion = isAgentStreamJsonStateAwaitingCompletion(
-          streamJsonStateRef.current,
-        );
+        const latestTurn = [...turnsRef.current].reverse().find((turn) => turn.running);
+        const streamState = streamJsonStateRef.current;
+        const hasPendingInteraction =
+          hasPendingStreamJsonInteraction(streamState) ||
+          Boolean(latestTurn && hasPendingAgentQuestion(latestTurn.activities));
+
+        if (hasPendingInteraction && (processRunning || agentPrintRunActiveRef.current || storedToken)) {
+          return;
+        }
+
+        const awaitingCompletion = isAgentStreamJsonStateAwaitingCompletion(streamState);
         const orphanThreshold = awaitingCompletion
           ? STREAM_JSON_INCOMPLETE_ORPHAN_FINALIZE_MS
           : STREAM_JSON_ORPHAN_FINALIZE_MS;

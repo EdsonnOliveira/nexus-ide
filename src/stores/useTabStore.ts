@@ -1,6 +1,7 @@
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useAgentComposerDraftStore } from '@/stores/useAgentComposerDraftStore';
+import { useTerminalPasteImageStore } from '@/stores/useTerminalPasteImageStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { bumpFileExternalRevision } from '@/utils/fileExternalRevision';
 import type { AgentTab, ApiTab, BrowserTab, EmulatorPlatform, EmulatorTab, FileTab, Tab, TabBarItem, TabType, TerminalAgent } from '@/types';
@@ -306,54 +307,61 @@ export function useTabActions(): TabStoreActions {
       }
 
       const launchCommand = rawCommand.trim() || cliAgent;
-
       const session = useTerminalSessionStore.getState();
 
       useProjectNotificationStore.getState().clearNotificationForPane(tabId);
-      session.resetAgentWorkload(tabId);
-      session.clearResumeChatId(tabId);
+      session.setRestarting(tabId, true);
 
-      if (isTerminalAgent && pane.type === 'terminal') {
-        await session.resumeAgentSession(tabId, launchCommand, focusPane);
-        return;
+      try {
+        stopAgentPane(tabId);
+        window.nexus.agentPrint.stop(tabId);
+        session.resetAgentWorkload(tabId);
+        session.clearResumeChatId(tabId);
+        useAgentComposerDraftStore.getState().clearDraft(tabId);
+        useTerminalPasteImageStore.getState().clearPaneImages(tabId);
+
+        if (isTerminalAgent && pane.type === 'terminal') {
+          await session.resumeAgentSession(tabId, launchCommand, focusPane);
+          return;
+        }
+
+        if (!isDedicatedAgent || pane.type !== 'agent') {
+          return;
+        }
+
+        if (pane.ptyId) {
+          window.nexus.terminal.kill(pane.ptyId);
+        }
+
+        const nextTabs = updatePaneInTabs(project.tabs, tabId, (entry) =>
+          entry.type === 'agent'
+            ? {
+                ...entry,
+                turns: [],
+                messages: [],
+                restoreCommand: launchCommand,
+                cliAgent,
+                ptyId: null,
+                workingDirectory: resolveAgentPaneRootPath(project.path),
+              }
+            : entry,
+        );
+
+        useProjectStore.setState((state) => ({
+          projects: state.projects.map((entry) =>
+            entry.id === project.id ? { ...entry, tabs: nextTabs } : entry,
+          ),
+        }));
+
+        await updateProject(project.id, {
+          tabs: nextTabs,
+        });
+
+        session.setPendingLaunchCommand(tabId, launchCommand);
+        await focusPane(tabId);
+      } finally {
+        session.setRestarting(tabId, false);
       }
-
-      if (!isDedicatedAgent || pane.type !== 'agent') {
-        return;
-      }
-
-      window.nexus.agentPrint.stop(tabId);
-
-      if (pane.ptyId) {
-        window.nexus.terminal.kill(pane.ptyId);
-      }
-
-      const nextTabs = updatePaneInTabs(project.tabs, tabId, (entry) =>
-        entry.type === 'agent'
-          ? {
-              ...entry,
-              turns: [],
-              messages: [],
-              restoreCommand: launchCommand,
-              cliAgent,
-              ptyId: null,
-              workingDirectory: resolveAgentPaneRootPath(project.path),
-            }
-          : entry,
-      );
-
-      useProjectStore.setState((state) => ({
-        projects: state.projects.map((entry) =>
-          entry.id === project.id ? { ...entry, tabs: nextTabs } : entry,
-        ),
-      }));
-
-      await updateProject(project.id, {
-        tabs: nextTabs,
-      });
-
-      session.setPendingLaunchCommand(tabId, launchCommand);
-      await focusPane(tabId);
     },
     resumeAgentHistorySession: async (tabId, chatId, projectPath) => {
       const project = getProjectSnapshot();

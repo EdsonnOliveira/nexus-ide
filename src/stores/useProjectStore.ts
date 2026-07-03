@@ -159,9 +159,6 @@ async function migrateAppStateChunked(appState: AppState): Promise<AppState> {
   for (let index = 0; index < appState.projects.length; index += 1) {
     const project = appState.projects[index];
     migratedProjects.push(migrateProject(project, fallbackWorkspaceId));
-    // #region agent log
-    fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'useProjectStore.ts:migrateAppStateChunked',message:'project migrated',data:{index,projectId:project.id,tabCount:project.tabs.length},timestamp:Date.now(),hypothesisId:'H4',runId:'pre-fix'})}).catch(()=>{});
-    // #endregion
     await yieldToNextFrame();
   }
 
@@ -188,11 +185,7 @@ function scheduleProjectMigration(
   rawState: AppState,
 ): void {
   void (async () => {
-    try {
-      // #region agent log
-      fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'useProjectStore.ts:scheduleProjectMigration',message:'migration start',data:{projectCount:rawState.projects.length,activeProjectId:rawState.activeProjectId},timestamp:Date.now(),hypothesisId:'H2',runId:'pre-fix'})}).catch(()=>{});
-      // #endregion
-      const shouldPersistBadgeColors = rawState.projects.some((project) =>
+    try {      const shouldPersistBadgeColors = rawState.projects.some((project) =>
         hasMissingBadgeColorIndex(project.tabs),
       );
       const shouldPersistTrimmedAgentHistory = rawState.projects.some((project) =>
@@ -212,10 +205,6 @@ function scheduleProjectMigration(
         projectsMigrated: true,
         sidebarCollapsed: activeProject?.sidebarCollapsed ?? false,
       });
-      // #region agent log
-      fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'useProjectStore.ts:scheduleProjectMigration',message:'migration complete',data:{projectCount:appState.projects.length,activeProjectId:appState.activeProjectId},timestamp:Date.now(),hypothesisId:'H2',runId:'pre-fix'})}).catch(()=>{});
-      // #endregion
-
       window.setTimeout(() => {
         void Promise.all([
           import('@/utils/hydrateTerminalSession'),
@@ -423,11 +412,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
 
     resetProjectSwitchState();
 
-    try {
-      // #region agent log
-      fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'useProjectStore.ts:initialize',message:'initialize start',data:{},timestamp:Date.now(),hypothesisId:'H2',runId:'pre-fix'})}).catch(()=>{});
-      // #endregion
-      const rawState = await window.nexus.projects.list();
+    try {      const rawState = await window.nexus.projects.list();
       const appState = migrateAppState(rawState);
       await window.nexus.projects.clearActiveProject();
       const workspaces =
@@ -450,10 +435,6 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
         sidebarVideoLastLink:
           appState.sidebarVideoLastLink ?? appState.sidebarVideoSession?.sourceUrl ?? null,
       });
-
-      // #region agent log
-      fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'useProjectStore.ts:initialize',message:'initialize migrated applied',data:{projectCount:appState.projects.length,activeProjectId:null},timestamp:Date.now(),hypothesisId:'H2',runId:'post-fix'})}).catch(()=>{});
-      // #endregion
       scheduleProjectMigration(set, get, rawState);
     } catch (error) {
       console.error('[project-store] initialize failed', error);
@@ -550,9 +531,6 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     });
   },
   selectProject: async (id, options) => {
-    // #region agent log
-    fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'useProjectStore.ts:selectProject',message:'selectProject called',data:{id,activeProjectId:get().activeProjectId,projectsMigrated:get().projectsMigrated},timestamp:Date.now(),hypothesisId:'H3',runId:'pre-fix'})}).catch(()=>{});
-    // #endregion
     if (id === get().activeProjectId) {
       return;
     }

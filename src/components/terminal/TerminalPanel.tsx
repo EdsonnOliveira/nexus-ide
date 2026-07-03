@@ -48,10 +48,6 @@ import {
   resolveHostedAgentProjects,
   type PaneAgentSessionSnapshot,
 } from '@/utils/paneAgentSession';
-
-// #region agent log
-fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'TerminalPanel.tsx:module',message:'TerminalPanel module evaluated',data:{},timestamp:Date.now(),hypothesisId:'H1',runId:'pre-fix'})}).catch(()=>{});
-// #endregion
 import {
   isOverlayBlockingTerminalHints,
   subscribeOverlayBlockingChange,
@@ -64,9 +60,14 @@ import {
   readImagePathAsDataUrl,
 } from '@/utils/attachAgentPromptImage';
 import {
+  buildAgentComposerMentionsAppendFragment,
+  resolveAgentComposerDropMentions,
+} from '@/utils/agentComposerDrop';
+import { writeAgentPaneDraft } from '@/utils/agentPaneRegistry';
+import {
   getExplorerDragEntryPath,
   isExplorerInternalDrag,
-  isExternalImageFileDrag,
+  isExternalFileDrag,
   resolveExplorerDropEffect,
 } from '@/utils/explorerExternalDrop';
 import {
@@ -296,9 +297,9 @@ const TabPane = memo(function TabPaneComponent({
       }
 
       const isExplorerDrag = isExplorerInternalDrag(event.dataTransfer);
-      const isImageDrag = isExternalImageFileDrag(event.dataTransfer);
+      const isFileDrag = isExternalFileDrag(event.dataTransfer);
 
-      if (!isExplorerDrag && !isImageDrag) {
+      if (!isExplorerDrag && !isFileDrag) {
         return;
       }
 
@@ -339,17 +340,25 @@ const TabPane = memo(function TabPaneComponent({
         return;
       }
 
-      if (!isExternalImageFileDrag(event.dataTransfer)) {
+      if (!isExternalFileDrag(event.dataTransfer)) {
         return;
       }
 
-      void readDroppedImageDataUrls(event.dataTransfer).then((dataUrls) => {
-        if (dataUrls.length === 0) {
-          return;
+      void (async () => {
+        const dataUrls = await readDroppedImageDataUrls(event.dataTransfer);
+
+        if (dataUrls.length > 0) {
+          await attachAgentPromptImagesToPane(projectPath, tab.id, dataUrls);
         }
 
-        void attachAgentPromptImagesToPane(projectPath, tab.id, dataUrls);
-      });
+        const mentions = await resolveAgentComposerDropMentions(projectPath, event.dataTransfer, {
+          includeImages: false,
+        });
+
+        if (mentions.length > 0) {
+          writeAgentPaneDraft(tab.id, buildAgentComposerMentionsAppendFragment('', mentions));
+        }
+      })();
     },
     [isAgentSession, projectPath, selectPane, tab.id],
   );
@@ -751,9 +760,6 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
   onUpdateAgentTab,
   onSplitRatioCommit,
 }: ProjectWorkspaceProps) {
-  // #region agent log
-  fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'TerminalPanel.tsx:ProjectWorkspace',message:'ProjectWorkspace render',data:{projectId:project.id,tabCount:project.tabs.length},timestamp:Date.now(),hypothesisId:'H11',runId:'post-fix'})}).catch(()=>{});
-  // #endregion
   const activeTabItem = useMemo(
     () => resolveActiveTabBarItem(project.tabs, project.activeTabId),
     [project.activeTabId, project.tabs],
@@ -865,14 +871,6 @@ interface PaneCompletionTracker {
 }
 
 function TerminalPanelComponent() {
-  // #region agent log
-  fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'TerminalPanel.tsx:render',message:'TerminalPanel render start',data:{},timestamp:Date.now(),hypothesisId:'H7',runId:'post-fix'})}).catch(()=>{});
-  // #endregion
-  useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'TerminalPanel.tsx:mount',message:'TerminalPanel mounted',data:{},timestamp:Date.now(),hypothesisId:'H1',runId:'post-fix'})}).catch(()=>{});
-    // #endregion
-  }, []);
   useAgentPrintBridge();
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const projects = useProjectStore((state) => state.projects);

@@ -51,9 +51,17 @@ import {
 } from '@/utils/attachAgentPromptImage';
 import { writeAgentPaneDraft } from '@/utils/agentPaneRegistry';
 import {
+  buildAgentComposerMentionsAppendFragment,
+  buildAgentComposerMentionsInsertion,
+  canAcceptAgentComposerDrop,
+  resolveAgentComposerDropEffect,
+  resolveAgentComposerDropMentions,
+} from '@/utils/agentComposerDrop';
+import {
   buildAgentPromptImageMentionAppendFragment,
   buildAgentPromptImageMentionInsertion,
 } from '@/utils/agentPromptImageBadge';
+import { isExternalFileDrag } from '@/utils/explorerExternalDrop';
 import { parseComposerSkillDraft } from '@/utils/agentSkillDisplay';
 import {
   applyComposerMention,
@@ -364,6 +372,7 @@ function AgentComposerComponent({
   const [caretIndex, setCaretIndex] = useState(0);
   const [mentionRepositionToken, setMentionRepositionToken] = useState(0);
   const composerCardRef = useRef<HTMLDivElement>(null);
+  const [composerDropActive, setComposerDropActive] = useState(false);
   const composerInputMirrorRef = useRef<HTMLDivElement>(null);
   const promptHistoryIndexRef = useRef(-1);
   const promptHistoryScratchRef = useRef('');
@@ -582,6 +591,111 @@ function AgentComposerComponent({
       insertImageMention(attached.imageNumber);
     },
     [insertImageMention, paneId, projectPath],
+  );
+
+  const insertPathMentions = useCallback(
+    (mentions: string[]) => {
+      if (mentions.length === 0) {
+        return;
+      }
+
+      const textarea = inputRef.current;
+      const bodyValue = skillDraft.hasSkill ? skillDraft.body : draft;
+      const selectionStart = textarea?.selectionStart ?? bodyValue.length;
+      const selectionEnd = textarea?.selectionEnd ?? selectionStart;
+      const { nextDraft, nextCaret } = buildAgentComposerMentionsInsertion(
+        bodyValue,
+        selectionStart,
+        selectionEnd,
+        mentions,
+      );
+      const nextValue = skillDraft.hasSkill
+        ? nextDraft
+          ? `${skillDraft.skillCommand} ${nextDraft}`
+          : skillDraft.skillCommand
+        : nextDraft;
+
+      onDraftChange(nextValue);
+
+      window.requestAnimationFrame(() => {
+        if (!textarea) {
+          return;
+        }
+
+        textarea.focus();
+        textarea.setSelectionRange(nextCaret, nextCaret);
+        setCaretIndex(nextCaret);
+        resizeComposerInput(textarea);
+        syncComposerInputScroll();
+      });
+    },
+    [
+      draft,
+      inputRef,
+      onDraftChange,
+      skillDraft.body,
+      skillDraft.hasSkill,
+      skillDraft.skillCommand,
+      syncComposerInputScroll,
+    ],
+  );
+
+  const handleComposerDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (!canAcceptAgentComposerDrop(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = resolveAgentComposerDropEffect(event.dataTransfer);
+    setComposerDropActive(true);
+  }, []);
+
+  const handleComposerDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    const related = event.relatedTarget as Node | null;
+
+    if (!composerCardRef.current?.contains(related)) {
+      setComposerDropActive(false);
+    }
+  }, []);
+
+  const handleComposerDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setComposerDropActive(false);
+
+      void (async () => {
+        const dataTransfer = event.dataTransfer;
+
+        if (isExternalFileDrag(dataTransfer)) {
+          const dataUrls = await readDroppedImageDataUrls(dataTransfer);
+
+          for (const dataUrl of dataUrls) {
+            await attachImageWithMention(dataUrl);
+          }
+
+          const mentions = await resolveAgentComposerDropMentions(projectPath, dataTransfer, {
+            includeImages: false,
+          });
+
+          if (mentions.length > 0) {
+            insertPathMentions(mentions);
+          }
+
+          inputRef.current?.focus();
+          return;
+        }
+
+        const mentions = await resolveAgentComposerDropMentions(projectPath, dataTransfer);
+
+        if (mentions.length > 0) {
+          insertPathMentions(mentions);
+          inputRef.current?.focus();
+        }
+      })();
+    },
+    [attachImageWithMention, inputRef, insertPathMentions, projectPath],
   );
 
   useLayoutEffect(() => {
@@ -962,7 +1076,10 @@ function AgentComposerComponent({
         ) : null}
         <div
           ref={composerCardRef}
-          className={`agent-view__composer-card${isEditing ? ' agent-view__composer-card--editing' : ''}`}
+          className={`agent-view__composer-card${isEditing ? ' agent-view__composer-card--editing' : ''}${composerDropActive ? ' agent-view__composer-card--drop-target' : ''}`}
+          onDragOver={handleComposerDragOver}
+          onDragLeave={handleComposerDragLeave}
+          onDrop={handleComposerDrop}
         >
           {pendingImages.length > 0 ? (
             <div className='agent-view__composer-attachments'>{pendingImages}</div>
@@ -1007,6 +1124,7 @@ function AgentComposerComponent({
                 rows={1}
                 placeholder={inputPlaceholder}
                 disabled={interactionPending}
+                spellCheck={false}
                 onChange={handleDraftChange}
                 onClick={syncCaretIndex}
                 onKeyUp={syncCaretIndex}
@@ -1120,17 +1238,34 @@ export async function handleAgentComposerDrop(
   paneId: string,
   dataTransfer: DataTransfer,
 ): Promise<void> {
-  const dataUrls = await readDroppedImageDataUrls(dataTransfer);
   let mentionDraft = '';
 
-  for (const dataUrl of dataUrls) {
-    const attached = await attachAgentPromptImageToPane(projectPath, paneId, dataUrl, false);
+  if (isExternalFileDrag(dataTransfer)) {
+    const dataUrls = await readDroppedImageDataUrls(dataTransfer);
 
-    if (!attached) {
-      continue;
+    for (const dataUrl of dataUrls) {
+      const attached = await attachAgentPromptImageToPane(projectPath, paneId, dataUrl, false);
+
+      if (!attached) {
+        continue;
+      }
+
+      mentionDraft = `${mentionDraft}${buildAgentPromptImageMentionAppendFragment(mentionDraft, attached.imageNumber)}`;
     }
 
-    mentionDraft = `${mentionDraft}${buildAgentPromptImageMentionAppendFragment(mentionDraft, attached.imageNumber)}`;
+    const pathMentions = await resolveAgentComposerDropMentions(projectPath, dataTransfer, {
+      includeImages: false,
+    });
+
+    if (pathMentions.length > 0) {
+      mentionDraft = `${mentionDraft}${buildAgentComposerMentionsAppendFragment(mentionDraft, pathMentions)}`;
+    }
+  } else {
+    const pathMentions = await resolveAgentComposerDropMentions(projectPath, dataTransfer);
+
+    if (pathMentions.length > 0) {
+      mentionDraft = buildAgentComposerMentionsAppendFragment('', pathMentions);
+    }
   }
 
   if (mentionDraft) {

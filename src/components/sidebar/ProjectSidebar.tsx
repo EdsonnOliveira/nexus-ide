@@ -546,9 +546,6 @@ function ProjectSidebarComponent() {
 
   const handleSelectProject = useCallback(
     (id: string) => {
-      // #region agent log
-      fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'ProjectSidebar.tsx:handleSelectProject',message:'sidebar project click',data:{id,activeProjectId},timestamp:Date.now(),hypothesisId:'H3',runId:'pre-fix'})}).catch(()=>{});
-      // #endregion
       if (id === activeProjectId) {
         void leaveActiveProject();
         return;

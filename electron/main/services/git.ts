@@ -96,6 +96,19 @@ const MAX_GIT_DISCOVERY_DEPTH = 6;
 const MAX_UNTRACKED_LINE_COUNT_BYTES = 128 * 1024;
 const MAX_UNTRACKED_LINE_STATS = 400;
 
+function buildGitPorcelainStatusArgs(): string[] {
+  return ['status', '--porcelain=1', '-b', '--untracked-files=all'];
+}
+
+function buildGitStatusArgs(): string[] {
+  return [
+    ...buildGitPorcelainStatusArgs(),
+    '--',
+    '.',
+    ...Array.from(GIT_DISCOVERY_IGNORED_DIRS).map((segment) => `:(exclude)${segment}/**`),
+  ];
+}
+
 const GIT_DISCOVERY_IGNORED_DIRS = new Set([
   '.cursor',
   '.nexus',
@@ -475,6 +488,94 @@ async function filterCommitRelevantStatus(
   };
 }
 
+function isUntrackedDirectoryEntry(repoPath: string, entryPath: string): boolean {
+  const normalized = entryPath.replace(/\\/g, '/');
+
+  if (normalized.endsWith('/')) {
+    return true;
+  }
+
+  try {
+    return statSync(path.join(repoPath, normalized)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function collectUntrackedFilesUnderDirectory(repoPath: string, directoryPath: string): string[] {
+  const normalizedDir = directoryPath.replace(/\\/g, '/').replace(/\/+$/, '');
+  const absoluteDir = path.join(repoPath, normalizedDir);
+  const files: string[] = [];
+  const queue: string[] = [absoluteDir];
+
+  while (queue.length > 0) {
+    const currentDir = queue.shift();
+
+    if (!currentDir) {
+      continue;
+    }
+
+    let entries;
+
+    try {
+      entries = readdirSync(currentDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (shouldSkipGitDiscoveryDir(entry.name)) {
+        continue;
+      }
+
+      const absoluteEntry = path.join(currentDir, entry.name);
+      const relativeEntry = path.relative(repoPath, absoluteEntry).replace(/\\/g, '/');
+
+      if (entry.isDirectory()) {
+        if (!isGitStatusExcludedPath(relativeEntry)) {
+          queue.push(absoluteEntry);
+        }
+
+        continue;
+      }
+
+      if (entry.isFile() && !isGitStatusExcludedPath(relativeEntry)) {
+        files.push(relativeEntry);
+      }
+    }
+  }
+
+  return files.sort((left, right) => left.localeCompare(right));
+}
+
+function expandUntrackedDirectoryEntries(
+  repoPath: string,
+  untracked: GitChangeEntry[],
+): GitChangeEntry[] {
+  const expanded: GitChangeEntry[] = [];
+
+  for (const entry of untracked) {
+    if (!isUntrackedDirectoryEntry(repoPath, entry.path)) {
+      expanded.push(entry);
+      continue;
+    }
+
+    const normalized = entry.path.replace(/\\/g, '/').replace(/\/+$/, '');
+    const files = collectUntrackedFilesUnderDirectory(repoPath, normalized);
+
+    if (files.length === 0) {
+      expanded.push({ ...entry, path: normalized });
+      continue;
+    }
+
+    for (const filePath of files) {
+      expanded.push({ path: filePath, status: 'untracked' });
+    }
+  }
+
+  return expanded;
+}
+
 function parseStatusOutput(output: string, repoPath: string): GitStatusResult {
   const staged: GitChangeEntry[] = [];
   const unstaged: GitChangeEntry[] = [];
@@ -788,16 +889,13 @@ export async function getGitStatus(dirPath: string): Promise<GitStatusResult> {
     return empty;
   }
 
-  const output = await runGit(resolved, [
-    'status',
-    '--porcelain=1',
-    '-b',
-    '--',
-    '.',
-    ...Array.from(GIT_DISCOVERY_IGNORED_DIRS).map((segment) => `:(exclude)${segment}/**`),
-  ]);
+  const output = await runGit(resolved, buildGitStatusArgs());
   const parsed = parseStatusOutput(output, resolved);
-  const pathFiltered = applyGitStatusPathExclusions(parsed);
+  const expandedUntracked = {
+    ...parsed,
+    untracked: expandUntrackedDirectoryEntries(resolved, parsed.untracked),
+  };
+  const pathFiltered = applyGitStatusPathExclusions(expandedUntracked);
   const enriched = await enrichStatusWithStats(resolved, pathFiltered);
   const result = await filterCommitRelevantStatus(resolved, enriched);
   statusCache.set(resolved, { expiresAt: now + CACHE_TTL_MS, result });
@@ -847,7 +945,7 @@ export async function discardGitPaths(dirPath: string, paths: string[]): Promise
       return { ok: false, error: 'Nenhum arquivo selecionado' };
     }
 
-    const statusOutput = await runGit(resolved, ['status', '--porcelain']);
+    const statusOutput = await runGit(resolved, buildGitPorcelainStatusArgs());
     const status = await enrichStatusWithStats(
       resolved,
       parseStatusOutput(statusOutput, resolved),

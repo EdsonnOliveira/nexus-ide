@@ -52,12 +52,6 @@ function AgentViewComponent(props: AgentViewProps) {
   }, [props.onFocusPane]);
 
   useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7573/ingest/667eb7be-70f4-44cb-a19a-5ae8dc0f89e6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f47fa1'},body:JSON.stringify({sessionId:'f47fa1',location:'AgentView.tsx:shell',message:'AgentView shell mounted',data:{paneId:props.tab.id},timestamp:Date.now(),hypothesisId:'H9',runId:'post-fix'})}).catch(()=>{});
-    // #endregion
-  }, [props.tab.id]);
-
-  useEffect(() => {
     setSessionReady(false);
     let cancelled = false;
     const idleId = window.requestIdleCallback(

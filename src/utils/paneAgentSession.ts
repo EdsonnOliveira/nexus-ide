@@ -42,7 +42,7 @@ export function shouldPreferLocalAgentTurnHistory(
   }
 
   if (incomingTurns.length === 0) {
-    return true;
+    return false;
   }
 
   const localRunning = localTurns.some((turn) => turn.running);

@@ -243,6 +243,12 @@ export function useDailyAgentGeneration(projects: Project[]) {
     [finishRun, updateResponse],
   );
 
+  useEffect(() => {
+    return () => {
+      stopActiveRuns();
+    };
+  }, [stopActiveRuns]);
+
   const generate = useCallback(
     async (options: DailyGenerationContext) => {
       if (!window.nexus?.agentPrint || runningProjectId) {

@@ -58,6 +58,31 @@ if (!app.requestSingleInstanceLock()) {
 app.setName(DOCK_APP_NAME);
 app.setPath('userData', path.join(app.getPath('appData'), 'nexus-ide'));
 
+function shouldRecoverRendererProcess(reason: string): boolean {
+  return reason === 'crashed' || reason === 'oom' || reason === 'abnormal-exit';
+}
+
+function scheduleRendererRecovery(webContents: Electron.WebContents, source: string): void {
+  if (isQuitting || !win || win.isDestroyed() || win.webContents !== webContents) {
+    return;
+  }
+
+  if (rendererReloadTimer) {
+    clearTimeout(rendererReloadTimer);
+  }
+
+  rendererReloadTimer = setTimeout(() => {
+    rendererReloadTimer = null;
+
+    if (isQuitting || !win || win.isDestroyed() || win.webContents.isDestroyed()) {
+      return;
+    }
+
+    console.warn(`[window] recovering renderer after ${source}`);
+    win.webContents.reload();
+  }, 300);
+}
+
 function registerProcessDiagnostics(): void {
   process.on('uncaughtException', (error) => {
     console.error('[main] uncaughtException', error);
@@ -67,8 +92,12 @@ function registerProcessDiagnostics(): void {
     console.error('[main] unhandledRejection', reason);
   });
 
-  app.on('render-process-gone', (_event, _webContents, details) => {
+  app.on('render-process-gone', (_event, webContents, details) => {
     console.error('[main] render-process-gone', details);
+
+    if (shouldRecoverRendererProcess(details.reason)) {
+      scheduleRendererRecovery(webContents, details.reason);
+    }
   });
 
   app.on('child-process-gone', (_event, details) => {
@@ -80,6 +109,7 @@ registerProcessDiagnostics();
 
 let win: BrowserWindow | null = null;
 let isQuitting = false;
+let rendererReloadTimer: ReturnType<typeof setTimeout> | null = null;
 let flushMode: 'quit' | 'close' = 'quit';
 let sessionFlushTimer: ReturnType<typeof setTimeout> | null = null;
 const SESSION_FLUSH_TIMEOUT_MS = 5000;
@@ -206,6 +236,10 @@ async function createWindow(appIcon?: NativeImage) {
 
   win.webContents.on('render-process-gone', (_event, details) => {
     console.error('[window] render-process-gone', details);
+
+    if (shouldRecoverRendererProcess(details.reason)) {
+      scheduleRendererRecovery(win!.webContents, details.reason);
+    }
   });
 
   win.once('ready-to-show', () => {

@@ -142,6 +142,19 @@ function canUseTerminal(terminal: Terminal | null, disposedRef: { current: boole
   return Boolean(terminal && !disposedRef.current);
 }
 
+const MAX_SCROLLBACK_REPLAY_BYTES = 262_144;
+
+function trimScrollbackTail(scrollback: string): string {
+  if (scrollback.length <= MAX_SCROLLBACK_REPLAY_BYTES) {
+    return scrollback;
+  }
+
+  const trimmed = scrollback.slice(-MAX_SCROLLBACK_REPLAY_BYTES);
+  const firstNewline = trimmed.indexOf('\n');
+
+  return firstNewline >= 0 ? trimmed.slice(firstNewline + 1) : trimmed;
+}
+
 async function forceReplayTerminalScrollback(
   terminal: Terminal,
   ptyId: string,
@@ -151,11 +164,13 @@ async function forceReplayTerminalScrollback(
   stickToBottomRef: { current: boolean },
   disposedRef: { current: boolean },
 ): Promise<void> {
-  const scrollback = await fetchTerminalScrollback(ptyId, paneId);
+  const raw = await fetchTerminalScrollback(ptyId, paneId);
 
-  if (!scrollback || !canUseTerminal(terminal, disposedRef)) {
+  if (!raw || !canUseTerminal(terminal, disposedRef)) {
     return;
   }
+
+  const scrollback = trimScrollbackTail(raw);
 
   suppressShellPromptClearRef.current = true;
   terminal.clear();
@@ -200,15 +215,17 @@ async function restoreTerminalScrollback(
 
 function replayTerminalScrollback(
   terminal: Terminal,
-  scrollback: string,
+  raw: string,
   parseStream: (data: string) => string,
   suppressShellPromptClearRef: { current: boolean },
   stickToBottomRef: { current: boolean },
   disposedRef: { current: boolean },
 ): void {
-  if (!scrollback || !canUseTerminal(terminal, disposedRef) || terminal.buffer.active.length > 1) {
+  if (!raw || !canUseTerminal(terminal, disposedRef) || terminal.buffer.active.length > 1) {
     return;
   }
+
+  const scrollback = trimScrollbackTail(raw);
 
   suppressShellPromptClearRef.current = true;
   terminal.write(parseStream(scrollback));
@@ -1010,43 +1027,55 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       return;
     }
 
-    void (async () => {
-      if (activePtyId && (await window.nexus.terminal.has(activePtyId))) {
+    const delay = isFocusedRef.current ? 0 : 120;
+
+    const timeoutId = window.setTimeout(() => {
+      void (async () => {
         if (generation !== scrollbackReplayGenerationRef.current) {
           return;
         }
 
-        await forceReplayTerminalScrollback(
-          terminal,
-          activePtyId,
-          paneIdRef.current,
-          parseStreamRef.current,
-          suppressShellPromptClearRef,
-          stickToBottomRef,
-          disposedRef,
-        );
+        if (activePtyId && (await window.nexus.terminal.has(activePtyId))) {
+          if (generation !== scrollbackReplayGenerationRef.current) {
+            return;
+          }
+
+          await forceReplayTerminalScrollback(
+            terminal,
+            activePtyId,
+            paneIdRef.current,
+            parseStreamRef.current,
+            suppressShellPromptClearRef,
+            stickToBottomRef,
+            disposedRef,
+          );
+
+          if (generation !== scrollbackReplayGenerationRef.current) {
+            return;
+          }
+
+          replayedScrollbackRef.current = { ptyId: activePtyId, terminal };
+        }
 
         if (generation !== scrollbackReplayGenerationRef.current) {
           return;
         }
 
-        replayedScrollbackRef.current = { ptyId: activePtyId, terminal };
-      }
+        if (canUseTerminal(terminalRef.current, disposedRef) && fitAddonRef.current) {
+          scheduleTerminalDisplayRefresh(
+            fitAddonRef.current,
+            terminalRef.current,
+            ptyIdRef.current,
+            stickToBottomRef,
+            true,
+          );
+        }
+      })();
+    }, delay);
 
-      if (generation !== scrollbackReplayGenerationRef.current) {
-        return;
-      }
-
-      if (canUseTerminal(terminalRef.current, disposedRef) && fitAddonRef.current) {
-        scheduleTerminalDisplayRefresh(
-          fitAddonRef.current,
-          terminalRef.current,
-          ptyIdRef.current,
-          stickToBottomRef,
-          true,
-        );
-      }
-    })();
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
   }, [isVisible]);
 
   useEffect(() => {

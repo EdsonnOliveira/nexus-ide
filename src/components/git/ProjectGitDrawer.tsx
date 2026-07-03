@@ -7,6 +7,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type CSSProperties,
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -14,8 +15,11 @@ import {
   Archive,
   CheckCheck,
   ChevronDown,
+  ChevronRight,
   Download,
+  FolderTree,
   GitBranch,
+  List,
   MoreHorizontal,
   RefreshCw,
   RotateCcw,
@@ -51,7 +55,7 @@ import type { GitRepoDiscovery } from '@/types/git';
 import type { ProjectDirectoryEntry } from '@/types';
 import { mentionExplorerEntryInAgent } from '@/utils/explorerAgentMention';
 import { toProjectRelativePath } from '@/utils/explorerRelativePath';
-import { buildFlatChanges, type GitFlatChange } from '@/utils/gitFlatChanges';
+import { buildFlatChanges, buildGitChangeTree, type GitChangeTreeNode, type GitChangesViewMode, type GitFlatChange } from '@/utils/gitFlatChanges';
 import { findGitFlatChangeByPath, gitChangePathsMatch, toRepoAbsolutePath } from '@/utils/gitPaths';
 import { resolvePaneAgentCommand } from '@/utils/projectAgentStatus';
 import { sanitizeAgentPrompt } from '@/utils/terminalShellPrompt';
@@ -286,6 +290,7 @@ interface GitChangeRowProps {
   absolutePath: string | null;
   agentPrompt?: string;
   selected: boolean;
+  treeDepth?: number;
   onToggleSelected: (path: string, selected: boolean) => void;
   onStage: (path: string) => void;
   onUnstage: (path: string) => void;
@@ -302,6 +307,7 @@ const GitChangeRow = memo(function GitChangeRowComponent({
   absolutePath,
   agentPrompt,
   selected,
+  treeDepth,
   onToggleSelected,
   onStage,
   onUnstage,
@@ -310,6 +316,8 @@ const GitChangeRow = memo(function GitChangeRowComponent({
   onContextMenu,
 }: GitChangeRowProps) {
   const isNew = change.status === 'untracked' || change.status === 'added';
+  const isTreeRow = treeDepth !== undefined;
+  const displayPath = isTreeRow ? (change.path.split('/').pop() ?? change.path) : change.path;
   const { onMouseEnter, onMouseLeave, hintNode } = useDelayedHoverHint(change.path);
 
   const handleOpenDiff = useCallback(() => {
@@ -389,7 +397,8 @@ const GitChangeRow = memo(function GitChangeRowComponent({
 
   return (
     <div
-      className='git-scm__file-row app-button app-button--enter'
+      className={`git-scm__file-row app-button app-button--enter${isTreeRow ? ' git-scm__file-row--tree' : ''}`}
+      style={isTreeRow ? ({ '--git-scm-tree-depth': treeDepth } as CSSProperties) : undefined}
       role='button'
       tabIndex={0}
       draggable={Boolean(absolutePath)}
@@ -400,8 +409,9 @@ const GitChangeRow = memo(function GitChangeRowComponent({
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
+      {isTreeRow ? <span className='git-scm__tree-chevron' aria-hidden /> : null}
       <GitChangeEntryIcon path={change.path} />
-      <span className='git-scm__file-path app-button__label'>{change.path}</span>
+      <span className='git-scm__file-path app-button__label'>{displayPath}</span>
       <span className='git-scm__file-stats'>
         {change.additions > 0 ? (
           <span className='git-scm__file-stat git-scm__file-stat--add'>+{change.additions}</span>
@@ -427,6 +437,230 @@ const GitChangeRow = memo(function GitChangeRowComponent({
       />
       {hintNode}
     </div>
+  );
+});
+
+interface GitChangeFolderRowProps {
+  node: GitChangeTreeNode;
+  depth: number;
+  expanded: boolean;
+  onToggle: (path: string) => void;
+}
+
+const GitChangeFolderRow = memo(function GitChangeFolderRowComponent({
+  node,
+  depth,
+  expanded,
+  onToggle,
+}: GitChangeFolderRowProps) {
+  const handleToggle = useCallback(() => {
+    onToggle(node.path);
+  }, [node.path, onToggle]);
+
+  const handleKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+      if (event.key !== 'Enter' && event.key !== ' ') {
+        return;
+      }
+
+      event.preventDefault();
+      handleToggle();
+    },
+    [handleToggle],
+  );
+
+  return (
+    <button
+      type='button'
+      className='git-scm__folder-row app-button app-button--enter'
+      style={{ '--git-scm-tree-depth': depth } as CSSProperties}
+      aria-expanded={expanded}
+      onClick={handleToggle}
+      onKeyDown={handleKeyDown}
+    >
+      <span className='git-scm__tree-chevron' aria-hidden>
+        {expanded ? <ChevronDown size={12} strokeWidth={2} /> : <ChevronRight size={12} strokeWidth={2} />}
+      </span>
+      <span className='git-scm__file-icon' aria-hidden>
+        <ExplorerDirectoryIcon folderName={node.name} />
+      </span>
+      <span className='git-scm__folder-name app-button__label'>{node.name}</span>
+    </button>
+  );
+});
+
+interface GitChangeTreeBranchProps {
+  node: GitChangeTreeNode;
+  depth: number;
+  collapsedFolders: Set<string>;
+  onToggleFolder: (path: string) => void;
+  selectedRepoPath: string | null;
+  agentPrompt?: string;
+  selectedPaths: Set<string>;
+  onToggleSelected: (path: string, selected: boolean) => void;
+  onStage: (path: string) => void;
+  onUnstage: (path: string) => void;
+  onDiscard: (path: string) => void;
+  onOpenDiff: (
+    filePath: string,
+    options: { staged: boolean; untracked?: boolean; agentPrompt?: string },
+  ) => void;
+  onContextMenu: (change: GitFlatChange, x: number, y: number) => void;
+}
+
+const GitChangeTreeBranch = memo(function GitChangeTreeBranchComponent({
+  node,
+  depth,
+  collapsedFolders,
+  onToggleFolder,
+  selectedRepoPath,
+  agentPrompt,
+  selectedPaths,
+  onToggleSelected,
+  onStage,
+  onUnstage,
+  onDiscard,
+  onOpenDiff,
+  onContextMenu,
+}: GitChangeTreeBranchProps) {
+  if (node.isDirectory) {
+    const expanded = !collapsedFolders.has(node.path);
+
+    return (
+      <>
+        <GitChangeFolderRow
+          node={node}
+          depth={depth}
+          expanded={expanded}
+          onToggle={onToggleFolder}
+        />
+        {expanded
+          ? node.children.map((child) => (
+              <GitChangeTreeBranch
+                key={child.path}
+                node={child}
+                depth={depth + 1}
+                collapsedFolders={collapsedFolders}
+                onToggleFolder={onToggleFolder}
+                selectedRepoPath={selectedRepoPath}
+                agentPrompt={agentPrompt}
+                selectedPaths={selectedPaths}
+                onToggleSelected={onToggleSelected}
+                onStage={onStage}
+                onUnstage={onUnstage}
+                onDiscard={onDiscard}
+                onOpenDiff={onOpenDiff}
+                onContextMenu={onContextMenu}
+              />
+            ))
+          : null}
+      </>
+    );
+  }
+
+  if (!node.change) {
+    return null;
+  }
+
+  return (
+    <GitChangeRow
+      change={node.change}
+      absolutePath={selectedRepoPath ? toRepoAbsolutePath(selectedRepoPath, node.change.path) : null}
+      agentPrompt={agentPrompt}
+      selected={selectedPaths.has(node.change.path)}
+      treeDepth={depth}
+      onToggleSelected={onToggleSelected}
+      onStage={onStage}
+      onUnstage={onUnstage}
+      onDiscard={onDiscard}
+      onOpenDiff={onOpenDiff}
+      onContextMenu={onContextMenu}
+    />
+  );
+});
+
+interface GitChangesListProps {
+  changes: GitFlatChange[];
+  viewMode: GitChangesViewMode;
+  collapsedFolders: Set<string>;
+  onToggleFolder: (path: string) => void;
+  selectedRepoPath: string | null;
+  agentPrompt?: string;
+  selectedPaths: Set<string>;
+  onToggleSelected: (path: string, selected: boolean) => void;
+  onStage: (path: string) => void;
+  onUnstage: (path: string) => void;
+  onDiscard: (path: string) => void;
+  onOpenDiff: (
+    filePath: string,
+    options: { staged: boolean; untracked?: boolean; agentPrompt?: string },
+  ) => void;
+  onContextMenu: (change: GitFlatChange, x: number, y: number) => void;
+}
+
+const GitChangesList = memo(function GitChangesListComponent({
+  changes,
+  viewMode,
+  collapsedFolders,
+  onToggleFolder,
+  selectedRepoPath,
+  agentPrompt,
+  selectedPaths,
+  onToggleSelected,
+  onStage,
+  onUnstage,
+  onDiscard,
+  onOpenDiff,
+  onContextMenu,
+}: GitChangesListProps) {
+  const tree = useMemo(
+    () => (viewMode === 'tree' ? buildGitChangeTree(changes) : []),
+    [changes, viewMode],
+  );
+
+  if (viewMode === 'list') {
+    return (
+      <>
+        {changes.map((change) => (
+          <GitChangeRow
+            key={change.path}
+            change={change}
+            absolutePath={selectedRepoPath ? toRepoAbsolutePath(selectedRepoPath, change.path) : null}
+            agentPrompt={agentPrompt}
+            selected={selectedPaths.has(change.path)}
+            onToggleSelected={onToggleSelected}
+            onStage={onStage}
+            onUnstage={onUnstage}
+            onDiscard={onDiscard}
+            onOpenDiff={onOpenDiff}
+            onContextMenu={onContextMenu}
+          />
+        ))}
+      </>
+    );
+  }
+
+  return (
+    <>
+      {tree.map((node) => (
+        <GitChangeTreeBranch
+          key={node.path}
+          node={node}
+          depth={0}
+          collapsedFolders={collapsedFolders}
+          onToggleFolder={onToggleFolder}
+          selectedRepoPath={selectedRepoPath}
+          agentPrompt={agentPrompt}
+          selectedPaths={selectedPaths}
+          onToggleSelected={onToggleSelected}
+          onStage={onStage}
+          onUnstage={onUnstage}
+          onDiscard={onDiscard}
+          onOpenDiff={onOpenDiff}
+          onContextMenu={onContextMenu}
+        />
+      ))}
+    </>
   );
 });
 
@@ -489,6 +723,8 @@ function ProjectGitDrawerComponent({
   const [discardConfirm, setDiscardConfirm] = useState<DiscardConfirmState | null>(null);
   const [promptModalText, setPromptModalText] = useState<string | null>(null);
   const [changeContextMenu, setChangeContextMenu] = useState<GitChangeContextMenuState | null>(null);
+  const [changesViewMode, setChangesViewMode] = useState<GitChangesViewMode>('tree');
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(() => new Set());
   const branchButtonRef = useRef<HTMLButtonElement>(null);
   const repoButtonRef = useRef<HTMLButtonElement>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
@@ -852,6 +1088,28 @@ function ProjectGitDrawerComponent({
     }
   }, [moreAnchor]);
 
+  const handleToggleFolder = useCallback((folderPath: string) => {
+    setCollapsedFolders((current) => {
+      const next = new Set(current);
+
+      if (next.has(folderPath)) {
+        next.delete(folderPath);
+      } else {
+        next.add(folderPath);
+      }
+
+      return next;
+    });
+  }, []);
+
+  const handleSelectTreeView = useCallback(() => {
+    setChangesViewMode('tree');
+  }, []);
+
+  const handleSelectListView = useCallback(() => {
+    setChangesViewMode('list');
+  }, []);
+
   const handleSelectRepo = useCallback((path: string) => {
     setRepoAnchor(null);
     setSelectedRepoPath(path);
@@ -970,6 +1228,27 @@ function ProjectGitDrawerComponent({
           <GitBranch size={13} strokeWidth={2} />
           {currentBranch}
         </button>
+        <div className='git-scm__toolbar-spacer' aria-hidden />
+        <div className='git-scm__view-toggle' role='group' aria-label='Modo de visualização'>
+          <button
+            type='button'
+            className={`git-scm__view-toggle-btn app-button app-button--enter${changesViewMode === 'tree' ? ' git-scm__view-toggle-btn--active' : ''}`}
+            aria-label='Visualização em árvore'
+            aria-pressed={changesViewMode === 'tree'}
+            onClick={handleSelectTreeView}
+          >
+            <FolderTree size={14} strokeWidth={2} />
+          </button>
+          <button
+            type='button'
+            className={`git-scm__view-toggle-btn app-button app-button--enter${changesViewMode === 'list' ? ' git-scm__view-toggle-btn--active' : ''}`}
+            aria-label='Visualização em lista'
+            aria-pressed={changesViewMode === 'list'}
+            onClick={handleSelectListView}
+          >
+            <List size={14} strokeWidth={2} />
+          </button>
+        </div>
         <button
           ref={moreButtonRef}
           type='button'
@@ -1059,22 +1338,20 @@ function ProjectGitDrawerComponent({
             <div className='git-scm__changes-body'>
               {promptGroups.length === 0 ? (
                 <div className='git-scm__file-list'>
-                  {flatChanges.map((change) => (
-                    <GitChangeRow
-                      key={change.path}
-                      change={change}
-                      absolutePath={
-                        selectedRepoPath ? toRepoAbsolutePath(selectedRepoPath, change.path) : null
-                      }
-                      selected={selectedPaths.has(change.path)}
-                      onToggleSelected={handleToggleSelected}
-                      onStage={handleStage}
-                      onUnstage={handleUnstage}
-                      onDiscard={handleDiscard}
-                      onOpenDiff={handleOpenDiff}
-                      onContextMenu={handleChangeContextMenu}
-                    />
-                  ))}
+                  <GitChangesList
+                    changes={flatChanges}
+                    viewMode={changesViewMode}
+                    collapsedFolders={collapsedFolders}
+                    onToggleFolder={handleToggleFolder}
+                    selectedRepoPath={selectedRepoPath}
+                    selectedPaths={selectedPaths}
+                    onToggleSelected={handleToggleSelected}
+                    onStage={handleStage}
+                    onUnstage={handleUnstage}
+                    onDiscard={handleDiscard}
+                    onOpenDiff={handleOpenDiff}
+                    onContextMenu={handleChangeContextMenu}
+                  />
                 </div>
               ) : (
                 <>
@@ -1109,25 +1386,21 @@ function ProjectGitDrawerComponent({
                           </button>
                         </div>
                         <div className='git-scm__file-list'>
-                          {changes.map((change) => (
-                            <GitChangeRow
-                              key={`${group.id}:${change.path}`}
-                              change={change}
-                              absolutePath={
-                                selectedRepoPath
-                                  ? toRepoAbsolutePath(selectedRepoPath, change.path)
-                                  : null
-                              }
-                              agentPrompt={group.prompt}
-                              selected={selectedPaths.has(change.path)}
-                              onToggleSelected={handleToggleSelected}
-                              onStage={handleStage}
-                              onUnstage={handleUnstage}
-                              onDiscard={handleDiscard}
-                              onOpenDiff={handleOpenDiff}
-                              onContextMenu={handleChangeContextMenu}
-                            />
-                          ))}
+                          <GitChangesList
+                            changes={changes}
+                            viewMode={changesViewMode}
+                            collapsedFolders={collapsedFolders}
+                            onToggleFolder={handleToggleFolder}
+                            selectedRepoPath={selectedRepoPath}
+                            agentPrompt={group.prompt}
+                            selectedPaths={selectedPaths}
+                            onToggleSelected={handleToggleSelected}
+                            onStage={handleStage}
+                            onUnstage={handleUnstage}
+                            onDiscard={handleDiscard}
+                            onOpenDiff={handleOpenDiff}
+                            onContextMenu={handleChangeContextMenu}
+                          />
                         </div>
                       </section>
                   ))}
@@ -1139,24 +1412,20 @@ function ProjectGitDrawerComponent({
                         </p>
                       </div>
                       <div className='git-scm__file-list'>
-                        {otherChanges.map((change) => (
-                          <GitChangeRow
-                            key={change.path}
-                            change={change}
-                            absolutePath={
-                              selectedRepoPath
-                                ? toRepoAbsolutePath(selectedRepoPath, change.path)
-                                : null
-                            }
-                            selected={selectedPaths.has(change.path)}
-                            onToggleSelected={handleToggleSelected}
-                            onStage={handleStage}
-                            onUnstage={handleUnstage}
-                            onDiscard={handleDiscard}
-                            onOpenDiff={handleOpenDiff}
-                            onContextMenu={handleChangeContextMenu}
-                          />
-                        ))}
+                        <GitChangesList
+                          changes={otherChanges}
+                          viewMode={changesViewMode}
+                          collapsedFolders={collapsedFolders}
+                          onToggleFolder={handleToggleFolder}
+                          selectedRepoPath={selectedRepoPath}
+                          selectedPaths={selectedPaths}
+                          onToggleSelected={handleToggleSelected}
+                          onStage={handleStage}
+                          onUnstage={handleUnstage}
+                          onDiscard={handleDiscard}
+                          onOpenDiff={handleOpenDiff}
+                          onContextMenu={handleChangeContextMenu}
+                        />
                       </div>
                     </section>
                   ) : null}

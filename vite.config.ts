@@ -1,6 +1,6 @@
 import { rmSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { electronSimple } from 'vite-plugin-electron/multi-env';
@@ -12,6 +12,18 @@ const external = Object.keys(
 );
 
 const nexusElectronBinary = path.join(__dirname, 'build/Nexus.app/Contents/MacOS/Electron');
+
+function stopBundledElectronApp(): void {
+  const running = (process as NodeJS.Process & { electronApp?: ChildProcess | null }).electronApp;
+
+  if (!running || running.killed) {
+    return;
+  }
+
+  running.removeAllListeners('exit');
+  running.kill();
+  (process as NodeJS.Process & { electronApp?: ChildProcess | null }).electronApp = null;
+}
 
 export default defineConfig(({ command }) => {
   const isBuild = command === 'build';
@@ -37,6 +49,8 @@ export default defineConfig(({ command }) => {
           plugins: [notBundle()],
           onstart({ startup }) {
             if (process.platform === 'darwin' && existsSync(nexusElectronBinary)) {
+              stopBundledElectronApp();
+
               const child = spawn(nexusElectronBinary, ['.', '--no-sandbox'], {
                 cwd: process.cwd(),
                 stdio: 'inherit',

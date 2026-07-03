@@ -614,6 +614,56 @@ function upsertPlanActivity(
   state.activities = [...state.activities.filter((entry) => entry.kind !== 'plan'), plan];
 }
 
+function isPendingInteractionActivity(entry: AgentActivity): boolean {
+  if (entry.kind === 'question') {
+    return entry.questionStatus === 'pending' && Boolean(entry.questions?.length);
+  }
+
+  if (entry.kind === 'plan') {
+    return (
+      entry.planStatus === 'pending' &&
+      Boolean(
+        entry.planBody?.trim() ||
+          entry.planOverview?.trim() ||
+          entry.planName?.trim() ||
+          entry.planUri?.trim(),
+      )
+    );
+  }
+
+  return false;
+}
+
+function mergeInteractionActivitiesFromTurn(
+  activities: AgentActivity[],
+  turn: AgentTurn,
+): AgentActivity[] {
+  const merged = [...activities];
+  const seenIds = new Set(merged.map((entry) => entry.id));
+
+  for (const entry of turn.activities) {
+    if (seenIds.has(entry.id) || !isPendingInteractionActivity(entry)) {
+      continue;
+    }
+
+    merged.push({ ...entry });
+    seenIds.add(entry.id);
+  }
+
+  return merged;
+}
+
+export function hasPendingStreamJsonInteraction(
+  state: AgentStreamJsonParserState,
+  activities: AgentActivity[] = state.activities,
+): boolean {
+  if (state.pendingQuestion || state.pendingPlan) {
+    return true;
+  }
+
+  return activities.some((entry) => isPendingInteractionActivity(entry));
+}
+
 function isRenderableStreamJsonActivity(entry: AgentActivity): boolean {
   if (entry.kind === 'question') {
     return Boolean(entry.questions && entry.questions.length > 0);
@@ -692,6 +742,7 @@ function handleToolCallCompleted(state: AgentStreamJsonParserState, toolCall: un
   const askQuestionPayload = extractAskQuestionArgs(payload);
 
   if (askQuestionPayload) {
+    upsertQuestionActivity(state, askQuestionPayload);
     return;
   }
 
@@ -968,7 +1019,7 @@ function handleStreamJsonEvent(state: AgentStreamJsonParserState, event: Record<
         upsertResponse(state, resultText, false);
       }
 
-      if (!state.pendingQuestion && !state.pendingPlan) {
+      if (!hasPendingStreamJsonInteraction(state)) {
         state.shouldFinalize = true;
       }
 
@@ -979,7 +1030,7 @@ function handleStreamJsonEvent(state: AgentStreamJsonParserState, event: Record<
       upsertResponse(state, resultText, false);
     }
 
-    if (!state.pendingQuestion && !state.pendingPlan) {
+    if (!hasPendingStreamJsonInteraction(state)) {
       state.shouldFinalize = true;
     }
 
@@ -1087,8 +1138,12 @@ export function feedAgentStreamJsonChunk(
 export function isAgentStreamJsonStateAwaitingCompletion(
   state: AgentStreamJsonParserState,
 ): boolean {
-  if (state.shouldFinalize || state.pendingPlan || state.pendingQuestion) {
+  if (state.shouldFinalize) {
     return false;
+  }
+
+  if (hasPendingStreamJsonInteraction(state)) {
+    return true;
   }
 
   const hasResponse =
@@ -1166,11 +1221,15 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
     ];
   }
 
+  activities = mergeInteractionActivitiesFromTurn(activities, turn);
   activities = activities.filter((entry) => isRenderableStreamJsonActivity(entry));
   activities = deduplicatePlanResponseActivities(activities);
 
   const summary = buildAgentTurnSummaryFromStreamJsonState(state);
   const incompleteFallback = resolveIncompleteStreamJsonResponseFallback(state);
+  const hasPendingInteraction =
+    hasPendingStreamJsonInteraction(state, activities) ||
+    turn.activities.some((entry) => isPendingInteractionActivity(entry));
 
   if (activities.length === 0 && isAgentTurnSummaryVisible(summary)) {
     activities = [
@@ -1179,7 +1238,7 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
         state.responseLead?.trim() || summary?.responseLead?.trim() || incompleteFallback,
       ),
     ];
-  } else if (activities.length === 0) {
+  } else if (activities.length === 0 && !hasPendingInteraction) {
     activities = [
       createActivity(
         'response',
