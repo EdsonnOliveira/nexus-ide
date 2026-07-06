@@ -6,17 +6,10 @@ export function formatMailDate(timestamp: number): string {
   }
 
   const date = new Date(timestamp);
-  const now = new Date();
-  const sameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
+  const dateLabel = date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+  const timeLabel = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
-  if (sameDay) {
-    return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-  }
-
-  return date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+  return `${dateLabel}, ${timeLabel}`;
 }
 
 const MAILBOX_ACCENTS = [

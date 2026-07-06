@@ -66,7 +66,7 @@ let events = store.events(matching: predicate).sorted { left, right in
 
 var output = ""
 
-for event in events.prefix(12) {
+for event in events.prefix(3) {
     let identifier = event.eventIdentifier ?? ""
     let title = event.title ?? "(Sem título)"
     let startMs = Int(event.startDate.timeIntervalSince1970 * 1000)

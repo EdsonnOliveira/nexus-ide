@@ -47,7 +47,7 @@ function AgentTurnViewComponent({
       ),
     [turn.activities],
   );
-  const stickyPromptActive = isLatestTurn && !turn.running && !hasPendingInteractive;
+  const stickyPromptActive = isLatestTurn && !hasPendingInteractive;
   const { isStuck: isPromptStuck, phase: stickyPhase } = useStickyPromptState(
     stickySentinelRef,
     scrollContainerRef,

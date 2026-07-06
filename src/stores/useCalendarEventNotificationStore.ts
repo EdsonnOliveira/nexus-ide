@@ -10,7 +10,7 @@ import { getCalendarEventKey } from '@/utils/calendarEventStyle';
 interface CalendarEventNotificationState {
   pingUntilByEventKey: Record<string, number>;
   urgentEvent: CalendarEventItem | null;
-  dismissedUrgentKeys: Record<string, true>;
+  dismissedUrgentKeys: Record<string, number>;
   triggerTemporaryPing: (eventKey: string, durationMs: number) => void;
   activateUrgentEvent: (event: CalendarEventItem) => void;
   dismissUrgentEvent: (event: CalendarEventItem) => void;
@@ -35,9 +35,22 @@ export const useCalendarEventNotificationStore = create<CalendarEventNotificatio
   activateUrgentEvent: (event) => {
     const eventKey = getCalendarEventKey(event);
     const state = get();
+    const dismissedAt = state.dismissedUrgentKeys[eventKey];
 
-    if (state.dismissedUrgentKeys[eventKey]) {
-      return;
+    if (dismissedAt) {
+      const now = Date.now();
+      const dismissedBeforeStart = dismissedAt < event.startAt;
+      const eventHasStarted = now >= event.startAt;
+
+      if (!(dismissedBeforeStart && eventHasStarted)) {
+        return;
+      }
+
+      set((currentState) => {
+        const nextDismissed = { ...currentState.dismissedUrgentKeys };
+        delete nextDismissed[eventKey];
+        return { dismissedUrgentKeys: nextDismissed };
+      });
     }
 
     if (state.urgentEvent?.id === event.id && state.urgentEvent.startAt === event.startAt) {
@@ -59,7 +72,7 @@ export const useCalendarEventNotificationStore = create<CalendarEventNotificatio
       urgentEvent: null,
       dismissedUrgentKeys: {
         ...state.dismissedUrgentKeys,
-        [eventKey]: true,
+        [eventKey]: Date.now(),
       },
       pingUntilByEventKey: {
         ...state.pingUntilByEventKey,
@@ -89,6 +102,12 @@ export const useCalendarEventNotificationStore = create<CalendarEventNotificatio
       return false;
     }
 
-    return !state.dismissedUrgentKeys[eventKey];
+    const dismissedAt = state.dismissedUrgentKeys[eventKey];
+
+    if (!dismissedAt) {
+      return true;
+    }
+
+    return dismissedAt < state.urgentEvent.startAt && now >= state.urgentEvent.startAt;
   },
 }));

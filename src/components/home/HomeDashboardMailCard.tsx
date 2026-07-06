@@ -1,5 +1,5 @@
 import { Mail } from 'lucide-react';
-import { memo, useCallback, useMemo } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import { HomeDashboardSection } from '@/components/home/HomeDashboardSection';
@@ -11,6 +11,24 @@ import { useHomeDashboardMail } from '@/hooks/useHomeDashboardMail';
 import type { HomeDashboardMailMessage } from '@/hooks/useHomeDashboardMailInbox';
 import { useHomeDashboardMailInbox } from '@/hooks/useHomeDashboardMailInbox';
 import { formatMailDate } from '@/utils/mailLabels';
+
+const MAIL_FILTER_STORAGE_KEY = 'nexus.home-dashboard.mail-filter';
+
+function readStoredMailUnreadOnly(): boolean {
+  try {
+    return localStorage.getItem(MAIL_FILTER_STORAGE_KEY) === 'unread';
+  } catch {
+    return false;
+  }
+}
+
+function writeStoredMailUnreadOnly(unreadOnly: boolean): void {
+  try {
+    localStorage.setItem(MAIL_FILTER_STORAGE_KEY, unreadOnly ? 'unread' : 'all');
+  } catch {
+    return;
+  }
+}
 
 function HomeDashboardMailCardComponent() {
   const {
@@ -28,29 +46,67 @@ function HomeDashboardMailCardComponent() {
     mailboxOptions,
     selectedMailbox,
   );
+  const [unreadOnly, setUnreadOnly] = useState(readStoredMailUnreadOnly);
 
   const unreadCount = useMemo(
     () => messages.filter((message) => message.unread).length,
     [messages],
   );
 
-  const mailboxSelect = useMemo(() => {
+  const filteredMessages = useMemo(
+    () => (unreadOnly ? messages.filter((message) => message.unread) : messages),
+    [messages, unreadOnly],
+  );
+
+  const handleUnreadOnlyChange = useCallback((nextUnreadOnly: boolean) => {
+    setUnreadOnly(nextUnreadOnly);
+    writeStoredMailUnreadOnly(nextUnreadOnly);
+  }, []);
+
+  const headerActions = useMemo(() => {
     if (loadingMailboxes) {
       return <HomeDashboardSelectSkeleton />;
     }
 
     return (
-      <AnchoredSelect
-        value={selectedMailboxId}
-        options={selectOptions}
-        allowEmpty
-        emptyLabel='Todas as caixas'
-        disabled={selectOptions.length === 0}
-        onChange={selectMailboxById}
-        triggerClassName='home-dashboard__mail-select'
-      />
+      <div className='home-dashboard__mail-header-actions'>
+        <div className='home-dashboard__mail-filter' role='group' aria-label='Filtrar e-mails'>
+          <button
+            type='button'
+            className={`home-dashboard__mail-filter-btn app-button app-button--enter${unreadOnly ? ' home-dashboard__mail-filter-btn--active' : ''}`}
+            aria-pressed={unreadOnly}
+            onClick={() => handleUnreadOnlyChange(true)}
+          >
+            Não lidas
+          </button>
+          <button
+            type='button'
+            className={`home-dashboard__mail-filter-btn app-button app-button--enter${!unreadOnly ? ' home-dashboard__mail-filter-btn--active' : ''}`}
+            aria-pressed={!unreadOnly}
+            onClick={() => handleUnreadOnlyChange(false)}
+          >
+            Todas
+          </button>
+        </div>
+        <AnchoredSelect
+          value={selectedMailboxId}
+          options={selectOptions}
+          allowEmpty
+          emptyLabel='Todas as caixas'
+          disabled={selectOptions.length === 0}
+          onChange={selectMailboxById}
+          triggerClassName='home-dashboard__mail-select'
+        />
+      </div>
     );
-  }, [loadingMailboxes, selectMailboxById, selectOptions, selectedMailboxId]);
+  }, [
+    handleUnreadOnlyChange,
+    loadingMailboxes,
+    selectMailboxById,
+    selectOptions,
+    selectedMailboxId,
+    unreadOnly,
+  ]);
 
   const handleOpenMessage = useCallback(
     (message: HomeDashboardMailMessage) => {
@@ -62,8 +118,12 @@ function HomeDashboardMailCardComponent() {
   const showSkeleton =
     loadingMailboxes || !hydrated || (loading && messages.length === 0);
   const showEmpty =
-    hydrated && !loadingMailboxes && !loading && snapshot.available && messages.length === 0;
-  const showList = hydrated && messages.length > 0;
+    hydrated &&
+    !loadingMailboxes &&
+    !loading &&
+    snapshot.available &&
+    filteredMessages.length === 0;
+  const showList = hydrated && filteredMessages.length > 0;
 
   return (
     <HomeDashboardSection
@@ -71,8 +131,8 @@ function HomeDashboardMailCardComponent() {
       title='E-mail'
       accent='#38bdf8'
       className='home-dashboard__mail-section'
-      enterDelayMs={200}
-      headerAction={mailboxSelect}
+      enterDelayMs={220}
+      headerAction={headerActions}
       headerMeta={
         unreadCount > 0 ? (
           <span className='home-dashboard__mail-unread'>{unreadCount} não lidos</span>
@@ -92,12 +152,20 @@ function HomeDashboardMailCardComponent() {
       ) : showEmpty ? (
         <EmptyState
           icon={Mail}
-          message={selectedMailbox ? 'Nenhum e-mail nesta caixa' : 'Nenhum e-mail recente'}
+          message={
+            unreadOnly
+              ? selectedMailbox
+                ? 'Nenhum e-mail não lido nesta caixa'
+                : 'Nenhum e-mail não lido'
+              : selectedMailbox
+                ? 'Nenhum e-mail nesta caixa'
+                : 'Nenhum e-mail recente'
+          }
           compact
         />
       ) : showList ? (
         <ul className='home-dashboard__mail-list'>
-          {messages.map((message, index) => (
+          {filteredMessages.map((message, index) => (
             <li key={`${message.mailbox.accountName}-${message.id}`}>
               <button
                 type='button'

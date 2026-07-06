@@ -14,6 +14,7 @@ import { registerHomeDashboardHandlers } from './ipc/homeDashboard';
 import { registerMusicHandlers } from './ipc/music';
 import { registerMailHandlers } from './ipc/mail';
 import { registerCalendarHandlers } from './ipc/calendar';
+import { registerMacParakeetHandlers } from './ipc/macParakeet';
 import { registerVercelHandlers } from './ipc/vercel';
 import { registerCursorUsageHandlers } from './ipc/cursorUsage';
 import { registerWhatsAppHandlers } from './ipc/whatsapp';
@@ -406,6 +407,7 @@ app.whenReady().then(() => {
   registerSystemNotificationsHandlers();
   registerMailHandlers();
   registerCalendarHandlers();
+  registerMacParakeetHandlers();
   registerVercelHandlers();
   registerCursorUsageHandlers();
   registerWhatsAppHandlers();

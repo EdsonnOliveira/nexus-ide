@@ -185,7 +185,9 @@ export const useTerminalSessionStore = create<TerminalSessionState>((set, get) =
   },
   setAgentBusy: (paneId, busy) => {
     set((state) => {
-      if (state.agentBusyByPane[paneId] === busy) {
+      const current = Boolean(state.agentBusyByPane[paneId]);
+
+      if (current === busy) {
         return state;
       }
 

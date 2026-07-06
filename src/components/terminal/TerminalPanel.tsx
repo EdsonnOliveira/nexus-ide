@@ -847,16 +847,37 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
     [activeTabItem?.id, isProjectActive, onSplitRatioCommit],
   );
 
+  const tabItemsWithBrowser = useMemo(
+    () =>
+      project.tabs.filter((item) => {
+        if (item.type === 'browser') {
+          return true;
+        }
+
+        if (item.type === 'split') {
+          return item.panes.some((pane) => pane.type === 'browser');
+        }
+
+        return false;
+      }),
+    [project.tabs],
+  );
+
   if (!project.tabs.length || !activeTabItem) {
     return null;
   }
+
+  const activeHasBrowser =
+    activeTabItem.type === 'browser' ||
+    (activeTabItem.type === 'split' && activeTabItem.panes.some((pane) => pane.type === 'browser'));
 
   return (
     <WorkspacePaneProvider value={workspacePaneContext}>
       <div
         className={`terminal-panel__view${isProjectActive ? ' terminal-panel__view--active' : ''}`}
       >
-        {renderTabLayout(activeTabItem)}
+        {!activeHasBrowser ? renderTabLayout(activeTabItem) : null}
+        {tabItemsWithBrowser.map((tabItem) => renderTabLayout(tabItem))}
       </div>
     </WorkspacePaneProvider>
   );

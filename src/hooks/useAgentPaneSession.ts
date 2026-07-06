@@ -85,14 +85,18 @@ const PTY_CLEAR_INPUT = '\x15';
 const STUCK_TURN_TIMEOUT_MS = 45_000;
 const STUCK_TURN_CHECK_MS = 5_000;
 const STREAM_JSON_ORPHAN_FINALIZE_MS = 4_000;
-const STREAM_JSON_INCOMPLETE_ORPHAN_FINALIZE_MS = 45_000;
+const STREAM_JSON_INCOMPLETE_ORPHAN_FINALIZE_MS = 120_000;
 const STREAM_JSON_ABSOLUTE_MAX_MS = 600_000;
+const STREAM_JSON_DEAD_PROCESS_FINALIZE_MS = 8_000;
 const STREAM_JSON_IDLE_CHECK_MS = 4_000;
 const APPROVAL_CONFIRM_DELAY_MS = 450;
 const SUBMIT_GATE_TIMEOUT_MS = 20_000;
 const SUBMIT_SETUP_TIMEOUT_MS = 8_000;
 const COMPOSER_READY_POLL_MS = 250;
 const COMPOSER_READY_MAX_MS = 12_000;
+const STREAM_JSON_AUTO_RETRY_DELAY_MS = 600;
+const STREAMING_TURNS_UI_MS = 80;
+const PERSIST_TURNS_DEBOUNCE_MS = 1200;
 const CONTEXT_USAGE_REPORT_DELAY_MS = 700;
 const AGENT_OUTPUT_TAIL_SIZE = 8192;
 const AGENT_TURN_OUTPUT_MAX = 512 * 1024;
@@ -104,7 +108,7 @@ interface UseAgentPaneSessionOptions {
   isVisible: boolean;
   onPtyCreated: (ptyId: string) => void;
   onPtyLost: () => void;
-  onTurnsChange: (turns: AgentTurn[]) => void;
+  onTurnsChange: (turns: AgentTurn[], options?: { persist?: boolean }) => void;
   onAppendDraft?: (text: string) => void;
   onRestoreDraft?: (text: string) => void;
 }
@@ -212,6 +216,7 @@ export function useAgentPaneSession({
   const turnOutputBufferRef = useRef('');
   const submitTimeoutRef = useRef<number | null>(null);
   const cwdParserRef = useRef(createNexusCwdStreamParser(() => {}));
+  const streamJsonAutoRetryRef = useRef(false);
 
   const [activePtyId, setActivePtyId] = useState<string | null>(tab.ptyId ?? null);
   const [isAgentReady, setIsAgentReady] = useState(false);
@@ -430,12 +435,80 @@ export function useAgentPaneSession({
     }
   }, [tab.ptyId]);
 
-  const persistTurns = useCallback((nextTurns: AgentTurn[]) => {
-    const trimmedTurns = sanitizeAgentTurnHistory(trimAgentTurnHistory(nextTurns));
-    turnsRef.current = trimmedTurns;
-    setTurnsRevision((revision) => revision + 1);
-    onTurnsChangeRef.current(trimmedTurns);
+  const persistTurnsDebounceRef = useRef<number | null>(null);
+  const streamingTurnsUiRef = useRef<number | null>(null);
+
+  const cancelPersistTurnsDebounce = useCallback(() => {
+    if (persistTurnsDebounceRef.current !== null) {
+      window.clearTimeout(persistTurnsDebounceRef.current);
+      persistTurnsDebounceRef.current = null;
+    }
   }, []);
+
+  const flushPersistTurns = useCallback(() => {
+    cancelPersistTurnsDebounce();
+
+    const trimmedTurns = trimAgentTurnHistory(turnsRef.current);
+    turnsRef.current = trimmedTurns;
+    onTurnsChangeRef.current(trimmedTurns, { persist: true });
+  }, [cancelPersistTurnsDebounce]);
+
+  const schedulePersistTurns = useCallback(() => {
+    cancelPersistTurnsDebounce();
+    persistTurnsDebounceRef.current = window.setTimeout(() => {
+      persistTurnsDebounceRef.current = null;
+      flushPersistTurns();
+    }, PERSIST_TURNS_DEBOUNCE_MS);
+  }, [cancelPersistTurnsDebounce, flushPersistTurns]);
+
+  const scheduleStreamingTurnsUi = useCallback(() => {
+    if (streamingTurnsUiRef.current !== null) {
+      return;
+    }
+
+    streamingTurnsUiRef.current = window.setTimeout(() => {
+      streamingTurnsUiRef.current = null;
+      onTurnsChangeRef.current(turnsRef.current, { persist: false });
+    }, STREAMING_TURNS_UI_MS);
+  }, []);
+
+  const persistTurns = useCallback(
+    (nextTurns: AgentTurn[], options?: { flush?: boolean }) => {
+      turnsRef.current = nextTurns;
+      setTurnsRevision((revision) => revision + 1);
+
+      if (options?.flush) {
+        if (streamingTurnsUiRef.current !== null) {
+          window.clearTimeout(streamingTurnsUiRef.current);
+          streamingTurnsUiRef.current = null;
+        }
+
+        flushPersistTurns();
+        return;
+      }
+
+      scheduleStreamingTurnsUi();
+      schedulePersistTurns();
+    },
+    [flushPersistTurns, schedulePersistTurns, scheduleStreamingTurnsUi],
+  );
+
+  useEffect(() => {
+    return () => {
+      cancelPersistTurnsDebounce();
+
+      if (streamingTurnsUiRef.current !== null) {
+        window.clearTimeout(streamingTurnsUiRef.current);
+        streamingTurnsUiRef.current = null;
+      }
+
+      if (turnsRef.current.length > 0) {
+        const trimmedTurns = trimAgentTurnHistory(turnsRef.current);
+        turnsRef.current = trimmedTurns;
+        onTurnsChangeRef.current(trimmedTurns, { persist: true });
+      }
+    };
+  }, [cancelPersistTurnsDebounce]);
 
   useEffect(() => {
     const boundResumeChatId = resumeChatId?.trim();
@@ -467,8 +540,11 @@ export function useAgentPaneSession({
     }
 
     nextTurns[resolvedIndex] = updatedTurn;
-    persistTurns(nextTurns);
-  }, [persistTurns]);
+    turnsRef.current = nextTurns;
+    setTurnsRevision((revision) => revision + 1);
+    scheduleStreamingTurnsUi();
+    schedulePersistTurns();
+  }, [schedulePersistTurns, scheduleStreamingTurnsUi]);
 
   const finalizeActiveTurn = useCallback((notifyOnComplete = false) => {
     const turns = turnsRef.current;
@@ -500,11 +576,18 @@ export function useAgentPaneSession({
       parserStateRef.current = createAgentTranscriptParserState();
     }
 
-    persistTurns(finalizeBuildingAgentPlans(nextTurns));
+    persistTurns(finalizeBuildingAgentPlans(nextTurns), { flush: true });
     recordHomeDashboardActivity('agentExecutions');
 
     if (notifyOnComplete) {
-      useTerminalSessionStore.getState().completeTaskIfAwaiting(paneId);
+      const finalizedActivities = nextTurns[resolvedIndex]?.activities ?? [];
+      const hasFollowUps = followUpsRef.current.length > 0;
+      const requiresHumanAction =
+        hasPendingAgentQuestion(finalizedActivities) || hasPendingAgentPlan(finalizedActivities);
+
+      if (!hasFollowUps || requiresHumanAction) {
+        useTerminalSessionStore.getState().completeTaskIfAwaiting(paneId);
+      }
     }
 
     setIsAgentReady(true);
@@ -537,7 +620,7 @@ export function useAgentPaneSession({
       return;
     }
 
-    persistTurns(repairStaleBuildingAgentPlans(currentTurns));
+    persistTurns(repairStaleBuildingAgentPlans(currentTurns), { flush: true });
   }, [isAgentBusy, isSubmitting, isTurnRunning, persistTurns, tab.turns, turnsRevision]);
 
   const finalizeStreamJsonTurnFromEvent = useCallback(() => {
@@ -562,10 +645,20 @@ export function useAgentPaneSession({
 
     streamJsonStateRef.current = createAgentStreamJsonParserState();
     turnOutputBufferRef.current = '';
+    streamJsonAutoRetryRef.current = false;
     clearAgentPrintRunToken(paneId);
-    persistTurns(nextTurns);
+    persistTurns(nextTurns, { flush: true });
     recordHomeDashboardActivity('agentExecutions');
-    useTerminalSessionStore.getState().completeTaskIfAwaiting(paneId);
+
+    const finalizedActivities = nextTurns[resolvedIndex]?.activities ?? [];
+    const hasFollowUps = followUpsRef.current.length > 0;
+    const requiresHumanAction =
+      hasPendingAgentQuestion(finalizedActivities) || hasPendingAgentPlan(finalizedActivities);
+
+    if (!hasFollowUps || requiresHumanAction) {
+      useTerminalSessionStore.getState().completeTaskIfAwaiting(paneId);
+    }
+
     setIsAgentReady(true);
     tryFlushFollowUpQueueRef.current({ force: true });
     promotePendingFollowUpTurnRef.current();
@@ -643,7 +736,17 @@ export function useAgentPaneSession({
         lastPrintMode !== undefined && lastPrintMode !== currentMode;
       const model = session.agentModelByPane[paneId] ?? null;
       const mode = resolveCursorAgentPrintMode(currentMode);
-      const fullPrompt = [prompt, ...imageRefs].filter(Boolean).join(' ').trim();
+      const root = agentRootPath.replace(/\/+$/, '');
+      const resolvedImageRefs = imageRefs.map((ref) => {
+        const relPath = ref.startsWith('@') ? ref.slice(1) : ref;
+
+        if (relPath.startsWith('/')) {
+          return ref;
+        }
+
+        return `@${root}/${relPath}`;
+      });
+      const fullPrompt = [prompt, ...resolvedImageRefs].filter(Boolean).join(' ').trim();
       const resumeChatId = session.resumeChatIdByPane[paneId]?.trim() ?? null;
 
       if (!fullPrompt) {
@@ -660,6 +763,7 @@ export function useAgentPaneSession({
       }
 
       streamJsonStateRef.current.activities = createInitialTurnActivities();
+      streamJsonAutoRetryRef.current = false;
 
       if (shouldMarkAgentAwaiting(paneId, fullPrompt, session.activeAgentByPane)) {
         session.setLastCommand(paneId, fullPrompt);
@@ -948,7 +1052,7 @@ export function useAgentPaneSession({
       }
 
       const truncated = turns.slice(0, index);
-      persistTurns(truncated);
+      persistTurns(truncated, { flush: true });
       parserStateRef.current = createAgentTranscriptParserState();
       streamJsonStateRef.current = createAgentStreamJsonParserState();
       cursorAgentContinueRef.current = truncated.length > 0;
@@ -1012,7 +1116,7 @@ export function useAgentPaneSession({
         startedAt: Date.now(),
       };
 
-      persistTurns([...turnsRef.current, turn]);
+      persistTurns([...turnsRef.current, turn], { flush: true });
     },
     [persistTurns],
   );
@@ -1038,7 +1142,7 @@ export function useAgentPaneSession({
     turnOutputBufferRef.current = '';
     parserStateRef.current = createAgentTranscriptParserState();
     streamJsonStateRef.current = createAgentStreamJsonParserState();
-    persistTurns(nextTurns);
+    persistTurns(nextTurns, { flush: true });
 
     if (!usesStreamJson) {
       return;
@@ -1140,7 +1244,7 @@ export function useAgentPaneSession({
       turnOutputBufferRef.current = '';
       parserStateRef.current = createAgentTranscriptParserState();
       streamJsonStateRef.current = createAgentStreamJsonParserState();
-      persistTurns([...turnsRef.current, turn]);
+      persistTurns([...turnsRef.current, turn], { flush: true });
       resetAgentReadyDetectors(paneId);
       setIsAgentReady(false);
 
@@ -1373,7 +1477,7 @@ export function useAgentPaneSession({
           turn.activities = createInitialTurnActivities();
         }
 
-        persistTurns([...turnsRef.current, turn]);
+        persistTurns([...turnsRef.current, turn], { flush: true });
 
         await delay(PROMPT_CLEAR_DELAY_MS);
 
@@ -1460,7 +1564,7 @@ export function useAgentPaneSession({
         };
       });
 
-      persistTurns(nextTurns);
+      persistTurns(nextTurns, { flush: true });
 
       return submitPrompt(prompt);
     },
@@ -1516,7 +1620,7 @@ export function useAgentPaneSession({
         };
       });
 
-      persistTurns(nextTurns);
+      persistTurns(nextTurns, { flush: true });
       runCommand('/agent\n');
 
       const submitted = await submitPrompt(buildAgentPlanImplementPrompt(planBody, activity.planName));
@@ -1535,6 +1639,7 @@ export function useAgentPaneSession({
               ),
             };
           }),
+          { flush: true },
         );
       }
 
@@ -1571,7 +1676,7 @@ export function useAgentPaneSession({
         };
       });
 
-      persistTurns(nextTurns);
+      persistTurns(nextTurns, { flush: true });
       return true;
     },
     [persistTurns],
@@ -1620,7 +1725,7 @@ export function useAgentPaneSession({
         };
       });
 
-      persistTurns(nextTurns);
+      persistTurns(nextTurns, { flush: true });
     });
 
     return () => {
@@ -1724,7 +1829,7 @@ export function useAgentPaneSession({
     );
 
     parserStateRef.current = createAgentTranscriptParserState();
-    persistTurns(nextTurns);
+    persistTurns(nextTurns, { flush: true });
     useTerminalSessionStore.getState().resetAgentWorkload(paneIdRef.current);
     writeToPty('\x1b');
     void delay(PROMPT_CLEAR_DELAY_MS).then(() => {
@@ -2068,10 +2173,7 @@ export function useAgentPaneSession({
         };
 
         if (applyStreamJsonChunk('')) {
-          if (followUpsRef.current.length > 0) {
-            tryFlushFollowUpQueueRef.current({ force: true });
-          }
-
+          finalizeStreamJsonTurnFromEvent();
           finishAgentPrintRun();
           return;
         }
@@ -2137,8 +2239,59 @@ export function useAgentPaneSession({
           return;
         }
 
+        if (
+          payload.code === 0 &&
+          !payload.error &&
+          !streamJsonAutoRetryRef.current &&
+          !streamJsonStateRef.current.pendingResponseText.trim() &&
+          !streamJsonStateRef.current.activities.some(
+            (entry) => entry.kind === 'response' || entry.kind === 'file_edit',
+          )
+        ) {
+          streamJsonAutoRetryRef.current = true;
+          finishAgentPrintRun();
+
+          const retryTurn = turnsRef.current.find((turn) => turn.running);
+
+          if (retryTurn) {
+            const prompt =
+              retryTurn.user.agentPrompt?.trim() || retryTurn.user.content.trim();
+            const imageRefs = (retryTurn.user.attachments ?? [])
+              .map((a) =>
+                a.relativePath ? buildImagePathReference(a.relativePath) : '',
+              )
+              .filter(Boolean);
+
+            if (prompt || imageRefs.length > 0) {
+              streamJsonStateRef.current = createAgentStreamJsonParserState();
+              streamJsonStateRef.current.activities = createInitialTurnActivities();
+              turnOutputBufferRef.current = '';
+
+              window.setTimeout(() => {
+                startStreamJsonAgentRun(prompt, imageRefs);
+              }, STREAM_JSON_AUTO_RETRY_DELAY_MS);
+
+              return;
+            }
+          }
+        }
+
+        if (
+          payload.code === 0 &&
+          !payload.error &&
+          !streamJsonStateRef.current.shouldFinalize &&
+          turnsRef.current.some((turn) => turn.running)
+        ) {
+          agentPrintRunActiveRef.current = false;
+          lastStreamJsonChunkAtRef.current = Date.now();
+          finishAgentPrintRun();
+          streamJsonAutoRetryRef.current = false;
+          return;
+        }
+
         finalizeActiveTurn(true);
         finishAgentPrintRun();
+        streamJsonAutoRetryRef.current = false;
       },
     });
   }, [
@@ -2147,6 +2300,7 @@ export function useAgentPaneSession({
     finalizeActiveTurn,
     finalizeStreamJsonTurnFromEvent,
     resolveAgentPrintRunToken,
+    startStreamJsonAgentRun,
     tab.id,
     updateActiveTurn,
     usesStreamJson,
@@ -2176,19 +2330,21 @@ export function useAgentPaneSession({
         }
 
         if (agentPrintRunActiveRef.current) {
-          if (idleMs < STREAM_JSON_ABSOLUTE_MAX_MS) {
+          if (idleMs < STREAM_JSON_DEAD_PROCESS_FINALIZE_MS) {
             return;
           }
 
-          clearAgentPrintRunToken(paneId);
-          window.nexus.agentPrint.stop(paneId);
-
-          if (streamJsonStateRef.current.shouldFinalize) {
-            finalizeStreamJsonTurnFromEvent();
-          } else {
-            finalizeActiveTurn(true);
+          if (!streamJsonStateRef.current.shouldFinalize) {
+            agentPrintRunActiveRef.current = false;
+            lastStreamJsonChunkAtRef.current = Date.now();
+            clearAgentPrintRunToken(paneId);
+            return;
           }
 
+          agentPrintRunActiveRef.current = false;
+          clearAgentPrintRunToken(paneId);
+          window.nexus.agentPrint.stop(paneId);
+          finalizeStreamJsonTurnFromEvent();
           return;
         }
 

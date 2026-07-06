@@ -17,6 +17,16 @@ export interface HomeDashboardActivityComparison {
   yesterday: HomeDashboardDayStats;
 }
 
+const STATS_CACHE_TTL_MS = 45_000;
+
+interface StatsCacheEntry {
+  key: string;
+  expiresAt: number;
+  value: HomeDashboardActivityComparison;
+}
+
+let statsCache: StatsCacheEntry | null = null;
+
 function emptyDayStats(): HomeDashboardDayStats {
   return {
     commits: 0,
@@ -24,6 +34,12 @@ function emptyDayStats(): HomeDashboardDayStats {
     agentExecutions: 0,
     prompts: 0,
   };
+}
+
+function buildStatsCacheKey(projectPaths: string[], referenceMs: number): string {
+  const dayKey = formatLocalDateKeyFromMs(referenceMs);
+  const pathsKey = [...new Set(projectPaths.filter(Boolean))].sort().join('|');
+  return `${dayKey}:${pathsKey}`;
 }
 
 async function resolveDayStats(
@@ -48,12 +64,26 @@ export async function getHomeDashboardActivityComparison(
   referenceMs = Date.now(),
 ): Promise<HomeDashboardActivityComparison> {
   const uniquePaths = [...new Set(projectPaths.filter(Boolean))];
+  const cacheKey = buildStatsCacheKey(uniquePaths, referenceMs);
+  const cached = statsCache;
+
+  if (cached && cached.key === cacheKey && cached.expiresAt > referenceMs) {
+    return cached.value;
+  }
 
   if (uniquePaths.length === 0) {
-    return {
+    const emptyComparison = {
       today: emptyDayStats(),
       yesterday: emptyDayStats(),
     };
+
+    statsCache = {
+      key: cacheKey,
+      expiresAt: referenceMs + STATS_CACHE_TTL_MS,
+      value: emptyComparison,
+    };
+
+    return emptyComparison;
   }
 
   const todayBounds = getLocalDayBoundsMs(referenceMs);
@@ -72,5 +102,13 @@ export async function getHomeDashboardActivityComparison(
     ),
   ]);
 
-  return { today, yesterday };
+  const value = { today, yesterday };
+
+  statsCache = {
+    key: cacheKey,
+    expiresAt: referenceMs + STATS_CACHE_TTL_MS,
+    value,
+  };
+
+  return value;
 }

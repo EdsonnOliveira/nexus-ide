@@ -1,9 +1,13 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import { X } from 'lucide-react';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
-import { CalendarEventDetailsPanel } from '@/components/sidebar/CalendarEventDetailsPanel';
+import {
+  CalendarEventDetailsPanel,
+  CalendarEventFooterActions,
+} from '@/components/sidebar/CalendarEventDetailsPanel';
+import { CalendarMeetingIcon } from '@/components/sidebar/CalendarMeetingIcon';
 import type { CalendarEventItem } from '@/types';
-import { resolveCalendarExternalUrl } from '@/utils/calendarEventStyle';
+import { resolveCalendarExternalUrl, resolveCalendarMeetingInfo } from '@/utils/calendarEventStyle';
 
 interface CalendarEventAlertModalProps {
   event: CalendarEventItem;
@@ -12,6 +16,8 @@ interface CalendarEventAlertModalProps {
 }
 
 function CalendarEventAlertModalComponent({ event, onClose, onOpenInCalendar }: CalendarEventAlertModalProps) {
+  const meetingInfo = useMemo(() => resolveCalendarMeetingInfo(event), [event]);
+
   const handleOpenExternalUrl = useCallback((url: string) => {
     if (!window.nexus?.tasks) {
       return;
@@ -31,12 +37,30 @@ function CalendarEventAlertModalComponent({ event, onClose, onOpenInCalendar }: 
     onClose();
   }, [event.startAt, onClose, onOpenInCalendar]);
 
+  const handleStartCall = useCallback(() => {
+    if (!meetingInfo?.url) {
+      return;
+    }
+
+    handleOpenExternalUrl(meetingInfo.url);
+  }, [handleOpenExternalUrl, meetingInfo?.url]);
+
   return (
-    <AnimatedModal panelClassName='calendar-event-alert-modal' onClose={onClose}>
+    <AnimatedModal
+      panelClassName='calendar-event-alert-modal calendar-event-alert-modal--ping'
+      onClose={onClose}
+    >
       {(requestClose) => (
         <div className='calendar-event-alert-modal__panel agent-cursor-usage__panel'>
           <div className='agent-cursor-usage__header'>
-            <span className='agent-cursor-usage__title'>{event.title}</span>
+            <div className='agent-cursor-usage__title-wrap'>
+              {meetingInfo ? (
+                <span className='agent-cursor-usage__title-leading'>
+                  <CalendarMeetingIcon provider={meetingInfo.provider} />
+                </span>
+              ) : null}
+              <span className='agent-cursor-usage__title'>{event.title}</span>
+            </div>
             <button
               type='button'
               className='agent-cursor-usage__close app-button app-button--enter'
@@ -50,7 +74,13 @@ function CalendarEventAlertModalComponent({ event, onClose, onOpenInCalendar }: 
           <CalendarEventDetailsPanel
             event={event}
             onOpenExternalUrl={handleOpenExternalUrl}
+            showStartsInHint
+          />
+
+          <CalendarEventFooterActions
             onOpenInCalendar={handleOpenInCalendar}
+            onStartCall={handleStartCall}
+            showStartCall={Boolean(meetingInfo?.url)}
           />
         </div>
       )}

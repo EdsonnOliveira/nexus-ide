@@ -5,6 +5,7 @@ interface TitleBarPopupShellProps {
   menuRef: RefObject<HTMLDivElement | null>;
   animationClass: string;
   title: string;
+  titleLeading?: ReactNode;
   ariaLabel?: string;
   popoverClassName?: string;
   panelClassName?: string;
@@ -17,6 +18,7 @@ function TitleBarPopupShellComponent({
   menuRef,
   animationClass,
   title,
+  titleLeading,
   ariaLabel,
   popoverClassName = '',
   panelClassName = '',
@@ -33,7 +35,10 @@ function TitleBarPopupShellComponent({
     >
       <div className={`agent-cursor-usage__panel${panelClassName ? ` ${panelClassName}` : ''}`}>
         <div className='agent-cursor-usage__header'>
-          <span className='agent-cursor-usage__title'>{title}</span>
+          <div className='agent-cursor-usage__title-wrap'>
+            {titleLeading ? <span className='agent-cursor-usage__title-leading'>{titleLeading}</span> : null}
+            <span className='agent-cursor-usage__title'>{title}</span>
+          </div>
           <button
             type='button'
             className='agent-cursor-usage__close app-button app-button--enter'

@@ -12,6 +12,7 @@ const FIELD_DELIMITER = '\u001f';
 const ENTRY_DELIMITER = '\u001e';
 const MAC_EPOCH_MS = Date.UTC(2001, 0, 1);
 const HELPER_TIMEOUT_MS = 120_000;
+const MAX_CALENDAR_EVENTS = 3;
 
 let calendarHelperTask: Promise<string | null> | null = null;
 
@@ -142,6 +143,24 @@ function parseEvents(raw: string): CalendarEventItem[] {
   return events;
 }
 
+function limitCalendarEvents(events: CalendarEventItem[]): CalendarEventItem[] {
+  const seen = new Set<string>();
+  const unique: CalendarEventItem[] = [];
+
+  for (const event of events) {
+    const key = `${event.title.trim().toLowerCase()}|${event.startAt}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(event);
+  }
+
+  return unique.sort((left, right) => left.startAt - right.startAt).slice(0, MAX_CALENDAR_EVENTS);
+}
+
 function buildSnapshotFromRaw(raw: string): CalendarEventsSnapshot {
   const trimmed = raw.trim();
 
@@ -153,7 +172,7 @@ function buildSnapshotFromRaw(raw: string): CalendarEventsSnapshot {
     return emptySnapshot(true, true, false, false);
   }
 
-  const events = parseEvents(trimmed);
+  const events = limitCalendarEvents(parseEvents(trimmed));
 
   return {
     platformSupported: true,

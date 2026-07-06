@@ -19,6 +19,8 @@ const ALERT_30M_SOUND_MS = 1_000;
 const ALERT_30M_PING_MS = 1_500;
 const ALERT_15M_SOUND_MS = 5_000;
 const ALERT_15M_PING_MS = 6_500;
+const ALERT_START_SOUND_MS = 5_000;
+const ALERT_START_PING_MS = 6_500;
 
 function pickUrgentEvent(events: CalendarEventItem[], now: number): CalendarEventItem | null {
   let closest: CalendarEventItem | null = null;
@@ -97,16 +99,17 @@ export function useCalendarEventNotifications(events: CalendarEventItem[], enabl
         if (previousMsUntilStart > CALENDAR_ALERT_15M_MS && msUntilStart <= CALENDAR_ALERT_15M_MS) {
           triggerTimedAlert(eventKey, ALERT_15M_SOUND_MS, ALERT_15M_PING_MS, store.triggerTemporaryPing);
         }
+
+        if (previousMsUntilStart > 0 && msUntilStart <= 0) {
+          triggerTimedAlert(eventKey, ALERT_START_SOUND_MS, ALERT_START_PING_MS, store.triggerTemporaryPing);
+          store.activateUrgentEvent(event);
+        }
       }
 
       const urgentCandidate = pickUrgentEvent(timedEvents, now);
 
       if (urgentCandidate) {
-        const urgentKey = getCalendarEventKey(urgentCandidate);
-
-        if (!store.dismissedUrgentKeys[urgentKey]) {
-          store.activateUrgentEvent(urgentCandidate);
-        }
+        store.activateUrgentEvent(urgentCandidate);
       } else if (store.urgentEvent) {
         const msSinceStart = now - store.urgentEvent.startAt;
 

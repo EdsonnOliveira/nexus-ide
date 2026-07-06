@@ -78,6 +78,18 @@ function HomeDashboardMailSkeletonComponent() {
 
 export const HomeDashboardMailSkeleton = memo(HomeDashboardMailSkeletonComponent);
 
+function HomeDashboardParakeetSkeletonComponent() {
+  return (
+    <HomeDashboardSkeletonRows
+      count={4}
+      className='home-dashboard__skeleton-list--parakeet'
+      rowClassName='home-dashboard__skeleton-row home-dashboard__skeleton-row--parakeet'
+    />
+  );
+}
+
+export const HomeDashboardParakeetSkeleton = memo(HomeDashboardParakeetSkeletonComponent);
+
 function HomeDashboardSelectSkeletonComponent() {
   return <HomeDashboardSkeletonBlock className='home-dashboard__skeleton-select' />;
 }
@@ -122,13 +134,30 @@ function HomeDashboardTaskListSkeletonComponent() {
 
 export const HomeDashboardTaskListSkeleton = memo(HomeDashboardTaskListSkeletonComponent);
 
+function HomeDashboardDailySkeletonProjectRow() {
+  return (
+    <div className='home-dashboard__daily-project home-dashboard__daily-project--skeleton' aria-hidden='true'>
+      <div className='home-dashboard__daily-project-head'>
+        <div className='home-dashboard__daily-project-toggle'>
+          <HomeDashboardSkeletonBlock className='home-dashboard__skeleton-daily-icon' />
+          <div className='home-dashboard__skeleton-daily-copy'>
+            <HomeDashboardSkeletonBlock className='home-dashboard__skeleton-daily-name' />
+            <HomeDashboardSkeletonBlock className='home-dashboard__skeleton-daily-meta' />
+          </div>
+        </div>
+        <HomeDashboardSkeletonBlock className='home-dashboard__skeleton-daily-action' />
+      </div>
+    </div>
+  );
+}
+
 function HomeDashboardDailySkeletonComponent() {
   return (
-    <HomeDashboardSkeletonRows
-      count={4}
-      className='home-dashboard__daily-list home-dashboard__daily-list--skeleton'
-      rowClassName='home-dashboard__skeleton-row home-dashboard__skeleton-row--daily'
-    />
+    <div className='home-dashboard__daily-list home-dashboard__daily-list--skeleton' aria-hidden='true'>
+      {Array.from({ length: 4 }, (_, index) => (
+        <HomeDashboardDailySkeletonProjectRow key={index} />
+      ))}
+    </div>
   );
 }
 

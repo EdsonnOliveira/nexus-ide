@@ -1,15 +1,14 @@
 import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { Bell, Bot, CalendarDays, ListTodo } from 'lucide-react';
 import { HomeDashboardMailCard } from '@/components/home/HomeDashboardMailCard';
+import { HomeDashboardMacParakeetCard } from '@/components/home/HomeDashboardMacParakeetCard';
 import { HomeDashboardDailyCard } from '@/components/home/HomeDashboardDailyCard';
 import { HomeDashboardActivityStats } from '@/components/home/HomeDashboardActivityStats';
 import { HomeDashboardHero } from '@/components/home/HomeDashboardHero';
 import { useHomeDashboardClock } from '@/hooks/useHomeDashboardClock';
 import {
   HomeDashboardCalendarSkeleton,
-  HomeDashboardHeroSkeleton,
   HomeDashboardNotificationSkeleton,
-  HomeDashboardTaskListSkeleton,
 } from '@/components/home/HomeDashboardSkeletons';
 import { HomeDashboardSection } from '@/components/home/HomeDashboardSection';
 import { HomeDashboardTaskRow } from '@/components/home/HomeDashboardTaskRow';
@@ -30,7 +29,8 @@ import type { ProjectTask } from '@/types/task';
 import {
   buildCalendarEventStyle,
   formatCalendarEventTime,
-  isCalendarEventStillVisible,
+  getVisibleCalendarEvents,
+  shouldShowCalendarEventLivePing,
 } from '@/utils/calendarEventStyle';
 import { formatNotificationRelativeTime } from '@/utils/notificationRelativeTime';
 import {
@@ -103,7 +103,7 @@ function HomeDashboardComponent() {
   }, [detailEntry, detailProject]);
 
   const visibleCalendarEvents = useMemo(
-    () => calendarEvents.filter((event) => isCalendarEventStillVisible(event, nowMs)),
+    () => getVisibleCalendarEvents(calendarEvents, nowMs),
     [calendarEvents, nowMs],
   );
 
@@ -112,8 +112,6 @@ function HomeDashboardComponent() {
 
   const showNotificationSkeleton = notificationsLoading;
   const showCalendarSkeleton = !calendarHydrated;
-  const showTasksSkeleton = activityLoading;
-  const showHeroSkeleton = showNotificationSkeleton || showCalendarSkeleton || activityLoading;
 
   const handleOpenAgentNotification = useCallback(
     (projectId: string, paneId: string | null) => {
@@ -227,11 +225,7 @@ function HomeDashboardComponent() {
 
   return (
     <div className='home-dashboard'>
-      {showHeroSkeleton ? (
-        <HomeDashboardHeroSkeleton />
-      ) : (
-        <HomeDashboardHero dateLabel={dateLabel} timeLabel={timeLabel} />
-      )}
+      <HomeDashboardHero dateLabel={dateLabel} timeLabel={timeLabel} />
 
       <HomeDashboardDailyCard projects={visibleProjects} enterDelayMs={40} />
 
@@ -323,6 +317,7 @@ function HomeDashboardComponent() {
                   key={`${event.startAt}-${event.title}`}
                   event={event}
                   enterDelayMs={160 + index * 40}
+                  nowMs={nowMs}
                   onSelect={handleCalendarEventClick}
                 />
               ))}
@@ -337,12 +332,12 @@ function HomeDashboardComponent() {
         loading={activityLoading}
       />
 
+      <HomeDashboardMacParakeetCard />
+
       <HomeDashboardMailCard />
 
       <HomeDashboardSection icon={ListTodo} title='Tasks pendentes' accent='#c084fc' enterDelayMs={200}>
-        {showTasksSkeleton ? (
-          <HomeDashboardTaskListSkeleton />
-        ) : pendingTasks.length === 0 ? (
+        {pendingTasks.length === 0 ? (
           <EmptyState icon={ListTodo} message='Nenhuma task pendente' compact />
         ) : (
           <div className='home-dashboard__task-list'>
@@ -394,16 +389,23 @@ function HomeDashboardComponent() {
 interface HomeDashboardCalendarRowProps {
   event: CalendarEventItem;
   enterDelayMs: number;
+  nowMs: number;
   onSelect: (event: CalendarEventItem, anchorRef: React.RefObject<HTMLButtonElement | null>) => void;
 }
 
-function HomeDashboardCalendarRow({ event, enterDelayMs, onSelect }: HomeDashboardCalendarRowProps) {
+function HomeDashboardCalendarRow({ event, enterDelayMs, nowMs, onSelect }: HomeDashboardCalendarRowProps) {
   const anchorRef = useRef<HTMLButtonElement>(null);
   const style = useMemo(() => buildCalendarEventStyle(event.colorHex), [event.colorHex]);
   const startLabel = useMemo(
     () => formatCalendarEventTime(event.startAt, event.allDay),
     [event.allDay, event.startAt],
   );
+  const endLabel = useMemo(
+    () => formatCalendarEventTime(event.endAt, event.allDay),
+    [event.allDay, event.endAt],
+  );
+  const showLivePing = useMemo(() => shouldShowCalendarEventLivePing(event, nowMs), [event, nowMs]);
+  const locationLabel = event.location.trim();
 
   const handleClick = useCallback(() => {
     onSelect(event, anchorRef);
@@ -418,11 +420,21 @@ function HomeDashboardCalendarRow({ event, enterDelayMs, onSelect }: HomeDashboa
       onClick={handleClick}
     >
       <span className='home-dashboard__calendar-accent' aria-hidden='true' />
-      <span className='home-dashboard__calendar-copy'>
+      <span className='home-dashboard__calendar-body'>
         <span className='home-dashboard__calendar-title'>{event.title}</span>
-        <span className='home-dashboard__calendar-meta'>
-          {startLabel}
-          {event.location.trim() ? ` · ${event.location.trim()}` : ''}
+        <span className='home-dashboard__calendar-meta'>{locationLabel || event.calendarName || '—'}</span>
+        <span className='home-dashboard__calendar-times'>
+          {showLivePing ? (
+            <span className='home-dashboard__calendar-live' aria-label='Reunião em andamento'>
+              <span className='home-dashboard__calendar-live-dot' aria-hidden='true' />
+            </span>
+          ) : null}
+          <span className='home-dashboard__calendar-times-copy'>
+            <span className='home-dashboard__calendar-time home-dashboard__calendar-time--primary'>{startLabel}</span>
+            {!event.allDay ? (
+              <span className='home-dashboard__calendar-time home-dashboard__calendar-time--secondary'>{endLabel}</span>
+            ) : null}
+          </span>
         </span>
       </span>
     </button>

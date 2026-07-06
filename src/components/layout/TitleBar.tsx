@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Battery,
   BatteryCharging,
@@ -10,6 +10,7 @@ import {
   Wifi,
   WifiOff,
 } from 'lucide-react';
+import { TitleBarBatteryCriticalAlert } from '@/components/layout/titlebar/TitleBarBatteryCriticalAlert';
 import { TitleBarBatteryPopup } from '@/components/layout/titlebar/TitleBarBatteryPopup';
 import { TitleBarNotificationsPopup } from '@/components/layout/titlebar/TitleBarNotificationsPopup';
 import { TitleBarVolumePopup } from '@/components/layout/titlebar/TitleBarVolumePopup';
@@ -20,6 +21,7 @@ import { useTitleBarClock } from '@/hooks/useTitleBarClock';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { closeAllAnchoredDropdowns } from '@/utils/overlayBlocking';
 import { getRecentSystemNotificationCount } from '@/utils/notificationRelativeTime';
+import { startBatteryAlertSoundLoop, stopBatteryAlertSoundLoop } from '@/utils/batteryAlertSound';
 
 type TitleBarPopupId = 'volume' | 'battery' | 'wifi' | 'notifications';
 
@@ -72,8 +74,8 @@ function TitleBarComponent() {
       return ' titlebar__item--battery-charging';
     }
 
-    if (systemStatus.batteryLevel < 10) {
-      return ' titlebar__item--battery-critical';
+    if (systemStatus.batteryLevel <= 15) {
+      return ' titlebar__item--battery-blink';
     }
 
     if (systemStatus.batteryLevel < 20) {
@@ -86,6 +88,37 @@ function TitleBarComponent() {
     systemStatus.batteryLevel,
     systemStatus.batteryPresent,
   ]);
+
+  const [batteryCriticalAlertDismissed, setBatteryCriticalAlertDismissed] = useState(false);
+
+  const isBatteryCritical =
+    systemStatus.batteryPresent &&
+    systemStatus.batteryLevel !== null &&
+    systemStatus.batteryLevel <= 15 &&
+    !systemStatus.batteryCharging;
+
+  const showBatteryCriticalAlert =
+    systemStatus.batteryPresent &&
+    systemStatus.batteryLevel !== null &&
+    systemStatus.batteryLevel <= 10 &&
+    !systemStatus.batteryCharging &&
+    !batteryCriticalAlertDismissed;
+
+  const handleDismissBatteryCriticalAlert = useCallback(() => {
+    setBatteryCriticalAlertDismissed(true);
+  }, []);
+
+  useEffect(() => {
+    if (isBatteryCritical) {
+      startBatteryAlertSoundLoop(systemStatus.batteryLevel ?? 15);
+    } else {
+      stopBatteryAlertSoundLoop();
+    }
+
+    return () => {
+      stopBatteryAlertSoundLoop();
+    };
+  }, [isBatteryCritical, systemStatus.batteryLevel]);
 
   const BatteryIcon = useMemo(() => {
     if (systemStatus.batteryCharging) {
@@ -229,6 +262,13 @@ function TitleBarComponent() {
           loading={loading}
           onRefresh={refreshNotifications}
           onClose={handleClosePopup}
+        />
+      ) : null}
+
+      {showBatteryCriticalAlert ? (
+        <TitleBarBatteryCriticalAlert
+          batteryLevel={systemStatus.batteryLevel ?? 10}
+          onDismiss={handleDismissBatteryCriticalAlert}
         />
       ) : null}
     </header>

@@ -718,14 +718,37 @@ async function getGitDailyStatsForRepo(
   }
 }
 
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) {
+    return [];
+  }
+
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await mapper(items[currentIndex]);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+}
+
 export async function aggregateGitDailyStats(
   projectPaths: string[],
   sinceMs: number,
   untilMs: number,
 ): Promise<GitDailyStats> {
   const seenRepos = new Set<string>();
-  let commits = 0;
-  let linesChanged = 0;
+  const repoPaths: string[] = [];
 
   for (const projectPath of projectPaths) {
     const repos = discoverGitRepos(projectPath);
@@ -738,13 +761,21 @@ export async function aggregateGitDailyStats(
       }
 
       seenRepos.add(resolved);
-      const stats = await getGitDailyStatsForRepo(resolved, sinceMs, untilMs);
-      commits += stats.commits;
-      linesChanged += stats.linesChanged;
+      repoPaths.push(resolved);
     }
   }
 
-  return { commits, linesChanged };
+  const results = await mapWithConcurrency(repoPaths, 8, (repoPath) =>
+    getGitDailyStatsForRepo(repoPath, sinceMs, untilMs),
+  );
+
+  return results.reduce<GitDailyStats>(
+    (totals, stats) => ({
+      commits: totals.commits + stats.commits,
+      linesChanged: totals.linesChanged + stats.linesChanged,
+    }),
+    { commits: 0, linesChanged: 0 },
+  );
 }
 
 async function getNumstatMap(

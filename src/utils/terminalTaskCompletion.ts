@@ -195,15 +195,14 @@ export function syncAgentBusyFromTail(
   onAgentReady?: () => void,
 ): void {
   if (!hasActiveAgent) {
-    setAgentBusy(paneId, false);
-
     const session = useTerminalSessionStore.getState();
-
-    if (
+    const hasWorkload =
       session.awaitingResponseByPane[paneId] ||
       session.agentNotifyEligibleByPane[paneId] ||
-      session.agentBusyByPane[paneId]
-    ) {
+      session.agentBusyByPane[paneId];
+
+    if (hasWorkload) {
+      setAgentBusy(paneId, false);
       session.resetAgentWorkload(paneId);
     }
 

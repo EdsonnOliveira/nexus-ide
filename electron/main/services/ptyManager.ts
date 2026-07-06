@@ -155,6 +155,8 @@ function buildShellArgs(shell: string): string[] {
 class PtyManager {
   private sessions = new Map<string, PtySession>();
   private window: BrowserWindow | null = null;
+  private pendingData = new Map<string, string>();
+  private flushScheduled = false;
 
   setWindow(window: BrowserWindow | null): void {
     this.window = window;
@@ -178,6 +180,24 @@ class PtyManager {
     } catch {
       this.window = null;
     }
+  }
+
+  private scheduleDataFlush(): void {
+    if (this.flushScheduled) {
+      return;
+    }
+
+    this.flushScheduled = true;
+
+    setImmediate(() => {
+      this.flushScheduled = false;
+
+      for (const [ptyId, data] of this.pendingData) {
+        this.sendToRenderer('terminal:data', { ptyId, data });
+      }
+
+      this.pendingData.clear();
+    });
   }
 
   has(ptyId: string): boolean {
@@ -218,10 +238,13 @@ class PtyManager {
         this.appendScrollback(session, data);
       }
 
-      this.sendToRenderer('terminal:data', { ptyId: id, data });
+      const pending = this.pendingData.get(id);
+      this.pendingData.set(id, pending ? pending + data : data);
+      this.scheduleDataFlush();
     });
 
     terminal.onExit(({ exitCode }) => {
+      this.pendingData.delete(id);
       this.sendToRenderer('terminal:exit', { ptyId: id, code: exitCode });
       this.sessions.delete(id);
     });
@@ -271,6 +294,7 @@ class PtyManager {
 
     session.pty.kill();
     this.sessions.delete(ptyId);
+    this.pendingData.delete(ptyId);
   }
 
   killAll(): void {
@@ -279,6 +303,7 @@ class PtyManager {
     }
 
     this.sessions.clear();
+    this.pendingData.clear();
   }
 }
 

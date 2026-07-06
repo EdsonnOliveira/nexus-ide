@@ -1,27 +1,27 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDays, MapPin } from 'lucide-react';
-import { CalendarEventAlertModal } from '@/components/sidebar/CalendarEventAlertModal';
 import { SidebarCalendarEventPopup } from '@/components/sidebar/SidebarCalendarEventPopup';
 import { useAppleCalendarEvents } from '@/hooks/useAppleCalendarEvents';
-import { useCalendarEventNotifications } from '@/hooks/useCalendarEventNotifications';
 import { useCalendarEventNotificationStore } from '@/stores/useCalendarEventNotificationStore';
 import type { CalendarEventItem } from '@/types';
 import {
   buildCalendarEventStyle,
   formatCalendarEventTime,
   getCalendarEventKey,
-  isCalendarEventStillVisible,
+  getVisibleCalendarEvents,
+  isCalendarEventLive,
 } from '@/utils/calendarEventStyle';
 import { getProjectPingTone } from '@/utils/projectPingTone';
 
 interface SidebarCalendarEventRowProps {
   event: CalendarEventItem;
   isActive: boolean;
+  isLive: boolean;
   isPinging: boolean;
   onSelect: (event: CalendarEventItem, anchorRef: React.RefObject<HTMLButtonElement | null>) => void;
 }
 
-function SidebarCalendarEventRowComponent({ event, isActive, isPinging, onSelect }: SidebarCalendarEventRowProps) {
+function SidebarCalendarEventRowComponent({ event, isActive, isLive, isPinging, onSelect }: SidebarCalendarEventRowProps) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const style = useMemo(() => buildCalendarEventStyle(event.colorHex), [event.colorHex]);
   const pingTone = useMemo(() => getProjectPingTone(event.colorHex), [event.colorHex]);
@@ -56,18 +56,23 @@ function SidebarCalendarEventRowComponent({ event, isActive, isPinging, onSelect
       ) : null}
       <span className='sidebar-calendar-event__accent' aria-hidden='true' />
       <span className='sidebar-calendar-event__content'>
-        <span className='sidebar-calendar-event__row'>
-          <span className='sidebar-calendar-event__title'>{event.title}</span>
-          <span className='sidebar-calendar-event__time sidebar-calendar-event__time--primary'>{startLabel}</span>
+        <span className='sidebar-calendar-event__title'>{event.title}</span>
+        <span className='sidebar-calendar-event__meta'>
+          <MapPin size={11} strokeWidth={2} className='sidebar-calendar-event__meta-icon' aria-hidden='true' />
+          <span className='sidebar-calendar-event__meta-text'>{locationLabel}</span>
         </span>
-        <span className='sidebar-calendar-event__row'>
-          <span className='sidebar-calendar-event__meta'>
-            <MapPin size={11} strokeWidth={2} className='sidebar-calendar-event__meta-icon' aria-hidden='true' />
-            <span className='sidebar-calendar-event__meta-text'>{locationLabel}</span>
-          </span>
-          {!event.allDay ? (
-            <span className='sidebar-calendar-event__time sidebar-calendar-event__time--secondary'>{endLabel}</span>
+        <span className='sidebar-calendar-event__times'>
+          {isLive ? (
+            <span className='sidebar-calendar-event__live' aria-label='Reunião em andamento'>
+              <span className='sidebar-calendar-event__live-dot' aria-hidden='true' />
+            </span>
           ) : null}
+          <span className='sidebar-calendar-event__times-copy'>
+            <span className='sidebar-calendar-event__time sidebar-calendar-event__time--primary'>{startLabel}</span>
+            {!event.allDay ? (
+              <span className='sidebar-calendar-event__time sidebar-calendar-event__time--secondary'>{endLabel}</span>
+            ) : null}
+          </span>
         </span>
       </span>
     </button>
@@ -107,8 +112,6 @@ function SidebarCalendarEventsComponent() {
   const { snapshot, loading, hydrated, openEvent, refresh } = useAppleCalendarEvents(true);
   const [now, setNow] = useState(() => Date.now());
   const [activePopup, setActivePopup] = useState<ActiveCalendarEventPopupState | null>(null);
-  const urgentEvent = useCalendarEventNotificationStore((state) => state.urgentEvent);
-  const dismissUrgentEvent = useCalendarEventNotificationStore((state) => state.dismissUrgentEvent);
   const isEventPinging = useCalendarEventNotificationStore((state) => state.isEventPinging);
 
   useEffect(() => {
@@ -156,14 +159,6 @@ function SidebarCalendarEventsComponent() {
     [openEvent],
   );
 
-  const handleCloseUrgentModal = useCallback(() => {
-    if (!urgentEvent) {
-      return;
-    }
-
-    dismissUrgentEvent(urgentEvent);
-  }, [dismissUrgentEvent, urgentEvent]);
-
   const handleOpenSettings = useCallback(() => {
     if (!window.nexus?.calendar) {
       return;
@@ -180,14 +175,12 @@ function SidebarCalendarEventsComponent() {
   }, [refresh]);
 
   const visibleEvents = useMemo(() => {
-    if (!hydrated || !snapshot.available || snapshot.events.length === 0) {
+    if (!hydrated || !snapshot.available) {
       return [];
     }
 
-    return snapshot.events.filter((event) => isCalendarEventStillVisible(event, now));
+    return getVisibleCalendarEvents(snapshot.events, now);
   }, [hydrated, now, snapshot.available, snapshot.events]);
-
-  useCalendarEventNotifications(visibleEvents, hydrated && snapshot.available);
 
   useEffect(() => {
     if (!activePopup) {
@@ -221,6 +214,7 @@ function SidebarCalendarEventsComponent() {
               key={eventKey}
               event={event}
               isActive={activePopup?.event.id === event.id && activePopup.event.startAt === event.startAt}
+              isLive={isCalendarEventLive(event, now)}
               isPinging={isEventPinging(eventKey, now)}
               onSelect={handleSelectEvent}
             />
@@ -234,14 +228,6 @@ function SidebarCalendarEventsComponent() {
           anchorRect={activePopup.anchorRect}
           anchorRef={activePopup.anchorRef}
           onClose={handleClosePopup}
-          onOpenInCalendar={handleOpenInCalendar}
-        />
-      ) : null}
-
-      {urgentEvent ? (
-        <CalendarEventAlertModal
-          event={urgentEvent}
-          onClose={handleCloseUrgentModal}
           onOpenInCalendar={handleOpenInCalendar}
         />
       ) : null}

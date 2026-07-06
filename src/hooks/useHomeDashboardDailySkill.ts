@@ -43,7 +43,7 @@ function normalizeProjectPath(projectPath: string): string {
 export function useHomeDashboardDailySkill(projects: Project[]) {
   const [skillHints, setSkillHints] = useState<TerminalCommandHint[]>([]);
   const [selectedSkillId, setSelectedSkillId] = useState('');
-  const [loadingSkills, setLoadingSkills] = useState(true);
+  const [loadingSkills, setLoadingSkills] = useState(false);
   const [skillsByProjectPath, setSkillsByProjectPath] = useState<Map<string, Set<string>>>(
     () => new Map(),
   );
@@ -150,10 +150,13 @@ export function useHomeDashboardDailySkill(projects: Project[]) {
       }
     };
 
-    void loadSkills();
+    const timeoutId = window.setTimeout(() => {
+      void loadSkills();
+    }, 300);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timeoutId);
     };
   }, [projectPathsKey]);
 

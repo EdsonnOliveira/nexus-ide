@@ -1,0 +1,92 @@
+import type { MacParakeetSourceType, MacParakeetTranscriptionDetail } from '@/types';
+import type { ProjectTask } from '@/types/task';
+
+export const MAC_PARAKEET_SOURCE_FILTER_OPTIONS: Array<{
+  value: MacParakeetSourceType | '';
+  label: string;
+}> = [
+  { value: '', label: 'Todas' },
+  { value: 'regular_call', label: 'Chamadas' },
+  { value: 'interview', label: 'Entrevistas' },
+];
+
+export function resolveMacParakeetSourceLabel(sourceType: MacParakeetSourceType): string {
+  switch (sourceType) {
+    case 'interview':
+      return 'Entrevista';
+    default:
+      return 'Chamada';
+  }
+}
+
+export function resolveMacParakeetSourceAccent(sourceType: MacParakeetSourceType): string {
+  switch (sourceType) {
+    case 'interview':
+      return '#f472b6';
+    default:
+      return '#34d399';
+  }
+}
+
+export function formatMacParakeetDuration(durationMs: number | null): string {
+  if (durationMs === null || durationMs <= 0) {
+    return '—';
+  }
+
+  const totalSeconds = Math.round(durationMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+export function formatMacParakeetDate(timestamp: number): string {
+  if (!timestamp) {
+    return '—';
+  }
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(timestamp));
+}
+
+export function formatMacParakeetSegmentTime(timestamp: number): string {
+  if (!timestamp) {
+    return '—';
+  }
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(timestamp));
+}
+
+export function buildTaskDraftFromTranscription(
+  detail: MacParakeetTranscriptionDetail,
+): ProjectTask {
+  const transcript = detail.transcript.trim();
+  const description =
+    transcript ||
+    detail.segments
+      .filter((segment) => segment.kind === 'speech')
+      .map((segment) => segment.content.trim())
+      .filter(Boolean)
+      .join('\n\n');
+
+  return {
+    id: crypto.randomUUID(),
+    source: 'local',
+    title: detail.title,
+    description,
+    attachments: [],
+    updatedAt: Date.now(),
+  };
+}

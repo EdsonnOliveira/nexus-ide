@@ -157,8 +157,13 @@ function AgentViewSessionComponent({
   );
 
   const handleTurnsChange = useCallback(
-    (nextTurns: AgentTurn[]) => {
+    (nextTurns: AgentTurn[], options?: { persist?: boolean }) => {
       setTurns(nextTurns);
+
+      if (options?.persist === false) {
+        return;
+      }
+
       onUpdateTab({ turns: nextTurns });
     },
     [onUpdateTab],

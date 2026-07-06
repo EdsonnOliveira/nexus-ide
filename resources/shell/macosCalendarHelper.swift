@@ -86,7 +86,7 @@ func fetchEvents(store: EKEventStore) -> String {
 
     var output = ""
 
-    for event in events.prefix(12) {
+    for event in events.prefix(3) {
         let identifier = escapeField(event.eventIdentifier ?? "")
         let title = escapeField(event.title ?? "(Sem título)")
         let startMs = Int(event.startDate.timeIntervalSince1970 * 1000)

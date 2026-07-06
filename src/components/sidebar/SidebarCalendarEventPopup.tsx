@@ -2,13 +2,17 @@ import { memo, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { TitleBarPopupShell } from '@/components/layout/titlebar/TitleBarPopupShell';
 import { useTitleBarPopupDismiss } from '@/components/layout/titlebar/useTitleBarPopupDismiss';
-import { CalendarEventDetailsPanel } from '@/components/sidebar/CalendarEventDetailsPanel';
+import {
+  CalendarEventDetailsPanel,
+  CalendarEventFooterActions,
+} from '@/components/sidebar/CalendarEventDetailsPanel';
+import { CalendarMeetingIcon } from '@/components/sidebar/CalendarMeetingIcon';
 import {
   positionDropdownAboveAnchor,
   useAnchoredDropdownMenu,
 } from '@/hooks/useAnchoredDropdownMenu';
 import type { CalendarEventItem } from '@/types';
-import { resolveCalendarExternalUrl } from '@/utils/calendarEventStyle';
+import { resolveCalendarExternalUrl, resolveCalendarMeetingInfo } from '@/utils/calendarEventStyle';
 
 interface SidebarCalendarEventPopupProps {
   event: CalendarEventItem;
@@ -33,6 +37,8 @@ function SidebarCalendarEventPopupComponent({
 
   useTitleBarPopupDismiss(menuRef, anchorRef, requestClose);
 
+  const meetingInfo = useMemo(() => resolveCalendarMeetingInfo(event), [event]);
+
   const handleOpenInCalendar = useCallback(() => {
     onOpenInCalendar(event.startAt);
     requestClose();
@@ -52,21 +58,31 @@ function SidebarCalendarEventPopupComponent({
     void window.nexus.tasks.openExternalUrl(resolved);
   }, []);
 
+  const handleStartCall = useCallback(() => {
+    if (!meetingInfo?.url) {
+      return;
+    }
+
+    handleOpenExternalUrl(meetingInfo.url);
+  }, [handleOpenExternalUrl, meetingInfo?.url]);
+
   return createPortal(
     <TitleBarPopupShell
       menuRef={menuRef}
       animationClass={animationClass}
       title={event.title}
+      titleLeading={
+        meetingInfo ? <CalendarMeetingIcon provider={meetingInfo.provider} /> : undefined
+      }
       ariaLabel={`Detalhes do evento ${event.title}`}
+      panelClassName='sidebar-calendar-popup__panel'
       onClose={requestClose}
       actions={
-        <button
-          type='button'
-          className='agent-cursor-usage__action app-button app-button--enter'
-          onClick={handleOpenInCalendar}
-        >
-          Abrir no Calendário
-        </button>
+        <CalendarEventFooterActions
+          onOpenInCalendar={handleOpenInCalendar}
+          onStartCall={handleStartCall}
+          showStartCall={Boolean(meetingInfo?.url)}
+        />
       }
     >
       <CalendarEventDetailsPanel

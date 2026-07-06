@@ -27,6 +27,7 @@ function isReducedMotionPreferred(): boolean {
 
 function playTone(
   ctx: AudioContext,
+  type: OscillatorType,
   frequency: number,
   startTime: number,
   duration: number,
@@ -35,7 +36,7 @@ function playTone(
   const oscillator = ctx.createOscillator();
   const gain = ctx.createGain();
 
-  oscillator.type = 'sine';
+  oscillator.type = type;
   oscillator.frequency.setValueAtTime(frequency, startTime);
 
   gain.gain.setValueAtTime(0.0001, startTime);
@@ -60,8 +61,9 @@ function playCalendarChime(): void {
     .resume()
     .then(() => {
       const now = ctx.currentTime;
-      playTone(ctx, 659.25, now, 0.14, 0.55);
-      playTone(ctx, 880, now + 0.12, 0.18, 0.48);
+      playTone(ctx, 'triangle', 987.77, now, 0.07, 0.42);
+      playTone(ctx, 'triangle', 987.77, now + 0.1, 0.07, 0.38);
+      playTone(ctx, 'triangle', 1174.66, now + 0.22, 0.32, 0.44);
     })
     .catch(() => undefined);
 }

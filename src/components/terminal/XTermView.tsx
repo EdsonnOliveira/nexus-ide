@@ -298,6 +298,9 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
   const isVisibleRef = useRef(isVisible);
   const disposedRef = useRef(false);
   const scrollbackReplayGenerationRef = useRef(0);
+  const pendingWriteRef = useRef('');
+  const pendingStickRef = useRef(false);
+  const writeFrameRef = useRef<number | null>(null);
   const [linkMenu, setLinkMenu] = useState<{ url: string; x: number; y: number } | null>(null);
 
   paneIdRef.current = paneId;
@@ -760,6 +763,36 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       stickToBottomRef.current = isTerminalAtBottom(terminal);
     });
 
+    const flushPendingWrite = () => {
+      writeFrameRef.current = null;
+      const buffered = pendingWriteRef.current;
+
+      if (!buffered) {
+        return;
+      }
+
+      pendingWriteRef.current = '';
+      const shouldStick = pendingStickRef.current;
+      pendingStickRef.current = false;
+
+      const activeTerminal = terminalRef.current;
+
+      if (!canUseTerminal(activeTerminal, disposedRef)) {
+        return;
+      }
+
+      activeTerminal.write(buffered);
+
+      if (shouldStick) {
+        activeTerminal.scrollToBottom();
+        stickToBottomRef.current = true;
+      } else {
+        stickToBottomRef.current = isTerminalAtBottom(activeTerminal);
+      }
+
+      scheduleSyncPasteImagesFromPromptRef.current(true);
+    };
+
     const unsubscribeData = window.nexus.terminal.onData((incomingPtyId, data) => {
       if (incomingPtyId !== ptyIdRef.current) {
         return;
@@ -772,23 +805,19 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         return;
       }
 
-      const activeTerminal = terminalRef.current;
-
-      if (!canUseTerminal(activeTerminal, disposedRef)) {
+      if (!canUseTerminal(terminalRef.current, disposedRef)) {
         return;
       }
 
-      const shouldStick = stickToBottomRef.current;
-      activeTerminal.write(parseStream(data));
+      pendingWriteRef.current += parseStream(data);
 
-      if (shouldStick) {
-        activeTerminal.scrollToBottom();
-        stickToBottomRef.current = true;
-      } else {
-        stickToBottomRef.current = isTerminalAtBottom(activeTerminal);
+      if (stickToBottomRef.current) {
+        pendingStickRef.current = true;
       }
 
-      scheduleSyncPasteImagesFromPromptRef.current(true);
+      if (writeFrameRef.current === null) {
+        writeFrameRef.current = requestAnimationFrame(flushPendingWrite);
+      }
     });
 
     const unsubscribeExit = window.nexus.terminal.onExit((incomingPtyId, code) => {
@@ -907,6 +936,12 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
 
     return () => {
       disposedRef.current = true;
+
+      if (writeFrameRef.current !== null) {
+        cancelAnimationFrame(writeFrameRef.current);
+        writeFrameRef.current = null;
+        pendingWriteRef.current = '';
+      }
 
       if (syncPasteImagesTimerRef.current !== null) {
         window.clearTimeout(syncPasteImagesTimerRef.current);

@@ -17,6 +17,7 @@ import { StatusBar } from '@/components/layout/StatusBar';
 import { TitleBar } from '@/components/layout/TitleBar';
 import { GlobalSearchPalette } from '@/components/search/GlobalSearchPalette';
 import { DailyGenerationProvider } from '@/components/home/DailyGenerationProvider';
+import { CalendarEventAlertHost } from '@/components/sidebar/CalendarEventAlertHost';
 import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { projectHasLiveAgentSession } from '@/utils/paneAgentSession';
@@ -379,6 +380,7 @@ function AppShellComponent() {
 
       <StatusBar />
       <GlobalSearchPalette />
+      <CalendarEventAlertHost />
       </div>
     </DailyGenerationProvider>
   );

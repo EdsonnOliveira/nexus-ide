@@ -1146,12 +1146,8 @@ export function isAgentStreamJsonStateAwaitingCompletion(
     return true;
   }
 
-  const hasResponse =
-    Boolean(state.pendingResponseText.trim()) ||
-    state.activities.some((entry) => entry.kind === 'response');
-
-  if (hasResponse) {
-    return false;
+  if (state.pendingResponseText.trim()) {
+    return true;
   }
 
   return state.activities.some(
@@ -1159,12 +1155,25 @@ export function isAgentStreamJsonStateAwaitingCompletion(
       entry.kind === 'file_read' ||
       entry.kind === 'file_edit' ||
       entry.kind === 'live_status' ||
-      entry.kind === 'thought',
+      entry.kind === 'thought' ||
+      entry.kind === 'response',
   );
 }
 
-function resolveIncompleteStreamJsonResponseFallback(state: AgentStreamJsonParserState): string {
+function resolveIncompleteStreamJsonResponseFallback(
+  state: AgentStreamJsonParserState,
+  activities: AgentActivity[],
+): string {
   if (state.responseLead?.trim() || state.pendingResponseText.trim()) {
+    return 'Alterações aplicadas.';
+  }
+
+  if (
+    state.editedPaths.size > 0 ||
+    state.shellCommands.length > 0 ||
+    state.shellCommandCount > 0 ||
+    activities.some((entry) => entry.kind === 'file_edit')
+  ) {
     return 'Alterações aplicadas.';
   }
 
@@ -1226,16 +1235,19 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
   activities = deduplicatePlanResponseActivities(activities);
 
   const summary = buildAgentTurnSummaryFromStreamJsonState(state);
-  const incompleteFallback = resolveIncompleteStreamJsonResponseFallback(state);
+  const incompleteFallback = resolveIncompleteStreamJsonResponseFallback(state, activities);
   const hasPendingInteraction =
     hasPendingStreamJsonInteraction(state, activities) ||
     turn.activities.some((entry) => isPendingInteractionActivity(entry));
+
+  const safeLead = sanitizeResponseText(state.responseLead?.trim() ?? '').trim();
+  const safeSummaryLead = sanitizeResponseText(summary?.responseLead?.trim() ?? '').trim();
 
   if (activities.length === 0 && isAgentTurnSummaryVisible(summary)) {
     activities = [
       createActivity(
         'response',
-        state.responseLead?.trim() || summary?.responseLead?.trim() || incompleteFallback,
+        safeLead || safeSummaryLead || incompleteFallback,
       ),
     ];
   } else if (activities.length === 0 && !hasPendingInteraction) {
@@ -1254,7 +1266,19 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
       ...activities,
       createActivity(
         'response',
-        state.responseLead?.trim() || summary?.responseLead?.trim() || incompleteFallback,
+        safeLead || safeSummaryLead || incompleteFallback,
+      ),
+    ];
+  } else if (
+    activities.length > 0 &&
+    !activities.some((entry) => entry.kind === 'response') &&
+    !hasPendingInteraction
+  ) {
+    activities = [
+      ...activities,
+      createActivity(
+        'response',
+        safeLead || incompleteFallback,
       ),
     ];
   }

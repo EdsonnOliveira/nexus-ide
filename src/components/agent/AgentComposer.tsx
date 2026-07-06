@@ -48,7 +48,9 @@ import {
   attachAgentPromptImageToPane,
   readDroppedImageDataUrls,
   readImagePathAsDataUrl,
+  saveAgentPromptImage,
 } from '@/utils/attachAgentPromptImage';
+import { blobToDataUrl } from '@/utils/terminalClipboardImage';
 import { writeAgentPaneDraft } from '@/utils/agentPaneRegistry';
 import {
   buildAgentComposerMentionsAppendFragment,
@@ -58,6 +60,7 @@ import {
   resolveAgentComposerDropMentions,
 } from '@/utils/agentComposerDrop';
 import {
+  buildAgentPromptImageMention,
   buildAgentPromptImageMentionAppendFragment,
   buildAgentPromptImageMentionInsertion,
 } from '@/utils/agentPromptImageBadge';
@@ -133,6 +136,12 @@ function getMentionProjectKindBadgeLabel(kind: ProjectKind): string {
 
   return kind.toUpperCase();
 }
+
+const PROJECT_KIND_BADGE_COLORS: Record<ProjectKind, string> = {
+  api: '#93c5fd',
+  web: '#6ee7b7',
+  mobile: '#fcd34d',
+};
 
 interface ComposerMentionProjectThumbProps {
   logo: string | null;
@@ -245,7 +254,10 @@ function AgentComposerMentionMatchIconComponent({ match }: { match: ComposerMent
   if (match.isProjectFolder && match.projectKind) {
     return (
       <span className='agent-view__composer-mention-icon' aria-hidden='true'>
-        <span className='project-explorer__kind-badge agent-view__composer-mention-kind-badge'>
+        <span
+          className='project-explorer__kind-badge agent-view__composer-mention-kind-badge'
+          style={{ backgroundColor: PROJECT_KIND_BADGE_COLORS[match.projectKind], color: '#000' }}
+        >
           {getMentionProjectKindBadgeLabel(match.projectKind)}
         </span>
       </span>
@@ -580,6 +592,54 @@ function AgentComposerComponent({
     [draft, inputRef, onDraftChange, skillDraft.body, skillDraft.hasSkill, skillDraft.skillCommand, syncComposerInputScroll],
   );
 
+  const insertMultipleImageMentions = useCallback(
+    (imageNumbers: number[]) => {
+      if (imageNumbers.length === 0) {
+        return;
+      }
+
+      if (imageNumbers.length === 1) {
+        insertImageMention(imageNumbers[0]!);
+        return;
+      }
+
+      const textarea = inputRef.current;
+      const bodyValue = skillDraft.hasSkill ? skillDraft.body : draft;
+      const selectionStart = textarea?.selectionStart ?? bodyValue.length;
+      const selectionEnd = textarea?.selectionEnd ?? selectionStart;
+      const before = bodyValue.slice(0, selectionStart);
+      const after = bodyValue.slice(selectionEnd);
+      const needsNewlineBefore = before.length > 0 && !/\n$/.test(before);
+      const block = imageNumbers
+        .map((n) => `${buildAgentPromptImageMention(n)} = `)
+        .join('\n');
+      const insertion = `${needsNewlineBefore ? '\n' : ''}${block}\n`;
+      const currentDraft = `${before}${insertion}${after}`;
+      const currentCaret = selectionStart + insertion.length;
+
+      const nextValue = skillDraft.hasSkill
+        ? currentDraft
+          ? `${skillDraft.skillCommand} ${currentDraft}`
+          : skillDraft.skillCommand
+        : currentDraft;
+
+      onDraftChange(nextValue);
+
+      window.requestAnimationFrame(() => {
+        if (!textarea) {
+          return;
+        }
+
+        textarea.focus();
+        textarea.setSelectionRange(currentCaret, currentCaret);
+        setCaretIndex(currentCaret);
+        resizeComposerInput(textarea);
+        syncComposerInputScroll();
+      });
+    },
+    [draft, inputRef, insertImageMention, onDraftChange, skillDraft.body, skillDraft.hasSkill, skillDraft.skillCommand, syncComposerInputScroll],
+  );
+
   const attachImageWithMention = useCallback(
     async (dataUrl: string) => {
       const attached = await attachAgentPromptImageToPane(projectPath, paneId, dataUrl, false);
@@ -591,6 +651,32 @@ function AgentComposerComponent({
       insertImageMention(attached.imageNumber);
     },
     [insertImageMention, paneId, projectPath],
+  );
+
+  const attachMultipleImagesWithMentions = useCallback(
+    async (dataUrls: string[]) => {
+      if (dataUrls.length === 0) {
+        return;
+      }
+
+      if (dataUrls.length === 1) {
+        await attachImageWithMention(dataUrls[0]!);
+        return;
+      }
+
+      const imageNumbers: number[] = [];
+
+      for (const dataUrl of dataUrls) {
+        const attached = await saveAgentPromptImage(projectPath, paneId, dataUrl);
+
+        if (attached) {
+          imageNumbers.push(attached.imageNumber);
+        }
+      }
+
+      insertMultipleImageMentions(imageNumbers);
+    },
+    [attachImageWithMention, insertMultipleImageMentions, paneId, projectPath],
   );
 
   const insertPathMentions = useCallback(
@@ -670,10 +756,7 @@ function AgentComposerComponent({
 
         if (isExternalFileDrag(dataTransfer)) {
           const dataUrls = await readDroppedImageDataUrls(dataTransfer);
-
-          for (const dataUrl of dataUrls) {
-            await attachImageWithMention(dataUrl);
-          }
+          await attachMultipleImagesWithMentions(dataUrls);
 
           const mentions = await resolveAgentComposerDropMentions(projectPath, dataTransfer, {
             includeImages: false,
@@ -695,7 +778,7 @@ function AgentComposerComponent({
         }
       })();
     },
-    [attachImageWithMention, inputRef, insertPathMentions, projectPath],
+    [attachMultipleImagesWithMentions, inputRef, insertPathMentions, projectPath],
   );
 
   useLayoutEffect(() => {
@@ -999,6 +1082,8 @@ function AgentComposerComponent({
         return;
       }
 
+      const imageFiles: File[] = [];
+
       for (const item of items) {
         if (!item.type.startsWith('image/')) {
           continue;
@@ -1006,29 +1091,32 @@ function AgentComposerComponent({
 
         const file = item.getAsFile();
 
-        if (!file) {
-          continue;
+        if (file) {
+          imageFiles.push(file);
         }
+      }
 
-        event.preventDefault();
-        void file.arrayBuffer().then(async (buffer) => {
-          const blob = new Blob([buffer], { type: file.type });
-          const reader = new FileReader();
-
-          reader.onload = () => {
-            const dataUrl = typeof reader.result === 'string' ? reader.result : null;
-
-            if (dataUrl) {
-              void attachImageWithMention(dataUrl);
-            }
-          };
-
-          reader.readAsDataURL(blob);
-        });
+      if (imageFiles.length === 0) {
         return;
       }
+
+      event.preventDefault();
+
+      void (async () => {
+        const dataUrls: string[] = [];
+
+        for (const file of imageFiles) {
+          try {
+            dataUrls.push(await blobToDataUrl(file));
+          } catch {
+            continue;
+          }
+        }
+
+        await attachMultipleImagesWithMentions(dataUrls);
+      })();
     },
-    [attachImageWithMention],
+    [attachMultipleImagesWithMentions],
   );
 
   const pendingImages = useMemo(
@@ -1242,15 +1330,23 @@ export async function handleAgentComposerDrop(
 
   if (isExternalFileDrag(dataTransfer)) {
     const dataUrls = await readDroppedImageDataUrls(dataTransfer);
+    const imageNumbers: number[] = [];
 
     for (const dataUrl of dataUrls) {
       const attached = await attachAgentPromptImageToPane(projectPath, paneId, dataUrl, false);
 
-      if (!attached) {
-        continue;
+      if (attached) {
+        imageNumbers.push(attached.imageNumber);
       }
+    }
 
-      mentionDraft = `${mentionDraft}${buildAgentPromptImageMentionAppendFragment(mentionDraft, attached.imageNumber)}`;
+    if (imageNumbers.length === 1) {
+      mentionDraft = buildAgentPromptImageMentionAppendFragment('', imageNumbers[0]!);
+    } else if (imageNumbers.length > 1) {
+      mentionDraft = imageNumbers
+        .map((n) => `${buildAgentPromptImageMention(n)} = `)
+        .join('\n');
+      mentionDraft = `${mentionDraft}\n`;
     }
 
     const pathMentions = await resolveAgentComposerDropMentions(projectPath, dataTransfer, {

@@ -13,7 +13,7 @@ export function buildAgentPromptImageMentionAppendFragment(
   currentDraft: string,
   imageNumber: number,
 ): string {
-  const mention = buildAgentPromptImageMention(imageNumber);
+  const mention = `${buildAgentPromptImageMention(imageNumber)} `;
 
   if (!currentDraft.trim()) {
     return mention;
@@ -32,7 +32,7 @@ export function buildAgentPromptImageMentionInsertion(
   const before = draft.slice(0, selectionStart);
   const after = draft.slice(selectionEnd);
   const needsSpaceBefore = before.length > 0 && !/[\s\n]$/.test(before);
-  const needsSpaceAfter = after.length > 0 && !/^[\s\n]/.test(after);
+  const needsSpaceAfter = !/^[\s\n]/.test(after);
   const insertion = `${needsSpaceBefore ? ' ' : ''}${mention}${needsSpaceAfter ? ' ' : ''}`;
 
   return {

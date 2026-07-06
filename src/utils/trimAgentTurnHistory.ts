@@ -1,9 +1,9 @@
 import type { AgentTab, AgentTurn, Tab, TabBarItem } from '@/types';
 
-export const MAX_AGENT_TURN_HISTORY_COUNT = 5;
-export const MAX_AGENT_TURN_HISTORY_BYTES = 512 * 1024;
-export const HEAVY_AGENT_TURN_THRESHOLD = 4;
-export const HEAVY_AGENT_ACTIVITY_THRESHOLD = 40;
+export const MAX_AGENT_TURN_HISTORY_COUNT = 30;
+export const MAX_AGENT_TURN_HISTORY_BYTES = 2 * 1024 * 1024;
+export const HEAVY_AGENT_TURN_THRESHOLD = 20;
+export const HEAVY_AGENT_ACTIVITY_THRESHOLD = 120;
 
 export function countAgentTranscriptActivities(turns: AgentTurn[]): number {
   return turns.reduce((total, turn) => total + turn.activities.length, 0);
@@ -25,7 +25,7 @@ export function isHeavyAgentTranscript(turns: AgentTurn[]): boolean {
 }
 
 export function measureAgentTurnHistoryBytes(turns: AgentTurn[]): number {
-  return new TextEncoder().encode(JSON.stringify(turns)).length;
+  return JSON.stringify(turns).length;
 }
 
 export function rawAgentTurnHistoryNeedsTrim(items: TabBarItem[]): boolean {
@@ -57,13 +57,65 @@ export function rawAgentTurnHistoryNeedsTrim(items: TabBarItem[]): boolean {
 }
 
 function trimTurnActivities(turn: AgentTurn, maxBytes: number): AgentTurn {
-  let activities = turn.activities;
+  const { activities } = turn;
 
-  while (activities.length > 0 && measureAgentTurnHistoryBytes([{ ...turn, activities }]) > maxBytes) {
-    activities = activities.slice(1);
+  if (activities.length === 0) {
+    return turn;
   }
 
-  return { ...turn, activities };
+  let lo = 0;
+  let hi = activities.length;
+
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+
+    if (JSON.stringify([{ ...turn, activities: activities.slice(mid) }]).length <= maxBytes) {
+      hi = mid;
+    } else {
+      lo = mid + 1;
+    }
+  }
+
+  if (lo === 0) {
+    return turn;
+  }
+
+  return { ...turn, activities: activities.slice(lo) };
+}
+
+function stripAttachmentDataUrls(turn: AgentTurn): AgentTurn {
+  const attachments = turn.user.attachments;
+
+  if (!attachments || attachments.length === 0) {
+    return turn;
+  }
+
+  const hasHeavy = attachments.some((a) => a.dataUrl.length > 256);
+
+  if (!hasHeavy) {
+    return turn;
+  }
+
+  return {
+    ...turn,
+    user: {
+      ...turn.user,
+      attachments: attachments.map((a) =>
+        a.dataUrl.length > 256 ? { ...a, dataUrl: '' } : a,
+      ),
+    },
+  };
+}
+
+function stripOlderAttachments(turns: AgentTurn[]): AgentTurn[] {
+  if (turns.length <= 1) {
+    return turns;
+  }
+
+  const last = turns[turns.length - 1]!;
+  const older = turns.slice(0, -1).map((t) => (t.running ? t : stripAttachmentDataUrls(t)));
+
+  return [...older, last];
 }
 
 export function trimAgentTurnHistory(turns: AgentTurn[]): AgentTurn[] {
@@ -71,27 +123,38 @@ export function trimAgentTurnHistory(turns: AgentTurn[]): AgentTurn[] {
     return turns;
   }
 
+  const hasRunningTurn = turns.some((turn) => turn.running);
+
+  if (hasRunningTurn && turns.length <= MAX_AGENT_TURN_HISTORY_COUNT) {
+    return stripOlderAttachments(turns);
+  }
+
   let next =
     turns.length > MAX_AGENT_TURN_HISTORY_COUNT
       ? turns.slice(-MAX_AGENT_TURN_HISTORY_COUNT)
       : [...turns];
 
-  while (next.length > 0 && measureAgentTurnHistoryBytes(next) > MAX_AGENT_TURN_HISTORY_BYTES) {
-    if (next.length > 1) {
-      next = next.slice(1);
-      continue;
-    }
+  next = stripOlderAttachments(next);
 
-    const trimmedTurn = trimTurnActivities(next[0]!, MAX_AGENT_TURN_HISTORY_BYTES);
-
-    if (measureAgentTurnHistoryBytes([trimmedTurn]) > MAX_AGENT_TURN_HISTORY_BYTES) {
-      return [{ ...trimmedTurn, activities: [] }];
-    }
-
-    return [trimmedTurn];
+  if (JSON.stringify(next).length <= MAX_AGENT_TURN_HISTORY_BYTES) {
+    return next;
   }
 
-  return next;
+  while (next.length > 1) {
+    next = next.slice(1);
+
+    if (JSON.stringify(next).length <= MAX_AGENT_TURN_HISTORY_BYTES) {
+      return next;
+    }
+  }
+
+  const trimmedTurn = trimTurnActivities(next[0]!, MAX_AGENT_TURN_HISTORY_BYTES);
+
+  if (JSON.stringify([trimmedTurn]).length > MAX_AGENT_TURN_HISTORY_BYTES) {
+    return [{ ...trimmedTurn, activities: [] }];
+  }
+
+  return [trimmedTurn];
 }
 
 export function sanitizeAgentTurnHistory(turns: AgentTurn[]): AgentTurn[] {

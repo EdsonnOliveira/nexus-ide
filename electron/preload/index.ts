@@ -341,6 +341,14 @@ const nexusApi = {
     openEvent: (startAt) => ipcRenderer.invoke('calendar:openEvent', startAt),
     openPrivacySettings: () => ipcRenderer.invoke('calendar:openPrivacySettings'),
   },
+  macParakeet: {
+    getTranscriptions: (sourceType, forceRefresh) =>
+      ipcRenderer.invoke('macParakeet:getTranscriptions', sourceType, forceRefresh),
+    getTranscriptionDetail: (id) => ipcRenderer.invoke('macParakeet:getTranscriptionDetail', id),
+    openApp: () => ipcRenderer.invoke('macParakeet:openApp'),
+    renameTranscriptionTitle: (id, title) =>
+      ipcRenderer.invoke('macParakeet:renameTranscriptionTitle', id, title),
+  },
   vercel: {
     getTokenConfigured: () => ipcRenderer.invoke('vercel:getTokenConfigured'),
     saveToken: (token) => ipcRenderer.invoke('vercel:saveToken', token),

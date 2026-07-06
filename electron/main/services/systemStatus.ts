@@ -89,7 +89,11 @@ function parseBatteryStatus(raw: string): {
   }
 
   const levelMatch = line.match(/(\d+)%/);
-  const charging = /\bcharging\b/i.test(line) || /\bfull\b/i.test(line);
+  const charging =
+    (/\bcharging\b/i.test(line) && !/\bnot charging\b/i.test(line) && !/\bdischarging\b/i.test(line)) ||
+    /\bcharged\b/i.test(line) ||
+    /\bfinishing charge\b/i.test(line) ||
+    /\bAC Power\b/i.test(line) && /\bfull\b/i.test(line);
   const present = /\bpresent:\s*true\b/i.test(line);
   const timeMatch = line.match(/(\d+:\d+)\s+remaining/i);
 

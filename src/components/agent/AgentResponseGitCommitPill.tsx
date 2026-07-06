@@ -176,7 +176,7 @@ function AgentResponseGitCommitPillComponent({
       >
         <button
           type='button'
-          className='agent-view__response-git-commit-hit app-button'
+          className='agent-view__response-git-commit-hit'
           aria-label={AGENT_GIT_COMMIT_ACTION_LABELS[selectedAction]}
           disabled={running}
           onMouseDown={preventPillFocusScroll}
@@ -189,7 +189,7 @@ function AgentResponseGitCommitPillComponent({
         <button
           ref={chevronRef}
           type='button'
-          className={`agent-view__response-git-commit-hit agent-view__response-git-commit-hit--menu app-button${menuOpen ? ' agent-view__response-git-commit-hit--open' : ''}`}
+          className={`agent-view__response-git-commit-hit agent-view__response-git-commit-hit--menu${menuOpen ? ' agent-view__response-git-commit-hit--open' : ''}`}
           aria-label='Mais opções de commit'
           aria-haspopup='menu'
           aria-expanded={menuOpen}

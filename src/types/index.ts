@@ -591,6 +591,48 @@ export interface CalendarEventsSnapshot {
   events: CalendarEventItem[];
 }
 
+export type MacParakeetSourceType = 'interview' | 'regular_call';
+
+export interface MacParakeetTranscriptionItem {
+  id: string;
+  createdAt: number;
+  title: string;
+  snippet: string;
+  durationMs: number | null;
+  sourceType: MacParakeetSourceType;
+  channelName: string | null;
+  isFavorite: boolean;
+  isLive: boolean;
+}
+
+export interface MacParakeetTranscriptionsSnapshot {
+  platformSupported: boolean;
+  installed: boolean;
+  available: boolean;
+  transcriptions: MacParakeetTranscriptionItem[];
+}
+
+export interface MacParakeetTranscriptionDetail extends MacParakeetTranscriptionItem {
+  transcript: string;
+  conclusion: string | null;
+  sourceUrl: string | null;
+  segments: MacParakeetTranscriptSegment[];
+}
+
+export type MacParakeetTranscriptSegmentKind = 'speech' | 'qa';
+
+export interface MacParakeetTranscriptSegment {
+  id: string;
+  kind: MacParakeetTranscriptSegmentKind;
+  createdAt: number;
+  isSelf: boolean;
+  speakerLabel: string | null;
+  content: string;
+  question: string | null;
+  answer: string | null;
+  isQuestion: boolean;
+}
+
 export type VercelDeploymentState =
   | 'READY'
   | 'ERROR'
@@ -944,6 +986,18 @@ export interface NexusAPI {
     requestAccess: () => Promise<CalendarEventsSnapshot>;
     openEvent: (startAt: number) => Promise<void>;
     openPrivacySettings: () => Promise<void>;
+  };
+  macParakeet: {
+    getTranscriptions: (
+      sourceType: MacParakeetSourceType | null,
+      forceRefresh?: boolean,
+    ) => Promise<MacParakeetTranscriptionsSnapshot>;
+    getTranscriptionDetail: (id: string) => Promise<MacParakeetTranscriptionDetail | null>;
+    openApp: () => Promise<void>;
+    renameTranscriptionTitle: (
+      id: string,
+      title: string,
+    ) => Promise<{ ok: true; title: string } | { ok: false }>;
   };
   vercel: {
     getTokenConfigured: () => Promise<boolean>;

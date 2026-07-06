@@ -38,8 +38,8 @@ function TitleBarBatteryPopupComponent({
       return ' titlebar-panel__battery-percent--charging';
     }
 
-    if (snapshot.batteryLevel < 10) {
-      return ' titlebar-panel__battery-percent--critical';
+    if (snapshot.batteryLevel <= 15) {
+      return ' titlebar-panel__battery-percent--blink';
     }
 
     if (snapshot.batteryLevel < 20) {
