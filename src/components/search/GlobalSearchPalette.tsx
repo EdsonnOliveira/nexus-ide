@@ -36,6 +36,13 @@ import type {
   SlashCommandId,
   SlashCommandQuery,
 } from '@/utils/globalSearchTypes';
+import {
+  buildQueryHighlightParts,
+  buildSearchHighlightParts,
+  findLineHighlightRanges,
+  DEFAULT_EXPLORER_SEARCH_OPTIONS,
+  type SearchHighlightPart,
+} from '@/utils/explorerSearch';
 
 const SLASH_COMMAND_ICON_SIZE = 12;
 const RESULT_KIND_ICON_SIZE = 16;
@@ -49,6 +56,18 @@ function shouldShowGroupProjectLogo(group: GlobalSearchResultGroup, project: Pro
   return group.label === project.name;
 }
 
+function renderHighlightParts(parts: SearchHighlightPart[], keyPrefix: string): ReactNode {
+  return parts.map((part, index) =>
+    part.highlight ? (
+      <span key={`${keyPrefix}-match-${index}`} className='global-search__item-title-match'>
+        {part.text}
+      </span>
+    ) : (
+      <span key={`${keyPrefix}-text-${index}`}>{part.text}</span>
+    ),
+  );
+}
+
 function highlightMatchingText(text: string, query: string): ReactNode {
   const normalizedQuery = query.trim();
 
@@ -56,35 +75,32 @@ function highlightMatchingText(text: string, query: string): ReactNode {
     return text;
   }
 
-  const lowerText = text.toLowerCase();
-  const lowerQuery = normalizedQuery.toLowerCase();
-  const parts: ReactNode[] = [];
-  let cursor = 0;
-  let partIndex = 0;
+  return renderHighlightParts(buildQueryHighlightParts(text, normalizedQuery), 'query');
+}
 
-  while (cursor < text.length) {
-    const matchIndex = lowerText.indexOf(lowerQuery, cursor);
+function renderFileSearchTitle(item: GlobalSearchResult, highlightQuery: string): ReactNode {
+  const payload = item.payload as GlobalSearchFilePayload;
 
-    if (matchIndex === -1) {
-      parts.push(text.slice(cursor));
-      break;
+  if (payload.preview) {
+    const submatches =
+      payload.submatches && payload.submatches.length > 0
+        ? payload.submatches
+        : findLineHighlightRanges(payload.preview, highlightQuery, DEFAULT_EXPLORER_SEARCH_OPTIONS);
+
+    if (submatches.length > 0) {
+      return (
+        <span className='global-search__item-title global-search__item-title--code'>
+          {renderHighlightParts(buildSearchHighlightParts(payload.preview, submatches), 'file')}
+        </span>
+      );
     }
-
-    if (matchIndex > cursor) {
-      parts.push(text.slice(cursor, matchIndex));
-    }
-
-    parts.push(
-      <span key={`${matchIndex}-${partIndex}`} className='global-search__item-title-match'>
-        {text.slice(matchIndex, matchIndex + normalizedQuery.length)}
-      </span>,
-    );
-
-    cursor = matchIndex + normalizedQuery.length;
-    partIndex += 1;
   }
 
-  return parts.length === 1 ? parts[0] : parts;
+  return (
+    <span className='global-search__item-title'>
+      {highlightMatchingText(item.title, highlightQuery)}
+    </span>
+  );
 }
 
 function resolveHighlightQuery(
@@ -682,9 +698,13 @@ function GlobalSearchResultItemComponent({
         </div>
       )}
       <span className='global-search__item-body'>
-        <span className='global-search__item-title'>
-          {highlightMatchingText(item.title, highlightQuery)}
-        </span>
+        {item.kind === 'file' ? (
+          renderFileSearchTitle(item, highlightQuery)
+        ) : (
+          <span className='global-search__item-title'>
+            {highlightMatchingText(item.title, highlightQuery)}
+          </span>
+        )}
         {item.subtitle ? (
           <span className='global-search__item-subtitle'>{item.subtitle}</span>
         ) : null}

@@ -95,6 +95,9 @@ export interface GlobalSearchFilePayload {
   projectId: string;
   absolutePath: string;
   relativePath: string;
+  lineNumber?: number;
+  preview?: string;
+  submatches?: Array<{ start: number; end: number }>;
 }
 
 export interface GlobalSearchGitPayload {

@@ -1,3 +1,10 @@
+import { release } from 'node:os';
+
+const PARAKEET_AI_API_URL = 'https://www.parakeet-ai.com';
+const TRANSLATION_TIMEOUT_MS = 45_000;
+const TRANSLATION_SESSION_TTL_MS = 10 * 60_000;
+const REQUEST_TIMEOUT_MS = 15_000;
+
 const EN_SECTION_MARKERS = [
   'Discussion Topic',
   'Action Items',
@@ -15,14 +22,34 @@ const PT_SECTION_MARKERS = [
   'Decisões',
 ];
 
-const TRANSLATION_CHUNK_MAX = 450;
-const TRANSLATION_CHUNK_DELAY_MS = 120;
 const translationCache = new Map<string, string>();
 
-interface MyMemoryResponse {
-  responseData?: {
-    translatedText?: string;
+let translationSession: { id: string; expiresAt: number } | null = null;
+
+export interface MacParakeetConclusionTranslationContext {
+  sessionToken: string;
+}
+
+interface ParakeetChatSseEvent {
+  type?: string;
+  delta?: string;
+}
+
+interface TrpcBatchResponse<T> {
+  result?: {
+    data?: {
+      json?: T;
+    };
   };
+  error?: {
+    json?: {
+      message?: string;
+    };
+  };
+}
+
+interface ParakeetTranslationSession {
+  id: string;
 }
 
 function applyPortugueseSectionLabels(text: string): string {
@@ -42,97 +69,255 @@ export function needsPortugueseConclusionTranslation(text: string): boolean {
     return false;
   }
 
+  const englishMatches = normalized.match(/\b(the|and|team|discussed|reviewed|meeting|will|should|caller|requests|testing|requirements|obtain|verify|using)\b/gi)?.length ?? 0;
+  const portugueseMatches =
+    normalized.match(/\b(o|a|os|as|equipe|reunião|decidiu|discutiu|deve|será|para|com|chamador|solicita|testes|requisitos|obter|verificar|usando)\b/gi)?.length ?? 0;
+
+  if (englishMatches > portugueseMatches + 1) {
+    return true;
+  }
+
   if (PT_SECTION_MARKERS.some((marker) => normalized.includes(marker))) {
     return false;
   }
 
-  if (EN_SECTION_MARKERS.some((marker) => normalized.includes(marker))) {
-    return true;
-  }
-
-  const englishMatches = normalized.match(/\b(the|and|team|discussed|reviewed|meeting|will|should)\b/gi)?.length ?? 0;
-  const portugueseMatches =
-    normalized.match(/\b(o|a|os|as|equipe|reunião|decidiu|discutiu|deve|será|para|com)\b/gi)?.length ?? 0;
-
-  return englishMatches > portugueseMatches + 1;
+  return EN_SECTION_MARKERS.some((marker) => normalized.includes(marker));
 }
 
-function splitForTranslation(text: string): string[] {
-  if (text.length <= TRANSLATION_CHUNK_MAX) {
-    return [text];
-  }
+function extractTranslatedTextFromSse(raw: string): string {
+  let translated = '';
 
-  const chunks: string[] = [];
-  let remaining = text;
-
-  while (remaining.length > TRANSLATION_CHUNK_MAX) {
-    let splitAt = remaining.lastIndexOf('\n\n', TRANSLATION_CHUNK_MAX);
-
-    if (splitAt < TRANSLATION_CHUNK_MAX * 0.4) {
-      splitAt = remaining.lastIndexOf('\n', TRANSLATION_CHUNK_MAX);
+  for (const line of raw.split('\n')) {
+    if (!line.startsWith('data: ')) {
+      continue;
     }
 
-    if (splitAt < TRANSLATION_CHUNK_MAX * 0.4) {
-      splitAt = remaining.lastIndexOf(' ', TRANSLATION_CHUNK_MAX);
+    const payload = line.slice(6).trim();
+    if (!payload || payload === '[DONE]') {
+      continue;
     }
 
-    if (splitAt <= 0) {
-      splitAt = TRANSLATION_CHUNK_MAX;
+    try {
+      const event = JSON.parse(payload) as ParakeetChatSseEvent;
+      if (event.type === 'text-delta' && typeof event.delta === 'string') {
+        translated += event.delta;
+      }
+    } catch {
+      // ignore malformed SSE chunks
     }
-
-    chunks.push(remaining.slice(0, splitAt).trim());
-    remaining = remaining.slice(splitAt).trim();
   }
 
-  if (remaining) {
-    chunks.push(remaining);
-  }
-
-  return chunks.filter(Boolean);
+  return translated.trim();
 }
 
-async function fetchMyMemoryTranslation(text: string): Promise<string | null> {
-  const url = new URL('https://api.mymemory.translated.net/get');
-  url.searchParams.set('q', text);
-  url.searchParams.set('langpair', 'en|pt-BR');
-
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    return null;
+function normalizeParakeetTranslatedText(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return trimmed;
   }
 
-  const body = (await response.json()) as MyMemoryResponse;
-  const translated = body.responseData?.translatedText?.trim();
-
-  if (!translated || translated.toUpperCase().includes('QUERY LENGTH LIMIT')) {
-    return null;
+  const headerMatch = trimmed.match(/^(?:#{1,6}\s|\*\*|[•\-]\s)/m);
+  if (!headerMatch || headerMatch.index === undefined) {
+    return trimmed;
   }
 
-  return translated;
+  if (headerMatch.index === 0) {
+    return trimmed;
+  }
+
+  return trimmed.slice(headerMatch.index).trimStart();
 }
 
-async function translateChunks(chunks: string[]): Promise<string | null> {
-  const translated: string[] = [];
+async function mutateParakeetTrpc<T>(
+  procedure: string,
+  payload: unknown,
+  sessionToken: string,
+): Promise<T | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  for (const chunk of chunks) {
-    const nextChunk = await fetchMyMemoryTranslation(chunk);
-    if (!nextChunk) {
+  try {
+    const response = await fetch(`${PARAKEET_AI_API_URL}/api/trpc/${procedure}?batch=1`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        Cookie: `__Secure-next-auth.session-token=${sessionToken}; next-auth.session-token=${sessionToken}`,
+      },
+      body: JSON.stringify({ '0': { json: payload } }),
+      signal: controller.signal,
+    });
+
+    const body = (await response.json()) as TrpcBatchResponse<T>[];
+    const entry = body[0];
+
+    if (!response.ok || entry?.error?.json?.message || !entry?.result?.data?.json) {
       return null;
     }
 
-    translated.push(nextChunk);
-
-    if (chunks.length > 1) {
-      await new Promise((resolve) => {
-        setTimeout(resolve, TRANSLATION_CHUNK_DELAY_MS);
-      });
-    }
+    return entry.result.data.json;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  return translated.join('\n\n');
 }
 
-export async function translateMacParakeetConclusionToPortuguese(text: string): Promise<string> {
+async function createParakeetTranslationSession(
+  sessionToken: string,
+): Promise<string | null> {
+  const created = await mutateParakeetTrpc<ParakeetTranslationSession>(
+    'callSession.create',
+    {
+      free: false,
+      sessionMode: 'regular_call',
+      mode: 'regular_call',
+      title: 'Nexus tradução',
+      description: '',
+      resumeId: null,
+      documentSelectionMode: 'all',
+      selectedDocumentIds: [],
+      language: 'pt',
+      extraContext: '',
+      aiModel: 'gpt-5-mini',
+      autoGenerate: false,
+      saveTranscription: false,
+      createdFrom: 'desktop-app',
+      autoStarted: true,
+      activationParameters: {
+        platform: 'desktop-app',
+        osVersion: release(),
+        appVersion: '3.6.14',
+      },
+    },
+    sessionToken,
+  );
+
+  return created?.id?.trim() || null;
+}
+
+async function ensureParakeetTranslationSession(sessionToken: string): Promise<string | null> {
+  const nowMs = Date.now();
+
+  if (translationSession && translationSession.expiresAt > nowMs) {
+    return translationSession.id;
+  }
+
+  const createdId = await createParakeetTranslationSession(sessionToken);
+  if (!createdId) {
+    translationSession = null;
+    return null;
+  }
+
+  translationSession = {
+    id: createdId,
+    expiresAt: nowMs + TRANSLATION_SESSION_TTL_MS,
+  };
+
+  return createdId;
+}
+
+async function fetchParakeetAiTranslation(
+  text: string,
+  context: MacParakeetConclusionTranslationContext,
+): Promise<string | null> {
+  const callSessionId = await ensureParakeetTranslationSession(context.sessionToken);
+  if (!callSessionId) {
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), TRANSLATION_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${PARAKEET_AI_API_URL}/api/chat`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        Cookie: `__Secure-next-auth.session-token=${context.sessionToken}; next-auth.session-token=${context.sessionToken}`,
+        'x-parakeet-request-source': 'desktop-chat',
+      },
+      body: JSON.stringify({
+        callSessionId,
+        pendingTranscriptEntries: [],
+        trigger: {
+          kind: 'direct-message',
+          triggeredUsingShortcut: false,
+          isMobile: false,
+          parts: [
+            {
+              type: 'text',
+              text: `Traduza integralmente o texto abaixo para português brasileiro. Responda apenas com o texto traduzido, sem comentários, mantendo a formatação markdown:\n\n${text}`,
+            },
+          ],
+        },
+        sessionInfo: { transcriptClearedAt: null },
+        adminConfig: { debug: false },
+      }),
+      signal: controller.signal,
+    });
+
+    if (response.status === 409) {
+      translationSession = null;
+      const retrySessionId = await ensureParakeetTranslationSession(context.sessionToken);
+      if (!retrySessionId) {
+        return null;
+      }
+
+      const retryResponse = await fetch(`${PARAKEET_AI_API_URL}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          Cookie: `__Secure-next-auth.session-token=${context.sessionToken}; next-auth.session-token=${context.sessionToken}`,
+          'x-parakeet-request-source': 'desktop-chat',
+        },
+        body: JSON.stringify({
+          callSessionId: retrySessionId,
+          pendingTranscriptEntries: [],
+          trigger: {
+            kind: 'direct-message',
+            triggeredUsingShortcut: false,
+            isMobile: false,
+            parts: [
+              {
+                type: 'text',
+                text: `Traduza integralmente o texto abaixo para português brasileiro. Responda apenas com o texto traduzido, sem comentários, mantendo a formatação markdown:\n\n${text}`,
+              },
+            ],
+          },
+          sessionInfo: { transcriptClearedAt: null },
+          adminConfig: { debug: false },
+        }),
+        signal: controller.signal,
+      });
+
+      if (!retryResponse.ok) {
+        return null;
+      }
+
+      const retryRaw = await retryResponse.text();
+      const retryTranslated = normalizeParakeetTranslatedText(extractTranslatedTextFromSse(retryRaw));
+      return retryTranslated || null;
+    }
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const raw = await response.text();
+    const translated = normalizeParakeetTranslatedText(extractTranslatedTextFromSse(raw));
+
+    return translated || null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+export async function translateMacParakeetConclusionToPortuguese(
+  text: string,
+  context?: MacParakeetConclusionTranslationContext,
+): Promise<string> {
   const trimmed = text.trim();
   if (!trimmed) {
     return trimmed;
@@ -151,15 +336,17 @@ export async function translateMacParakeetConclusionToPortuguese(text: string): 
     return result;
   }
 
-  try {
-    const translated = await translateChunks(splitForTranslation(trimmed));
-    if (translated) {
-      result = applyPortugueseSectionLabels(translated);
-      translationCache.set(trimmed, result);
-      return result;
+  if (context?.sessionToken) {
+    try {
+      const translated = await fetchParakeetAiTranslation(trimmed, context);
+      if (translated) {
+        result = applyPortugueseSectionLabels(translated);
+        translationCache.set(trimmed, result);
+        return result;
+      }
+    } catch {
+      // fall through to localized headers
     }
-  } catch {
-    // fall through to localized headers
   }
 
   result = applyPortugueseSectionLabels(trimmed);

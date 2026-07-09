@@ -31,4 +31,8 @@ cd() {
 chpwd_functions=(_nexus_emit_cwd)
 precmd_functions=(_nexus_emit_cwd)
 
+TRAPWINCH() {
+  zle && zle -R
+}
+
 _nexus_emit_cwd

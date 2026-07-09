@@ -6,6 +6,35 @@ import type { ProjectTask, ProjectTaskLocalMeta } from '../../types/task';
 import { agentTurnHistoryChanged, sanitizeAgentTurnHistory } from './trimAgentTurnHistory';
 import { ensureNexusGitignore, hasNexusProjectDir } from './nexusProjectGitignore';
 
+import type { ProjectTestEntry } from '../../types/test';
+
+function isTestTargetDirectory(targetPath: string): boolean {
+  const last = targetPath.split('/').filter(Boolean).pop() ?? targetPath;
+  return !/\.(ya?ml|jsx?|tsx?|mjs)$/i.test(last);
+}
+
+function buildTestEntryName(relativePath: string, isDirectory: boolean): string {
+  const segments = relativePath.split('/').filter(Boolean);
+  const last = segments[segments.length - 1] ?? relativePath;
+
+  if (isDirectory) {
+    return last;
+  }
+
+  return last.replace(/\.(ya?ml|jsx?|tsx?|mjs)$/i, '');
+}
+
+function migrateTestEntry(entry: ProjectTestEntry): ProjectTestEntry {
+  if (entry.sourceName) {
+    return entry;
+  }
+
+  return {
+    ...entry,
+    sourceName: buildTestEntryName(entry.targetPath, isTestTargetDirectory(entry.targetPath)),
+  };
+}
+
 const PROJECT_COLORS = [
   '#7c3aed',
   '#2563eb',
@@ -247,6 +276,7 @@ function normalizeProject(project: Project & { layout?: unknown }, fallbackWorks
     mailInbox: project.mailInbox ?? null,
     tasks: (project.tasks ?? []).map((task) => normalizeTask(task as ProjectTask)),
     taskIntegration: project.taskIntegration ?? null,
+    testEntries: (project.testEntries ?? []).map(migrateTestEntry),
     agentGitGroups: project.agentGitGroups ?? [],
     agentResponseSkills: project.agentResponseSkills ?? [],
     flag: project.flag ?? null,
@@ -417,6 +447,7 @@ class ProjectStoreService {
       mailInbox: null,
       tasks: [],
       taskIntegration: null,
+      testEntries: [],
     };
 
     this.writeState({

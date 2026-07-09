@@ -74,7 +74,7 @@ export function registerFileHandlers(getWindow: () => Electron.BrowserWindow | n
   ipcMain.handle(
     'files:searchProjectTree',
     async (_, dirPath: string, query: string, options: ExplorerSearchOptions) =>
-      searchProjectTree(resolveDirectoryPath(dirPath), query, options),
+      await searchProjectTree(resolveDirectoryPath(dirPath), query, options),
   );
 
   ipcMain.handle('files:createEmptyFile', async (_, dirPath: string, name: string) =>

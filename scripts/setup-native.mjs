@@ -47,3 +47,15 @@ const patchBranding = spawnSync(process.execPath, ['scripts/patch-electron-brand
 if (patchBranding.status !== 0) {
   process.exit(patchBranding.status ?? 1);
 }
+
+if (process.platform === 'darwin') {
+  const downloadSimulatorServer = spawnSync(process.execPath, ['scripts/download-simulator-server.mjs'], {
+    cwd: rootDir,
+    stdio: 'inherit',
+    env: process.env,
+  });
+
+  if (downloadSimulatorServer.status !== 0) {
+    process.exit(downloadSimulatorServer.status ?? 1);
+  }
+}

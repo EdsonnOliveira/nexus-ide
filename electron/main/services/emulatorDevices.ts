@@ -6,6 +6,7 @@ import {
   resolveEmulatorPath,
   resolveIdbCompanionPath,
   resolveIdbPath,
+  resolveSimulatorServerPath,
   resolveXcrunPath,
   hasAndroidSdkRoot,
 } from './emulatorPaths';
@@ -149,6 +150,7 @@ export function getEmulatorSetupStatus(): {
   const adb = resolveAdbPath();
   const emulator = resolveEmulatorPath();
   const xcrun = resolveXcrunPath();
+  const simulatorServer = resolveSimulatorServerPath();
   const idb = resolveIdbPath();
   const idbCompanion = resolveIdbCompanionPath();
 
@@ -192,9 +194,9 @@ export function getEmulatorSetupStatus(): {
 
   const iosInstallCommand = iosMissing.includes('xcrun')
     ? 'xcode-select --install'
-    : iosOptionalMissing.includes('idb-companion')
+    : !simulatorServer.found && iosOptionalMissing.includes('idb-companion')
       ? 'brew tap facebook/fb && brew install idb-companion'
-      : iosOptionalMissing.includes('idb')
+      : !simulatorServer.found && iosOptionalMissing.includes('idb')
         ? 'pip3 install fb-idb'
         : null;
 
@@ -210,17 +212,22 @@ export function getEmulatorSetupStatus(): {
     },
     ios: {
       available: iosMissing.length === 0,
-      missingTools: [...iosMissing, ...iosOptionalMissing],
+      missingTools: [
+        ...iosMissing,
+        ...(!simulatorServer.found ? iosOptionalMissing : []),
+      ],
       installHint:
         iosMissing.includes('macOS')
           ? 'O emulador iOS só funciona no macOS com Xcode.'
           : iosMissing.includes('xcrun')
             ? 'Instale o Xcode e as ferramentas de linha de comando.'
-            : iosOptionalMissing.includes('idb-companion')
-              ? 'Para stream em 60 FPS, instale o idb-companion: brew tap facebook/fb && brew install idb-companion'
-              : iosOptionalMissing.includes('idb')
-                ? 'Visualização disponível. Para toques e stream rápido, instale o idb: pip3 install fb-idb'
-                : null,
+            : simulatorServer.found
+              ? 'Stream fluido disponível via simulator-server.'
+              : !simulatorServer.found && iosOptionalMissing.includes('idb-companion')
+                ? 'Stream fluido indisponível. Para fallback rápido, instale idb-companion: brew tap facebook/fb && brew install idb-companion'
+                : !simulatorServer.found && iosOptionalMissing.includes('idb')
+                  ? 'Visualização disponível. Para toques e stream alternativo, instale o idb: pip3 install fb-idb'
+                  : null,
       installCommand: iosInstallCommand,
     },
   };

@@ -9,6 +9,7 @@ import type {
   EmulatorSessionState,
   EmulatorStreamStats,
   EmulatorVideoCodec,
+  EmulatorAttachResult,
 } from '../../types';
 import {
   createAndroidEmulatorSession,
@@ -33,11 +34,20 @@ interface PendingEmulatorStart {
   abort: (() => Promise<void>) | null;
 }
 
+interface SessionSnapshot {
+  state: EmulatorSessionState;
+  message?: string;
+  stats?: EmulatorStreamStats;
+  frameWidth?: number;
+  frameHeight?: number;
+}
+
 type WindowGetter = () => BrowserWindow | null;
 
 class EmulatorSessionManager {
   #sessions = new Map<string, ActiveEmulatorSession>();
   #pendingStarts = new Map<string, PendingEmulatorStart>();
+  #snapshots = new Map<string, SessionSnapshot>();
   #getWindow: WindowGetter = () => null;
 
   setWindowGetter(getter: WindowGetter): void {
@@ -66,6 +76,16 @@ class EmulatorSessionManager {
       targetFps: stats?.targetFps,
       streamFps: stats?.streamFps,
       fallbackReason: stats?.fallbackReason,
+      streamUrl: stats?.streamUrl,
+    });
+
+    const previous = this.#snapshots.get(sessionId);
+    this.#snapshots.set(sessionId, {
+      state,
+      message,
+      stats: stats ?? previous?.stats,
+      frameWidth: previous?.frameWidth,
+      frameHeight: previous?.frameHeight,
     });
   }
 
@@ -83,6 +103,39 @@ class EmulatorSessionManager {
       targetFps: stats.targetFps,
       streamFps: stats.streamFps,
       fallbackReason: stats.fallbackReason,
+      streamUrl: stats.streamUrl,
+    });
+
+    const previous = this.#snapshots.get(sessionId);
+    this.#snapshots.set(sessionId, {
+      state: previous?.state ?? 'running',
+      message: previous?.message,
+      stats,
+      frameWidth: previous?.frameWidth,
+      frameHeight: previous?.frameHeight,
+    });
+  }
+
+  #emitFrameSize(sessionId: string, tabId: string, width: number, height: number): void {
+    const window = this.#getWindow();
+
+    if (!window || window.isDestroyed()) {
+      return;
+    }
+
+    window.webContents.send('emulator:frame-size', {
+      sessionId,
+      width,
+      height,
+    });
+
+    const previous = this.#snapshots.get(sessionId);
+    this.#snapshots.set(sessionId, {
+      state: previous?.state ?? 'running',
+      message: previous?.message,
+      stats: previous?.stats,
+      frameWidth: width,
+      frameHeight: height,
     });
   }
 
@@ -107,11 +160,7 @@ class EmulatorSessionManager {
     });
 
     if (size) {
-      window.webContents.send('emulator:frame-size', {
-        sessionId,
-        width: size.width,
-        height: size.height,
-      });
+      this.#emitFrameSize(sessionId, this.#sessions.get(sessionId)?.tabId ?? '', size.width, size.height);
     }
   }
 
@@ -224,7 +273,56 @@ class EmulatorSessionManager {
 
     await session.handle.stop();
     this.#sessions.delete(sessionId);
+    this.#snapshots.delete(sessionId);
     this.#emitState(sessionId, session.tabId, 'stopped');
+  }
+
+  attachTab(tabId: string): EmulatorAttachResult | null {
+    const session = [...this.#sessions.values()].find((entry) => entry.tabId === tabId);
+
+    if (session) {
+      const snapshot = this.#snapshots.get(session.id);
+
+      if (snapshot) {
+        this.#emitState(session.id, tabId, snapshot.state, snapshot.message, snapshot.stats);
+
+        if (snapshot.stats) {
+          this.#emitStreamStats(session.id, tabId, snapshot.stats);
+        }
+
+        if (snapshot.frameWidth && snapshot.frameHeight) {
+          this.#emitFrameSize(session.id, tabId, snapshot.frameWidth, snapshot.frameHeight);
+        }
+      }
+
+      return this.#toAttachResult(session.id, snapshot);
+    }
+
+    const pending = this.#pendingStarts.get(tabId);
+
+    if (pending) {
+      return {
+        sessionId: pending.sessionId,
+        state: 'booting',
+      };
+    }
+
+    return null;
+  }
+
+  #toAttachResult(sessionId: string, snapshot?: SessionSnapshot): EmulatorAttachResult {
+    return {
+      sessionId,
+      state: snapshot?.state ?? 'running',
+      message: snapshot?.message,
+      captureBackend: snapshot?.stats?.captureBackend,
+      targetFps: snapshot?.stats?.targetFps,
+      streamFps: snapshot?.stats?.streamFps,
+      fallbackReason: snapshot?.stats?.fallbackReason,
+      streamUrl: snapshot?.stats?.streamUrl,
+      frameWidth: snapshot?.frameWidth,
+      frameHeight: snapshot?.frameHeight,
+    };
   }
 
   async stopByTabId(tabId: string): Promise<void> {
@@ -270,6 +368,11 @@ class EmulatorSessionManager {
     await session?.handle.pressHome();
   }
 
+  async pressAppSwitcher(sessionId: string): Promise<void> {
+    const session = this.#sessions.get(sessionId);
+    await session?.handle.pressAppSwitcher();
+  }
+
   async pressBack(sessionId: string): Promise<void> {
     const session = this.#sessions.get(sessionId);
     await session?.handle.pressBack();
@@ -283,6 +386,48 @@ class EmulatorSessionManager {
   async typeText(sessionId: string, text: string): Promise<void> {
     const session = this.#sessions.get(sessionId);
     await session?.handle.typeText(text);
+  }
+
+  async sendInput(sessionId: string, line: string): Promise<boolean> {
+    if (line.length === 0 || line.length > 256 || line.includes('\n') || line.includes('\r')) {
+      return false;
+    }
+
+    const session = this.#sessions.get(sessionId);
+
+    if (!session) {
+      return false;
+    }
+
+    return session.handle.sendInput(line);
+  }
+
+  listActiveSessions(): Array<{
+    sessionId: string;
+    tabId: string;
+    platform: EmulatorPlatform;
+    deviceId: string;
+  }> {
+    return [...this.#sessions.values()].map((session) => ({
+      sessionId: session.id,
+      tabId: session.tabId,
+      platform: session.platform,
+      deviceId: session.deviceId,
+    }));
+  }
+
+  hasPendingBoot(): boolean {
+    if (this.#pendingStarts.size > 0) {
+      return true;
+    }
+
+    for (const snapshot of this.#snapshots.values()) {
+      if (snapshot.state === 'booting') {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   async screenshot(sessionId: string): Promise<boolean> {

@@ -19,11 +19,13 @@ import { resolveTabBadgeColor } from '@/utils/tabBadge';
 import { toProjectRelativePath } from '@/utils/explorerRelativePath';
 import {
   DEFAULT_EXPLORER_SEARCH_OPTIONS,
+  type ExplorerSearchLineMatch,
   type ExplorerSearchNode,
 } from '@/utils/explorerSearch';
 import { getActiveTerminalCwd, resolveActiveGitRepo } from '@/utils/gitRepoSelection';
 import { summarizePasswordCollectionMeta } from '@/utils/passwordLabels';
 import type {
+  GlobalSearchFilePayload,
   GlobalSearchGroupedResults,
   GlobalSearchResult,
   GlobalSearchResultGroup,
@@ -169,6 +171,47 @@ function flattenFileSearchNodes(nodes: ExplorerSearchNode[], limit: number): Exp
 
       if (entry.type === 'file') {
         results.push(entry);
+      }
+
+      if (entry.children) {
+        walk(entry.children);
+      }
+    }
+  };
+
+  walk(nodes);
+  return results;
+}
+
+interface FlattenedFileSearchMatch {
+  file: ExplorerSearchNode;
+  match?: ExplorerSearchLineMatch;
+}
+
+function flattenFileSearchMatches(
+  nodes: ExplorerSearchNode[],
+  limit: number,
+): FlattenedFileSearchMatch[] {
+  const results: FlattenedFileSearchMatch[] = [];
+
+  const walk = (entries: ExplorerSearchNode[]) => {
+    for (const entry of entries) {
+      if (results.length >= limit) {
+        return;
+      }
+
+      if (entry.type === 'file') {
+        if (entry.contentMatches && entry.contentMatches.length > 0) {
+          for (const match of entry.contentMatches) {
+            if (results.length >= limit) {
+              return;
+            }
+
+            results.push({ file: entry, match });
+          }
+        } else {
+          results.push({ file: entry });
+        }
       }
 
       if (entry.children) {
@@ -335,13 +378,33 @@ export async function searchFiles(
     return [];
   }
 
-  const files = flattenFileSearchNodes(
+  const matches = flattenFileSearchMatches(
     nodes as ExplorerSearchNode[],
-    GLOBAL_SEARCH_MAX_FILES_PER_PROJECT,
+    GLOBAL_SEARCH_MAX_FILES_PER_PROJECT * 4,
   );
 
-  return files.map((file) => {
+  return matches.map(({ file, match }) => {
     const relativePath = toProjectRelativePath(project.path, file.path);
+
+    if (match) {
+      const preview = match.preview.trim();
+
+      return {
+        id: `file:${project.id}:${file.path}:${match.lineNumber}`,
+        kind: 'file' as const,
+        title: preview,
+        subtitle: `${relativePath}:${match.lineNumber}`,
+        projectId: project.id,
+        payload: {
+          projectId: project.id,
+          absolutePath: file.path,
+          relativePath,
+          lineNumber: match.lineNumber,
+          preview: match.preview,
+          submatches: match.submatches,
+        },
+      };
+    }
 
     return {
       id: `file:${project.id}:${file.path}`,
@@ -771,13 +834,16 @@ async function searchFileCategoryResults(
   const merged = [...openMatches];
 
   for (const item of filesystemMatches) {
-    const absolutePath = (item.payload as { absolutePath: string }).absolutePath;
+    const payload = item.payload as GlobalSearchFilePayload;
 
-    if (seenPaths.has(absolutePath)) {
+    if (!payload.lineNumber && seenPaths.has(payload.absolutePath)) {
       continue;
     }
 
-    seenPaths.add(absolutePath);
+    if (!payload.lineNumber) {
+      seenPaths.add(payload.absolutePath);
+    }
+
     merged.push(item);
   }
 

@@ -5,6 +5,7 @@ import type {
   ApiTab,
 } from '@/types/api';
 import type { Automation } from '@/types/automation';
+import type { ProjectTestEntry } from '@/types/test';
 import type { PasswordCollection } from '@/types/password';
 import type { AgentGitChangeGroup } from '@/types/agentGit';
 import type { ProjectTask, TaskAttachment, TaskComment, TaskCredentialStatus, TaskCredentialsPayload, TaskDetailData, TaskIntegrationConfig, TaskSyncResult } from '@/types/task';
@@ -46,6 +47,15 @@ export type {
 } from '@/types/git';
 
 export type { AgentGitChangeFile, AgentGitChangeGroup } from '@/types/agentGit';
+
+export type {
+  DiscoveredTestTarget,
+  ProjectTestEntry,
+  TestRunSnapshot,
+  TestRunStep,
+  TestRunnerKind,
+  TestStepStatus,
+} from '@/types/test';
 
 export type {
   ApiAuthType,
@@ -222,7 +232,7 @@ export type EmulatorPlatform = 'android' | 'ios';
 
 export type EmulatorSessionState = 'booting' | 'running' | 'stopped' | 'error';
 
-export type EmulatorCaptureBackend = 'idb' | 'simctl' | 'adb';
+export type EmulatorCaptureBackend = 'simulator-server' | 'idb' | 'simctl' | 'adb';
 
 export type EmulatorVideoCodec = 'h264' | 'jpeg' | 'png';
 
@@ -231,6 +241,20 @@ export interface EmulatorStreamStats {
   targetFps: number;
   streamFps: number;
   fallbackReason?: string;
+  streamUrl?: string;
+}
+
+export interface EmulatorAttachResult {
+  sessionId: string;
+  state: EmulatorSessionState;
+  message?: string;
+  captureBackend?: EmulatorCaptureBackend;
+  targetFps?: number;
+  streamFps?: number;
+  fallbackReason?: string;
+  streamUrl?: string;
+  frameWidth?: number;
+  frameHeight?: number;
 }
 
 export interface EmulatorDevice {
@@ -397,6 +421,7 @@ export interface Project {
   mailInbox?: MailMailboxRef | null;
   tasks?: ProjectTask[];
   taskIntegration?: TaskIntegrationConfig | null;
+  testEntries?: ProjectTestEntry[];
   agentGitGroups?: AgentGitChangeGroup[];
   agentResponseSkills?: ProjectAgentResponseSkill[];
   flag?: ProjectFlag | null;
@@ -434,6 +459,7 @@ export interface ProjectUpdatePayload {
   mailInbox?: MailMailboxRef | null;
   tasks?: ProjectTask[];
   taskIntegration?: TaskIntegrationConfig | null;
+  testEntries?: ProjectTestEntry[];
   agentGitGroups?: AgentGitChangeGroup[];
   agentResponseSkills?: ProjectAgentResponseSkill[];
   flag?: ProjectFlag | null;
@@ -845,6 +871,45 @@ export interface NexusAPI {
     getDetail: (projectId: string, externalId: string) => Promise<TaskDetailData>;
     addComment: (projectId: string, externalId: string, body: string) => Promise<TaskComment>;
   };
+  tests: {
+    discover: (
+      projectPath: string,
+      kind: import('@/types/test').TestRunnerKind,
+    ) => Promise<import('@/types/test').DiscoveredTestTarget[]>;
+    resolveSteps: (
+      projectPath: string,
+      entry: import('@/types/test').ProjectTestEntry,
+    ) => Promise<import('@/types/test').TestRunStep[]>;
+    run: (
+      projectPath: string,
+      projectId: string,
+      entry: import('@/types/test').ProjectTestEntry,
+      steps?: import('@/types/test').TestRunStep[],
+    ) => Promise<{ runId: string; entryId: string; projectId: string; command: string }>;
+    stop: (runId: string) => Promise<void>;
+    isRunning: (runId: string) => Promise<boolean>;
+    prepareMaestroRun: (steps: import('@/types/test').TestRunStep[]) => Promise<void>;
+    resolveHighlight: (runId: string, source: string) => Promise<void>;
+    onOutput: (
+      callback: (payload: {
+        runId: string;
+        entryId: string;
+        projectId: string;
+        chunk: string;
+      }) => void,
+    ) => () => void;
+    onExit: (
+      callback: (payload: {
+        runId: string;
+        entryId: string;
+        projectId: string;
+        code: number;
+      }) => void,
+    ) => () => void;
+    onHighlight: (
+      callback: (payload: import('@/types/test').MaestroTestHighlightEvent) => void,
+    ) => () => void;
+  };
   passwords: {
     getValues: (projectId: string, collectionId: string) => Promise<Record<string, string>>;
     saveValues: (
@@ -899,6 +964,11 @@ export interface NexusAPI {
           type: 'file' | 'directory';
           children?: unknown[];
         }[];
+        contentMatches?: Array<{
+          lineNumber: number;
+          preview: string;
+          submatches: Array<{ start: number; end: number }>;
+        }>;
       }[]
     >;
     createEmptyFile: (
@@ -1069,6 +1139,7 @@ export interface NexusAPI {
     start: (tabId: string, platform: EmulatorPlatform, deviceId: string) => Promise<string>;
     stop: (sessionId: string) => Promise<void>;
     stopByTabId: (tabId: string) => Promise<void>;
+    attachTab: (tabId: string) => Promise<EmulatorAttachResult | null>;
     tap: (sessionId: string, x: number, y: number) => Promise<void>;
     swipe: (
       sessionId: string,
@@ -1079,9 +1150,11 @@ export interface NexusAPI {
       durationMs: number,
     ) => Promise<void>;
     pressHome: (sessionId: string) => Promise<void>;
+    pressAppSwitcher: (sessionId: string) => Promise<void>;
     pressBack: (sessionId: string) => Promise<void>;
     rotate: (sessionId: string) => Promise<void>;
     typeText: (sessionId: string, text: string) => Promise<void>;
+    sendInput: (sessionId: string, line: string) => Promise<boolean>;
     screenshot: (sessionId: string) => Promise<boolean>;
     onVideoChunk: (
       callback: (payload: {
@@ -1102,6 +1175,7 @@ export interface NexusAPI {
         targetFps?: number;
         streamFps?: number;
         fallbackReason?: string;
+        streamUrl?: string;
       }) => void,
     ) => () => void;
     onStreamStats: (
@@ -1112,6 +1186,7 @@ export interface NexusAPI {
         targetFps: number;
         streamFps: number;
         fallbackReason?: string;
+        streamUrl?: string;
       }) => void,
     ) => () => void;
     onFrameSize: (
@@ -1125,6 +1200,15 @@ export interface NexusAPI {
     loadProjectData: (projectId: string) => Promise<ApiProjectData>;
     saveProjectData: (projectId: string, data: ApiProjectData) => Promise<void>;
     sendRequest: (payload: ApiSendRequestPayload) => Promise<ApiHttpResponse>;
+  };
+  debug: {
+    sessionLog: (payload: {
+      location: string;
+      message: string;
+      data?: Record<string, unknown>;
+      hypothesisId?: string;
+      runId?: string;
+    }) => void;
   };
 }
 

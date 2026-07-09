@@ -8,8 +8,10 @@ import type {
   EmulatorSetupStatus,
   EmulatorTab,
   EmulatorVideoCodec,
+  EmulatorAttachResult,
 } from '@/types';
 import { isOverlayBlockingTerminalHints } from '@/utils/overlayBlocking';
+import { formatSimulatorTouchInput } from '@/utils/simulatorServerInput';
 
 interface UseEmulatorSessionOptions {
   tab: EmulatorTab;
@@ -34,16 +36,21 @@ interface UseEmulatorSessionResult {
   streamFallbackReason: string | null;
   isStarting: boolean;
   frameSize: { width: number; height: number };
+  streamUrl: string | null;
+  usesNativeStream: boolean;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  streamImgRef: React.RefObject<HTMLImageElement | null>;
   setPlatform: (platform: EmulatorPlatform) => void;
   setDeviceId: (deviceId: string) => void;
   startSession: () => Promise<void>;
   stopSession: () => Promise<void>;
-  handlePointerDown: (event: React.PointerEvent<HTMLCanvasElement>) => void;
-  handlePointerMove: (event: React.PointerEvent<HTMLCanvasElement>) => void;
-  handlePointerUp: (event: React.PointerEvent<HTMLCanvasElement>) => void;
-  handleCanvasPaste: (event: React.ClipboardEvent<HTMLCanvasElement>) => void;
+  handlePointerDown: (event: React.PointerEvent<HTMLElement>) => void;
+  handlePointerMove: (event: React.PointerEvent<HTMLElement>) => void;
+  handlePointerUp: (event: React.PointerEvent<HTMLElement>) => void;
+  handleCanvasPaste: (event: React.ClipboardEvent<HTMLElement>) => void;
+  handleStreamImgLoad: () => void;
   pressHome: () => Promise<void>;
+  pressAppSwitcher: () => Promise<void>;
   pressBack: () => Promise<void>;
   rotate: () => Promise<void>;
   takeScreenshot: () => Promise<boolean>;
@@ -160,6 +167,7 @@ export function useEmulatorSession({
   onUpdateTab,
 }: UseEmulatorSessionOptions): UseEmulatorSessionResult {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const streamImgRef = useRef<HTMLImageElement | null>(null);
   const [setupStatus, setSetupStatus] = useState<EmulatorSetupStatus | null>(null);
   const [devices, setDevices] = useState<EmulatorDevice[]>([]);
   const [isLoadingDevices, setIsLoadingDevices] = useState(false);
@@ -169,6 +177,7 @@ export function useEmulatorSession({
   const [streamFps, setStreamFps] = useState(0);
   const [targetFps, setTargetFps] = useState(0);
   const [streamFallbackReason, setStreamFallbackReason] = useState<string | null>(null);
+  const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [frameSize, setFrameSize] = useState({ width: 390, height: 844 });
   const sessionIdRef = useRef<string | null>(tab.sessionId);
@@ -183,8 +192,127 @@ export function useEmulatorSession({
     scheduled: false,
   });
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const pointerDraggingRef = useRef(false);
+  const pendingMoveRef = useRef<{ x: number; y: number } | null>(null);
+  const captureBackendRef = useRef<EmulatorCaptureBackend | null>(null);
   const h264DecoderRef = useRef<VideoDecoder | null>(null);
   const h264ConfiguredRef = useRef(false);
+  const usesNativeStream = captureBackend === 'simulator-server';
+
+  useEffect(() => {
+    captureBackendRef.current = captureBackend;
+  }, [captureBackend]);
+
+  const resolveSessionId = useCallback(() => sessionIdRef.current ?? tab.sessionId, [tab.sessionId]);
+
+  const dispatchSimulatorInput = useCallback(
+    (line: string) => {
+      const sessionId = resolveSessionId();
+
+      if (!sessionId) {
+        return;
+      }
+
+      void window.nexus.emulator.sendInput(sessionId, line);
+    },
+    [resolveSessionId],
+  );
+
+  const flushPendingMove = useCallback(() => {
+    const point = pendingMoveRef.current;
+
+    if (!point) {
+      return;
+    }
+
+    pendingMoveRef.current = null;
+    dispatchSimulatorInput(formatSimulatorTouchInput('Move', point.x, point.y));
+  }, [dispatchSimulatorInput]);
+
+  useEffect(() => {
+    if (!usesNativeStream) {
+      return;
+    }
+
+    let frameId = 0;
+
+    const tick = () => {
+      flushPendingMove();
+      frameId = window.requestAnimationFrame(tick);
+    };
+
+    frameId = window.requestAnimationFrame(tick);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [flushPendingMove, usesNativeStream]);
+
+  const applyAttachResult = useCallback(
+    (result: EmulatorAttachResult) => {
+      sessionIdRef.current = result.sessionId;
+      setSessionState(result.state);
+      setSessionMessage(result.message ?? null);
+      setIsStarting(result.state === 'booting');
+
+      if (result.captureBackend) {
+        setCaptureBackend(result.captureBackend);
+      }
+
+      if (typeof result.targetFps === 'number') {
+        setTargetFps(result.targetFps);
+      }
+
+      if (typeof result.streamFps === 'number') {
+        setStreamFps(result.streamFps);
+      }
+
+      if (result.fallbackReason) {
+        setStreamFallbackReason(result.fallbackReason);
+      } else if (result.state === 'running') {
+        setStreamFallbackReason(null);
+      }
+
+      if (result.streamUrl) {
+        setStreamUrl(result.streamUrl);
+      }
+
+      if (result.frameWidth && result.frameHeight) {
+        setFrameSize({ width: result.frameWidth, height: result.frameHeight });
+      }
+
+      onUpdateTab(tab.id, { sessionId: result.sessionId });
+    },
+    [onUpdateTab, tab.id],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void window.nexus.emulator.attachTab(tab.id).then((result) => {
+      if (cancelled) {
+        return;
+      }
+
+      if (!result) {
+        if (tab.sessionId) {
+          sessionIdRef.current = null;
+          setSessionState('stopped');
+          setCaptureBackend(null);
+          setStreamUrl(null);
+          onUpdateTab(tab.id, { sessionId: null });
+        }
+
+        return;
+      }
+
+      applyAttachResult(result);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyAttachResult, onUpdateTab, tab.id]);
 
   useEffect(() => {
     if (tab.sessionId) {
@@ -309,6 +437,10 @@ export function useEmulatorSession({
     const activeSessionId = sessionIdRef.current ?? tab.sessionId;
 
     if (activeSessionId && payload.sessionId !== activeSessionId) {
+      return;
+    }
+
+    if (captureBackendRef.current === 'simulator-server') {
       return;
     }
 
@@ -481,6 +613,10 @@ export function useEmulatorSession({
         setCaptureBackend(payload.captureBackend);
       }
 
+      if (payload.streamUrl) {
+        setStreamUrl(payload.streamUrl);
+      }
+
       if (typeof payload.targetFps === 'number') {
         setTargetFps(payload.targetFps);
       }
@@ -498,6 +634,9 @@ export function useEmulatorSession({
         setStreamFps(0);
         setTargetFps(0);
         setStreamFallbackReason(null);
+        setStreamUrl(null);
+        pointerDraggingRef.current = false;
+        pendingMoveRef.current = null;
       }
 
       if (payload.state === 'running' || payload.state === 'stopped' || payload.state === 'error') {
@@ -512,6 +651,10 @@ export function useEmulatorSession({
       setCaptureBackend(payload.captureBackend);
       setTargetFps(payload.targetFps);
       setStreamFps(payload.streamFps);
+
+      if (payload.streamUrl) {
+        setStreamUrl(payload.streamUrl);
+      }
 
       if (payload.fallbackReason) {
         setStreamFallbackReason(payload.fallbackReason);
@@ -535,12 +678,6 @@ export function useEmulatorSession({
       h264ConfiguredRef.current = false;
     };
   }, [handleVideoChunk, tab.id]);
-
-  useEffect(() => {
-    return () => {
-      void window.nexus.emulator.stopByTabId(tab.id);
-    };
-  }, [tab.id]);
 
   const setPlatform = useCallback(
     (platform: EmulatorPlatform) => {
@@ -585,6 +722,7 @@ export function useEmulatorSession({
     setIsStarting(true);
     setSessionState('booting');
     setSessionMessage(null);
+    setStreamUrl(null);
     imageDrawStateRef.current = {
       generation: 0,
       pending: null,
@@ -593,6 +731,12 @@ export function useEmulatorSession({
     pendingImageFrameRef.current = null;
 
     try {
+      const device = devices.find((entry) => entry.id === tab.deviceId);
+
+      if (device) {
+        onUpdateTab(tab.id, { title: `Emulador · ${device.name}` });
+      }
+
       const sessionId = await window.nexus.emulator.start(tab.id, tab.platform, tab.deviceId);
 
       if (generation !== startGenerationRef.current) {
@@ -611,7 +755,7 @@ export function useEmulatorSession({
       setSessionState('error');
       setSessionMessage(error instanceof Error ? error.message : 'Falha ao iniciar o emulador.');
     }
-  }, [isStarting, onUpdateTab, tab.deviceId, tab.id, tab.platform]);
+  }, [devices, isStarting, onUpdateTab, tab.deviceId, tab.id, tab.platform]);
 
   useEffect(() => {
     if (
@@ -650,6 +794,7 @@ export function useEmulatorSession({
     setStreamFps(0);
     setTargetFps(0);
     setStreamFallbackReason(null);
+    setStreamUrl(null);
     sessionIdRef.current = null;
     imageDrawStateRef.current = {
       generation: 0,
@@ -662,14 +807,8 @@ export function useEmulatorSession({
     await window.nexus.emulator.stopByTabId(tab.id);
   }, [onUpdateTab, tab.id]);
 
-  const mapPointer = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-
-    if (!canvas) {
-      return null;
-    }
-
-    const rect = canvas.getBoundingClientRect();
+  const mapPointer = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
     const x = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1);
     const y = Math.min(Math.max((event.clientY - rect.top) / rect.height, 0), 1);
 
@@ -677,7 +816,7 @@ export function useEmulatorSession({
   }, []);
 
   const handlePointerDown = useCallback(
-    (event: React.PointerEvent<HTMLCanvasElement>) => {
+    (event: React.PointerEvent<HTMLElement>) => {
       event.currentTarget.focus();
       const point = mapPointer(event);
 
@@ -685,23 +824,67 @@ export function useEmulatorSession({
         return;
       }
 
+      if (captureBackendRef.current === 'simulator-server') {
+        pointerDraggingRef.current = true;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        dispatchSimulatorInput(formatSimulatorTouchInput('Down', point.x, point.y));
+        return;
+      }
+
       pointerStartRef.current = point;
       event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    [dispatchSimulatorInput, mapPointer],
+  );
+
+  const handlePointerMove = useCallback(
+    (event: React.PointerEvent<HTMLElement>) => {
+      if (captureBackendRef.current === 'simulator-server') {
+        if (!pointerDraggingRef.current) {
+          return;
+        }
+
+        const point = mapPointer(event);
+
+        if (!point) {
+          return;
+        }
+
+        pendingMoveRef.current = point;
+        event.preventDefault();
+        return;
+      }
+
+      if (!pointerStartRef.current || event.buttons === 0) {
+        return;
+      }
+
+      event.preventDefault();
     },
     [mapPointer],
   );
 
-  const handlePointerMove = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!pointerStartRef.current || event.buttons === 0) {
-      return;
-    }
-
-    event.preventDefault();
-  }, []);
-
   const handlePointerUp = useCallback(
-    (event: React.PointerEvent<HTMLCanvasElement>) => {
+    (event: React.PointerEvent<HTMLElement>) => {
       const point = mapPointer(event);
+
+      if (captureBackendRef.current === 'simulator-server') {
+        if (!pointerDraggingRef.current) {
+          return;
+        }
+
+        pointerDraggingRef.current = false;
+        event.currentTarget.releasePointerCapture(event.pointerId);
+
+        if (!point) {
+          return;
+        }
+
+        flushPendingMove();
+        dispatchSimulatorInput(formatSimulatorTouchInput('Up', point.x, point.y));
+        return;
+      }
+
       const start = pointerStartRef.current;
       pointerStartRef.current = null;
 
@@ -733,10 +916,18 @@ export function useEmulatorSession({
 
       void window.nexus.emulator.tap(sessionId, point.x, point.y);
     },
-    [mapPointer, tab.sessionId],
+    [dispatchSimulatorInput, flushPendingMove, mapPointer, tab.sessionId],
   );
 
-  const resolveSessionId = useCallback(() => sessionIdRef.current ?? tab.sessionId, [tab.sessionId]);
+  const handleStreamImgLoad = useCallback(() => {
+    const image = streamImgRef.current;
+
+    if (!image || !image.naturalWidth || !image.naturalHeight) {
+      return;
+    }
+
+    setFrameSize({ width: image.naturalWidth, height: image.naturalHeight });
+  }, []);
 
   const pressHome = useCallback(async () => {
     const sessionId = resolveSessionId();
@@ -746,6 +937,16 @@ export function useEmulatorSession({
     }
 
     await window.nexus.emulator.pressHome(sessionId);
+  }, [resolveSessionId]);
+
+  const pressAppSwitcher = useCallback(async () => {
+    const sessionId = resolveSessionId();
+
+    if (!sessionId) {
+      return;
+    }
+
+    await window.nexus.emulator.pressAppSwitcher(sessionId);
   }, [resolveSessionId]);
 
   const pressBack = useCallback(async () => {
@@ -782,7 +983,7 @@ export function useEmulatorSession({
   );
 
   const handleCanvasPaste = useCallback(
-    (event: React.ClipboardEvent<HTMLCanvasElement>) => {
+    (event: React.ClipboardEvent<HTMLElement>) => {
       if (!isFocused || sessionState !== 'running') {
         return;
       }
@@ -871,7 +1072,10 @@ export function useEmulatorSession({
     streamFallbackReason,
     isStarting,
     frameSize,
+    streamUrl,
+    usesNativeStream,
     canvasRef,
+    streamImgRef,
     setPlatform,
     setDeviceId,
     startSession,
@@ -880,7 +1084,9 @@ export function useEmulatorSession({
     handlePointerMove,
     handlePointerUp,
     handleCanvasPaste,
+    handleStreamImgLoad,
     pressHome,
+    pressAppSwitcher,
     pressBack,
     rotate,
     takeScreenshot,

@@ -1,6 +1,6 @@
 {
   "name": "nexus-ide",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "private": true,
   "description": "Nexus IDE — AI-powered desktop IDE",
   "engines": {
@@ -29,24 +29,25 @@
     "@codemirror/legacy-modes": "^6.5.3",
     "@uiw/codemirror-theme-monokai": "^4.25.10",
     "@uiw/react-codemirror": "^4.25.10",
+    "@vscode/ripgrep": "^1.18.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "electron-store": "^10.0.1",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.460.0",
-    "material-icon-theme": "^5.35.0",
     "macos-calendar": "file:native/macos-calendar",
+    "material-icon-theme": "^5.35.0",
     "node-pty": "^1.0.0",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
-    "node-addon-api": "^8.3.1",
     "@types/react": "^19.2.16",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
     "electron": "^42.1.0",
     "electron-builder": "^26.8.1",
+    "node-addon-api": "^8.3.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "typescript": "^5.8.3",
@@ -66,6 +67,7 @@
       "dist-electron",
       "dist",
       "resources/shell",
+      "resources/simulator-server",
       "build/icon.icns",
       "build/icon.ico",
       "build/icon.png"
@@ -73,7 +75,10 @@
     "asarUnpack": [
       "**/node_modules/node-pty/**/*",
       "**/node_modules/macos-calendar/**/*",
-      "resources/shell/**/*"
+      "**/node_modules/@vscode/ripgrep/**/*",
+      "**/node_modules/@vscode/ripgrep-*/**/*",
+      "resources/shell/**/*",
+      "resources/simulator-server/**/*"
     ],
     "extraFiles": [
       {
@@ -102,7 +107,7 @@
         "NSCalendarsUsageDescription": "O Nexus IDE exibe seus eventos do Calendário na barra lateral.",
         "NSCalendarsFullAccessUsageDescription": "O Nexus IDE precisa ler seus eventos do Calendário para exibi-los na barra lateral."
       },
-      "x64ArchFiles": "{**/node-pty/**,**/Contents/Helpers/**,**/macos-calendar/**,**/resources/shell/**}",
+      "x64ArchFiles": "{**/node-pty/**,**/Contents/Helpers/**,**/macos-calendar/**,**/resources/shell/**,**/@vscode/ripgrep*/**}",
       "identity": "-",
       "gatekeeperAssess": false,
       "hardenedRuntime": false,

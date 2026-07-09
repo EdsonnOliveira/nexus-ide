@@ -10,7 +10,22 @@ import type {
   EmulatorVideoCodec,
 } from '../../types';
 import type { EmulatorSessionStartControls } from './androidEmulatorSession';
-import { resolveIdbCompanionPath, resolveIdbPath, resolveXcrunPath } from './emulatorPaths';
+import {
+  resolveIdbCompanionPath,
+  resolveIdbPath,
+  resolveSimulatorServerPath,
+  resolveXcrunPath,
+} from './emulatorPaths';
+import {
+  createSimulatorServerStream,
+  type SimulatorServerStreamController,
+} from './simulatorServerStream';
+import {
+  charToHid,
+  formatSimulatorButtonInput,
+  formatSimulatorKeyInput,
+  formatSimulatorTouchInput,
+} from '../utils/simulatorServerInput';
 
 export interface EmulatorSessionEvents {
   onState: (state: EmulatorSessionState, message?: string, stats?: EmulatorStreamStats) => void;
@@ -27,10 +42,12 @@ export interface EmulatorSessionHandle {
   tap(x: number, y: number): Promise<void>;
   swipe(x1: number, y1: number, x2: number, y2: number, durationMs: number): Promise<void>;
   pressHome(): Promise<void>;
+  pressAppSwitcher(): Promise<void>;
   pressBack(): Promise<void>;
   rotate(): Promise<void>;
   takeScreenshot(outputPath: string): Promise<void>;
   typeText(text: string): Promise<void>;
+  sendInput(line: string): Promise<boolean>;
 }
 
 interface SimulatorScreenInfo {
@@ -49,6 +66,8 @@ const IDB_FIRST_FRAME_TIMEOUT_MS = 12_000;
 const IDB_SCREENSHOT_FIRST_FRAME_TIMEOUT_MS = 8_000;
 const SIMCTL_PARALLEL_CAPTURES = 3;
 const SIMCTL_TARGET_FPS = 60;
+const SIMULATOR_SERVER_TARGET_FPS = 60;
+const SIMULATOR_SERVER_START_TIMEOUT_MS = 30_000;
 const JPEG_SOI = Buffer.from([0xff, 0xd8]);
 const JPEG_EOI = Buffer.from([0xff, 0xd9]);
 
@@ -767,6 +786,35 @@ export async function createIosSimulatorSession(
     throw new Error('Session cancelled');
   }
 
+  const simServerTool = resolveSimulatorServerPath();
+  let simulatorServerController: SimulatorServerStreamController | null = null;
+  let useSimulatorServer = false;
+  let activeStreamUrl: string | null = null;
+  let idbFallbackReason: string | null = null;
+
+  if (simServerTool.found) {
+    simulatorServerController = await createSimulatorServerStream({
+      binaryPath: simServerTool.path,
+      udid,
+      isStopped: () => stopped || isCancelled(),
+    });
+
+    if (simulatorServerController) {
+      activeStreamUrl = await simulatorServerController.waitForStreamReady(
+        SIMULATOR_SERVER_START_TIMEOUT_MS,
+      );
+
+      if (activeStreamUrl && !isCancelled()) {
+        useSimulatorServer = true;
+      } else {
+        await simulatorServerController.stop();
+        simulatorServerController = null;
+        activeStreamUrl = null;
+        idbFallbackReason = 'simulator-server indisponível; tentando idb.';
+      }
+    }
+  }
+
   let activeCaptures = 0;
   let lastFrameHash = 0;
   let inputChain: Promise<void> = Promise.resolve();
@@ -809,112 +857,119 @@ export async function createIosSimulatorSession(
 
   const idbCompanion = resolveIdbCompanionPath();
   let firstFrame: Buffer | null = null;
-  let idbFallbackReason: string | null = null;
   let sharedCompanion: IdbCompanionHandle | null = null;
 
-  const tryIdbVideoStream = async (companionPath: string | null): Promise<Buffer | null> => {
-    const controller = await createIdbVideoStreamController({
-      udid,
-      idbPath: idb.path,
-      companionPath: sharedCompanion ? null : companionPath,
-      companionEndpoint: sharedCompanion?.endpoint ?? null,
-      inputSize,
-      isStopped: () => stopped || isCancelled(),
-      onFrame: emitFrame,
-    });
+  if (!useSimulatorServer) {
 
-    if (!controller) {
+    const tryIdbVideoStream = async (companionPath: string | null): Promise<Buffer | null> => {
+      const controller = await createIdbVideoStreamController({
+        udid,
+        idbPath: idb.path,
+        companionPath: sharedCompanion ? null : companionPath,
+        companionEndpoint: sharedCompanion?.endpoint ?? null,
+        inputSize,
+        isStopped: () => stopped || isCancelled(),
+        onFrame: emitFrame,
+      });
+
+      if (!controller) {
+        return null;
+      }
+
+      const frame = await controller.waitForFirstFrame(IDB_FIRST_FRAME_TIMEOUT_MS);
+
+      if (frame && !isCancelled()) {
+        idbVideoStream = controller;
+        useIdbVideoStream = true;
+        activeStreamCodec = STREAM_CODEC;
+        return frame;
+      }
+
+      await controller.stop();
       return null;
-    }
+    };
 
-    const frame = await controller.waitForFirstFrame(IDB_FIRST_FRAME_TIMEOUT_MS);
+    const tryIdbScreenshotStream = async (): Promise<Buffer | null> => {
+      const controller = await createIdbScreenshotStreamController({
+        udid,
+        idbPath: idb.path,
+        companionPath: sharedCompanion ? null : idbCompanion.path,
+        companionEndpoint: sharedCompanion?.endpoint ?? null,
+        inputSize,
+        isStopped: () => stopped || isCancelled(),
+        onFrame: emitFrame,
+      });
 
-    if (frame && !isCancelled()) {
-      idbVideoStream = controller;
-      useIdbVideoStream = true;
-      activeStreamCodec = STREAM_CODEC;
-      return frame;
-    }
+      if (!controller) {
+        return null;
+      }
 
-    await controller.stop();
-    return null;
-  };
+      const frame = await controller.waitForFirstFrame(IDB_SCREENSHOT_FIRST_FRAME_TIMEOUT_MS);
 
-  const tryIdbScreenshotStream = async (): Promise<Buffer | null> => {
-    const controller = await createIdbScreenshotStreamController({
-      udid,
-      idbPath: idb.path,
-      companionPath: sharedCompanion ? null : idbCompanion.path,
-      companionEndpoint: sharedCompanion?.endpoint ?? null,
-      inputSize,
-      isStopped: () => stopped || isCancelled(),
-      onFrame: emitFrame,
-    });
+      if (frame && !isCancelled()) {
+        idbScreenshotStream = controller;
+        useIdbScreenshotStream = true;
+        activeStreamCodec = 'png';
+        return frame;
+      }
 
-    if (!controller) {
+      await controller.stop();
       return null;
+    };
+
+    if (idb.found && idbCompanion.found) {
+      sharedCompanion = await startIdbCompanion(idbCompanion.path, udid);
     }
 
-    const frame = await controller.waitForFirstFrame(IDB_SCREENSHOT_FIRST_FRAME_TIMEOUT_MS);
+    if (idb.found && sharedCompanion) {
+      firstFrame = await tryIdbVideoStream(null);
 
-    if (frame && !isCancelled()) {
-      idbScreenshotStream = controller;
-      useIdbScreenshotStream = true;
-      activeStreamCodec = 'png';
-      return frame;
+      if (!firstFrame) {
+        firstFrame = await tryIdbScreenshotStream();
+      }
     }
 
-    await controller.stop();
-    return null;
-  };
+    if (!firstFrame && idb.found) {
+      if (sharedCompanion) {
+        await sharedCompanion.stop();
+        sharedCompanion = null;
+      }
 
-  if (idb.found && idbCompanion.found) {
-    sharedCompanion = await startIdbCompanion(idbCompanion.path, udid);
-  }
+      firstFrame = await tryIdbVideoStream(null);
 
-  if (idb.found && sharedCompanion) {
-    firstFrame = await tryIdbVideoStream(null);
+      if (!firstFrame) {
+        firstFrame = await tryIdbScreenshotStream();
+      }
+    }
+
+    if (!useIdbVideoStream && !useIdbScreenshotStream) {
+      if (sharedCompanion) {
+        await sharedCompanion.stop();
+        sharedCompanion = null;
+      }
+
+      if (!idbFallbackReason) {
+        idbFallbackReason = 'idb video-stream indisponível; usando captura simctl.';
+      }
+    }
+
+    if (!useIdbVideoStream && !useIdbScreenshotStream) {
+      firstFrame = await waitForSimulatorFrame(udid, xcrun.path, jpegPaths[0]);
+    }
+
+    if (isCancelled()) {
+      await idbVideoStream?.stop();
+      throw new Error('Session cancelled');
+    }
 
     if (!firstFrame) {
-      firstFrame = await tryIdbScreenshotStream();
+      await idbVideoStream?.stop();
+      await cleanupTempDir();
+      throw new Error('Não foi possível capturar a tela do simulador iOS.');
     }
-  }
-
-  if (!firstFrame && idb.found) {
-    if (sharedCompanion) {
-      await sharedCompanion.stop();
-      sharedCompanion = null;
-    }
-
-    firstFrame = await tryIdbVideoStream(null);
-
-    if (!firstFrame) {
-      firstFrame = await tryIdbScreenshotStream();
-    }
-  }
-
-  if (!useIdbVideoStream && !useIdbScreenshotStream) {
-    if (sharedCompanion) {
-      await sharedCompanion.stop();
-      sharedCompanion = null;
-    }
-
-    idbFallbackReason = 'idb video-stream indisponível; usando captura simctl.';
-  }
-
-  if (!useIdbVideoStream && !useIdbScreenshotStream) {
-    firstFrame = await waitForSimulatorFrame(udid, xcrun.path, jpegPaths[0]);
-  }
-
-  if (isCancelled()) {
-    await idbVideoStream?.stop();
+  } else if (isCancelled()) {
+    await simulatorServerController?.stop();
     throw new Error('Session cancelled');
-  }
-
-  if (!firstFrame) {
-    await idbVideoStream?.stop();
-    await cleanupTempDir();
-    throw new Error('Não foi possível capturar a tela do simulador iOS.');
   }
 
   const drainProcessQueue = () => {
@@ -989,12 +1044,35 @@ export async function createIosSimulatorSession(
   };
 
   const useIdbCapture = useIdbVideoStream || useIdbScreenshotStream;
-  const captureBackend: EmulatorCaptureBackend = useIdbCapture ? 'idb' : 'simctl';
-  const targetFps = useIdbVideoStream
-    ? IDB_STREAM_FPS
-    : useIdbScreenshotStream
-      ? IDB_SCREENSHOT_FPS
-      : SIMCTL_TARGET_FPS;
+  const captureBackend: EmulatorCaptureBackend = useSimulatorServer
+    ? 'simulator-server'
+    : useIdbCapture
+      ? 'idb'
+      : 'simctl';
+  const targetFps = useSimulatorServer
+    ? SIMULATOR_SERVER_TARGET_FPS
+    : useIdbVideoStream
+      ? IDB_STREAM_FPS
+      : useIdbScreenshotStream
+        ? IDB_SCREENSHOT_FPS
+        : SIMCTL_TARGET_FPS;
+
+  const sendSimulatorInput = async (line: string): Promise<boolean> => {
+    return simulatorServerController?.sendInput(line) ?? false;
+  };
+
+  const typeTextWithSimulatorServer = async (text: string) => {
+    for (const char of text) {
+      const code = charToHid(char);
+
+      if (code === null) {
+        continue;
+      }
+
+      await sendSimulatorInput(formatSimulatorKeyInput('Down', code));
+      await sendSimulatorInput(formatSimulatorKeyInput('Up', code));
+    }
+  };
 
   const swapInputOrientation = () => {
     inputSize = {
@@ -1003,7 +1081,14 @@ export async function createIosSimulatorSession(
     };
   };
 
-  const pressHomeWithFallback = async () => {
+  const sendHomeButtonPress = async () => {
+    if (useSimulatorServer) {
+      await sendSimulatorInput(formatSimulatorButtonInput('Down', 'home'));
+      await delay(80);
+      await sendSimulatorInput(formatSimulatorButtonInput('Up', 'home'));
+      return;
+    }
+
     if (idb.found) {
       const result = await runCommand(idb.path, ['ui', 'button', '--udid', udid, 'HOME']);
 
@@ -1018,6 +1103,85 @@ export async function createIosSimulatorSession(
       '-e',
       'tell application "System Events" to keystroke "h" using {shift down, command down}',
     ]);
+  };
+
+  const pressHomeWithFallback = async () => {
+    await sendHomeButtonPress();
+  };
+
+  const performAppSwitcherGesture = async (): Promise<boolean> => {
+    const centerX = 0.5;
+    const startY = 0.96;
+    const holdY = 0.5;
+
+    if (useSimulatorServer) {
+      await sendSimulatorInput(formatSimulatorTouchInput('Down', centerX, startY));
+      await delay(50);
+
+      const steps = 10;
+
+      for (let step = 1; step <= steps; step += 1) {
+        const y = startY + ((holdY - startY) * step) / steps;
+        await sendSimulatorInput(formatSimulatorTouchInput('Move', centerX, y));
+        await delay(35);
+      }
+
+      await delay(800);
+      await sendSimulatorInput(formatSimulatorTouchInput('Up', centerX, holdY));
+      return true;
+    }
+
+    if (idb.found) {
+      const px = Math.round(centerX * inputSize.inputWidth);
+      const startPy = Math.round(startY * inputSize.inputHeight);
+      const holdPy = Math.round(holdY * inputSize.inputHeight);
+      const result = await runCommand(idb.path, [
+        'ui',
+        'swipe',
+        '--udid',
+        udid,
+        '--duration',
+        '1.4',
+        String(px),
+        String(startPy),
+        String(px),
+        String(holdPy),
+      ]);
+
+      return result.code === 0;
+    }
+
+    return false;
+  };
+
+  const pressAppSwitcherWithFallback = async () => {
+    const shortcutResult = await runCommand('osascript', [
+      '-e',
+      'tell application "Simulator" to activate',
+      '-e',
+      'delay 0.15',
+      '-e',
+      'tell application "System Events" to keystroke "h" using {control down, shift down, command down}',
+    ]);
+
+    if (shortcutResult.code === 0) {
+      return;
+    }
+
+    const menuResult = await runCommand('osascript', [
+      '-e',
+      'tell application "Simulator" to activate',
+      '-e',
+      'delay 0.15',
+      '-e',
+      'tell application "System Events" to tell process "Simulator" to click menu item "App Switcher" of menu "Device" of menu bar 1',
+    ]);
+
+    if (menuResult.code === 0) {
+      return;
+    }
+
+    await performAppSwitcherGesture();
   };
 
   const rotateWithFallback = async () => {
@@ -1129,10 +1293,11 @@ export async function createIosSimulatorSession(
       targetFps,
       streamFps,
       fallbackReason: idbFallbackReason ?? undefined,
+      streamUrl: activeStreamUrl ?? undefined,
     });
   };
 
-  if (!useIdbCapture) {
+  if (!useSimulatorServer && !useIdbCapture && firstFrame) {
     emitFrame(firstFrame);
   }
 
@@ -1141,11 +1306,15 @@ export async function createIosSimulatorSession(
     targetFps,
     streamFps: 0,
     fallbackReason: idbFallbackReason ?? undefined,
+    streamUrl: activeStreamUrl ?? undefined,
   });
-  statsTimer = setInterval(publishStreamStats, 1000);
 
-  if (!useIdbCapture) {
-    scheduleCapture();
+  if (!useSimulatorServer) {
+    statsTimer = setInterval(publishStreamStats, 1000);
+
+    if (!useIdbCapture) {
+      scheduleCapture();
+    }
   }
 
   return {
@@ -1158,6 +1327,8 @@ export async function createIosSimulatorSession(
       }
 
       latestPendingJpeg = null;
+      await simulatorServerController?.stop();
+      simulatorServerController = null;
       await idbVideoStream?.stop();
       await idbScreenshotStream?.stop();
       await sharedCompanion?.stop();
@@ -1167,6 +1338,14 @@ export async function createIosSimulatorSession(
       events.onState('stopped');
     },
     async tap(x, y) {
+      if (useSimulatorServer) {
+        await runInput(async () => {
+          await sendSimulatorInput(formatSimulatorTouchInput('Down', x, y));
+          await sendSimulatorInput(formatSimulatorTouchInput('Up', x, y));
+        });
+        return;
+      }
+
       if (!idb.found) {
         return;
       }
@@ -1188,6 +1367,15 @@ export async function createIosSimulatorSession(
       });
     },
     async swipe(x1, y1, x2, y2, durationMs) {
+      if (useSimulatorServer) {
+        await runInput(async () => {
+          await sendSimulatorInput(formatSimulatorTouchInput('Down', x1, y1));
+          await sendSimulatorInput(formatSimulatorTouchInput('Move', x2, y2));
+          await sendSimulatorInput(formatSimulatorTouchInput('Up', x2, y2));
+        });
+        return;
+      }
+
       if (!idb.found) {
         return;
       }
@@ -1219,6 +1407,12 @@ export async function createIosSimulatorSession(
         triggerBurstCapture();
       });
     },
+    async pressAppSwitcher() {
+      await runInput(async () => {
+        await pressAppSwitcherWithFallback();
+        triggerBurstCapture();
+      });
+    },
     async pressBack() {},
     async rotate() {
       await runInput(async () => {
@@ -1232,7 +1426,9 @@ export async function createIosSimulatorSession(
       }
 
       await runInput(async () => {
-        if (idb.found) {
+        if (useSimulatorServer) {
+          await typeTextWithSimulatorServer(text);
+        } else if (idb.found) {
           await typeTextWithIdb(text);
         } else {
           await typeTextWithOsascript(text);
@@ -1240,6 +1436,9 @@ export async function createIosSimulatorSession(
 
         triggerBurstCapture();
       });
+    },
+    async sendInput(line: string) {
+      return sendSimulatorInput(line);
     },
     async takeScreenshot(outputPath: string) {
       await runCommand(xcrun.path, ['simctl', 'io', udid, 'screenshot', outputPath]);

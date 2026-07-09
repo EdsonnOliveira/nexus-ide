@@ -38,6 +38,10 @@ export function registerEmulatorHandlers(getWindow: WindowGetter): void {
     await emulatorSessionManager.stopByTabId(tabId);
   });
 
+  ipcMain.handle('emulator:attachTab', (_event, tabId: string) => {
+    return emulatorSessionManager.attachTab(tabId);
+  });
+
   ipcMain.handle('emulator:tap', async (_event, sessionId: string, x: number, y: number) => {
     await emulatorSessionManager.tap(sessionId, x, y);
   });
@@ -61,6 +65,10 @@ export function registerEmulatorHandlers(getWindow: WindowGetter): void {
     await emulatorSessionManager.pressHome(sessionId);
   });
 
+  ipcMain.handle('emulator:pressAppSwitcher', async (_event, sessionId: string) => {
+    await emulatorSessionManager.pressAppSwitcher(sessionId);
+  });
+
   ipcMain.handle('emulator:pressBack', async (_event, sessionId: string) => {
     await emulatorSessionManager.pressBack(sessionId);
   });
@@ -71,6 +79,10 @@ export function registerEmulatorHandlers(getWindow: WindowGetter): void {
 
   ipcMain.handle('emulator:typeText', async (_event, sessionId: string, text: string) => {
     await emulatorSessionManager.typeText(sessionId, text);
+  });
+
+  ipcMain.handle('emulator:sendInput', async (_event, sessionId: string, line: string) => {
+    return emulatorSessionManager.sendInput(sessionId, line);
   });
 
   ipcMain.handle('emulator:screenshot', async (_event, sessionId: string) => {

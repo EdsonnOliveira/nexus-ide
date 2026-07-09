@@ -19,7 +19,9 @@ import {
   useAnchoredDropdownMenu,
 } from '@/hooks/useAnchoredDropdownMenu';
 import { useEmulatorSession } from '@/hooks/useEmulatorSession';
+import { useMaestroHighlightForPlatform } from '@/stores/useMaestroHighlightStore';
 import { useTabActions } from '@/stores/useTabStore';
+import { EmulatorTestHighlightOverlay } from '@/components/emulator/EmulatorTestHighlightOverlay';
 import type { EmulatorDevice, EmulatorPlatform, EmulatorTab } from '@/types';
 
 const EMULATOR_MIN_ZOOM = 0.5;
@@ -27,20 +29,54 @@ const EMULATOR_MAX_ZOOM = 1.5;
 const EMULATOR_ZOOM_STEP = 0.1;
 const EMULATOR_DEFAULT_ZOOM = 1;
 
+function resolveEmulatorDeviceName(title: string): string | null {
+  const prefix = 'Emulador · ';
+
+  if (!title.startsWith(prefix)) {
+    return null;
+  }
+
+  const name = title.slice(prefix.length).trim();
+
+  return name || null;
+}
+
 function clampEmulatorZoom(factor: number, maxZoom = EMULATOR_MAX_ZOOM): number {
   return Math.min(maxZoom, Math.max(EMULATOR_MIN_ZOOM, Number(factor.toFixed(2))));
 }
 
-function computeEmulatorMaxZoom(
-  wrap: HTMLElement,
-  canvas: HTMLCanvasElement,
-): number {
-  if (canvas.offsetWidth <= 0 || canvas.offsetHeight <= 0) {
+function computeEmulatorFitSize(
+  containerWidth: number,
+  containerHeight: number,
+  frameWidth: number,
+  frameHeight: number,
+): { width: number; height: number } {
+  if (containerWidth <= 0 || containerHeight <= 0 || frameWidth <= 0 || frameHeight <= 0) {
+    return { width: 0, height: 0 };
+  }
+
+  const aspect = frameWidth / frameHeight;
+  let height = containerHeight;
+  let width = height * aspect;
+
+  if (width > containerWidth) {
+    width = containerWidth;
+    height = width / aspect;
+  }
+
+  return {
+    width: Math.floor(width),
+    height: Math.floor(height),
+  };
+}
+
+function computeEmulatorMaxZoom(wrap: HTMLElement, screen: HTMLElement): number {
+  if (screen.offsetWidth <= 0 || screen.offsetHeight <= 0) {
     return EMULATOR_DEFAULT_ZOOM;
   }
 
-  const maxByHeight = wrap.clientHeight / canvas.offsetHeight;
-  const maxByWidth = wrap.clientWidth / canvas.offsetWidth;
+  const maxByHeight = wrap.clientHeight / screen.offsetHeight;
+  const maxByWidth = wrap.clientWidth / screen.offsetWidth;
   const fitMax = Math.min(maxByHeight, maxByWidth, EMULATOR_MAX_ZOOM);
 
   return clampEmulatorZoom(Math.floor(fitMax * 100) / 100, EMULATOR_MAX_ZOOM);
@@ -169,6 +205,9 @@ function EmulatorDeviceMenuComponent({
               {device.subtitle ? (
                 <span className='emulator-view__device-menu-subtitle'>{device.subtitle}</span>
               ) : null}
+              {device.platform === 'ios' ? (
+                <span className='emulator-view__device-menu-udid'>{device.id}</span>
+              ) : null}
             </span>
             {isSelected ? (
               <Check size={14} strokeWidth={2} className='emulator-view__device-menu-check' aria-hidden />
@@ -184,6 +223,10 @@ function EmulatorDeviceMenuComponent({
 const EmulatorDeviceMenu = memo(EmulatorDeviceMenuComponent);
 
 function streamBackendLabel(backend: string): string {
+  if (backend === 'simulator-server') {
+    return 'simulator-server';
+  }
+
   if (backend === 'idb') {
     return 'idb';
   }
@@ -216,7 +259,10 @@ function EmulatorViewComponent({
     streamFallbackReason,
     isStarting,
     frameSize,
+    streamUrl,
+    usesNativeStream,
     canvasRef,
+    streamImgRef,
     setPlatform,
     setDeviceId,
     startSession,
@@ -225,7 +271,9 @@ function EmulatorViewComponent({
     handlePointerMove,
     handlePointerUp,
     handleCanvasPaste,
+    handleStreamImgLoad,
     pressHome,
+    pressAppSwitcher,
     pressBack,
     rotate,
     takeScreenshot,
@@ -240,6 +288,14 @@ function EmulatorViewComponent({
   const [zoomFactor, setZoomFactor] = useState(EMULATOR_DEFAULT_ZOOM);
   const [maxZoomFactor, setMaxZoomFactor] = useState(EMULATOR_DEFAULT_ZOOM);
   const screenWrapRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const displaySizeRef = useRef<{ width: number; height: number } | null>(null);
+  const prevFrameSizeRef = useRef(frameSize);
+  const [displaySize, setDisplaySize] = useState<{ width: number; height: number } | null>(null);
+  const [cachedActiveDevice, setCachedActiveDevice] = useState<{ id: string; name: string } | null>(
+    null,
+  );
+  const homeClickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const platformSetup = useMemo(() => {
     if (!setupStatus) {
@@ -250,6 +306,8 @@ function EmulatorViewComponent({
   }, [setupStatus, tab.platform]);
 
   const isRunning = sessionState === 'running' || sessionState === 'booting' || isStarting;
+  const maestroHighlight = useMaestroHighlightForPlatform(tab.platform);
+  const showMaestroHighlight = sessionState === 'running' && maestroHighlight !== null;
   const showControls = sessionState === 'running';
   const streamBadgeLabel = useMemo(() => {
     if (!captureBackend) {
@@ -260,6 +318,10 @@ function EmulatorViewComponent({
 
     if (captureBackend === 'simctl') {
       return streamFps > 0 ? `${backend} · ${streamFps} FPS` : `${backend} · ~7 FPS máx`;
+    }
+
+    if (captureBackend === 'simulator-server') {
+      return `${backend} · ${targetFps} FPS`;
     }
 
     return `${backend} · ${streamFps > 0 ? streamFps : targetFps} FPS`;
@@ -274,7 +336,7 @@ function EmulatorViewComponent({
     [devices, selectedDeviceId],
   );
 
-  const deviceTriggerLabel = useMemo(() => {
+  const deviceTriggerName = useMemo(() => {
     if (isLoadingDevices && !devices.length) {
       return 'Carregando dispositivos…';
     }
@@ -285,6 +347,105 @@ function EmulatorViewComponent({
 
     return selectedDevice?.name ?? devices[0]?.name ?? 'Nenhum dispositivo';
   }, [devices, isLoadingDevices, selectedDevice]);
+
+  const deviceTriggerUdid = useMemo(() => {
+    if (tab.platform !== 'ios' || !selectedDevice) {
+      return null;
+    }
+
+    return selectedDevice.id;
+  }, [selectedDevice, tab.platform]);
+
+  const activeDeviceDisplay = useMemo(() => {
+    if (!tab.deviceId) {
+      return null;
+    }
+
+    const matchedDevice =
+      devices.find((entry) => entry.id === tab.deviceId) ??
+      (selectedDevice?.id === tab.deviceId ? selectedDevice : null);
+
+    if (matchedDevice) {
+      return { id: matchedDevice.id, name: matchedDevice.name };
+    }
+
+    const titleName = resolveEmulatorDeviceName(tab.title);
+
+    if (titleName) {
+      return { id: tab.deviceId, name: titleName };
+    }
+
+    if (cachedActiveDevice?.id === tab.deviceId) {
+      return cachedActiveDevice;
+    }
+
+    return null;
+  }, [cachedActiveDevice, devices, selectedDevice, tab.deviceId, tab.title]);
+
+  const activeDeviceUdid = useMemo(() => {
+    if (tab.platform !== 'ios' || !activeDeviceDisplay) {
+      return null;
+    }
+
+    if (activeDeviceDisplay.name === activeDeviceDisplay.id) {
+      return null;
+    }
+
+    return activeDeviceDisplay.id;
+  }, [activeDeviceDisplay, tab.platform]);
+
+  useEffect(() => {
+    if (!tab.deviceId) {
+      setCachedActiveDevice(null);
+      return;
+    }
+
+    const matchedDevice =
+      devices.find((entry) => entry.id === tab.deviceId) ??
+      (selectedDevice?.id === tab.deviceId ? selectedDevice : null);
+
+    if (matchedDevice) {
+      setCachedActiveDevice({ id: matchedDevice.id, name: matchedDevice.name });
+      return;
+    }
+
+    const titleName = resolveEmulatorDeviceName(tab.title);
+
+    if (titleName) {
+      setCachedActiveDevice({ id: tab.deviceId, name: titleName });
+    }
+  }, [devices, selectedDevice, tab.deviceId, tab.title]);
+
+  useEffect(() => {
+    if (!isRunning || !tab.deviceId) {
+      return;
+    }
+
+    const hasDeviceName =
+      cachedActiveDevice?.id === tab.deviceId && cachedActiveDevice.name !== tab.deviceId;
+
+    if (hasDeviceName) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void window.nexus.emulator.listDevices(tab.platform).then((nextDevices) => {
+      if (cancelled) {
+        return;
+      }
+
+      const matchedDevice = nextDevices.find((entry) => entry.id === tab.deviceId);
+
+      if (matchedDevice) {
+        setCachedActiveDevice({ id: matchedDevice.id, name: matchedDevice.name });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cachedActiveDevice, isRunning, tab.deviceId, tab.platform]);
 
   const handleMouseDown = useCallback(() => {
     onFocusPane(tab.id);
@@ -342,8 +503,26 @@ function EmulatorViewComponent({
       return;
     }
 
+    if (selectedDevice) {
+      setCachedActiveDevice({ id: selectedDevice.id, name: selectedDevice.name });
+    } else if (
+      tab.deviceId &&
+      deviceTriggerName !== 'Carregando dispositivos…' &&
+      deviceTriggerName !== 'Nenhum dispositivo'
+    ) {
+      setCachedActiveDevice({ id: tab.deviceId, name: deviceTriggerName });
+    }
+
     void startSession();
-  }, [isRunning, isStarting, sessionState, startSession, stopSession]);
+  }, [
+    deviceTriggerName,
+    isRunning,
+    isStarting,
+    selectedDevice,
+    startSession,
+    stopSession,
+    tab.deviceId,
+  ]);
 
   const handleInstall = useCallback(() => {
     if (!platformSetup?.installCommand) {
@@ -354,8 +533,24 @@ function EmulatorViewComponent({
   }, [addAgentTab, platformSetup?.installCommand]);
 
   const handlePressHome = useCallback(() => {
+    if (tab.platform === 'ios') {
+      if (homeClickTimeoutRef.current) {
+        clearTimeout(homeClickTimeoutRef.current);
+        homeClickTimeoutRef.current = null;
+        void pressAppSwitcher();
+        return;
+      }
+
+      homeClickTimeoutRef.current = setTimeout(() => {
+        homeClickTimeoutRef.current = null;
+        void pressHome();
+      }, 400);
+
+      return;
+    }
+
     void pressHome();
-  }, [pressHome]);
+  }, [pressAppSwitcher, pressHome, tab.platform]);
 
   const handlePressBack = useCallback(() => {
     void pressBack();
@@ -400,8 +595,106 @@ function EmulatorViewComponent({
   }, [isRunning]);
 
   useEffect(() => {
-    setZoomFactor((current) => clampEmulatorZoom(current, maxZoomFactor));
+    setZoomFactor((current) => {
+      if (current <= EMULATOR_DEFAULT_ZOOM) {
+        return EMULATOR_DEFAULT_ZOOM;
+      }
+
+      return clampEmulatorZoom(current, maxZoomFactor);
+    });
   }, [maxZoomFactor]);
+
+  useEffect(() => {
+    if (!isRunning) {
+      displaySizeRef.current = null;
+      setDisplaySize(null);
+    }
+  }, [isRunning]);
+
+  useEffect(() => {
+    if (!isRunning) {
+      return;
+    }
+
+    const prev = prevFrameSizeRef.current;
+    const rotated =
+      prev.width === frameSize.height &&
+      prev.height === frameSize.width &&
+      prev.width !== prev.height;
+
+    if (rotated) {
+      displaySizeRef.current = null;
+      setDisplaySize(null);
+    }
+
+    prevFrameSizeRef.current = frameSize;
+  }, [frameSize.height, frameSize.width, isRunning]);
+
+  useEffect(() => {
+    if (sessionState !== 'running' || displaySizeRef.current) {
+      return;
+    }
+
+    const body = bodyRef.current;
+
+    if (!body) {
+      return;
+    }
+
+    let bestFit = { width: 0, height: 0 };
+    let lockTimeoutId = 0;
+
+    const measureFit = () => {
+      const bodyStyles = getComputedStyle(body);
+      const paddingX =
+        parseFloat(bodyStyles.paddingLeft) + parseFloat(bodyStyles.paddingRight);
+      const paddingY =
+        parseFloat(bodyStyles.paddingTop) + parseFloat(bodyStyles.paddingBottom);
+      const nextFit = computeEmulatorFitSize(
+        body.clientWidth - paddingX,
+        body.clientHeight - paddingY,
+        frameSize.width,
+        frameSize.height,
+      );
+
+      if (nextFit.width <= 0 || nextFit.height <= 0) {
+        return;
+      }
+
+      if (nextFit.width > bestFit.width || nextFit.height > bestFit.height) {
+        bestFit = nextFit;
+      }
+    };
+
+    const lockDisplaySize = () => {
+      if (displaySizeRef.current || bestFit.width <= 0 || bestFit.height <= 0) {
+        return;
+      }
+
+      displaySizeRef.current = bestFit;
+      setDisplaySize(bestFit);
+    };
+
+    const scheduleLock = () => {
+      window.clearTimeout(lockTimeoutId);
+      lockTimeoutId = window.setTimeout(lockDisplaySize, 320);
+    };
+
+    measureFit();
+    scheduleLock();
+
+    const observer = new ResizeObserver(() => {
+      measureFit();
+      scheduleLock();
+    });
+
+    observer.observe(body);
+
+    return () => {
+      window.clearTimeout(lockTimeoutId);
+      observer.disconnect();
+    };
+  }, [frameSize.height, frameSize.width, sessionState]);
 
   useEffect(() => {
     if (!isRunning) {
@@ -409,33 +702,44 @@ function EmulatorViewComponent({
     }
 
     const wrap = screenWrapRef.current;
-    const canvas = canvasRef.current;
+    const screen = usesNativeStream ? streamImgRef.current : canvasRef.current;
 
-    if (!wrap || !canvas) {
+    if (!wrap || !screen) {
       return;
     }
 
     const updateMaxZoom = () => {
-      setMaxZoomFactor(computeEmulatorMaxZoom(wrap, canvas));
+      setMaxZoomFactor(computeEmulatorMaxZoom(wrap, screen));
     };
 
     const observer = new ResizeObserver(updateMaxZoom);
     observer.observe(wrap);
-    observer.observe(canvas);
+    observer.observe(screen);
     updateMaxZoom();
 
     return () => observer.disconnect();
-  }, [canvasRef, frameSize.height, frameSize.width, isRunning, showControls]);
+  }, [canvasRef, frameSize.height, frameSize.width, isRunning, streamImgRef, usesNativeStream]);
 
   useEffect(() => {
     return () => {
       if (screenshotTimeoutRef.current) {
         clearTimeout(screenshotTimeoutRef.current);
       }
+
+      if (homeClickTimeoutRef.current) {
+        clearTimeout(homeClickTimeoutRef.current);
+      }
     };
   }, []);
 
   const screenStyle = useMemo(() => {
+    if (displaySize) {
+      return {
+        width: displaySize.width,
+        height: displaySize.height,
+      } as const;
+    }
+
     const aspect = frameSize.width / frameSize.height;
     const maxHeight = '100%';
     const maxWidth = `calc(${maxHeight} * ${aspect})`;
@@ -445,62 +749,104 @@ function EmulatorViewComponent({
       maxWidth,
       maxHeight,
     } as const;
-  }, [frameSize.height, frameSize.width]);
+  }, [displaySize, frameSize.height, frameSize.width]);
 
   return (
     <div className='emulator-view' onMouseDown={handleMouseDown}>
-      <div className={`emulator-view__toolbar${isFocused ? ' emulator-view__toolbar--focused' : ''}`}>
-        <div className='emulator-view__platforms' role='tablist' aria-label='Plataforma do emulador'>
-          <button
-            type='button'
-            className={`emulator-view__platform app-button${tab.platform === 'android' ? ' emulator-view__platform--active app-button--enter' : ''}`}
-            onClick={() => handlePlatformChange('android')}
-            disabled={isRunning}
-          >
-            <AndroidIcon size={14} />
-            <span>Android</span>
-          </button>
-          <button
-            type='button'
-            className={`emulator-view__platform app-button${tab.platform === 'ios' ? ' emulator-view__platform--active app-button--enter' : ''}`}
-            onClick={() => handlePlatformChange('ios')}
-            disabled={isRunning}
-          >
-            <AppleLogoIcon size={14} />
-            <span>iOS</span>
-          </button>
-        </div>
+      <div className={`emulator-view__toolbar${isFocused ? ' emulator-view__toolbar--focused' : ''}${isRunning ? ' emulator-view__toolbar--running' : ''}`}>
+        {!isRunning ? (
+          <div className='emulator-view__platforms' role='tablist' aria-label='Plataforma do emulador'>
+            <button
+              type='button'
+              className={`emulator-view__platform app-button${tab.platform === 'android' ? ' emulator-view__platform--active app-button--enter' : ''}`}
+              onClick={() => handlePlatformChange('android')}
+            >
+              <AndroidIcon size={14} />
+              <span>Android</span>
+            </button>
+            <button
+              type='button'
+              className={`emulator-view__platform app-button${tab.platform === 'ios' ? ' emulator-view__platform--active app-button--enter' : ''}`}
+              onClick={() => handlePlatformChange('ios')}
+            >
+              <AppleLogoIcon size={14} />
+              <span>iOS</span>
+            </button>
+          </div>
+        ) : null}
 
-        <div className={`emulator-view__device-bar${deviceMenuOpen ? ' emulator-view__device-bar--open' : ''}`}>
-          <button
-            ref={deviceMenuButtonRef}
-            type='button'
-            className={`emulator-view__device-trigger app-button${deviceMenuOpen ? ' emulator-view__device-trigger--open app-button--enter' : ''}`}
-            disabled={isDeviceSelectDisabled}
-            aria-expanded={deviceMenuOpen}
-            aria-haspopup='menu'
-            onClick={handleToggleDeviceMenu}
-          >
-            <span className='emulator-view__device-trigger-label'>{deviceTriggerLabel}</span>
-            <ChevronDown size={14} strokeWidth={2} className='emulator-view__device-trigger-icon' aria-hidden />
-          </button>
-          {deviceMenuOpen && deviceMenuAnchorRect ? (
-            <EmulatorDeviceMenu
-              anchorRect={deviceMenuAnchorRect}
-              anchorRef={deviceMenuButtonRef}
-              devices={devices}
-              selectedDeviceId={selectedDeviceId}
-              onClose={handleCloseDeviceMenu}
-              onSelect={handleSelectDevice}
-            />
-          ) : null}
+        <div
+          className={`emulator-view__device-bar${deviceMenuOpen ? ' emulator-view__device-bar--open' : ''}${isRunning ? ' emulator-view__device-bar--running' : ''}`}
+        >
+          {isRunning ? (
+            <div className='emulator-view__device-active' aria-label='Dispositivo em execução'>
+              <span className='emulator-view__device-trigger-label'>
+                <span className='emulator-view__device-trigger-name'>
+                  {activeDeviceDisplay?.name ?? 'Dispositivo ativo'}
+                </span>
+                {activeDeviceUdid ? (
+                  <>
+                    <span className='emulator-view__device-trigger-separator' aria-hidden>
+                      {' '}
+                      ·{' '}
+                    </span>
+                    <span className='emulator-view__device-trigger-udid'>{activeDeviceUdid}</span>
+                  </>
+                ) : null}
+              </span>
+            </div>
+          ) : (
+            <>
+              <button
+                ref={deviceMenuButtonRef}
+                type='button'
+                className={`emulator-view__device-trigger app-button${deviceMenuOpen ? ' emulator-view__device-trigger--open app-button--enter' : ''}`}
+                disabled={isDeviceSelectDisabled}
+                aria-expanded={deviceMenuOpen}
+                aria-haspopup='menu'
+                onClick={handleToggleDeviceMenu}
+              >
+                <span className='emulator-view__device-trigger-label'>
+                  <span className='emulator-view__device-trigger-name'>{deviceTriggerName}</span>
+                  {deviceTriggerUdid ? (
+                    <>
+                      <span className='emulator-view__device-trigger-separator' aria-hidden>
+                        {' '}
+                        ·{' '}
+                      </span>
+                      <span className='emulator-view__device-trigger-udid'>{deviceTriggerUdid}</span>
+                    </>
+                  ) : null}
+                </span>
+                <ChevronDown size={14} strokeWidth={2} className='emulator-view__device-trigger-icon' aria-hidden />
+              </button>
+              {deviceMenuOpen && deviceMenuAnchorRect ? (
+                <EmulatorDeviceMenu
+                  anchorRect={deviceMenuAnchorRect}
+                  anchorRef={deviceMenuButtonRef}
+                  devices={devices}
+                  selectedDeviceId={selectedDeviceId}
+                  onClose={handleCloseDeviceMenu}
+                  onSelect={handleSelectDevice}
+                />
+              ) : null}
+            </>
+          )}
           {showControls ? (
             <div className='emulator-view__device-actions' role='toolbar' aria-label='Controles do emulador'>
               <button
                 type='button'
                 className='emulator-view__device-action app-button app-button--enter'
-                title='Início'
-                aria-label='Início'
+                title={
+                  tab.platform === 'ios'
+                    ? 'Início (toque duplo: alternador de apps)'
+                    : 'Início'
+                }
+                aria-label={
+                  tab.platform === 'ios'
+                    ? 'Início. Toque duplo abre o alternador de apps.'
+                    : 'Início'
+                }
                 onClick={handlePressHome}
               >
                 <Home size={14} strokeWidth={2} />
@@ -564,23 +910,34 @@ function EmulatorViewComponent({
               </button>
             </div>
           ) : null}
+          {isRunning ? (
+            <button
+              type='button'
+              className='emulator-view__action emulator-view__action--stop emulator-view__action--inline app-button app-button--enter'
+              aria-label='Parar emulador'
+              title='Parar'
+              onClick={handleToggleSession}
+            >
+              {showBootSpinner ? (
+                <Loader2 size={14} className='emulator-view__spinner' />
+              ) : (
+                <Square size={14} strokeWidth={2} aria-hidden />
+              )}
+            </button>
+          ) : null}
         </div>
 
-        <button
-          type='button'
-          className={`emulator-view__action app-button app-button--enter${isRunning ? ' emulator-view__action--stop' : ' emulator-view__action--start'}`}
-          onClick={handleToggleSession}
-          disabled={!selectedDeviceId || platformSetup?.available === false}
-        >
-          {showBootSpinner ? (
-            <Loader2 size={14} className='emulator-view__spinner' />
-          ) : isRunning ? (
-            <Square size={14} strokeWidth={2} aria-hidden />
-          ) : (
+        {!isRunning ? (
+          <button
+            type='button'
+            className='emulator-view__action app-button app-button--enter emulator-view__action--start'
+            onClick={handleToggleSession}
+            disabled={!selectedDeviceId || platformSetup?.available === false}
+          >
             <Play size={14} strokeWidth={2} aria-hidden />
-          )}
-          <span className='app-button__label'>{isRunning ? 'Parar' : 'Iniciar'}</span>
-        </button>
+            <span className='app-button__label'>Iniciar</span>
+          </button>
+        ) : null}
 
         {captureBackend && showControls ? (
           <span
@@ -592,7 +949,10 @@ function EmulatorViewComponent({
         ) : null}
       </div>
 
-      <div className='emulator-view__body'>
+      <div
+        ref={bodyRef}
+        className={`emulator-view__body${displaySize ? ' emulator-view__body--locked' : ''}`}
+      >
         {!isRunning ? (
           <div className='emulator-view__empty workspace-empty-state'>
             <Smartphone size={28} strokeWidth={1.6} />
@@ -615,30 +975,65 @@ function EmulatorViewComponent({
             {sessionMessage ? <p className='emulator-view__error'>{sessionMessage}</p> : null}
           </div>
         ) : (
-          <div className='emulator-view__screen-column'>
+          <div
+            className={`emulator-view__screen-column${displaySize ? ' emulator-view__screen-column--locked' : ''}`}
+          >
             <div
               ref={screenWrapRef}
-              className='emulator-view__screen-wrap'
+              className={`emulator-view__screen-wrap${displaySize ? ' emulator-view__screen-wrap--locked' : ''}`}
               style={{ '--emulator-zoom': zoomFactor } as React.CSSProperties}
             >
               {showBootSpinner ? (
-                <div className='emulator-view__loading'>
-                  <Loader2 size={18} className='emulator-view__spinner' />
-                  <span>Iniciando emulador…</span>
+                <div className='emulator-view__boot-shell' style={screenStyle}>
+                  <div className='emulator-view__loading emulator-view__loading--boot'>
+                    <Loader2 size={18} className='emulator-view__spinner' />
+                    <span>Iniciando emulador…</span>
+                  </div>
                 </div>
-              ) : null}
-              <canvas
-                ref={canvasRef}
-                className='emulator-view__screen'
-                style={screenStyle}
-                tabIndex={0}
-                role='application'
-                aria-label='Tela do emulador'
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
-                onPaste={handleCanvasPaste}
-              />
+              ) : usesNativeStream && streamUrl ? (
+                <div className='emulator-view__stream-shell' style={screenStyle}>
+                  <img
+                    ref={streamImgRef}
+                    className='emulator-view__stream-img'
+                    src={streamUrl}
+                    alt=''
+                    draggable={false}
+                    onLoad={handleStreamImgLoad}
+                  />
+                  <div
+                    className='emulator-view__gesture-layer'
+                    tabIndex={0}
+                    role='application'
+                    aria-label='Tela do emulador'
+                    onPointerDown={handlePointerDown}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                    onPaste={handleCanvasPaste}
+                  />
+                  {showMaestroHighlight ? (
+                    <EmulatorTestHighlightOverlay highlight={maestroHighlight} />
+                  ) : null}
+                </div>
+              ) : (
+                <div className='emulator-view__stream-shell' style={screenStyle}>
+                  <canvas
+                    ref={canvasRef}
+                    className='emulator-view__screen'
+                    width={frameSize.width}
+                    height={frameSize.height}
+                    tabIndex={0}
+                    role='application'
+                    aria-label='Tela do emulador'
+                    onPointerDown={handlePointerDown}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                    onPaste={handleCanvasPaste}
+                  />
+                  {showMaestroHighlight ? (
+                    <EmulatorTestHighlightOverlay highlight={maestroHighlight} />
+                  ) : null}
+                </div>
+              )}
             </div>
           </div>
         )}

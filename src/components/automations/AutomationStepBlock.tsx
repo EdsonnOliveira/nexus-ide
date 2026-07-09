@@ -166,6 +166,7 @@ function AutomationStepBlockComponent({
       emulatorDevices.map((device) => ({
         value: device.id,
         label: device.subtitle ? `${device.name} · ${device.subtitle}` : device.name,
+        subtitle: device.platform === 'ios' ? device.id : undefined,
       })),
     [emulatorDevices],
   );

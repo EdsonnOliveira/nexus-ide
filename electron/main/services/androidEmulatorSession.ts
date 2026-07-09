@@ -29,10 +29,12 @@ export interface EmulatorSessionHandle {
   tap(x: number, y: number): Promise<void>;
   swipe(x1: number, y1: number, x2: number, y2: number, durationMs: number): Promise<void>;
   pressHome(): Promise<void>;
+  pressAppSwitcher(): Promise<void>;
   pressBack(): Promise<void>;
   rotate(): Promise<void>;
   takeScreenshot(outputPath: string): Promise<void>;
   typeText(text: string): Promise<void>;
+  sendInput(line: string): Promise<boolean>;
 }
 
 const STREAM_MAX_WIDTH = 540;
@@ -44,6 +46,7 @@ const INPUT_CAPTURE_POLL_MS = 4;
 const KEYCODE_WAKEUP = '224';
 const KEYCODE_HOME = '3';
 const KEYCODE_BACK = '4';
+const KEYCODE_APP_SWITCH = '187';
 const KEYCODE_MENU = '82';
 const KEYCODE_ENTER = '66';
 const KEYCODE_DEL = '67';
@@ -1186,11 +1189,18 @@ export async function createAndroidEmulatorSession(
         await delay(40);
         sendShellCommand(`input keyevent ${KEYCODE_HOME}`);
         await delay(120);
-        sendShellCommand(`input keyevent ${KEYCODE_HOME}`);
-        await delay(120);
         sendShellCommand(
           'am start -a android.intent.action.MAIN -c android.intent.category.HOME',
         );
+      });
+    },
+    async pressAppSwitcher() {
+      if (!serial) {
+        return;
+      }
+
+      await withInputGate(async () => {
+        sendShellCommand(`input keyevent ${KEYCODE_APP_SWITCH}`);
       });
     },
     async pressBack() {
@@ -1292,6 +1302,9 @@ export async function createAndroidEmulatorSession(
       if (isValidPng(png)) {
         await writeFile(outputPath, png);
       }
+    },
+    async sendInput() {
+      return false;
     },
   };
 }

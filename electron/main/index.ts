@@ -20,9 +20,11 @@ import { registerCursorUsageHandlers } from './ipc/cursorUsage';
 import { registerWhatsAppHandlers } from './ipc/whatsapp';
 import { registerSessionHandlers } from './ipc/session';
 import { registerTaskHandlers } from './ipc/tasks';
+import { registerTestHandlers } from './ipc/tests';
 import { registerPasswordHandlers } from './ipc/passwords';
 import { registerTerminalHandlers } from './ipc/terminal';
 import { registerAgentPrintHandlers } from './ipc/agentPrint';
+import { registerDebugSessionHandlers } from './ipc/debugSession';
 import { registerSystemStatusHandlers } from './ipc/systemStatus';
 import { registerSystemNotificationsHandlers } from './ipc/systemNotifications';
 import {
@@ -33,6 +35,7 @@ import { attachBrowserWebviewContextMenu } from './services/browserWebviewContex
 import { registerYouTubeSidebarWebviewSession } from './services/youtubeSidebarWebviewSession';
 import { ptyManager } from './services/ptyManager';
 import { agentPrintRunner } from './services/agentPrintRunner';
+import { testRunnerSession } from './services/testRunnerSession';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -127,6 +130,7 @@ function completeSessionFlush(): void {
   if (flushMode === 'close') {
     ptyManager.killAll();
     agentPrintRunner.stopAll();
+    testRunnerSession.stopAll();
     win?.destroy();
     isQuitting = false;
     flushMode = 'quit';
@@ -226,6 +230,7 @@ async function createWindow(appIcon?: NativeImage) {
 
   ptyManager.setWindow(win);
   agentPrintRunner.setWindow(win);
+  testRunnerSession.setWindow(win);
 
   if (windowIcon && process.platform !== 'darwin') {
     win.setIcon(windowIcon);
@@ -270,6 +275,7 @@ async function createWindow(appIcon?: NativeImage) {
   win.on('closed', () => {
     ptyManager.setWindow(null);
     agentPrintRunner.setWindow(null);
+    testRunnerSession.setWindow(null);
     win = null;
   });
 
@@ -395,7 +401,9 @@ app.whenReady().then(() => {
   registerFileHandlers(() => win);
   registerTerminalHandlers();
   registerAgentPrintHandlers();
+  registerDebugSessionHandlers();
   registerTaskHandlers();
+  registerTestHandlers();
   registerPasswordHandlers();
   registerDialogHandlers(() => win);
   registerBrowserHandlers();
@@ -459,6 +467,7 @@ app.on('window-all-closed', () => {
   globalShortcut.unregisterAll();
   ptyManager.killAll();
   agentPrintRunner.stopAll();
+  testRunnerSession.stopAll();
   void cleanupEmulatorSessions();
 
   if (process.platform !== 'darwin') {
@@ -485,6 +494,7 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   ptyManager.killAll();
   agentPrintRunner.stopAll();
+  testRunnerSession.stopAll();
   void cleanupEmulatorSessions();
 });
 

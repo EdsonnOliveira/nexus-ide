@@ -50,6 +50,7 @@ import {
 } from '@/utils/terminalPasteImageTokens';
 import { readShellPromptInput, sanitizeAgentPrompt } from '@/utils/terminalShellPrompt';
 import { isProjectSwitching } from '@/utils/projectSwitch';
+import { readTerminalCellDimensions } from '@/utils/terminalBadgeMetrics';
 import type { XTermViewHandle } from '@/types';
 
 interface XTermViewProps {
@@ -78,9 +79,51 @@ function isTerminalAtBottom(terminal: Terminal): boolean {
   return buffer.baseY + terminal.rows >= buffer.length;
 }
 
+function isLineEditRedraw(data: string): boolean {
+  return data.includes('\r') && !data.includes('\n');
+}
+
+function readTerminalViewportWidth(mount: HTMLElement): number {
+  const screen = mount.querySelector('.xterm-screen');
+
+  if (screen instanceof HTMLElement && screen.clientWidth > 0) {
+    return screen.clientWidth;
+  }
+
+  return mount.clientWidth;
+}
+
+function applyTerminalGeometry(
+  fitAddon: FitAddon,
+  terminal: Terminal,
+  mount: HTMLElement,
+  ptyId: string | null,
+): void {
+  fitAddon.fit();
+
+  const cell = readTerminalCellDimensions(terminal, mount);
+  const viewportWidth = readTerminalViewportWidth(mount);
+
+  if (!cell || viewportWidth <= 0 || mount.clientHeight <= 0) {
+    return;
+  }
+
+  const cols = Math.max(2, Math.floor(viewportWidth / cell.width));
+  const rows = Math.max(1, Math.floor(mount.clientHeight / cell.height));
+
+  if (cols !== terminal.cols || rows !== terminal.rows) {
+    terminal.resize(cols, rows);
+  }
+
+  if (ptyId && terminal.cols > 0 && terminal.rows > 0) {
+    window.nexus.terminal.resize(ptyId, terminal.cols, terminal.rows);
+  }
+}
+
 function fitTerminal(
   fitAddon: FitAddon,
   terminal: Terminal,
+  mount: HTMLElement,
   ptyId: string | null,
   stickToBottomRef: { current: boolean },
   isVisible: boolean,
@@ -91,7 +134,7 @@ function fitTerminal(
 
   const stickToBottom = stickToBottomRef.current;
 
-  fitAddon.fit();
+  applyTerminalGeometry(fitAddon, terminal, mount, ptyId);
 
   if (stickToBottom) {
     terminal.scrollToBottom();
@@ -99,20 +142,34 @@ function fitTerminal(
   } else {
     stickToBottomRef.current = isTerminalAtBottom(terminal);
   }
+}
 
-  if (ptyId && terminal.cols > 0 && terminal.rows > 0) {
-    window.nexus.terminal.resize(ptyId, terminal.cols, terminal.rows);
+function writeTerminalOutput(
+  terminal: Terminal,
+  data: string,
+  stickToBottomRef: { current: boolean },
+): void {
+  terminal.write(data);
+
+  if (!stickToBottomRef.current) {
+    stickToBottomRef.current = isTerminalAtBottom(terminal);
+    return;
+  }
+
+  if (!isLineEditRedraw(data)) {
+    terminal.scrollToBottom();
   }
 }
 
 function refreshTerminalDisplay(
   fitAddon: FitAddon,
   terminal: Terminal,
+  mount: HTMLElement,
   ptyId: string | null,
   stickToBottomRef: { current: boolean },
   isVisible: boolean,
 ): void {
-  fitTerminal(fitAddon, terminal, ptyId, stickToBottomRef, isVisible);
+  fitTerminal(fitAddon, terminal, mount, ptyId, stickToBottomRef, isVisible);
 
   if (terminal.rows > 0) {
     terminal.refresh(0, terminal.rows - 1);
@@ -122,14 +179,35 @@ function refreshTerminalDisplay(
 function scheduleTerminalDisplayRefresh(
   fitAddon: FitAddon,
   terminal: Terminal,
+  mount: HTMLElement,
   ptyId: string | null,
   stickToBottomRef: { current: boolean },
   isVisible: boolean,
 ): void {
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      refreshTerminalDisplay(fitAddon, terminal, ptyId, stickToBottomRef, isVisible);
+      refreshTerminalDisplay(fitAddon, terminal, mount, ptyId, stickToBottomRef, isVisible);
     });
+  });
+}
+
+function scheduleTerminalGeometrySync(
+  fitAddon: FitAddon,
+  terminal: Terminal,
+  mount: HTMLElement,
+  ptyId: string | null,
+  stickToBottomRef: { current: boolean },
+  isVisible: boolean,
+  disposedRef: { current: boolean },
+): void {
+  scheduleTerminalDisplayRefresh(fitAddon, terminal, mount, ptyId, stickToBottomRef, isVisible);
+
+  void document.fonts.ready.then(() => {
+    if (!canUseTerminal(terminal, disposedRef)) {
+      return;
+    }
+
+    refreshTerminalDisplay(fitAddon, terminal, mount, ptyId, stickToBottomRef, isVisible);
   });
 }
 
@@ -303,9 +381,6 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
   const isVisibleRef = useRef(isVisible);
   const disposedRef = useRef(false);
   const scrollbackReplayGenerationRef = useRef(0);
-  const pendingWriteRef = useRef('');
-  const pendingStickRef = useRef(false);
-  const writeFrameRef = useRef<number | null>(null);
   const [linkMenu, setLinkMenu] = useState<{ url: string; x: number; y: number } | null>(null);
 
   paneIdRef.current = paneId;
@@ -541,13 +616,15 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         useTerminalSessionStore.getState().setLastCommand(paneIdRef.current, queuedLaunchCommand);
       }, LAUNCH_COMMAND_DELAY_MS);
 
-      if (terminal && fitAddon) {
-        scheduleTerminalDisplayRefresh(
+      if (terminal && fitAddon && containerRef.current) {
+        scheduleTerminalGeometrySync(
           fitAddon,
           terminal,
+          containerRef.current,
           createdPtyId,
           stickToBottomRef,
           isVisibleRef.current,
+          disposedRef,
         );
 
         if (isFocusedRef.current) {
@@ -604,7 +681,15 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     requestAnimationFrame(() => {
       applyTransparentViewport(container);
       terminal.refresh(0, terminal.rows - 1);
-      fitTerminal(fitAddon, terminal, ptyIdRef.current, stickToBottomRef, isVisibleRef.current);
+      scheduleTerminalGeometrySync(
+        fitAddon,
+        terminal,
+        container,
+        ptyIdRef.current,
+        stickToBottomRef,
+        isVisibleRef.current,
+        disposedRef,
+      );
     });
 
     terminalRef.current = terminal;
@@ -661,7 +746,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
 
       resizeFrameRef.current = window.requestAnimationFrame(() => {
         resizeFrameRef.current = null;
-        fitTerminal(fitAddon, terminal, ptyIdRef.current, stickToBottomRef, isVisibleRef.current);
+        fitTerminal(fitAddon, terminal, container, ptyIdRef.current, stickToBottomRef, isVisibleRef.current);
       });
     });
 
@@ -784,36 +869,6 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       stickToBottomRef.current = isTerminalAtBottom(terminal);
     });
 
-    const flushPendingWrite = () => {
-      writeFrameRef.current = null;
-      const buffered = pendingWriteRef.current;
-
-      if (!buffered) {
-        return;
-      }
-
-      pendingWriteRef.current = '';
-      const shouldStick = pendingStickRef.current;
-      pendingStickRef.current = false;
-
-      const activeTerminal = terminalRef.current;
-
-      if (!canUseTerminal(activeTerminal, disposedRef)) {
-        return;
-      }
-
-      activeTerminal.write(buffered);
-
-      if (shouldStick) {
-        activeTerminal.scrollToBottom();
-        stickToBottomRef.current = true;
-      } else {
-        stickToBottomRef.current = isTerminalAtBottom(activeTerminal);
-      }
-
-      scheduleSyncPasteImagesFromPromptRef.current(true);
-    };
-
     const unsubscribeData = window.nexus.terminal.onData((incomingPtyId, data) => {
       if (incomingPtyId !== ptyIdRef.current) {
         return;
@@ -827,19 +882,14 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         return;
       }
 
-      if (!canUseTerminal(terminalRef.current, disposedRef)) {
+      const activeTerminal = terminalRef.current;
+
+      if (!canUseTerminal(activeTerminal, disposedRef)) {
         return;
       }
 
-      pendingWriteRef.current += parseStream(data);
-
-      if (stickToBottomRef.current) {
-        pendingStickRef.current = true;
-      }
-
-      if (writeFrameRef.current === null) {
-        writeFrameRef.current = requestAnimationFrame(flushPendingWrite);
-      }
+      writeTerminalOutput(activeTerminal, parseStream(data), stickToBottomRef);
+      scheduleSyncPasteImagesFromPromptRef.current(true);
     });
 
     const unsubscribeExit = window.nexus.terminal.onExit((incomingPtyId, code) => {
@@ -959,12 +1009,6 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     return () => {
       disposedRef.current = true;
 
-      if (writeFrameRef.current !== null) {
-        cancelAnimationFrame(writeFrameRef.current);
-        writeFrameRef.current = null;
-        pendingWriteRef.current = '';
-      }
-
       if (syncPasteImagesTimerRef.current !== null) {
         window.clearTimeout(syncPasteImagesTimerRef.current);
         syncPasteImagesTimerRef.current = null;
@@ -1029,8 +1073,16 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
             }
           }
 
-          if (terminal && fitAddon && isVisible && canUseTerminal(terminal, disposedRef)) {
-            scheduleTerminalDisplayRefresh(fitAddon, terminal, ptyId, stickToBottomRef, true);
+          if (terminal && fitAddon && isVisible && containerRef.current && canUseTerminal(terminal, disposedRef)) {
+            scheduleTerminalGeometrySync(
+              fitAddon,
+              terminal,
+              containerRef.current,
+              ptyId,
+              stickToBottomRef,
+              true,
+              disposedRef,
+            );
           }
 
           return;
@@ -1118,13 +1170,19 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
           return;
         }
 
-        if (canUseTerminal(terminalRef.current, disposedRef) && fitAddonRef.current) {
-          scheduleTerminalDisplayRefresh(
+        if (
+          containerRef.current &&
+          canUseTerminal(terminalRef.current, disposedRef) &&
+          fitAddonRef.current
+        ) {
+          scheduleTerminalGeometrySync(
             fitAddonRef.current,
             terminalRef.current,
+            containerRef.current,
             ptyIdRef.current,
             stickToBottomRef,
             true,
+            disposedRef,
           );
         }
       })();
@@ -1160,11 +1218,19 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     const terminal = terminalRef.current;
     const fitAddon = fitAddonRef.current;
 
-    if (!terminal || !fitAddon) {
+    if (!terminal || !fitAddon || !containerRef.current) {
       return;
     }
 
-    scheduleTerminalDisplayRefresh(fitAddon, terminal, ptyId, stickToBottomRef, true);
+    scheduleTerminalGeometrySync(
+      fitAddon,
+      terminal,
+      containerRef.current,
+      ptyId,
+      stickToBottomRef,
+      true,
+      disposedRef,
+    );
     terminal.focus();
   }, [isFocused, ptyId]);
 

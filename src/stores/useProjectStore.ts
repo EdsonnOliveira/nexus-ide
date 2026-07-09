@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import type { AppState, MailMailboxRef, Project, ProjectUpdatePayload, Tab, TabBarItem, Workspace, WorkspaceUpdatePayload } from '@/types';
 import { PROJECT_COLORS } from '@/types';
+import {
+  migrateProjectTestEntry,
+} from '@/utils/testLabels';
 import { migrateLegacyProjectTabs } from '@/utils/migrateTabs';
 import { rawAgentTurnHistoryNeedsTrim, trimAgentTurnsInTabBarItems } from '@/utils/trimAgentTurnHistory';
 import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
@@ -39,7 +42,7 @@ function hasMissingBadgeColorIndex(tabs: TabBarItem[]): boolean {
 
 export type ExplorerView = 'tree' | 'git';
 
-export type SidePanel = 'explorer' | 'passwords' | 'automations' | 'tasks' | null;
+export type SidePanel = 'explorer' | 'passwords' | 'automations' | 'tasks' | 'tests' | null;
 
 interface ProjectStoreState {
   projects: Project[];
@@ -74,6 +77,7 @@ interface ProjectStoreState {
   togglePasswords: () => void;
   toggleAutomations: () => void;
   toggleTasks: () => void;
+  toggleTests: () => void;
   setSidePanel: (panel: SidePanel | 'git') => void;
   startSidebarVideoSession: (session: SidebarVideoSession, lastLink?: string) => Promise<void>;
   setSidebarVideoLastLink: (link: string | null) => Promise<void>;
@@ -121,6 +125,7 @@ function migrateProject(project: Project, fallbackWorkspaceId: string): Project 
     automations: legacyProject.automations ?? [],
     whatsappLink: legacyProject.whatsappLink ?? null,
     mailInbox: legacyProject.mailInbox ?? null,
+    testEntries: (legacyProject.testEntries ?? []).map(migrateProjectTestEntry),
     agentGitGroups: legacyProject.agentGitGroups ?? [],
     agentResponseSkills: legacyProject.agentResponseSkills ?? [],
     flag: legacyProject.flag ?? null,
@@ -749,6 +754,10 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   toggleTasks: () => {
     const current = get().sidePanel;
     set({ sidePanel: current === 'tasks' ? null : 'tasks' });
+  },
+  toggleTests: () => {
+    const current = get().sidePanel;
+    set({ sidePanel: current === 'tests' ? null : 'tests' });
   },
   setSidePanel: (panel) => {
     if (panel === 'git') {

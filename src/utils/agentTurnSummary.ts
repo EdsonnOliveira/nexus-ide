@@ -360,6 +360,40 @@ export function buildLiveToolBatchSummary(
       /^(?:Glob|Grep)/i.test(activity.label.trim()),
   ).length;
 
+  if (running) {
+    const liveStatus = [...activities]
+      .reverse()
+      .find((activity) => activity.kind === 'live_status' && activity.label.trim());
+
+    if (liveStatus?.label.trim()) {
+      return liveStatus.label.trim();
+    }
+
+    const streamingShell = [...activities]
+      .reverse()
+      .find(
+        (activity) =>
+          activity.kind === 'tool_run' &&
+          activity.streaming &&
+          activity.toolCommand?.trim(),
+      );
+
+    if (streamingShell?.toolCommand?.trim()) {
+      const command = streamingShell.toolCommand.trim();
+      const preview = command.length > 56 ? `${command.slice(0, 53)}…` : command;
+
+      return `Executando ${preview}`;
+    }
+
+    const streamingTool = [...activities]
+      .reverse()
+      .find((activity) => activity.kind === 'tool_run' && activity.streaming && activity.label.trim());
+
+    if (streamingTool?.label.trim()) {
+      return streamingTool.label.trim();
+    }
+  }
+
   if (fileEdits.length > 0) {
     const additions = fileEdits.reduce((sum, entry) => sum + (entry.additions ?? 0), 0);
     const deletions = fileEdits.reduce((sum, entry) => sum + (entry.deletions ?? 0), 0);
@@ -437,6 +471,15 @@ export function shouldShowLiveToolBatchDetail(
 ): boolean {
   if (!detail) {
     return false;
+  }
+
+  if (detail.kind === 'live_status') {
+    const detailLabel = detail.label.trim();
+    const summaryLabel = summary?.trim() ?? '';
+
+    if (!detailLabel || detailLabel === summaryLabel) {
+      return false;
+    }
   }
 
   if (detail.streaming || detail.kind === 'live_status') {

@@ -13,8 +13,13 @@ import {
   isAgentTurnSummaryVisible,
   splitAgentResponseForSummary,
 } from '@/utils/agentTurnSummary';
-import { sanitizeResponseText, isValidReadFileTarget } from '@/utils/agentTranscriptParser';
+import {
+  resolveAgentActivityFilePath,
+  sanitizeResponseText,
+  isValidReadFileTarget,
+} from '@/utils/agentTranscriptParser';
 import { normalizeMarkdownSource } from '@/utils/markdownPreview';
+import { useTabActions } from '@/stores/useTabStore';
 
 interface AgentActivityListProps {
   activities: AgentActivity[];
@@ -28,7 +33,9 @@ interface AgentActivityListProps {
 }
 
 function getSanitizedResponseLabel(label: string): string {
-  return sanitizeResponseText(normalizeMarkdownSource(label));
+  const normalized = normalizeMarkdownSource(label);
+  const sanitized = sanitizeResponseText(normalized).trim();
+  return sanitized || normalized.trim();
 }
 
 function isRenderableActivity(activity: AgentActivity, running: boolean): boolean {
@@ -95,10 +102,17 @@ function findAgentResponseInlineCode(element: EventTarget | null): HTMLElement |
   return code;
 }
 
-const AgentResponseBody = memo(function AgentResponseBody({ content }: { content: string }) {
+const AgentResponseBody = memo(function AgentResponseBody({
+  content,
+  projectPath,
+}: {
+  content: string;
+  projectPath: string;
+}) {
   const html = useDeferredMarkdownHtml(content);
   const bodyRef = useMarkdownCodeHighlight<HTMLDivElement>(html);
   const copiedTimeoutRef = useRef<number | null>(null);
+  const { openFileTab } = useTabActions();
 
   const handleClick = useCallback(async (event: MouseEvent<HTMLDivElement>) => {
     const code = findAgentResponseInlineCode(event.target);
@@ -131,11 +145,20 @@ const AgentResponseBody = memo(function AgentResponseBody({ content }: { content
         code.removeAttribute('title');
         copiedTimeoutRef.current = null;
       }, 1600);
+
+      if (code.classList.contains('markdown-preview__inline-code--path')) {
+        const absolutePath = resolveAgentActivityFilePath(projectPath, value);
+
+        if (absolutePath) {
+          const fileName = absolutePath.split(/[/\\]/).pop() ?? value;
+          void openFileTab(absolutePath, fileName);
+        }
+      }
     } catch {
       code.classList.remove('markdown-preview__inline-code--copied');
       code.removeAttribute('title');
     }
-  }, []);
+  }, [openFileTab, projectPath]);
 
   return (
     <div
@@ -151,13 +174,14 @@ function renderResponseBlock(
   activity: AgentActivity,
   content: string,
   running: boolean,
+  projectPath: string,
   className = '',
 ): ReactNode {
   return (
     <div
       className={`agent-view__response${running && activity.streaming ? ' agent-view__response--streaming' : ' agent-view__response--settled'}${className ? ` ${className}` : ''}`}
     >
-      <AgentResponseBody content={content} />
+      <AgentResponseBody content={content} projectPath={projectPath} />
     </div>
   );
 }
@@ -277,14 +301,14 @@ function AgentActivityListComponent({
           if (split) {
             return (
               <Fragment key={activity.id}>
-                {renderResponseBlock(activity, split.lead, running, 'agent-view__response--lead')}
+                {renderResponseBlock(activity, split.lead, running, projectPath, 'agent-view__response--lead')}
                 <AgentTurnSummaryLine summary={summary!} projectPath={projectPath} />
-                {renderResponseBlock(activity, split.rest, running, 'agent-view__response--tail')}
+                {renderResponseBlock(activity, split.rest, running, projectPath, 'agent-view__response--tail')}
               </Fragment>
             );
           }
 
-          return renderResponseBlock(activity, label, running);
+          return renderResponseBlock(activity, label, running, projectPath);
         }
 
         if (activity.kind === 'question') {

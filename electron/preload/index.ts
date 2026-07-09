@@ -377,13 +377,16 @@ const nexusApi = {
       ipcRenderer.invoke('emulator:start', tabId, platform, deviceId),
     stop: (sessionId) => ipcRenderer.invoke('emulator:stop', sessionId),
     stopByTabId: (tabId) => ipcRenderer.invoke('emulator:stopByTabId', tabId),
+    attachTab: (tabId) => ipcRenderer.invoke('emulator:attachTab', tabId),
     tap: (sessionId, x, y) => ipcRenderer.invoke('emulator:tap', sessionId, x, y),
     swipe: (sessionId, x1, y1, x2, y2, durationMs) =>
       ipcRenderer.invoke('emulator:swipe', sessionId, x1, y1, x2, y2, durationMs),
     pressHome: (sessionId) => ipcRenderer.invoke('emulator:pressHome', sessionId),
+    pressAppSwitcher: (sessionId) => ipcRenderer.invoke('emulator:pressAppSwitcher', sessionId),
     pressBack: (sessionId) => ipcRenderer.invoke('emulator:pressBack', sessionId),
     rotate: (sessionId) => ipcRenderer.invoke('emulator:rotate', sessionId),
     typeText: (sessionId, text) => ipcRenderer.invoke('emulator:typeText', sessionId, text),
+    sendInput: (sessionId, line) => ipcRenderer.invoke('emulator:sendInput', sessionId, line),
     screenshot: (sessionId) => ipcRenderer.invoke('emulator:screenshot', sessionId),
     onVideoChunk: (callback) => {
       const listener = (
@@ -425,10 +428,11 @@ const nexusApi = {
           tabId: string;
           state: 'booting' | 'running' | 'stopped' | 'error';
           message?: string;
-          captureBackend?: 'idb' | 'simctl' | 'adb';
+          captureBackend?: 'simulator-server' | 'idb' | 'simctl' | 'adb';
           targetFps?: number;
           streamFps?: number;
           fallbackReason?: string;
+          streamUrl?: string;
         },
       ) => {
         callback(payload);
@@ -443,10 +447,11 @@ const nexusApi = {
         payload: {
           sessionId: string;
           tabId: string;
-          captureBackend: 'idb' | 'simctl' | 'adb';
+          captureBackend: 'simulator-server' | 'idb' | 'simctl' | 'adb';
           targetFps: number;
           streamFps: number;
           fallbackReason?: string;
+          streamUrl?: string;
         },
       ) => {
         callback(payload);
@@ -507,6 +512,47 @@ const nexusApi = {
     addComment: (projectId, externalId, body) =>
       ipcRenderer.invoke('tasks:addComment', projectId, externalId, body),
   },
+  tests: {
+    discover: (projectPath, kind) => ipcRenderer.invoke('tests:discover', projectPath, kind),
+    resolveSteps: (projectPath, entry) =>
+      ipcRenderer.invoke('tests:resolveSteps', projectPath, entry),
+    run: (projectPath, projectId, entry, steps = []) =>
+      ipcRenderer.invoke('tests:run', projectPath, projectId, entry, steps),
+    stop: (runId) => ipcRenderer.invoke('tests:stop', runId),
+    isRunning: (runId) => ipcRenderer.invoke('tests:isRunning', runId),
+    prepareMaestroRun: (steps) => ipcRenderer.invoke('tests:prepareMaestroRun', steps),
+    resolveHighlight: (runId, source) => ipcRenderer.invoke('tests:resolveHighlight', runId, source),
+    onOutput: (callback) => {
+      const listener = (
+        _: Electron.IpcRendererEvent,
+        payload: { runId: string; entryId: string; projectId: string; chunk: string },
+      ) => {
+        callback(payload);
+      };
+
+      ipcRenderer.on('tests:output', listener);
+      return () => ipcRenderer.off('tests:output', listener);
+    },
+    onExit: (callback) => {
+      const listener = (
+        _: Electron.IpcRendererEvent,
+        payload: { runId: string; entryId: string; projectId: string; code: number },
+      ) => {
+        callback(payload);
+      };
+
+      ipcRenderer.on('tests:exit', listener);
+      return () => ipcRenderer.off('tests:exit', listener);
+    },
+    onHighlight: (callback) => {
+      const listener = (_: Electron.IpcRendererEvent, payload: import('../../types/test').MaestroTestHighlightEvent) => {
+        callback(payload);
+      };
+
+      ipcRenderer.on('tests:highlight', listener);
+      return () => ipcRenderer.off('tests:highlight', listener);
+    },
+  },
   passwords: {
     getValues: (projectId: string, collectionId: string): Promise<Record<string, string>> =>
       ipcRenderer.invoke('passwords:getValues', projectId, collectionId),
@@ -519,6 +565,17 @@ const nexusApi = {
       ipcRenderer.invoke('passwords:deleteValues', projectId, collectionId),
     getGuestPreloadPath: (): Promise<string> =>
       ipcRenderer.invoke('passwords:getGuestPreloadPath'),
+  },
+  debug: {
+    sessionLog: (payload: {
+      location: string;
+      message: string;
+      data?: Record<string, unknown>;
+      hypothesisId?: string;
+      runId?: string;
+    }): void => {
+      ipcRenderer.send('debug:sessionLog', payload);
+    },
   },
 };
 

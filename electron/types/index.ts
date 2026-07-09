@@ -1,4 +1,5 @@
 import type { AgentGitChangeGroup } from './agentGit';
+import type { ProjectTestEntry } from './test';
 
 export type TerminalAgent = 'cursor' | 'claude' | 'composer' | 'shell';
 
@@ -169,13 +170,21 @@ export type {
   TaskSource,
 } from './task';
 
+export type {
+  DiscoveredTestTarget,
+  ProjectTestEntry,
+  TestRunStep,
+  TestRunnerKind,
+  TestStepStatus,
+} from './test';
+
 export type { AgentGitChangeFile, AgentGitChangeGroup } from './agentGit';
 
 export type EmulatorPlatform = 'android' | 'ios';
 
 export type EmulatorSessionState = 'booting' | 'running' | 'stopped' | 'error';
 
-export type EmulatorCaptureBackend = 'idb' | 'simctl' | 'adb';
+export type EmulatorCaptureBackend = 'simulator-server' | 'idb' | 'simctl' | 'adb';
 
 export type EmulatorVideoCodec = 'h264' | 'jpeg' | 'png';
 
@@ -184,6 +193,20 @@ export interface EmulatorStreamStats {
   targetFps: number;
   streamFps: number;
   fallbackReason?: string;
+  streamUrl?: string;
+}
+
+export interface EmulatorAttachResult {
+  sessionId: string;
+  state: EmulatorSessionState;
+  message?: string;
+  captureBackend?: EmulatorCaptureBackend;
+  targetFps?: number;
+  streamFps?: number;
+  fallbackReason?: string;
+  streamUrl?: string;
+  frameWidth?: number;
+  frameHeight?: number;
 }
 
 export interface EmulatorDevice {
@@ -391,6 +414,7 @@ export interface Project {
   mailInbox?: MailMailboxRef | null;
   tasks?: ProjectTask[];
   taskIntegration?: TaskIntegrationConfig | null;
+  testEntries?: ProjectTestEntry[];
   agentGitGroups?: AgentGitChangeGroup[];
   agentResponseSkills?: ProjectAgentResponseSkill[];
   flag?: ProjectFlag | null;
@@ -428,6 +452,7 @@ export interface ProjectUpdatePayload {
   mailInbox?: MailMailboxRef | null;
   tasks?: ProjectTask[];
   taskIntegration?: TaskIntegrationConfig | null;
+  testEntries?: ProjectTestEntry[];
   agentGitGroups?: AgentGitChangeGroup[];
   agentResponseSkills?: ProjectAgentResponseSkill[];
   flag?: ProjectFlag | null;

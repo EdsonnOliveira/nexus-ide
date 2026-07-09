@@ -9,6 +9,7 @@ import type {
   AgentTurnSummaryFileRef,
 } from '@/types';
 import { isAgentTurnSummaryVisible } from '@/utils/agentTurnSummary';
+import { writeDebugSessionLog } from '@/utils/debugSessionLog';
 import { sanitizeResponseText } from '@/utils/agentTranscriptParser';
 import { ensureOtherOption } from '@/utils/agentQuestionPrompt';
 import {
@@ -748,6 +749,20 @@ function mergeInteractionActivitiesFromTurn(
   return merged;
 }
 
+export function hasMeaningfulStreamJsonTurnOutput(state: AgentStreamJsonParserState): boolean {
+  if (state.pendingResponseText.trim()) {
+    return true;
+  }
+
+  return state.activities.some(
+    (entry) =>
+      (entry.kind === 'response' && entry.label.trim().length > 0) ||
+      entry.kind === 'file_edit' ||
+      (entry.kind === 'question' && entry.questionStatus === 'pending') ||
+      (entry.kind === 'plan' && entry.planStatus === 'pending'),
+  );
+}
+
 export function hasPendingStreamJsonInteraction(
   state: AgentStreamJsonParserState,
   activities: AgentActivity[] = state.activities,
@@ -774,7 +789,8 @@ function isRenderableStreamJsonActivity(entry: AgentActivity): boolean {
   }
 
   if (entry.kind === 'response') {
-    return sanitizeResponseText(entry.label).trim().length > 0;
+    const sanitized = sanitizeResponseText(entry.label).trim();
+    return sanitized.length > 0 || entry.label.trim().length > 0;
   }
 
   if (entry.kind === 'thought') {
@@ -1178,8 +1194,23 @@ function handleStreamJsonEvent(state: AgentStreamJsonParserState, event: Record<
         upsertResponse(state, resultText, false);
       }
 
-      if (!hasPendingStreamJsonInteraction(state)) {
+      if (
+        !hasPendingStreamJsonInteraction(state) &&
+        hasMeaningfulStreamJsonTurnOutput(state)
+      ) {
         state.shouldFinalize = true;
+        // #region agent log
+        writeDebugSessionLog({
+          location: 'agentStreamJsonParser.ts:result-success',
+          message: 'shouldFinalize set from result success',
+          data: {
+            resultTextLength: resultText.length,
+            activityKinds: state.activities.map((entry) => entry.kind),
+            hasPendingResponse: Boolean(state.pendingResponseText.trim()),
+          },
+          hypothesisId: 'B',
+        });
+        // #endregion
       }
 
       return;
@@ -1191,6 +1222,18 @@ function handleStreamJsonEvent(state: AgentStreamJsonParserState, event: Record<
 
     if (!hasPendingStreamJsonInteraction(state)) {
       state.shouldFinalize = true;
+      // #region agent log
+      writeDebugSessionLog({
+        location: 'agentStreamJsonParser.ts:result-non-success',
+        message: 'shouldFinalize set from result non-success',
+        data: {
+          subtype: event.subtype,
+          resultTextLength: resultText.length,
+          activityKinds: state.activities.map((entry) => entry.kind),
+        },
+        hypothesisId: 'B',
+      });
+      // #endregion
     }
 
     return;
@@ -1266,6 +1309,80 @@ function consumeJsonObjects(state: AgentStreamJsonParserState): void {
   }
 }
 
+export function upsertStreamJsonLiveStatus(
+  state: AgentStreamJsonParserState,
+  label: string,
+): boolean {
+  const trimmed = label.trim();
+
+  if (!trimmed) {
+    return false;
+  }
+
+  const existing = state.activities.find((entry) => entry.kind === 'live_status');
+
+  if (existing?.label === trimmed) {
+    return false;
+  }
+
+  if (existing) {
+    state.activities = state.activities.map((entry) =>
+      entry.id === existing.id ? { ...entry, label: trimmed } : entry,
+    );
+    return true;
+  }
+
+  state.activities = [
+    ...state.activities.filter((entry) => entry.kind !== 'live_status'),
+    createActivity('live_status', trimmed),
+  ];
+  return true;
+}
+
+export function clearStreamJsonLiveStatus(state: AgentStreamJsonParserState): boolean {
+  if (!state.activities.some((entry) => entry.kind === 'live_status')) {
+    return false;
+  }
+
+  state.activities = state.activities.filter((entry) => entry.kind !== 'live_status');
+  return true;
+}
+
+export function resolveStreamJsonStallLiveStatus(
+  state: AgentStreamJsonParserState,
+  idleMs: number,
+): string | null {
+  if (findStreamingThoughtActivity(state)?.streaming) {
+    return null;
+  }
+
+  if (state.runningToolRunStack.length > 0) {
+    return null;
+  }
+
+  if (state.activities.some((entry) => entry.kind === 'tool_run' && entry.streaming)) {
+    return null;
+  }
+
+  const idleSeconds = Math.max(1, Math.round(idleMs / 1000));
+
+  if (state.pendingResponseText.trim() || state.responseId) {
+    return `Agent executando… (${idleSeconds}s)`;
+  }
+
+  return `Aguardando resposta do agent… (${idleSeconds}s)`;
+}
+
+export function forceSettleStreamJsonInFlightWork(state: AgentStreamJsonParserState): void {
+  while (state.runningToolRunStack.length > 0) {
+    completeToolRun(state);
+  }
+
+  settleThought(state);
+  sealActiveResponseSegment(state);
+  state.activities = state.activities.filter((entry) => entry.kind !== 'live_status');
+}
+
 export function feedAgentStreamJsonChunk(
   state: AgentStreamJsonParserState,
   chunk: string,
@@ -1308,19 +1425,85 @@ export function isAgentStreamJsonStateAwaitingCompletion(
     return true;
   }
 
-  if (state.pendingResponseText.trim()) {
+  if (state.runningToolRunStack.length > 0) {
+    return true;
+  }
+
+  if (state.responseId) {
+    return true;
+  }
+
+  if (findStreamingThoughtActivity(state)?.streaming) {
+    return true;
+  }
+
+  if (
+    !hasMeaningfulStreamJsonTurnOutput(state) &&
+    state.activities.some((entry) => entry.kind === 'thought')
+  ) {
     return true;
   }
 
   return state.activities.some(
     (entry) =>
-      entry.kind === 'file_read' ||
-      entry.kind === 'file_edit' ||
-      entry.kind === 'live_status' ||
-      entry.kind === 'tool_run' ||
-      entry.kind === 'thought' ||
-      entry.kind === 'response',
+      (entry.kind === 'tool_run' || entry.kind === 'live_status' || entry.kind === 'response') &&
+      Boolean(entry.streaming),
   );
+}
+
+export function tryMarkStreamJsonReadyToFinalize(state: AgentStreamJsonParserState): boolean {
+  if (state.shouldFinalize) {
+    return true;
+  }
+
+  if (isAgentStreamJsonStateAwaitingCompletion(state)) {
+    return false;
+  }
+
+  if (hasPendingStreamJsonInteraction(state)) {
+    return false;
+  }
+
+  if (state.runningToolRunStack.length > 0) {
+    return false;
+  }
+
+  if (findStreamingThoughtActivity(state)?.streaming) {
+    return false;
+  }
+
+  if (!hasMeaningfulStreamJsonTurnOutput(state)) {
+    return false;
+  }
+
+  state.activities = state.activities.map((entry) => {
+    if (entry.kind === 'thought' && entry.streaming) {
+      return {
+        ...entry,
+        streaming: undefined,
+        collapsed: true,
+      };
+    }
+
+    if (entry.kind === 'response' && entry.streaming) {
+      return {
+        ...entry,
+        streaming: undefined,
+      };
+    }
+
+    if ((entry.kind === 'tool_run' || entry.kind === 'live_status') && entry.streaming) {
+      return {
+        ...entry,
+        streaming: undefined,
+      };
+    }
+
+    return entry;
+  });
+  settleThought(state);
+  state.shouldFinalize = true;
+  return true;
 }
 
 function resolveIncompleteStreamJsonResponseFallback(
@@ -1363,6 +1546,17 @@ export function buildAgentTurnSummaryFromStreamJsonState(
   return isAgentTurnSummaryVisible(summary) ? summary : undefined;
 }
 
+function resolveFinalResponseLabel(raw: string): string {
+  const trimmed = raw.trim();
+
+  if (!trimmed) {
+    return '';
+  }
+
+  const sanitized = sanitizeResponseText(trimmed).trim();
+  return sanitized || trimmed;
+}
+
 export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonParserState): AgentTurn {
   consumeJsonObjects(state);
   state.jsonBuffer = '';
@@ -1382,7 +1576,8 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
       }
 
       if (entry.kind === 'response') {
-        return { ...entry, streaming: undefined };
+        const label = resolveFinalResponseLabel(entry.label);
+        return { ...entry, label, streaming: undefined };
       }
 
       return entry;
@@ -1391,7 +1586,7 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
   if (!activities.some((entry) => entry.kind === 'response') && state.pendingResponseText.trim()) {
     activities = [
       ...activities.filter((entry) => entry.kind !== 'response'),
-      createActivity('response', state.pendingResponseText.trim()),
+      createActivity('response', resolveFinalResponseLabel(state.pendingResponseText)),
     ];
   }
 
@@ -1447,6 +1642,22 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
       ),
     ];
   }
+
+  // #region agent log
+  writeDebugSessionLog({
+    location: 'agentStreamJsonParser.ts:finalizeStreamJsonTurn',
+    message: 'stream json turn finalized',
+    data: {
+      activityKinds: activities.map((entry) => entry.kind),
+      responseCount: activities.filter((entry) => entry.kind === 'response').length,
+      pendingResponseLength: state.pendingResponseText.trim().length,
+      incompleteFallback,
+      hasPendingInteraction,
+    },
+    hypothesisId: 'F',
+    runId: 'post-fix',
+  });
+  // #endregion
 
   return {
     ...turn,

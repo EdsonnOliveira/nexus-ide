@@ -12,6 +12,7 @@ import { TaskFormModal } from '@/components/tasks/TaskFormModal';
 import { TaskProjectPickerModal } from '@/components/tasks/TaskProjectPickerModal';
 import { useHomeDashboardMacParakeet } from '@/hooks/useHomeDashboardMacParakeet';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { useToastStore } from '@/stores/useToastStore';
 import type { MacParakeetTranscriptionDetail, MacParakeetTranscriptionItem } from '@/types';
 import type { ProjectTask } from '@/types/task';
 import {
@@ -42,6 +43,7 @@ function HomeDashboardMacParakeetCardComponent() {
   const projects = useProjectStore((state) => state.projects);
   const activeWorkspaceId = useProjectStore((state) => state.activeWorkspaceId);
   const updateProject = useProjectStore((state) => state.updateProject);
+  const showToast = useToastStore((state) => state.showToast);
   const {
     snapshot,
     transcriptions,
@@ -238,8 +240,9 @@ function HomeDashboardMacParakeetCardComponent() {
       const tasks = project.tasks ?? [];
       await updateProject(project.id, { tasks: [...tasks, task] });
       setTaskFormState(null);
+      showToast(`Tarefa criada em ${project.name}`);
     },
-    [projects, taskFormState, updateProject],
+    [projects, showToast, taskFormState, updateProject],
   );
 
   const showSkeleton = !hydrated || (loading && transcriptions.length === 0);
@@ -405,6 +408,7 @@ function HomeDashboardMacParakeetCardComponent() {
         <TaskFormModal
           projectId={taskFormState.projectId}
           task={taskFormState.task}
+          autoFocusTitle
           onClose={handleCloseTaskForm}
           onSave={(task) => void handleSaveTask(task)}
         />

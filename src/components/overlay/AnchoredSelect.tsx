@@ -186,15 +186,21 @@ function AnchoredSelectComponent<T extends string = string>({
   const [open, setOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
 
+  const selectedOption = useMemo(() => {
+    if (value === '') {
+      return null;
+    }
+
+    return options.find((option) => option.value === value) ?? null;
+  }, [options, value]);
+
   const selectedContent = useMemo(() => {
     if (value === '') {
       return allowEmpty ? emptyLabel : placeholder;
     }
 
-    const selectedOption = options.find((option) => option.value === value);
-
     return selectedOption?.labelNode ?? selectedOption?.label ?? placeholder;
-  }, [allowEmpty, emptyLabel, options, placeholder, value]);
+  }, [allowEmpty, emptyLabel, placeholder, selectedOption, value]);
 
   const handleToggle = useCallback(() => {
     if (disabled) {
@@ -243,7 +249,14 @@ function AnchoredSelectComponent<T extends string = string>({
               {leadingIcon}
             </span>
           ) : null}
-          <span className='anchored-select__trigger-label'>{selectedContent}</span>
+          {selectedOption?.subtitle ? (
+            <span className='anchored-select__trigger-copy'>
+              <span className='anchored-select__trigger-label'>{selectedContent}</span>
+              <span className='anchored-select__trigger-subtitle'>{selectedOption.subtitle}</span>
+            </span>
+          ) : (
+            <span className='anchored-select__trigger-label'>{selectedContent}</span>
+          )}
         </span>
         <ChevronDown size={14} strokeWidth={2} className='anchored-select__trigger-icon' aria-hidden />
       </button>

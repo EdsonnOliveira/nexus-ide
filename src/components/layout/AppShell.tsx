@@ -3,6 +3,7 @@ import { FolderPlus } from 'lucide-react';
 import { useNexusReady } from '@/hooks/useNexusReady';
 import { useGitChangeCount } from '@/hooks/useGitChangeCount';
 import { useAutomationScheduler } from '@/hooks/useAutomationScheduler';
+import { useTestRunnerEvents } from '@/hooks/useTestRunnerEvents';
 import { flushTerminalSessionsNow } from '@/utils/persistTerminalSession';
 import { flushAgentGitGroupsNow } from '@/utils/persistAgentGitGroups';
 import { bumpFileExternalRevision } from '@/utils/fileExternalRevision';
@@ -18,6 +19,7 @@ import { TitleBar } from '@/components/layout/TitleBar';
 import { GlobalSearchPalette } from '@/components/search/GlobalSearchPalette';
 import { DailyGenerationProvider } from '@/components/home/DailyGenerationProvider';
 import { CalendarEventAlertHost } from '@/components/sidebar/CalendarEventAlertHost';
+import { AppToastHost } from '@/components/overlay/AppToastHost';
 import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { projectHasLiveAgentSession } from '@/utils/paneAgentSession';
@@ -65,6 +67,12 @@ const ProjectTasksDrawer = lazy(() =>
   })),
 );
 
+const ProjectTestsDrawer = lazy(() =>
+  import('@/components/tests/ProjectTestsDrawer').then((module) => ({
+    default: module.ProjectTestsDrawer,
+  })),
+);
+
 const ProjectPasswordsDrawer = lazy(() =>
   import('@/components/passwords/ProjectPasswordsDrawer').then((module) => ({
     default: module.ProjectPasswordsDrawer,
@@ -97,6 +105,7 @@ function EmptyWorkspace() {
 
 function AppShellComponent() {
   const nexusReady = useNexusReady();
+  useTestRunnerEvents();
   const initialize = useProjectStore((state) => state.initialize);
   const toggleExplorerEntry = useProjectStore((state) => state.toggleExplorerEntry);
   const toggleGlobalSearch = useGlobalSearchStore((state) => state.toggle);
@@ -353,7 +362,9 @@ function AppShellComponent() {
                     ? 'Carregando automações...'
                     : sidePanel === 'tasks'
                       ? 'Carregando tarefas...'
-                      : 'Carregando explorador...'}
+                      : sidePanel === 'tests'
+                        ? 'Carregando testes...'
+                        : 'Carregando explorador...'}
               </div>
             }
           >
@@ -374,6 +385,7 @@ function AppShellComponent() {
               <ProjectAutomationsDrawer projectId={activeProject.id} />
             ) : null}
             {sidePanel === 'tasks' ? <ProjectTasksDrawer projectId={activeProject.id} /> : null}
+            {sidePanel === 'tests' ? <ProjectTestsDrawer projectId={activeProject.id} /> : null}
           </Suspense>
         </div>
       ) : null}
@@ -381,6 +393,7 @@ function AppShellComponent() {
       <StatusBar />
       <GlobalSearchPalette />
       <CalendarEventAlertHost />
+      <AppToastHost />
       </div>
     </DailyGenerationProvider>
   );

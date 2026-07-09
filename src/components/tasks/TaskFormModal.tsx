@@ -1,5 +1,5 @@
 import { Paperclip, Trash2, X } from 'lucide-react';
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { TaskAttachmentImage } from '@/components/tasks/TaskAttachmentImage';
@@ -15,6 +15,7 @@ import { readClipboardImageDataUrl } from '@/utils/terminalClipboardImage';
 interface TaskFormModalProps {
   projectId: string;
   task: ProjectTask | null;
+  autoFocusTitle?: boolean;
   onClose: () => void;
   onSave: (task: ProjectTask) => void;
 }
@@ -35,7 +36,13 @@ function resolveDueDateInput(task: ProjectTask | null): string {
   return '';
 }
 
-function TaskFormModalComponent({ projectId, task, onClose, onSave }: TaskFormModalProps) {
+function TaskFormModalComponent({
+  projectId,
+  task,
+  autoFocusTitle = false,
+  onClose,
+  onSave,
+}: TaskFormModalProps) {
   const [title, setTitle] = useState(task?.title ?? '');
   const [description, setDescription] = useState(task?.description ?? '');
   const [dueDateInput, setDueDateInput] = useState(() => resolveDueDateInput(task));
@@ -44,6 +51,7 @@ function TaskFormModalComponent({ projectId, task, onClose, onSave }: TaskFormMo
   const [tagDraft, setTagDraft] = useState('');
   const [attachments, setAttachments] = useState<TaskAttachment[]>(task?.attachments ?? []);
   const [error, setError] = useState<string | null>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
   const taskId = useMemo(() => task?.id ?? crypto.randomUUID(), [task?.id]);
 
   useEffect(() => {
@@ -56,6 +64,15 @@ function TaskFormModalComponent({ projectId, task, onClose, onSave }: TaskFormMo
     setAttachments(task?.attachments ?? []);
     setError(null);
   }, [task]);
+
+  useEffect(() => {
+    if (!autoFocusTitle) {
+      return;
+    }
+
+    titleInputRef.current?.focus();
+    titleInputRef.current?.select();
+  }, [autoFocusTitle, task]);
 
   useEffect(() => {
     const handlePaste = async (event: ClipboardEvent) => {
@@ -172,7 +189,11 @@ function TaskFormModalComponent({ projectId, task, onClose, onSave }: TaskFormMo
           <span className='project-dialog__title'>{task ? 'Editar tarefa' : 'Nova tarefa'}</span>
           <label className='task-form-modal__field'>
             <span>Título</span>
-            <input value={title} onChange={(event) => setTitle(event.target.value)} />
+            <input
+              ref={titleInputRef}
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+            />
           </label>
           <div className='task-form-modal__row'>
             <label className='task-form-modal__field task-form-modal__field--inline'>

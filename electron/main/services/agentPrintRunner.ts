@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { BrowserWindow } from 'electron';
 import { buildCliPathEnv } from '../utils/cliPathEnv';
+import { writeDebugSessionLog } from '../utils/debugSessionLog';
 
 export interface AgentPrintRunOptions {
   paneId: string;
@@ -112,6 +113,25 @@ class AgentPrintRunner {
 
     this.processes.set(options.paneId, child);
 
+    const startedAt = Date.now();
+    // #region agent log
+    writeDebugSessionLog({
+      location: 'agentPrintRunner.ts:start',
+      message: 'agentPrint process spawned',
+      data: {
+        paneId: options.paneId,
+        runToken,
+        executable,
+        cwd: resolvedCwd,
+        resumeChatId: resumeChatId ?? null,
+        continueSession: Boolean(options.continueSession),
+        mode: options.mode ?? null,
+        promptLength: options.prompt.trim().length,
+      },
+      hypothesisId: 'A',
+    });
+    // #endregion
+
     let stdoutSeen = false;
     let stderrBuffer = '';
 
@@ -142,6 +162,24 @@ class AgentPrintRunner {
           : !stdoutSeen && stderr
             ? stderr
             : undefined;
+      const durationMs = Date.now() - startedAt;
+
+      // #region agent log
+      writeDebugSessionLog({
+        location: 'agentPrintRunner.ts:close',
+        message: 'agentPrint process closed',
+        data: {
+          paneId: options.paneId,
+          runToken,
+          code: code ?? 1,
+          durationMs,
+          stdoutSeen,
+          hasStderr: Boolean(stderr),
+          stderrPreview: stderr.slice(0, 200),
+        },
+        hypothesisId: 'A',
+      });
+      // #endregion
 
       this.emit('agent:printDone', {
         paneId: options.paneId,
@@ -168,6 +206,15 @@ class AgentPrintRunner {
     if (!child) {
       return;
     }
+
+    // #region agent log
+    writeDebugSessionLog({
+      location: 'agentPrintRunner.ts:stop',
+      message: 'agentPrint process stop requested',
+      data: { paneId },
+      hypothesisId: 'D',
+    });
+    // #endregion
 
     child.kill('SIGTERM');
     setTimeout(() => {

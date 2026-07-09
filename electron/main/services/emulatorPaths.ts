@@ -1,3 +1,4 @@
+import { app } from 'electron';
 import { accessSync, constants, readdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
@@ -186,6 +187,26 @@ export function resolveIdbCompanionPath(): ResolvedTool {
 
 export function resolveOpenPath(): ResolvedTool {
   return resolveFromPath('open');
+}
+
+export function resolveSimulatorServerPath(): ResolvedTool {
+  if (process.platform !== 'darwin') {
+    return { path: 'simulator-server', found: false };
+  }
+
+  const binaryName = 'simulator-server';
+  const candidates = [
+    path.join(process.cwd(), 'resources/simulator-server/darwin', binaryName),
+    path.join(app.getAppPath(), 'resources/simulator-server/darwin', binaryName),
+    path.join(
+      process.resourcesPath,
+      'app.asar.unpacked/resources/simulator-server/darwin',
+      binaryName,
+    ),
+    path.join(process.resourcesPath, 'resources/simulator-server/darwin', binaryName),
+  ];
+
+  return resolveFromCandidates(candidates);
 }
 
 export function hasAndroidSdkRoot(): boolean {

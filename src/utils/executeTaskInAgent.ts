@@ -7,6 +7,8 @@ import {
   runAgentPaneCommand,
   submitAgentPanePrompt,
 } from '@/utils/agentPaneRegistry';
+import { isCursorAgentStreamJsonCli } from '@/utils/agentCliSession';
+import { resolveAgentTabCli } from '@/utils/agentTabHelpers';
 import { toProjectRelativePath } from '@/utils/explorerRelativePath';
 import { resolvePaneAgentCommand } from '@/utils/projectAgentStatus';
 import { getTerminalHandle } from '@/utils/terminalHandleRegistry';
@@ -182,10 +184,16 @@ export async function executeTaskInAgent({
       return false;
     }
 
-    runAgentPaneCommand(paneId, `/${agentMode}\n`);
-    await delay(PROMPT_EXTRA_DELAY_MS);
+    const usesStreamJson = isCursorAgentStreamJsonCli(resolveAgentTabCli(pane!));
 
-    return await submitAgentPanePrompt(paneId, prompt);
+    if (usesStreamJson) {
+      useTerminalSessionStore.getState().setLastCommand(paneId, `/${agentMode}`);
+    } else {
+      runAgentPaneCommand(paneId, `/${agentMode}\n`);
+      await delay(PROMPT_EXTRA_DELAY_MS);
+    }
+
+    return await submitAgentPanePrompt(paneId, prompt, { forceNewTurn: true });
   }
 
   const handle = await waitForWritableHandle(paneId);

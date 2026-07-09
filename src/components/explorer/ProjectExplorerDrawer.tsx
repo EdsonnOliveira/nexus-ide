@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, FilePlus, FolderOpen, FolderPlus, GitBranch, Search } from 'lucide-react';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ProjectGitDrawer } from '@/components/git/ProjectGitDrawer';
 import { ExplorerEntryContextMenu } from '@/components/explorer/ExplorerEntryContextMenu';
 import {
@@ -23,6 +23,8 @@ import {
 } from '@/types';
 import {
   DEFAULT_EXPLORER_SEARCH_OPTIONS,
+  buildSearchHighlightParts,
+  type ExplorerSearchLineMatch,
   type ExplorerSearchNode,
   type ExplorerSearchOptions,
 } from '@/utils/explorerSearch';
@@ -73,6 +75,7 @@ interface ExplorerTreeNodeProps {
   projectKind?: ProjectKind | null;
   preloadedChildren?: ProjectDirectoryEntry[] | null;
   initialExpanded?: boolean;
+  isSearchTree?: boolean;
   dragEnabled: boolean;
   dropTargetPath: string | null;
   dropDragMode: ExplorerDragMode | null;
@@ -87,6 +90,21 @@ interface ExplorerTreeNodeProps {
   onImportOnTarget: (sourcePaths: string[], targetDirPath: string) => void;
   onContextMenu: (entry: ProjectDirectoryEntry, x: number, y: number) => void;
   resolveGitDecoration: (absolutePath: string) => ExplorerGitDecoration | null;
+}
+
+function renderExplorerSearchPreview(
+  preview: string,
+  submatches: ExplorerSearchLineMatch['submatches'],
+): ReactNode {
+  return buildSearchHighlightParts(preview, submatches).map((part, index) =>
+    part.highlight ? (
+      <span key={`match-${index}`} className='project-explorer__search-match-highlight'>
+        {part.text}
+      </span>
+    ) : (
+      <span key={`text-${index}`}>{part.text}</span>
+    ),
+  );
 }
 
 function resolveExplorerDrop(
@@ -204,6 +222,7 @@ const ExplorerTreeNode = memo(function ExplorerTreeNodeComponent({
   projectKind,
   preloadedChildren,
   initialExpanded = false,
+  isSearchTree = false,
   dragEnabled,
   dropTargetPath,
   dropDragMode,
@@ -245,11 +264,12 @@ const ExplorerTreeNode = memo(function ExplorerTreeNodeComponent({
   );
   const isRootProject = depth === 0 && isDirectory && projectKind;
   const rootAccent = depth === 0 && isDirectory ? accentColor : undefined;
-  const isSearchTree = preloadedChildren !== undefined;
   const gitDecoration =
     !isDirectory && typeof resolveGitDecoration === 'function'
       ? resolveGitDecoration(entry.path)
       : null;
+  const contentMatches =
+    isSearchTree && !isDirectory ? (entry as ExplorerSearchNode).contentMatches : undefined;
 
   useEffect(() => {
     if (isSearchTree) {
@@ -471,6 +491,23 @@ const ExplorerTreeNode = memo(function ExplorerTreeNodeComponent({
         ) : null}
       </button>
       {hintNode}
+      {contentMatches?.map((match) => (
+        <button
+          key={`${entry.path}:${match.lineNumber}:${match.preview}`}
+          type='button'
+          className='project-explorer__search-match app-button app-button--enter'
+          style={{ paddingLeft: `${22 + depth * 14}px` }}
+          onClick={() => {
+            onOpenFile(entry);
+            onSelect(entry.path, entry.type);
+          }}
+        >
+          <span className='project-explorer__search-match-line'>{match.lineNumber}</span>
+          <span className='project-explorer__search-match-preview'>
+            {renderExplorerSearchPreview(match.preview, match.submatches)}
+          </span>
+        </button>
+      ))}
 
       {isDirectory ? (
         <div className={`project-explorer__children${expanded ? ' project-explorer__children--open' : ''}`}>
@@ -499,6 +536,7 @@ const ExplorerTreeNode = memo(function ExplorerTreeNodeComponent({
                     dropDragMode={dropDragMode}
                     treeRevision={treeRevision}
                     directoryInvalidation={directoryInvalidation}
+                    isSearchTree={isSearchTree}
                     preloadedChildren={
                       isSearchTree && child.type === 'directory'
                         ? ((child as ExplorerSearchNode).children ?? null)
@@ -1103,7 +1141,7 @@ function ProjectExplorerDrawerComponent({
                 <button
                   type='button'
                   className={`project-explorer__header-btn app-button app-button--enter${searchOpen ? ' project-explorer__header-btn--active' : ''}`}
-                  aria-label='Buscar arquivos'
+                  aria-label='Buscar no projeto'
                   onClick={handleToggleSearch}
                 >
                   <Search size={14} strokeWidth={2} />
@@ -1217,6 +1255,7 @@ function ProjectExplorerDrawerComponent({
                   dropDragMode={explorerDragMode}
                   treeRevision={treeRevision}
                   directoryInvalidation={directoryInvalidation}
+                  isSearchTree={isSearching}
                   preloadedChildren={
                     isSearching && entry.type === 'directory'
                       ? ((entry as ExplorerSearchNode).children ?? null)

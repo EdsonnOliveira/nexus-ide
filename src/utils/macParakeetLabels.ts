@@ -66,20 +66,37 @@ export function formatMacParakeetSegmentTime(timestamp: number): string {
 export function buildTaskDraftFromTranscription(
   detail: MacParakeetTranscriptionDetail,
 ): ProjectTask {
-  const transcript = detail.transcript.trim();
-  const description =
-    transcript ||
-    detail.segments
-      .filter((segment) => segment.kind === 'speech')
-      .map((segment) => segment.content.trim())
-      .filter(Boolean)
-      .join('\n\n');
+  const speechSegments = detail.segments.filter((segment) => segment.kind === 'speech');
+  const transcription =
+    speechSegments.length > 0
+      ? speechSegments
+          .map((segment) => segment.content.trim())
+          .filter(Boolean)
+          .join('\n\n')
+      : detail.transcript.trim();
+
+  const conclusion = detail.conclusion?.trim() ?? '';
+  const descriptionParts: string[] = [];
+
+  if (transcription) {
+    descriptionParts.push(transcription);
+  }
+
+  if (conclusion) {
+    if (descriptionParts.length > 0) {
+      descriptionParts.push('', '---', '', 'Conclusão', '');
+    } else {
+      descriptionParts.push('Conclusão', '');
+    }
+
+    descriptionParts.push(conclusion);
+  }
 
   return {
     id: crypto.randomUUID(),
     source: 'local',
     title: detail.title,
-    description,
+    description: descriptionParts.join('\n'),
     attachments: [],
     updatedAt: Date.now(),
   };

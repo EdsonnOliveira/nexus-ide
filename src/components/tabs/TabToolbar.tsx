@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FolderTree, ListTodo, Lock, Plus, Workflow } from 'lucide-react';
+import { FolderTree, FlaskConical, ListTodo, Lock, Plus, Workflow } from 'lucide-react';
 import nexusGoMark from '@/assets/nexus-go-mark.png';
 import { GLOBAL_SEARCH_NAME } from '@/constants/globalSearch';
 import { useProjectStore } from '@/stores/useProjectStore';
@@ -9,6 +9,7 @@ import { TabAddMenu, type TabAddOptionId } from '@/components/tabs/TabAddMenu';
 import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
 import { useGitChangeCount } from '@/hooks/useGitChangeCount';
 import { countProjectTasksForToolbarBadge } from '@/utils/taskFilters';
+import { useRunningTestCount } from '@/stores/useTestExecutionStore';
 
 function TabSearchBadgeComponent() {
   const openGlobalSearch = useGlobalSearchStore((state) => state.open);
@@ -48,8 +49,10 @@ function TabToolbarComponent() {
   const togglePasswords = useProjectStore((state) => state.togglePasswords);
   const toggleAutomations = useProjectStore((state) => state.toggleAutomations);
   const toggleTasks = useProjectStore((state) => state.toggleTasks);
+  const toggleTests = useProjectStore((state) => state.toggleTests);
   const activeProject = projects.find((item) => item.id === activeProjectId) ?? null;
   const gitChangeCount = useGitChangeCount(activeProject?.path ?? null);
+  const runningTestCount = useRunningTestCount();
   const openTaskCount = useMemo(() => {
     if (!activeProject) {
       return 0;
@@ -159,6 +162,19 @@ function TabToolbarComponent() {
           {openTaskCount > 0 ? (
             <span className='tool-btn__badge tool-btn__badge--tasks' aria-hidden='true'>
               {openTaskCount > 99 ? '99+' : openTaskCount}
+            </span>
+          ) : null}
+        </button>
+        <button
+          type='button'
+          className={`tool-btn tool-btn--tests${sidePanel === 'tests' ? ' tool-btn--active' : ''}`}
+          aria-label='Testes'
+          onClick={toggleTests}
+        >
+          <FlaskConical size={15} />
+          {runningTestCount > 0 ? (
+            <span className='tool-btn__badge tool-btn__badge--tests' aria-hidden='true'>
+              {runningTestCount > 99 ? '99+' : runningTestCount}
             </span>
           ) : null}
         </button>
