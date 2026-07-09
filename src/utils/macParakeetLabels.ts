@@ -38,11 +38,7 @@ export function formatMacParakeetDuration(durationMs: number | null): string {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
 
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-  }
-
-  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
 export function formatMacParakeetDate(timestamp: number): string {
@@ -53,8 +49,6 @@ export function formatMacParakeetDate(timestamp: number): string {
   return new Intl.DateTimeFormat('pt-BR', {
     day: '2-digit',
     month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
   }).format(new Date(timestamp));
 }
 

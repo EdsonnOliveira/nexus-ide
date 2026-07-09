@@ -6,7 +6,7 @@ import { useMarkdownCodeHighlight, useDeferredMarkdownHtml } from '@/hooks/useMa
 interface AgentThoughtBlockProps {
   activity: AgentActivity;
   defaultExpanded?: boolean;
-  liveStatus?: string | null;
+  forceCollapsed?: boolean;
 }
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 48;
@@ -37,16 +37,20 @@ function getElapsedSeconds(startedAt: number): number {
 function AgentThoughtBlockComponent({
   activity,
   defaultExpanded = true,
-  liveStatus = null,
+  forceCollapsed = false,
 }: AgentThoughtBlockProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const programmaticScrollRef = useRef(false);
   const scrollRafRef = useRef<number | null>(null);
   const contentHeightRef = useRef(0);
-  const [expanded, setExpanded] = useState(
-    () => activity.streaming || Boolean(activity.label.trim()) || defaultExpanded,
-  );
+  const [expanded, setExpanded] = useState(() => {
+    if (activity.collapsed) {
+      return false;
+    }
+
+    return activity.streaming || Boolean(activity.label.trim()) || defaultExpanded;
+  });
   const [elapsedSeconds, setElapsedSeconds] = useState(() =>
     activity.streaming ? getElapsedSeconds(activity.createdAt) : 1,
   );
@@ -56,15 +60,15 @@ function AgentThoughtBlockComponent({
   const proseRef = useMarkdownCodeHighlight<HTMLDivElement>(bodyHtml);
 
   useEffect(() => {
-    if (activity.streaming || bodyText) {
-      setExpanded(true);
+    if (forceCollapsed || activity.collapsed) {
+      setExpanded(false);
       return;
     }
 
-    if (activity.collapsed) {
-      setExpanded(false);
+    if (activity.streaming || bodyText) {
+      setExpanded(true);
     }
-  }, [activity.collapsed, activity.streaming, bodyText]);
+  }, [activity.collapsed, activity.streaming, bodyText, forceCollapsed]);
 
   useEffect(() => {
     if (!activity.streaming) {
@@ -184,7 +188,7 @@ function AgentThoughtBlockComponent({
         scrollRafRef.current = null;
       }
     };
-  }, [activity.id, activity.streaming, bodyHtml, bodyText, expanded, liveStatus]);
+  }, [activity.id, activity.streaming, bodyHtml, bodyText, expanded]);
 
   const handleToggle = useCallback(() => {
     setExpanded((prev) => !prev);
@@ -197,8 +201,7 @@ function AgentThoughtBlockComponent({
       ? 'Thought briefly'
       : `Thought for ${formatDuration(activity.durationMs)}`;
 
-  const showLiveStatus = activity.streaming && Boolean(liveStatus?.trim()) && !bodyText;
-  const showWaitingState = activity.streaming && !bodyText && !showLiveStatus;
+  const showWaitingState = activity.streaming && !bodyText;
 
   return (
     <div
@@ -220,9 +223,6 @@ function AgentThoughtBlockComponent({
               className='agent-view__thought-prose markdown-preview markdown-preview--monokai'
               dangerouslySetInnerHTML={{ __html: bodyHtml }}
             />
-          ) : null}
-          {showLiveStatus ? (
-            <div className='agent-view__thought-live-status app-button--enter'>{liveStatus}</div>
           ) : null}
           {showWaitingState ? (
             <div className='agent-view__thought-waiting'>

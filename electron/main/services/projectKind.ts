@@ -29,8 +29,11 @@ function detectNodeProjectKind(root: string, pkg: PackageJson): ProjectKind | nu
   const isExpo = hasDep(pkg, 'expo') || hasFile(root, ['app.json', 'app.config.js', 'app.config.ts']);
   const isReactNative =
     hasDep(pkg, 'react-native') && hasFile(root, ['android', 'ios']) && !isExpo;
+  const isCapacitor =
+    (hasDep(pkg, '@capacitor/core') || hasDep(pkg, '@capacitor/cli')) &&
+    hasFile(root, ['android', 'ios']);
 
-  if (isExpo || isReactNative) {
+  if (isExpo || isReactNative || isCapacitor) {
     return 'mobile';
   }
 

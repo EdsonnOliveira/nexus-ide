@@ -40,6 +40,11 @@ import { createTerminalOutputParser } from '@/utils/terminalStream';
 import { clampSplitRatio } from '@/utils/splitLayout';
 import { executeAutomation } from '@/utils/executeAutomation';
 import { handleAutomationPaneShellPrompt } from '@/utils/automationPaneExecution';
+import {
+  feedMobileReleaseOutput,
+  handleMobileReleaseShellPrompt,
+  startMobileReleaseFromCommand,
+} from '@/utils/mobileReleaseTracker';
 import { completeAgentGitTurn, trackAgentGitPrompt } from '@/utils/agentGitTurn';
 import { useAgentPrintBridge } from '@/hooks/useAgentPrintBridge';
 import { useAgentGitChangeStore } from '@/stores/useAgentGitChangeStore';
@@ -271,6 +276,8 @@ const TabPane = memo(function TabPaneComponent({
         } else {
           session.setLastCommand(tab.id, commandLine);
         }
+
+        void startMobileReleaseFromCommand(tab.id, commandLine);
       }
 
       terminalHandleRef.current?.write(command);
@@ -1178,6 +1185,7 @@ function TerminalPanelComponent() {
           const completeIfAwaiting = createSettledCallback(() => {
             completeShellIdleTaskIfAwaiting(paneId);
             handleAutomationPaneShellPrompt(paneId);
+            handleMobileReleaseShellPrompt(paneId);
           });
           const agentDetector = createAgentReadyStreamDetector(
             () => {
@@ -1198,6 +1206,7 @@ function TerminalPanelComponent() {
               }
 
               dispatchPendingAgentTaskCommands(paneId, (command) => {
+                void startMobileReleaseFromCommand(paneId, command);
                 window.nexus.terminal.write(ptyId, `${command}\n`);
               });
             },
@@ -1264,6 +1273,7 @@ function TerminalPanelComponent() {
 
       tracker.agentDetector.feed(data);
       tracker.parseShellPrompt(data);
+      feedMobileReleaseOutput(paneId, data);
       tracker.busyBuffer = (tracker.busyBuffer + data).slice(-TURN_BUFFER_SIZE);
 
       const session = useTerminalSessionStore.getState();

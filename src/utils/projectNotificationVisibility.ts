@@ -52,3 +52,18 @@ export function getNotifiedWorkspaceIds(
 
   return workspaceIds;
 }
+
+export function getRunningAgentWorkspaceIds(
+  projects: Project[],
+  runningAgentProjectIds: Set<string>,
+): Set<string> {
+  const workspaceIds = new Set<string>();
+
+  for (const project of projects) {
+    if (runningAgentProjectIds.has(project.id) && project.workspaceId) {
+      workspaceIds.add(project.workspaceId);
+    }
+  }
+
+  return workspaceIds;
+}

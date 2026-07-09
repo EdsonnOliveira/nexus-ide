@@ -5,6 +5,7 @@ import {
   getMacParakeetTranscriptionsSnapshot,
   openMacParakeetApp,
   renameMacParakeetTranscriptionTitle,
+  startMacParakeetCallFromEvent,
 } from '../services/macParakeetTranscriptions';
 
 export function registerMacParakeetHandlers(): void {
@@ -17,6 +18,9 @@ export function registerMacParakeetHandlers(): void {
     getMacParakeetTranscriptionDetail(id),
   );
   ipcMain.handle('macParakeet:openApp', () => openMacParakeetApp());
+  ipcMain.handle('macParakeet:startCallFromEvent', (_, title: string) =>
+    startMacParakeetCallFromEvent(title),
+  );
   ipcMain.handle('macParakeet:renameTranscriptionTitle', (_, id: string, title: string) =>
     renameMacParakeetTranscriptionTitle(id, title),
   );

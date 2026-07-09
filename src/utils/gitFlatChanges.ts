@@ -8,6 +8,34 @@ export interface GitFlatChange {
   deletions: number;
 }
 
+export interface GitChangeDecoration {
+  kind: 'modified' | 'new';
+  badge: string;
+}
+
+export function getGitChangeDecoration(change: GitFlatChange): GitChangeDecoration {
+  if (change.status === 'untracked' || change.status === 'added') {
+    return {
+      kind: 'new',
+      badge: change.status === 'added' ? 'A' : 'U',
+    };
+  }
+
+  if (change.status === 'deleted') {
+    return { kind: 'modified', badge: 'D' };
+  }
+
+  if (change.status === 'renamed') {
+    return { kind: 'modified', badge: 'R' };
+  }
+
+  if (change.status === 'conflicted') {
+    return { kind: 'modified', badge: 'C' };
+  }
+
+  return { kind: 'modified', badge: 'M' };
+}
+
 export type GitChangesViewMode = 'list' | 'tree';
 
 export interface GitChangeTreeNode {
@@ -31,6 +59,30 @@ function sortGitChangeTreeNodes(nodes: GitChangeTreeNode[]): GitChangeTreeNode[]
 
       return left.name.localeCompare(right.name);
     });
+}
+
+function collapseSingleChildDirectoryNode(node: GitChangeTreeNode): GitChangeTreeNode {
+  const children = node.children.map(collapseSingleChildDirectoryNode);
+
+  if (node.isDirectory && children.length === 1 && children[0].isDirectory) {
+    const child = children[0];
+
+    return collapseSingleChildDirectoryNode({
+      ...child,
+      name: `${node.name}/${child.name}`,
+      path: child.path,
+      children: child.children,
+    });
+  }
+
+  return {
+    ...node,
+    children,
+  };
+}
+
+function collapseSingleChildDirectoryChains(nodes: GitChangeTreeNode[]): GitChangeTreeNode[] {
+  return nodes.map(collapseSingleChildDirectoryNode);
 }
 
 export function buildGitChangeTree(changes: GitFlatChange[]): GitChangeTreeNode[] {
@@ -64,7 +116,7 @@ export function buildGitChangeTree(changes: GitFlatChange[]): GitChangeTreeNode[
     }
   }
 
-  return sortGitChangeTreeNodes(root);
+  return collapseSingleChildDirectoryChains(sortGitChangeTreeNodes(root));
 }
 
 export function buildFlatChanges(status: GitStatusResult): GitFlatChange[] {

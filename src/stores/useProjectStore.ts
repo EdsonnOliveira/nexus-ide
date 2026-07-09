@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import type { AppState, MailMailboxRef, Project, ProjectUpdatePayload, Tab, TabBarItem, Workspace } from '@/types';
+import type { AppState, MailMailboxRef, Project, ProjectUpdatePayload, Tab, TabBarItem, Workspace, WorkspaceUpdatePayload } from '@/types';
+import { PROJECT_COLORS } from '@/types';
 import { migrateLegacyProjectTabs } from '@/utils/migrateTabs';
 import { rawAgentTurnHistoryNeedsTrim, trimAgentTurnsInTabBarItems } from '@/utils/trimAgentTurnHistory';
 import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
@@ -61,6 +62,7 @@ interface ProjectStoreState {
   leaveActiveProject: () => Promise<void>;
   updateProject: (id: string, data: ProjectUpdatePayload) => Promise<void>;
   createWorkspace: (name: string) => Promise<void>;
+  updateWorkspace: (id: string, data: WorkspaceUpdatePayload) => Promise<void>;
   selectWorkspace: (id: string | null) => Promise<void>;
   removeWorkspace: (id: string) => Promise<void>;
   moveProjectToWorkspace: (projectId: string, workspaceId: string) => Promise<void>;
@@ -125,12 +127,35 @@ function migrateProject(project: Project, fallbackWorkspaceId: string): Project 
   };
 }
 
+function migrateWorkspace(
+  workspace: Pick<Workspace, 'id' | 'name'> & Partial<Workspace>,
+  index: number,
+): Workspace {
+  const color = workspace.color ?? PROJECT_COLORS[index % PROJECT_COLORS.length];
+  const icon = workspace.icon ?? workspace.name.charAt(0).toUpperCase() ?? 'W';
+
+  return {
+    id: workspace.id,
+    name: workspace.name,
+    color,
+    icon,
+    iconCustomized: workspace.iconCustomized ?? icon.startsWith('preset:'),
+    logo: workspace.logo ?? null,
+    flag: workspace.flag ?? null,
+  };
+}
+
+function createDefaultWorkspace(): Workspace {
+  return migrateWorkspace({ id: crypto.randomUUID(), name: 'Padrão' }, 0);
+}
+
 function migrateAppState(appState: AppState): AppState {
-  const workspaces =
+  const rawWorkspaces =
     appState.workspaces.length > 0
       ? appState.workspaces
-      : [{ id: crypto.randomUUID(), name: 'Padrão' }];
+      : [createDefaultWorkspace()];
 
+  const workspaces = rawWorkspaces.map((workspace, index) => migrateWorkspace(workspace, index));
   const fallbackWorkspaceId = workspaces[0]?.id ?? crypto.randomUUID();
 
   return migrateLegacyGlobalWhatsAppLink({
@@ -148,11 +173,12 @@ function yieldToNextFrame(): Promise<void> {
 }
 
 async function migrateAppStateChunked(appState: AppState): Promise<AppState> {
-  const workspaces =
+  const rawWorkspaces =
     appState.workspaces.length > 0
       ? appState.workspaces
-      : [{ id: crypto.randomUUID(), name: 'Padrão' }];
+      : [createDefaultWorkspace()];
 
+  const workspaces = rawWorkspaces.map((workspace, index) => migrateWorkspace(workspace, index));
   const fallbackWorkspaceId = workspaces[0]?.id ?? crypto.randomUUID();
   const migratedProjects: Project[] = [];
 
@@ -418,7 +444,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
       const workspaces =
         appState.workspaces.length > 0
           ? appState.workspaces
-          : [{ id: crypto.randomUUID(), name: 'Padrão' }];
+          : [createDefaultWorkspace()];
       const restoredVideoSession = appState.sidebarVideoSession
         ? restoreSidebarVideoSession(appState.sidebarVideoSession)
         : null;
@@ -591,6 +617,12 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   createWorkspace: async (name) => {
     const prevState = get();
     await window.nexus.projects.createWorkspace(name);
+    const appState = migrateAppState(await window.nexus.projects.list());
+    applyStatePreservingRuntime(set, appState, prevState);
+  },
+  updateWorkspace: async (id, data) => {
+    const prevState = get();
+    await window.nexus.projects.updateWorkspace(id, data);
     const appState = migrateAppState(await window.nexus.projects.list());
     applyStatePreservingRuntime(set, appState, prevState);
   },

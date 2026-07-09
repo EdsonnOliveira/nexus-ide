@@ -123,6 +123,7 @@ function HomeDashboardMailCardComponent() {
     !loading &&
     snapshot.available &&
     filteredMessages.length === 0;
+  const showUnreadFilterEmpty = showEmpty && unreadOnly && messages.length > 0;
   const showList = hydrated && filteredMessages.length > 0;
 
   return (
@@ -153,16 +154,28 @@ function HomeDashboardMailCardComponent() {
         <EmptyState
           icon={Mail}
           message={
-            unreadOnly
-              ? selectedMailbox
-                ? 'Nenhum e-mail não lido nesta caixa'
-                : 'Nenhum e-mail não lido'
-              : selectedMailbox
-                ? 'Nenhum e-mail nesta caixa'
-                : 'Nenhum e-mail recente'
+            showUnreadFilterEmpty
+              ? 'Nenhum e-mail não lido nos recentes'
+              : unreadOnly
+                ? selectedMailbox
+                  ? 'Nenhum e-mail não lido nesta caixa'
+                  : 'Nenhum e-mail não lido'
+                : selectedMailbox
+                  ? 'Nenhum e-mail nesta caixa'
+                  : 'Nenhum e-mail recente'
           }
           compact
-        />
+        >
+          {showUnreadFilterEmpty ? (
+            <button
+              type='button'
+              className='home-dashboard__permission-hint app-button app-button--enter'
+              onClick={() => handleUnreadOnlyChange(false)}
+            >
+              Ver todos os e-mails
+            </button>
+          ) : null}
+        </EmptyState>
       ) : showList ? (
         <ul className='home-dashboard__mail-list'>
           {filteredMessages.map((message, index) => (

@@ -1,11 +1,12 @@
 import { copyFileSync, mkdtempSync, readdirSync, rmSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { homedir, platform, tmpdir } from 'node:os';
+import { homedir, platform, release, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { shell } from 'electron';
 import { DatabaseSync } from 'node:sqlite';
 import type {
   MacParakeetSourceType,
+  MacParakeetStartCallResult,
   MacParakeetTranscriptionDetail,
   MacParakeetTranscriptionItem,
   MacParakeetTranscriptionsSnapshot,
@@ -19,11 +20,14 @@ import {
   applyAutoCalendarTitlesToTranscriptions,
   refreshAutoCalendarTitlesForItems,
 } from './macParakeetCalendarTitleMatch';
+import { translateMacParakeetConclusionToPortuguese } from './macParakeetConclusionPt';
 
 const PARAKEET_AI_API_URL = 'https://www.parakeet-ai.com';
 const PARAKEET_AI_DATA_DIR = join(homedir(), 'Library', 'Application Support', 'parakeetai-desktop');
 const PARAKEET_AI_COOKIES_PATH = join(PARAKEET_AI_DATA_DIR, 'Cookies');
 const PARAKEET_AI_BUNDLE_ID = 'org.parakeetai.ParakeetAI';
+const PARAKEET_AI_PROTOCOL = 'parakeetai';
+const PARAKEET_AI_DEFAULT_APP_VERSION = '3.6.14';
 const HOME_DASHBOARD_PARAKEET_LIMIT = 12;
 const SNIPPET_FALLBACK_LENGTH = 120;
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -45,6 +49,20 @@ interface ParakeetAiCallSession {
   saveTranscription?: boolean;
   deleted?: boolean;
   language?: string | null;
+  extraContext?: string | null;
+  aiModel?: string | null;
+  autoGenerate?: boolean | null;
+  documentSelectionMode?: string | null;
+  resumeId?: string | null;
+}
+
+interface ParakeetAiSessionDefaults {
+  language: string;
+  aiModel: string;
+  extraContext: string;
+  documentSelectionMode: string;
+  autoGenerate: boolean;
+  saveTranscription: boolean;
 }
 
 interface ParakeetAiTranscriptionChunk {
@@ -131,7 +149,30 @@ interface TrpcBatchResponse<T> {
       json?: T;
     };
   };
-  error?: unknown;
+  error?: {
+    json?: {
+      message?: string;
+      data?: {
+        httpStatus?: number;
+        code?: string;
+      };
+    };
+  };
+}
+
+interface TrpcFetchOutcome<T> {
+  data: T | null;
+  unauthorized: boolean;
+}
+
+function isTrpcUnauthorizedEntry(entry: TrpcBatchResponse<unknown> | undefined): boolean {
+  const error = entry?.error?.json;
+
+  return (
+    error?.message === 'UNAUTHORIZED' ||
+    error?.data?.httpStatus === 401 ||
+    error?.data?.code === 'UNAUTHORIZED'
+  );
 }
 
 function emptySnapshot(
@@ -259,7 +300,7 @@ async function fetchTrpcOnce<T>(
   procedure: string,
   payload: unknown,
   sessionToken: string,
-): Promise<T | null> {
+): Promise<TrpcFetchOutcome<T>> {
   const url = `${PARAKEET_AI_API_URL}/api/trpc/${procedure}?batch=1&input=${buildTrpcInput(payload)}`;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -273,19 +314,59 @@ async function fetchTrpcOnce<T>(
       signal: controller.signal,
     });
 
-    if (!response.ok) {
-      return null;
+    const body = (await response.json()) as TrpcBatchResponse<T>[];
+    const entry = body[0];
+
+    if (response.status === 401 || isTrpcUnauthorizedEntry(entry)) {
+      return { data: null, unauthorized: true };
     }
+
+    if (!response.ok || !entry?.result?.data?.json) {
+      return { data: null, unauthorized: false };
+    }
+
+    return { data: entry.result.data.json, unauthorized: false };
+  } catch {
+    return { data: null, unauthorized: false };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function mutateTrpcOnce<T>(
+  procedure: string,
+  payload: unknown,
+  sessionToken: string,
+): Promise<TrpcFetchOutcome<T>> {
+  const url = `${PARAKEET_AI_API_URL}/api/trpc/${procedure}?batch=1`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        Cookie: `__Secure-next-auth.session-token=${sessionToken}; next-auth.session-token=${sessionToken}`,
+      },
+      body: JSON.stringify({ '0': { json: payload } }),
+      signal: controller.signal,
+    });
 
     const body = (await response.json()) as TrpcBatchResponse<T>[];
     const entry = body[0];
-    if (!entry?.result?.data?.json) {
-      return null;
+
+    if (response.status === 401 || isTrpcUnauthorizedEntry(entry)) {
+      return { data: null, unauthorized: true };
     }
 
-    return entry.result.data.json;
+    if (!response.ok || !entry?.result?.data?.json) {
+      return { data: null, unauthorized: false };
+    }
+
+    return { data: entry.result.data.json, unauthorized: false };
   } catch {
-    return null;
+    return { data: null, unauthorized: false };
   } finally {
     clearTimeout(timeoutId);
   }
@@ -295,15 +376,19 @@ async function fetchTrpc<T>(
   procedure: string,
   payload: unknown,
   sessionToken?: string | null,
-): Promise<T | null> {
+): Promise<TrpcFetchOutcome<T>> {
   const token = sessionToken ?? readParakeetAiSessionToken();
   if (!token) {
-    return null;
+    return { data: null, unauthorized: false };
   }
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const result = await fetchTrpcOnce<T>(procedure, payload, token);
-    if (result !== null) {
+    if (result.data !== null) {
+      return result;
+    }
+
+    if (result.unauthorized) {
       return result;
     }
 
@@ -314,7 +399,74 @@ async function fetchTrpc<T>(
     }
   }
 
-  return null;
+  return { data: null, unauthorized: false };
+}
+
+async function mutateTrpc<T>(
+  procedure: string,
+  payload: unknown,
+  sessionToken?: string | null,
+): Promise<TrpcFetchOutcome<T>> {
+  const token = sessionToken ?? readParakeetAiSessionToken();
+  if (!token) {
+    return { data: null, unauthorized: false };
+  }
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = await mutateTrpcOnce<T>(procedure, payload, token);
+    if (result.data !== null) {
+      return result;
+    }
+
+    if (result.unauthorized) {
+      return result;
+    }
+
+    if (attempt === 0) {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 100);
+      });
+    }
+  }
+
+  return { data: null, unauthorized: false };
+}
+
+function resolveParakeetSessionDefaults(
+  sessions: ParakeetAiCallSession[],
+): ParakeetAiSessionDefaults {
+  const latest = sessions.find((session) => !session.deleted) ?? null;
+
+  return {
+    language: latest?.language?.trim() || 'pt',
+    aiModel: latest?.aiModel?.trim() || 'gpt-5-mini',
+    extraContext: latest?.extraContext ?? '',
+    documentSelectionMode: latest?.documentSelectionMode?.trim() || 'all',
+    autoGenerate: latest?.autoGenerate ?? false,
+    saveTranscription: latest?.saveTranscription ?? true,
+  };
+}
+
+function buildParakeetSessionDeepLink(callSessionId: string, authToken: string): string {
+  const payload = Buffer.from(
+    JSON.stringify({
+      callSessionId,
+      authToken,
+    }),
+    'utf8',
+  ).toString('base64');
+
+  return `${PARAKEET_AI_PROTOCOL}://session?payload=${encodeURIComponent(payload)}`;
+}
+
+async function openParakeetSessionDeepLink(callSessionId: string, authToken: string): Promise<void> {
+  const deepLink = buildParakeetSessionDeepLink(callSessionId, authToken);
+
+  try {
+    await shell.openExternal(deepLink);
+  } catch {
+    await openMacParakeetApp();
+  }
 }
 
 function parseCreatedAtMs(value: string | undefined): number {
@@ -428,6 +580,40 @@ function resolveConclusion(session: ParakeetAiCallSession): string | null {
   return null;
 }
 
+async function resolveLocalizedConclusion(session: ParakeetAiCallSession): Promise<string | null> {
+  const conclusion = resolveConclusion(session);
+  if (!conclusion) {
+    return null;
+  }
+
+  return translateMacParakeetConclusionToPortuguese(conclusion);
+}
+
+async function ensurePortugueseConclusion(
+  detail: MacParakeetTranscriptionDetail,
+  id?: string,
+): Promise<MacParakeetTranscriptionDetail> {
+  if (!detail.conclusion?.trim()) {
+    return detail;
+  }
+
+  const conclusion = await translateMacParakeetConclusionToPortuguese(detail.conclusion);
+  if (conclusion === detail.conclusion) {
+    return detail;
+  }
+
+  const nextDetail = {
+    ...detail,
+    conclusion,
+  };
+
+  if (id) {
+    cacheTranscriptionDetail(id, nextDetail);
+  }
+
+  return nextDetail;
+}
+
 function resolveSnippet(session: ParakeetAiCallSession): string {
   const candidates = [session.shortDescription, session.description, session.notes];
 
@@ -446,6 +632,22 @@ function resolveSnippet(session: ParakeetAiCallSession): string {
   return '';
 }
 
+async function resolveLocalizedSnippet(session: ParakeetAiCallSession): Promise<string> {
+  const snippet = resolveSnippet(session);
+  if (!snippet) {
+    return '';
+  }
+
+  const source = snippet.endsWith('…') ? snippet.slice(0, -1).trimEnd() : snippet;
+  const translated = await translateMacParakeetConclusionToPortuguese(source);
+
+  if (translated.length <= SNIPPET_FALLBACK_LENGTH) {
+    return translated;
+  }
+
+  return `${translated.slice(0, SNIPPET_FALLBACK_LENGTH).trimEnd()}…`;
+}
+
 function mapCallSession(session: ParakeetAiCallSession): MacParakeetTranscriptionItem {
   const subtitle = session.shortDescription?.trim() || session.description?.trim() || null;
 
@@ -460,6 +662,22 @@ function mapCallSession(session: ParakeetAiCallSession): MacParakeetTranscriptio
     isFavorite: false,
     isLive: isCallSessionLive(session),
   });
+}
+
+async function mapCallSessionLocalized(
+  session: ParakeetAiCallSession,
+): Promise<MacParakeetTranscriptionItem> {
+  const item = mapCallSession(session);
+  const snippet = await resolveLocalizedSnippet(session);
+
+  if (!snippet || snippet === item.snippet) {
+    return item;
+  }
+
+  return {
+    ...item,
+    snippet,
+  };
 }
 
 function buildTranscriptText(chunks: ParakeetAiTranscriptionChunk[]): string {
@@ -555,39 +773,18 @@ async function fetchTranscriptionChunks(
   callSessionId: string,
   sessionToken: string,
 ): Promise<ParakeetAiTranscriptionChunk[]> {
-  return (
-    (await fetchTrpc<ParakeetAiTranscriptionChunk[]>(
-      'callSession.transcription.get',
-      { callSessionId },
-      sessionToken,
-    )) ?? []
+  const result = await fetchTrpc<ParakeetAiTranscriptionChunk[]>(
+    'callSession.transcription.get',
+    { callSessionId },
+    sessionToken,
   );
+
+  return result.data ?? [];
 }
 
-async function fetchCallSessions(
-  sourceType: MacParakeetSourceType | null,
+async function fetchCallSessionsRaw(
   sessionToken: string,
-): Promise<ParakeetAiCallSession[]> {
-  const sessions = await fetchCallSessionsRaw(sessionToken);
-
-  return sessions.filter((session) => {
-    if (session.deleted) {
-      return false;
-    }
-
-    if (session.saveTranscription === false) {
-      return false;
-    }
-
-    if (sourceType && normalizeSourceType(session.mode) !== sourceType) {
-      return false;
-    }
-
-    return true;
-  });
-}
-
-async function fetchCallSessionsRaw(sessionToken: string): Promise<ParakeetAiCallSession[]> {
+): Promise<{ sessions: ParakeetAiCallSession[]; unauthorized: boolean }> {
   const result = await fetchTrpc<{ data: ParakeetAiCallSession[] }>(
     'callSession.getMany',
     {
@@ -597,9 +794,43 @@ async function fetchCallSessionsRaw(sessionToken: string): Promise<ParakeetAiCal
     sessionToken,
   );
 
-  const sessions = result?.data ?? [];
+  if (result.unauthorized) {
+    return { sessions: [], unauthorized: true };
+  }
+
+  const sessions = result.data?.data ?? [];
   cacheCallSessions(sessions);
-  return sessions;
+  return { sessions, unauthorized: false };
+}
+
+async function fetchCallSessions(
+  sourceType: MacParakeetSourceType | null,
+  sessionToken: string,
+): Promise<{ sessions: ParakeetAiCallSession[]; unauthorized: boolean }> {
+  const { sessions, unauthorized } = await fetchCallSessionsRaw(sessionToken);
+
+  if (unauthorized) {
+    return { sessions: [], unauthorized: true };
+  }
+
+  return {
+    sessions: sessions.filter((session) => {
+      if (session.deleted) {
+        return false;
+      }
+
+      if (session.saveTranscription === false) {
+        return false;
+      }
+
+      if (sourceType && normalizeSourceType(session.mode) !== sourceType) {
+        return false;
+      }
+
+      return true;
+    }),
+    unauthorized: false,
+  };
 }
 
 async function fetchCallSessionById(
@@ -617,18 +848,23 @@ async function fetchCallSessionById(
     sessionToken,
   );
 
-  if (!session?.id) {
+  if (session.unauthorized || !session.data?.id) {
     return null;
   }
 
+  const resolvedSession = session.data;
+
   const cached = sessionsCache;
   if (cached && cached.expiresAt > Date.now()) {
-    cacheCallSessions([...cached.sessions.filter((entry) => entry.id !== session.id), session]);
+    cacheCallSessions([
+      ...cached.sessions.filter((entry) => entry.id !== resolvedSession.id),
+      resolvedSession,
+    ]);
   } else {
-    cacheCallSessions([session]);
+    cacheCallSessions([resolvedSession]);
   }
 
-  return session;
+  return resolvedSession;
 }
 
 function readCachedCallSessionsList(): ParakeetAiCallSession[] {
@@ -701,11 +937,22 @@ export async function getMacParakeetTranscriptionsSnapshot(
   }
 
   try {
-    const sessions = await fetchCallSessions(sourceType, sessionToken);
-    let transcriptions = sessions
-      .map((session) => mapCallSession(session))
-      .sort((left, right) => right.createdAt - left.createdAt)
-      .slice(0, HOME_DASHBOARD_PARAKEET_LIMIT);
+    const { sessions, unauthorized } = await fetchCallSessions(sourceType, sessionToken);
+
+    if (unauthorized) {
+      snapshotCache = null;
+      sessionsCache = null;
+      clearTranscriptionDetailCache();
+      return emptySnapshot({ installed: true, available: false });
+    }
+
+    let transcriptions = await Promise.all(
+      sessions
+        .slice()
+        .sort((left, right) => parseCreatedAtMs(right.createdAt) - parseCreatedAtMs(left.createdAt))
+        .slice(0, HOME_DASHBOARD_PARAKEET_LIMIT)
+        .map((session) => mapCallSessionLocalized(session)),
+    );
 
     if (!forceRefresh) {
       transcriptions = await applyAutoCalendarTitlesToTranscriptions(sessions, transcriptions);
@@ -744,7 +991,7 @@ export async function getMacParakeetTranscriptionDetail(
 
   const cachedDetail = readCachedTranscriptionDetail(trimmedId);
   if (cachedDetail) {
-    return cachedDetail;
+    return ensurePortugueseConclusion(cachedDetail, trimmedId);
   }
 
   const sessionToken = readParakeetAiSessionToken();
@@ -775,15 +1022,13 @@ export async function getMacParakeetTranscriptionDetail(
       .filter(Boolean)
       .join('\n\n');
 
-  const [item] = await applyAutoCalendarTitlesToTranscriptions(
-    [session],
-    [mapCallSession(session)],
-  );
+  const localizedItem = await mapCallSessionLocalized(session);
+  const [item] = await applyAutoCalendarTitlesToTranscriptions([session], [localizedItem]);
 
   const detail: MacParakeetTranscriptionDetail = {
     ...item,
     transcript,
-    conclusion: resolveConclusion(session),
+    conclusion: await resolveLocalizedConclusion(session),
     segments,
     sourceUrl: `${PARAKEET_AI_API_URL}/dashboard`,
   };
@@ -840,4 +1085,86 @@ export async function openMacParakeetApp(): Promise<void> {
   }
 
   await shell.openExternal(`${PARAKEET_AI_API_URL}/dashboard`);
+}
+
+export async function startMacParakeetCallFromEvent(
+  title: string,
+): Promise<MacParakeetStartCallResult> {
+  if (platform() !== 'darwin') {
+    return { ok: false, reason: 'unsupported' };
+  }
+
+  if (!isMacParakeetInstalled()) {
+    await openMacParakeetApp();
+    return { ok: false, reason: 'not_installed' };
+  }
+
+  const sessionToken = readParakeetAiSessionToken();
+  if (!sessionToken) {
+    await openMacParakeetApp();
+    return { ok: false, reason: 'unauthorized' };
+  }
+
+  const trimmedTitle = title.trim().slice(0, 255);
+  if (!trimmedTitle) {
+    return { ok: false, reason: 'invalid_title' };
+  }
+
+  const { sessions, unauthorized } = await fetchCallSessionsRaw(sessionToken);
+  if (unauthorized) {
+    await openMacParakeetApp();
+    return { ok: false, reason: 'unauthorized' };
+  }
+
+  const defaults = resolveParakeetSessionDefaults(sessions);
+  const created = await mutateTrpc<ParakeetAiCallSession>(
+    'callSession.create',
+    {
+      free: false,
+      sessionMode: 'regular_call',
+      mode: 'regular_call',
+      title: trimmedTitle,
+      description: '',
+      resumeId: null,
+      documentSelectionMode: defaults.documentSelectionMode,
+      selectedDocumentIds: [],
+      language: defaults.language,
+      extraContext: defaults.extraContext,
+      aiModel: defaults.aiModel,
+      autoGenerate: defaults.autoGenerate,
+      saveTranscription: defaults.saveTranscription,
+      createdFrom: 'desktop-app',
+      autoStarted: true,
+      activationParameters: {
+        platform: 'desktop-app',
+        os: 'macos',
+        osVersion: release(),
+        version: PARAKEET_AI_DEFAULT_APP_VERSION,
+      },
+    },
+    sessionToken,
+  );
+
+  if (created.unauthorized) {
+    await openMacParakeetApp();
+    return { ok: false, reason: 'unauthorized' };
+  }
+
+  const callSessionId = created.data?.id?.trim();
+  if (!callSessionId) {
+    await openMacParakeetApp();
+    return { ok: false, reason: 'create_failed' };
+  }
+
+  setMacParakeetTitleOverride(callSessionId, trimmedTitle);
+  snapshotCache = null;
+  cacheCallSessions([created.data as ParakeetAiCallSession, ...sessions], SNAPSHOT_CACHE_TTL_MS);
+
+  await openParakeetSessionDeepLink(callSessionId, sessionToken);
+
+  return {
+    ok: true,
+    callSessionId,
+    title: trimmedTitle,
+  };
 }

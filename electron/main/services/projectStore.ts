@@ -1,7 +1,7 @@
 import Store from 'electron-store';
 import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
-import type { AppState, Project, ProjectUpdatePayload, Tab, TabBarItem, Workspace } from '../../types';
+import type { AppState, Project, ProjectUpdatePayload, Tab, TabBarItem, Workspace, WorkspaceUpdatePayload } from '../../types';
 import type { ProjectTask, ProjectTaskLocalMeta } from '../../types/task';
 import { agentTurnHistoryChanged, sanitizeAgentTurnHistory } from './trimAgentTurnHistory';
 import { ensureNexusGitignore, hasNexusProjectDir } from './nexusProjectGitignore';
@@ -216,6 +216,24 @@ function stripRuntimeFieldsFromTabs(tabs: TabBarItem[]): TabBarItem[] {
   });
 }
 
+function normalizeWorkspace(
+  workspace: Pick<Workspace, 'id' | 'name'> & Partial<Workspace>,
+  index: number,
+): Workspace {
+  const color = workspace.color ?? PROJECT_COLORS[index % PROJECT_COLORS.length];
+  const icon = workspace.icon ?? workspace.name.charAt(0).toUpperCase() ?? 'W';
+
+  return {
+    id: workspace.id,
+    name: workspace.name,
+    color,
+    icon,
+    iconCustomized: workspace.iconCustomized ?? icon.startsWith('preset:'),
+    logo: workspace.logo ?? null,
+    flag: workspace.flag ?? null,
+  };
+}
+
 function normalizeProject(project: Project & { layout?: unknown }, fallbackWorkspaceId: string): Project {
   return {
     ...project,
@@ -237,11 +255,12 @@ function normalizeProject(project: Project & { layout?: unknown }, fallbackWorks
 }
 
 function ensureWorkspaces(state: AppState): AppState {
-  const workspaces =
+  const rawWorkspaces =
     state.workspaces.length > 0
       ? state.workspaces
       : [{ id: randomUUID(), name: DEFAULT_WORKSPACE_NAME }];
 
+  const workspaces = rawWorkspaces.map((workspace, index) => normalizeWorkspace(workspace, index));
   const fallbackWorkspaceId = workspaces[0]?.id ?? randomUUID();
 
   return {
@@ -467,10 +486,18 @@ class ProjectStoreService {
     }
 
     const state = this.readState();
-    const workspace: Workspace = {
-      id: randomUUID(),
-      name: trimmed,
-    };
+    const workspace = normalizeWorkspace(
+      {
+        id: randomUUID(),
+        name: trimmed,
+        color: PROJECT_COLORS[state.workspaces.length % PROJECT_COLORS.length],
+        icon: trimmed.charAt(0).toUpperCase(),
+        iconCustomized: false,
+        logo: null,
+        flag: null,
+      },
+      state.workspaces.length,
+    );
 
     this.writeState({
       ...state,
@@ -479,6 +506,33 @@ class ProjectStoreService {
     });
 
     return workspace;
+  }
+
+  updateWorkspace(id: string, data: WorkspaceUpdatePayload): Workspace | null {
+    const state = this.readState();
+    const index = state.workspaces.findIndex((workspace) => workspace.id === id);
+
+    if (index === -1) {
+      return null;
+    }
+
+    const updatedWorkspace = normalizeWorkspace(
+      {
+        ...state.workspaces[index],
+        ...data,
+      },
+      index,
+    );
+
+    const nextWorkspaces = [...state.workspaces];
+    nextWorkspaces[index] = updatedWorkspace;
+
+    this.writeState({
+      ...state,
+      workspaces: nextWorkspaces,
+    });
+
+    return updatedWorkspace;
   }
 
   removeWorkspace(id: string): void {

@@ -91,6 +91,12 @@ export function computeAgentTurnSummaryFromActivities(
       continue;
     }
 
+    if (activity.kind === 'tool_run' && activity.toolCommand?.trim()) {
+      commands.push({ command: activity.toolCommand.trim() });
+      commandCount += 1;
+      continue;
+    }
+
     if (activity.kind === 'live_status') {
       const runningMatch = activity.label.trim().match(/^Running\s+(.+)$/i);
 
@@ -252,10 +258,196 @@ export function extractAgentFinalResponseText(activities: AgentActivity[]): stri
     .join('\n\n');
 }
 
-const AGENT_TOOL_ACTIVITY_KINDS = new Set<AgentActivity['kind']>(['file_edit', 'file_read']);
-
 export function isAgentToolActivity(activity: AgentActivity): boolean {
-  return AGENT_TOOL_ACTIVITY_KINDS.has(activity.kind);
+  if (activity.kind === 'file_edit' || activity.kind === 'file_read') {
+    return Boolean(activity.filePath?.trim());
+  }
+
+  if (activity.kind === 'tool_run') {
+    return Boolean(activity.label.trim() || activity.toolCommand?.trim());
+  }
+
+  if (activity.kind === 'live_status') {
+    return Boolean(activity.label.trim());
+  }
+
+  if (activity.kind === 'status') {
+    return /^Ran\b/i.test(activity.label.trim());
+  }
+
+  return false;
+}
+
+export function isAgentScrollGroupActivity(activity: AgentActivity, running: boolean): boolean {
+  if (activity.kind === 'file_edit') {
+    return Boolean(activity.filePath?.trim());
+  }
+
+  if (activity.kind === 'file_read') {
+    return running && Boolean(activity.filePath?.trim());
+  }
+
+  if (activity.kind === 'tool_run') {
+    return running && Boolean(activity.label.trim() || activity.toolCommand?.trim());
+  }
+
+  if (activity.kind === 'live_status') {
+    return running && Boolean(activity.label.trim());
+  }
+
+  if (activity.kind === 'status') {
+    return Boolean(/^Ran\b/i.test(activity.label.trim()));
+  }
+
+  return false;
+}
+
+export interface AgentActivityRenderChunk {
+  key: string;
+  type: 'single' | 'tool-group';
+  activity?: AgentActivity;
+  activities?: AgentActivity[];
+}
+
+export function buildAgentActivityRenderChunks(
+  activities: AgentActivity[],
+  running: boolean,
+): AgentActivityRenderChunk[] {
+  const chunks: AgentActivityRenderChunk[] = [];
+  let toolGroup: AgentActivity[] = [];
+
+  const flushToolGroup = () => {
+    if (toolGroup.length === 0) {
+      return;
+    }
+
+    chunks.push({
+      key: `tool-group-${toolGroup[0]?.id ?? chunks.length}`,
+      type: 'tool-group',
+      activities: toolGroup,
+    });
+    toolGroup = [];
+  };
+
+  for (const activity of activities) {
+    if (isAgentScrollGroupActivity(activity, running)) {
+      toolGroup.push(activity);
+      continue;
+    }
+
+    flushToolGroup();
+    chunks.push({
+      key: activity.id,
+      type: 'single',
+      activity,
+    });
+  }
+
+  flushToolGroup();
+
+  return chunks;
+}
+
+export function buildLiveToolBatchSummary(
+  activities: AgentActivity[],
+  running: boolean,
+): string | null {
+  const fileReads = activities.filter((activity) => activity.kind === 'file_read');
+  const fileEdits = activities.filter((activity) => activity.kind === 'file_edit');
+  const searchCount = activities.filter(
+    (activity) =>
+      (activity.kind === 'tool_run' || activity.kind === 'live_status') &&
+      /^(?:Glob|Grep)/i.test(activity.label.trim()),
+  ).length;
+
+  if (fileEdits.length > 0) {
+    const additions = fileEdits.reduce((sum, entry) => sum + (entry.additions ?? 0), 0);
+    const deletions = fileEdits.reduce((sum, entry) => sum + (entry.deletions ?? 0), 0);
+    let label = `Editing ${fileEdits.length} file${fileEdits.length === 1 ? '' : 's'}`;
+
+    if (additions > 0 || deletions > 0) {
+      label += ` +${additions} -${deletions}`;
+    }
+
+    return label;
+  }
+
+  const exploredCount = fileReads.length;
+
+  if (exploredCount > 0 || searchCount > 0) {
+    const prefix = running ? 'Exploring' : 'Explored';
+    const fileLabel = `${exploredCount} file${exploredCount === 1 ? '' : 's'}`;
+    const searchLabel =
+      searchCount > 0 ? `, ${searchCount} search${searchCount === 1 ? '' : 'es'}` : '';
+
+    return `${prefix} ${fileLabel}${searchLabel}`;
+  }
+
+  const shellRuns = activities.filter(
+    (activity) => activity.kind === 'tool_run' && activity.toolCommand?.trim(),
+  );
+
+  if (shellRuns.length > 0) {
+    return running
+      ? `Running ${shellRuns.length} command${shellRuns.length === 1 ? '' : 's'}`
+      : `Ran ${shellRuns.length} command${shellRuns.length === 1 ? '' : 's'}`;
+  }
+
+  return null;
+}
+
+export function findLiveToolBatchDetailActivity(
+  activities: AgentActivity[],
+): AgentActivity | null {
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const entry = activities[index];
+
+    if (!entry) {
+      continue;
+    }
+
+    if (entry.kind === 'live_status') {
+      return entry;
+    }
+
+    if (entry.kind === 'tool_run' && entry.streaming) {
+      return entry;
+    }
+  }
+
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const entry = activities[index];
+
+    if (
+      entry &&
+      (entry.kind === 'file_edit' ||
+        entry.kind === 'tool_run' ||
+        entry.kind === 'file_read')
+    ) {
+      return entry;
+    }
+  }
+
+  return null;
+}
+
+export function shouldShowLiveToolBatchDetail(
+  detail: AgentActivity | null,
+  summary: string | null,
+): boolean {
+  if (!detail) {
+    return false;
+  }
+
+  if (detail.streaming || detail.kind === 'live_status') {
+    return true;
+  }
+
+  if (detail.kind === 'file_edit' || detail.toolCommand?.trim()) {
+    return true;
+  }
+
+  return !summary;
 }
 
 export function partitionAgentToolActivitiesForResponse(activities: AgentActivity[]): {

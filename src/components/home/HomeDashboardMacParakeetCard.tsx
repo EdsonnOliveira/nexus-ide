@@ -1,4 +1,4 @@
-import { AudioLines, Download, Loader2, Mic, Star } from 'lucide-react';
+import { AudioLines, CalendarDays, Clock, Download, Loader2, Mic, Star, Timer } from 'lucide-react';
 import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
 import { EmptyState } from '@/components/overlay/EmptyState';
@@ -14,10 +14,11 @@ import { useHomeDashboardMacParakeet } from '@/hooks/useHomeDashboardMacParakeet
 import { useProjectStore } from '@/stores/useProjectStore';
 import type { MacParakeetTranscriptionDetail, MacParakeetTranscriptionItem } from '@/types';
 import type { ProjectTask } from '@/types/task';
-import { formatNotificationRelativeTime } from '@/utils/notificationRelativeTime';
 import {
   buildTaskDraftFromTranscription,
+  formatMacParakeetDate,
   formatMacParakeetDuration,
+  formatMacParakeetSegmentTime,
   resolveMacParakeetSourceAccent,
   resolveMacParakeetSourceLabel,
 } from '@/utils/macParakeetLabels';
@@ -313,7 +314,33 @@ function HomeDashboardMacParakeetCardComponent() {
                   onClick={() => void handleOpenTranscription(item)}
                 >
                   <span className='home-dashboard__parakeet-copy'>
-                    <span className='home-dashboard__parakeet-title'>{item.title}</span>
+                    <span className='home-dashboard__parakeet-header'>
+                      <span className='home-dashboard__parakeet-title'>{item.title}</span>
+                      <span className='home-dashboard__parakeet-datetime'>
+                        <span className='home-dashboard__parakeet-meta-segment'>
+                          <CalendarDays
+                            size={11}
+                            strokeWidth={2}
+                            className='home-dashboard__parakeet-meta-icon'
+                            aria-hidden='true'
+                          />
+                          <span className='home-dashboard__parakeet-meta-text'>
+                            {formatMacParakeetDate(item.createdAt)}
+                          </span>
+                        </span>
+                        <span className='home-dashboard__parakeet-meta-segment'>
+                          <Clock
+                            size={11}
+                            strokeWidth={2}
+                            className='home-dashboard__parakeet-meta-icon'
+                            aria-hidden='true'
+                          />
+                          <span className='home-dashboard__parakeet-meta-text'>
+                            {formatMacParakeetSegmentTime(item.createdAt)}
+                          </span>
+                        </span>
+                      </span>
+                    </span>
                     {item.snippet ? (
                       <span className='home-dashboard__parakeet-snippet'>{item.snippet}</span>
                     ) : null}
@@ -329,11 +356,16 @@ function HomeDashboardMacParakeetCardComponent() {
                       {item.channelName ? (
                         <span className='home-dashboard__parakeet-channel'>{item.channelName}</span>
                       ) : null}
-                      <span className='home-dashboard__parakeet-duration'>
-                        {formatMacParakeetDuration(item.durationMs)}
-                      </span>
-                      <span className='home-dashboard__parakeet-date'>
-                        {formatNotificationRelativeTime(item.createdAt)}
+                      <span className='home-dashboard__parakeet-meta-segment'>
+                        <Timer
+                          size={11}
+                          strokeWidth={2}
+                          className='home-dashboard__parakeet-meta-icon'
+                          aria-hidden='true'
+                        />
+                        <span className='home-dashboard__parakeet-meta-text'>
+                          {formatMacParakeetDuration(item.durationMs)}
+                        </span>
                       </span>
                     </span>
                   </span>

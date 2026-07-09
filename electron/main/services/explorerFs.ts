@@ -26,6 +26,31 @@ function sanitizeEntryName(name: string): string | null {
   return trimmed;
 }
 
+function resolveUniqueEntryPath(destinationDirPath: string, entryName: string): string {
+  const initialPath = path.join(destinationDirPath, entryName);
+
+  if (!existsSync(initialPath)) {
+    return initialPath;
+  }
+
+  const extension = path.extname(entryName);
+  const baseName = path.basename(entryName, extension);
+  let counter = 1;
+
+  while (true) {
+    const candidateName = extension
+      ? `${baseName} (${counter})${extension}`
+      : `${baseName} (${counter})`;
+    const candidatePath = path.join(destinationDirPath, candidateName);
+
+    if (!existsSync(candidatePath)) {
+      return candidatePath;
+    }
+
+    counter += 1;
+  }
+}
+
 function isDescendantPath(parentPath: string, candidatePath: string): boolean {
   const relative = path.relative(parentPath, candidatePath);
 
@@ -98,11 +123,10 @@ export function importEntry(destinationDirPath: string, sourcePath: string): Exp
     return { ok: false, error: 'Pasta de destino inválida' };
   }
 
-  const nextPath = path.join(resolvedDestinationDir, path.basename(resolvedSource));
-
-  if (existsSync(nextPath)) {
-    return { ok: false, error: 'Já existe um item com esse nome no destino' };
-  }
+  const nextPath = resolveUniqueEntryPath(
+    resolvedDestinationDir,
+    path.basename(resolvedSource),
+  );
 
   try {
     cpSync(resolvedSource, nextPath, { recursive: true });

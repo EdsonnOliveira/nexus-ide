@@ -1,6 +1,7 @@
-import { Check, FolderKanban, Plus, Trash2 } from 'lucide-react';
+import { Check, FolderKanban, Plus } from 'lucide-react';
 import { memo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { WorkspaceMark } from '@/components/sidebar/WorkspaceMark';
 import {
   positionDropdownBelowAnchor,
   useAnchoredDropdownMenu,
@@ -11,26 +12,28 @@ interface WorkspaceMenuProps {
   anchorRect: DOMRect;
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
-  canDeleteWorkspace: boolean;
   hasHiddenNotifications: boolean;
   notifiedWorkspaceIds: Set<string>;
+  hasRunningAgent: boolean;
+  runningAgentWorkspaceIds: Set<string>;
   onClose: () => void;
   onSelect: (workspaceId: string | null) => void;
   onCreate: () => void;
-  onDelete: (workspaceId: string) => void;
+  onContextMenu: (workspace: Workspace, x: number, y: number) => void;
 }
 
 function WorkspaceMenuComponent({
   anchorRect,
   workspaces,
   activeWorkspaceId,
-  canDeleteWorkspace,
   hasHiddenNotifications,
   notifiedWorkspaceIds,
+  hasRunningAgent,
+  runningAgentWorkspaceIds,
   onClose,
   onSelect,
   onCreate,
-  onDelete,
+  onContextMenu,
 }: WorkspaceMenuProps) {
   const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
     onClose,
@@ -40,9 +43,17 @@ function WorkspaceMenuComponent({
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) {
-        requestClose();
+      const target = event.target as Node;
+
+      if (menuRef.current?.contains(target)) {
+        return;
       }
+
+      if (target instanceof Element && target.closest('[data-workspace-submenu]')) {
+        return;
+      }
+
+      requestClose();
     };
 
     const timeoutId = window.setTimeout(() => {
@@ -72,6 +83,10 @@ function WorkspaceMenuComponent({
 
   const handleSelectAll = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (event.button !== 0) {
+        return;
+      }
+
       event.preventDefault();
       event.stopPropagation();
       onSelect(null);
@@ -82,6 +97,10 @@ function WorkspaceMenuComponent({
 
   const handleSelectWorkspace = useCallback(
     (workspaceId: string) => (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (event.button !== 0) {
+        return;
+      }
+
       event.preventDefault();
       event.stopPropagation();
       onSelect(workspaceId);
@@ -90,18 +109,21 @@ function WorkspaceMenuComponent({
     [onSelect, requestClose],
   );
 
-  const handleDeleteWorkspace = useCallback(
-    (workspaceId: string) => (event: React.MouseEvent<HTMLButtonElement>) => {
+  const handleWorkspaceContextMenu = useCallback(
+    (workspace: Workspace) => (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
       event.stopPropagation();
-      onDelete(workspaceId);
-      requestClose();
+      onContextMenu(workspace, event.clientX, event.clientY);
     },
-    [onDelete, requestClose],
+    [onContextMenu],
   );
 
   const handleCreate = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (event.button !== 0) {
+        return;
+      }
+
       event.preventDefault();
       event.stopPropagation();
       onCreate();
@@ -115,6 +137,7 @@ function WorkspaceMenuComponent({
       ref={menuRef}
       className={`context-menu workspace-menu overlay-popup--anchor-start ${animationClass}`}
       role='menu'
+      onContextMenu={(event) => event.preventDefault()}
     >
       <button
         type='button'
@@ -129,43 +152,47 @@ function WorkspaceMenuComponent({
           ) : null}
         </span>
         <span>Todos os projetos</span>
+        {hasRunningAgent ? (
+          <span
+            className='project-item__agent project-item__agent--loading workspace-menu__agent'
+            aria-label='Agent em execução'
+          />
+        ) : null}
         {activeWorkspaceId === null ? <Check size={14} strokeWidth={2} aria-hidden /> : null}
       </button>
       {workspaces.length > 0 ? <div className='context-menu__separator' /> : null}
       {workspaces.map((workspace) => {
         const isActive = activeWorkspaceId === workspace.id;
         const hasNotification = notifiedWorkspaceIds.has(workspace.id);
+        const isAgentRunning = runningAgentWorkspaceIds.has(workspace.id);
+        const isFlagged = Boolean(workspace.flag);
 
         return (
-          <div key={workspace.id} className='workspace-menu__row'>
-            <button
-              type='button'
-              className={`context-menu__item workspace-menu__item${isActive ? ' context-menu__item--active' : ''}${hasNotification ? ' workspace-menu__item--notified' : ''}`}
-              role='menuitem'
-              onMouseDown={handleSelectWorkspace(workspace.id)}
-            >
-              <span className='workspace-menu__icon-wrap'>
-                <span className='workspace-menu__dot' aria-hidden />
-                {hasNotification ? (
-                  <span className='project-item__ping project-item__ping--red workspace-menu__ping' aria-hidden='true' />
-                ) : null}
-              </span>
-              <span className='workspace-menu__label'>{workspace.name}</span>
-              {isActive ? (
-                <Check size={14} strokeWidth={2} className='workspace-menu__check' aria-hidden />
+          <button
+            key={workspace.id}
+            type='button'
+            className={`context-menu__item workspace-menu__item${isActive ? ' context-menu__item--active' : ''}${hasNotification ? ' workspace-menu__item--notified' : ''}${isFlagged ? ' workspace-menu__item--flagged' : ''}`}
+            role='menuitem'
+            onMouseDown={handleSelectWorkspace(workspace.id)}
+            onContextMenu={handleWorkspaceContextMenu(workspace)}
+          >
+            <span className='workspace-menu__icon-wrap'>
+              <WorkspaceMark workspace={workspace} />
+              {hasNotification ? (
+                <span className='project-item__ping project-item__ping--red workspace-menu__ping' aria-hidden='true' />
               ) : null}
-            </button>
-            {canDeleteWorkspace ? (
-              <button
-                type='button'
-                className='workspace-menu__delete'
-                aria-label={`Excluir workspace ${workspace.name}`}
-                onMouseDown={handleDeleteWorkspace(workspace.id)}
-              >
-                <Trash2 size={14} strokeWidth={2} aria-hidden />
-              </button>
+            </span>
+            <span className='workspace-menu__label'>{workspace.name}</span>
+            {isAgentRunning ? (
+              <span
+                className='project-item__agent project-item__agent--loading workspace-menu__agent'
+                aria-label='Agent em execução'
+              />
             ) : null}
-          </div>
+            {isActive ? (
+              <Check size={14} strokeWidth={2} className='workspace-menu__check' aria-hidden />
+            ) : null}
+          </button>
         );
       })}
       <div className='context-menu__separator' />

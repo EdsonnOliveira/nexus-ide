@@ -6,12 +6,15 @@ import { PROJECT_COLORS, type TabBarItem } from '@/types';
 import { resolveTabDisplayTitle } from '@/utils/resolveAgentPaneForTab';
 import { resolveTabBadgeColor } from '@/utils/tabBadge';
 import { isTabPinned } from '@/utils/tabOrder';
+import type { ProjectPingTone } from '@/utils/projectPingTone';
 
 interface TabItemProps {
   tab: TabBarItem;
   index: number;
   isFocused: boolean;
   isRestarting: boolean;
+  hasNotification?: boolean;
+  pingTone?: ProjectPingTone;
   isDropTarget: boolean;
   onSelect: (tabId: string) => void;
   onClose: (tabId: string) => void;
@@ -27,6 +30,8 @@ function TabItemComponent({
   index,
   isFocused,
   isRestarting,
+  hasNotification = false,
+  pingTone = 'red',
   isDropTarget,
   onSelect,
   onClose,
@@ -44,6 +49,10 @@ function TabItemComponent({
   }, [tab]);
 
   const badgeLabel = useMemo(() => index + 1, [index]);
+  const pingClassName = useMemo(
+    () => `project-item__ping project-item__ping--${pingTone} tab-item__ping`,
+    [pingTone],
+  );
   const wasRestartingRef = useRef(false);
   const itemRef = useRef<HTMLDivElement>(null);
   const [shimmerCycle, setShimmerCycle] = useState(0);
@@ -148,8 +157,12 @@ function TabItemComponent({
       classes.push('tab-item--drop-target');
     }
 
+    if (hasNotification) {
+      classes.push('tab-item--notified');
+    }
+
     return classes.join(' ');
-  }, [isDropTarget, isFocused, pinned]);
+  }, [hasNotification, isDropTarget, isFocused, pinned]);
 
   return (
     <div
@@ -173,11 +186,14 @@ function TabItemComponent({
       }}
     >
       {pinned ? <Pin size={11} strokeWidth={2.25} className='tab-item__pin' aria-hidden='true' /> : null}
-      <span
-        className={`tab-item__badge${isRestarting ? ' tab-item__badge--loading' : ''}`}
-        style={badgeStyle}
-      >
-        {isRestarting ? <Loader2 size={10} strokeWidth={2.5} className='tab-item__badge-spinner' /> : badgeLabel}
+      <span className='tab-item__badge-wrap'>
+        <span
+          className={`tab-item__badge${isRestarting ? ' tab-item__badge--loading' : ''}`}
+          style={badgeStyle}
+        >
+          {isRestarting ? <Loader2 size={10} strokeWidth={2.5} className='tab-item__badge-spinner' /> : badgeLabel}
+        </span>
+        {hasNotification ? <span className={pingClassName} aria-hidden='true' /> : null}
       </span>
       <span
         key={isRestarting ? shimmerCycle : undefined}

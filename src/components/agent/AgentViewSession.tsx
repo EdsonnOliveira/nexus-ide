@@ -10,6 +10,7 @@ import {
 import { ArrowDown, Bot } from 'lucide-react';
 import { AgentComposer } from '@/components/agent/AgentComposer';
 import { AgentFollowUpQueue } from '@/components/agent/AgentFollowUpQueue';
+import { AgentShellTerminalDock } from '@/components/agent/AgentShellTerminalDock';
 import { AgentPlanReviewDock } from '@/components/agent/AgentPlanReviewDock';
 import { AgentProjectSkillPills } from '@/components/agent/AgentProjectSkillPills';
 import {
@@ -20,6 +21,7 @@ import { EmptyState } from '@/components/overlay/EmptyState';
 import { AgentGitChangePill } from '@/components/terminal/AgentGitChangePill';
 import { useAgentPaneSession } from '@/hooks/useAgentPaneSession';
 import { useAgentComposerDraftStore } from '@/stores/useAgentComposerDraftStore';
+import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { TERMINAL_AGENTS } from '@/constants/terminalAgents';
 import type { AgentTurn } from '@/types';
 import { cliAgentToTerminalAgent } from '@/utils/agentTabHelpers';
@@ -213,6 +215,35 @@ function AgentViewSessionComponent({
     onRestoreDraft: restoreDraft,
   });
 
+  const clearNotificationForPane = useProjectNotificationStore(
+    (state) => state.clearNotificationForPane,
+  );
+  const restoreProjectNotification = useProjectNotificationStore(
+    (state) => state.restoreProjectNotification,
+  );
+
+  useEffect(() => {
+    if (isVisible) {
+      clearNotificationForPane(tab.id);
+      return;
+    }
+
+    if (hasPendingQuestion || hasPendingPlan) {
+      restoreProjectNotification(projectId, tab.id);
+      return;
+    }
+
+    clearNotificationForPane(tab.id);
+  }, [
+    clearNotificationForPane,
+    hasPendingPlan,
+    hasPendingQuestion,
+    isVisible,
+    projectId,
+    restoreProjectNotification,
+    tab.id,
+  ]);
+
   useEffect(() => {
     if (!isFocused || !isVisible) {
       return;
@@ -346,6 +377,8 @@ function AgentViewSessionComponent({
             onReject={handleRejectPlan}
           />
         ) : null}
+
+        <AgentShellTerminalDock agentPaneId={tab.id} projectPath={projectPath} />
 
         <AgentComposer
           paneId={tab.id}

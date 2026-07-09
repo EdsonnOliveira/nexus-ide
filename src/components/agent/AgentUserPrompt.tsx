@@ -14,7 +14,7 @@ import { getAgentModeOption, type AgentModeBadgeIcon } from '@/constants/agentMo
 import { useFlipMotion } from '@/hooks/useFlipMotion';
 import type { AgentTurn } from '@/types';
 import { hydrateAgentUserMessage, resolvePromptDisplayContent } from '@/utils/agentPromptAttachments';
-import { resolveAgentSkillDisplayState, shouldShowSkillChipAbovePrompt } from '@/utils/agentSkillDisplay';
+import { resolveAgentSkillDisplayState, isSkillOnlyPrompt, shouldShowSkillChipAbovePrompt } from '@/utils/agentSkillDisplay';
 
 const MODE_ICON_SRC: Record<AgentModeBadgeIcon, string> = {
   'mode-agent': iconModeAgent,
@@ -55,10 +55,13 @@ function AgentUserPromptComponent({
     return getAgentModeOption(mode) ?? null;
   }, [turn.user.mode]);
   const { hasSkillPrompt, skillChipLabel } = resolveAgentSkillDisplayState(turn.user);
-  const showSkillChip =
-    hasSkillPrompt && shouldShowSkillChipAbovePrompt(bubbleContent, skillChipLabel);
+  const isSkillOnly = isSkillOnlyPrompt(turn.user, bubbleContent, attachments.length);
+  const showSkillChipAbove =
+    hasSkillPrompt && !isSkillOnly && shouldShowSkillChipAbovePrompt(bubbleContent, skillChipLabel);
   const isMultilineBubble =
-    bubbleContent.includes('\n') || bubbleContent.length > 72;
+    !isSkillOnly && (bubbleContent.includes('\n') || bubbleContent.length > 72);
+  const showBubble = Boolean(bubbleContent) && !isSkillOnly;
+  const showSkillBadge = isSkillOnly && hasSkillPrompt;
 
   useEffect(() => {
     let cancelled = false;
@@ -103,7 +106,7 @@ function AgentUserPromptComponent({
         ) : turn.pendingFollowUp ? (
           <span className='agent-view__user-queued-badge app-button--enter'>Na fila</span>
         ) : null}
-        {showSkillChip ? (
+        {showSkillChipAbove ? (
           <div className='agent-view__user-skill agent-view__user-skill--skill'>
             <BookOpen size={11} strokeWidth={2} aria-hidden='true' />
             <span className='agent-view__user-skill-label'>{skillChipLabel}</span>
@@ -127,11 +130,17 @@ function AgentUserPromptComponent({
           </div>
         ) : null}
         <div
-          className={`agent-view__user-prompt${turn.running ? ' agent-view__user-prompt--active' : ''}${turn.pendingFollowUp ? ' agent-view__user-prompt--pending' : ''}${isEditing ? ' agent-view__user-prompt--editing' : ''}${isMultilineBubble ? ' agent-view__user-prompt--multiline' : ''}`}
+          className={`agent-view__user-prompt${turn.running ? ' agent-view__user-prompt--active' : ''}${turn.pendingFollowUp ? ' agent-view__user-prompt--pending' : ''}${isEditing ? ' agent-view__user-prompt--editing' : ''}${isMultilineBubble ? ' agent-view__user-prompt--multiline' : ''}${isSkillOnly ? ' agent-view__user-prompt--skill-only' : ''}`}
         >
-          {bubbleContent ? (
+          {showSkillBadge ? (
+            <div className='agent-view__user-skill agent-view__user-skill--skill'>
+              <BookOpen size={11} strokeWidth={2} aria-hidden='true' />
+              <span className='agent-view__user-skill-label'>{skillChipLabel}</span>
+            </div>
+          ) : null}
+          {showBubble ? (
             <div
-              className={`agent-view__user-bubble${isMultilineBubble ? ' agent-view__user-bubble--multiline' : ''}${hasSkillPrompt ? ' agent-view__user-bubble--skill' : ''}`}
+              className={`agent-view__user-bubble${isMultilineBubble ? ' agent-view__user-bubble--multiline' : ''}${hasSkillPrompt && !showSkillChipAbove ? ' agent-view__user-bubble--skill' : ''}`}
             >
               <AgentPromptImageMentionText text={bubbleContent} />
             </div>

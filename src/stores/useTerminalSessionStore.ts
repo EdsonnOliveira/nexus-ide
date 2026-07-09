@@ -152,6 +152,10 @@ export const useTerminalSessionStore = create<TerminalSessionState>((set, get) =
   agentPrintLastModeByPane: {},
   setActiveAgent: (paneId, agent) => {
     set((state) => {
+      if (state.activeAgentByPane[paneId] === agent) {
+        return state;
+      }
+
       const nextSince = { ...state.activeAgentSinceByPane };
       const nextMode = { ...state.activeAgentModeByPane };
 

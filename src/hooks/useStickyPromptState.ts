@@ -6,13 +6,10 @@ const STICKY_PROMPT_IN_MS = 220;
 const STICKY_PROMPT_OUT_MS = 180;
 const STICKY_ENTER_OFFSET_PX = 10;
 const STICKY_EXIT_OFFSET_PX = 42;
-const STICKY_RELEASE_BLOCK_PX = 72;
-const STICKY_RELEASE_CLEAR_PX = 148;
 const STICKY_STATE_LOCK_MS = 320;
 
 interface UseStickyPromptStateOptions {
   disabled?: boolean;
-  releaseSentinelRef?: RefObject<HTMLDivElement | null>;
 }
 
 function getStickyMotionDuration(phase: 'in' | 'out'): number {
@@ -30,13 +27,11 @@ export function useStickyPromptState(
   options: UseStickyPromptStateOptions = {},
 ): { isStuck: boolean; phase: StickyPromptMotionPhase } {
   const disabled = options.disabled ?? false;
-  const releaseSentinelRef = options.releaseSentinelRef;
   const [rawStuck, setRawStuck] = useState(false);
   const [isStuck, setIsStuck] = useState(false);
   const [phase, setPhase] = useState<StickyPromptMotionPhase>(null);
   const isStuckRef = useRef(false);
   const rawStuckRef = useRef(false);
-  const blockedByActivitiesRef = useRef(false);
   const timerRef = useRef<number | null>(null);
   const lockUntilRef = useRef(0);
   const rafRef = useRef<number | null>(null);
@@ -54,7 +49,6 @@ export function useStickyPromptState(
 
     isStuckRef.current = false;
     rawStuckRef.current = false;
-    blockedByActivitiesRef.current = false;
     lockUntilRef.current = 0;
     setRawStuck(false);
     setIsStuck(false);
@@ -67,7 +61,6 @@ export function useStickyPromptState(
     }
 
     rawStuckRef.current = false;
-    blockedByActivitiesRef.current = false;
     setRawStuck(false);
   }, [disabled]);
 
@@ -100,23 +93,8 @@ export function useStickyPromptState(
       const offsetTop = sentinelRect.top - rootRect.top;
       const previous = rawStuckRef.current;
       let next = previous;
-      const releaseSentinel = releaseSentinelRef?.current;
 
-      if (releaseSentinel) {
-        const releaseOffsetTop = releaseSentinel.getBoundingClientRect().top - rootRect.top;
-
-        if (releaseOffsetTop <= STICKY_RELEASE_BLOCK_PX) {
-          blockedByActivitiesRef.current = true;
-        } else if (releaseOffsetTop >= STICKY_RELEASE_CLEAR_PX) {
-          blockedByActivitiesRef.current = false;
-        }
-      } else {
-        blockedByActivitiesRef.current = false;
-      }
-
-      if (blockedByActivitiesRef.current) {
-        next = false;
-      } else if (!previous && offsetTop < -STICKY_ENTER_OFFSET_PX) {
+      if (!previous && offsetTop < -STICKY_ENTER_OFFSET_PX) {
         next = true;
       } else if (previous && offsetTop > STICKY_EXIT_OFFSET_PX) {
         next = false;
@@ -160,7 +138,7 @@ export function useStickyPromptState(
         rafRef.current = null;
       }
     };
-  }, [disabled, releaseSentinelRef, scrollContainerRef, sentinelRef, watchKey]);
+  }, [disabled, scrollContainerRef, sentinelRef, watchKey]);
 
   useEffect(() => {
     if (timerRef.current !== null) {

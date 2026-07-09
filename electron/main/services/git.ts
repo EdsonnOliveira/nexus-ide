@@ -191,10 +191,84 @@ function resolveGitRepoRoot(dirPath: string): string {
       return output;
     }
   } catch {
-    return resolved;
+    const nestedRepos = discoverGitRepos(resolved);
+
+    if (nestedRepos.length === 1) {
+      return nestedRepos[0].path;
+    }
+  }
+
+  const nestedRepos = discoverGitRepos(resolved);
+
+  if (nestedRepos.length === 1) {
+    return nestedRepos[0].path;
   }
 
   return resolved;
+}
+
+function resolveGitRepoForFilePath(dirPath: string, filePath: string): string {
+  const resolved = resolveRepo(dirPath);
+
+  if (isGitRepo(resolved)) {
+    return resolved;
+  }
+
+  try {
+    const output = execFileSync('git', ['-C', resolved, 'rev-parse', '--show-toplevel'], {
+      encoding: 'utf8',
+      timeout: 3000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+
+    if (output) {
+      return output;
+    }
+  } catch {
+    // fall through to nested repo discovery
+  }
+
+  const repos = discoverGitRepos(resolved);
+
+  if (repos.length === 0) {
+    return resolved;
+  }
+
+  if (repos.length === 1) {
+    return repos[0].path;
+  }
+
+  const normalizedInput = filePath.replace(/\\/g, '/');
+
+  if (path.isAbsolute(filePath)) {
+    const absolute = path.resolve(filePath);
+    const sortedRepos = [...repos].sort((left, right) => right.path.length - left.path.length);
+
+    for (const repo of sortedRepos) {
+      const relative = path.relative(repo.path, absolute).replace(/\\/g, '/');
+
+      if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+        return repo.path;
+      }
+    }
+  } else {
+    const relative = normalizedInput.replace(/^\/+/, '').replace(/^\.\/+/, '');
+    const sortedRepos = [...repos].sort((left, right) => right.path.length - left.path.length);
+
+    for (const repo of sortedRepos) {
+      if (repo.relativePath !== '.' && relative.startsWith(`${repo.relativePath}/`)) {
+        return repo.path;
+      }
+
+      const candidate = path.join(repo.path, relative);
+
+      if (existsSync(candidate)) {
+        return repo.path;
+      }
+    }
+  }
+
+  return repos[0].path;
 }
 
 function isGitRepo(dirPath: string): boolean {
@@ -1119,7 +1193,7 @@ export async function getGitFileDiffSides(
   filePath: string,
   options: { staged: boolean; untracked?: boolean },
 ): Promise<GitFileDiffSidesResult> {
-  const resolved = resolveGitRepoRoot(dirPath);
+  const resolved = resolveGitRepoForFilePath(dirPath, filePath);
   const { relativePath, absolutePath } = resolveGitFileInRepo(resolved, filePath);
 
   if (options.untracked) {
@@ -1147,7 +1221,7 @@ export async function getGitFileDiffImageSides(
   filePath: string,
   options: { staged: boolean; untracked?: boolean },
 ): Promise<GitFileDiffImageSidesResult> {
-  const resolved = resolveGitRepoRoot(dirPath);
+  const resolved = resolveGitRepoForFilePath(dirPath, filePath);
   const { relativePath, absolutePath } = resolveGitFileInRepo(resolved, filePath);
 
   if (options.untracked) {

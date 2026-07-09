@@ -108,6 +108,7 @@ export type AgentActivityKind =
   | 'file_edit'
   | 'file_read'
   | 'live_status'
+  | 'tool_run'
   | 'response'
   | 'question'
   | 'plan';
@@ -157,6 +158,9 @@ export interface AgentActivity {
   planTodos?: AgentPlanTodo[];
   planStatus?: AgentPlanStatus;
   planUri?: string;
+  toolCommand?: string;
+  toolOutput?: string;
+  toolExitCode?: number | null;
 }
 
 export interface AgentFollowUp {
@@ -343,9 +347,28 @@ export type {
   AutomationTrigger,
 } from '@/types/automation';
 
+export interface ProjectFlag {
+  reason: string;
+  createdAt: number;
+}
+
 export interface Workspace {
   id: string;
   name: string;
+  color: string;
+  icon: string;
+  iconCustomized: boolean;
+  logo: string | null;
+  flag?: ProjectFlag | null;
+}
+
+export interface WorkspaceUpdatePayload {
+  name?: string;
+  color?: string;
+  icon?: string;
+  iconCustomized?: boolean;
+  logo?: string | null;
+  flag?: ProjectFlag | null;
 }
 
 export interface ProjectAgentResponseSkill {
@@ -353,11 +376,6 @@ export interface ProjectAgentResponseSkill {
   hintId: string;
   label: string;
   command: string;
-}
-
-export interface ProjectFlag {
-  reason: string;
-  createdAt: number;
 }
 
 export interface Project {
@@ -633,6 +651,13 @@ export interface MacParakeetTranscriptSegment {
   isQuestion: boolean;
 }
 
+export type MacParakeetStartCallResult =
+  | { ok: true; callSessionId: string; title: string }
+  | {
+      ok: false;
+      reason: 'unsupported' | 'not_installed' | 'unauthorized' | 'invalid_title' | 'create_failed';
+    };
+
 export type VercelDeploymentState =
   | 'READY'
   | 'ERROR'
@@ -659,6 +684,27 @@ export interface VercelActiveDeployment {
   projectAvatarUrl: string | null;
 }
 
+export type MobileReleaseKind = 'android-aab' | 'android-apk' | 'ios-testflight';
+
+export type MobileReleaseState = 'BUILDING' | 'READY' | 'ERROR';
+
+export interface MobileActiveRelease {
+  uid: string;
+  projectId: string;
+  projectName: string;
+  paneId: string;
+  kind: MobileReleaseKind;
+  state: MobileReleaseState;
+  version: string | null;
+  versionCode: string | null;
+  artifactPath: string | null;
+  phase: string | null;
+  createdAt: number;
+  buildingAt: number;
+  readyAt: number | null;
+  logTail: string;
+}
+
 export interface CursorPeriodUsageSnapshot {
   available: boolean;
   percent: number;
@@ -678,6 +724,8 @@ export interface CursorPeriodUsageSnapshot {
 export interface XTermViewHandle {
   focus: () => void;
   write: (data: string) => void;
+  print: (data: string) => void;
+  canPrint: () => boolean;
   isWritable: () => boolean;
   interruptAndRun: (command: string) => Promise<void>;
   removeImageFromPrompt: (imageId: number) => void;
@@ -707,6 +755,7 @@ export interface NexusAPI {
   projects: {
     list: () => Promise<AppState>;
     createWorkspace: (name: string) => Promise<Workspace>;
+    updateWorkspace: (id: string, data: WorkspaceUpdatePayload) => Promise<Workspace | null>;
     removeWorkspace: (id: string) => Promise<void>;
     selectWorkspace: (id: string | null) => Promise<void>;
     add: (projectPath: string, workspaceId?: string | null) => Promise<Project>;
@@ -716,6 +765,7 @@ export interface NexusAPI {
     update: (id: string, data: ProjectUpdatePayload) => Promise<Project | null>;
     saveLogo: (projectId: string, sourcePath: string) => Promise<string>;
     saveLogoFromDataUrl: (projectId: string, dataUrl: string) => Promise<string>;
+    saveWorkspaceLogoFromDataUrl: (workspaceId: string, dataUrl: string) => Promise<string>;
     removeLogo: (logoPath: string | null) => Promise<void>;
     setSidebarVideoSession: (
       session: PersistedSidebarVideoSession | null | undefined,
@@ -994,6 +1044,7 @@ export interface NexusAPI {
     ) => Promise<MacParakeetTranscriptionsSnapshot>;
     getTranscriptionDetail: (id: string) => Promise<MacParakeetTranscriptionDetail | null>;
     openApp: () => Promise<void>;
+    startCallFromEvent: (title: string) => Promise<MacParakeetStartCallResult>;
     renameTranscriptionTitle: (
       id: string,
       title: string,
@@ -1119,6 +1170,12 @@ export interface ContextMenuState {
   y: number;
 }
 
-export type ProjectPromptMode = 'rename' | 'icon' | 'workspace';
+export interface WorkspaceContextMenuState {
+  workspaceId: string;
+  x: number;
+  y: number;
+}
+
+export type ProjectPromptMode = 'rename' | 'icon' | 'workspace' | 'workspace-rename' | 'workspace-icon';
 
 export {};

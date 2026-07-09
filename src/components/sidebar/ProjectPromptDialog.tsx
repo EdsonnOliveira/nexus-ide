@@ -41,10 +41,23 @@ function ProjectPromptDialogComponent({
 
   const title =
     dialogTitle ??
-    (mode === 'rename' ? 'Renomear projeto' : mode === 'workspace' ? 'Nova workspace' : 'Definir ícone');
+    (mode === 'rename' || mode === 'workspace-rename'
+      ? mode === 'workspace-rename'
+        ? 'Renomear workspace'
+        : 'Renomear projeto'
+      : mode === 'workspace'
+        ? 'Nova workspace'
+        : 'Definir ícone');
   const label =
     dialogLabel ??
-    (mode === 'rename' ? 'Nome do projeto' : mode === 'workspace' ? 'Nome da workspace' : 'Caractere do ícone');
+    (mode === 'rename' || mode === 'workspace-rename'
+      ? mode === 'workspace-rename'
+        ? 'Nome da workspace'
+        : 'Nome do projeto'
+      : mode === 'workspace'
+        ? 'Nome da workspace'
+        : 'Caractere do ícone');
+  const isIconMode = mode === 'icon' || mode === 'workspace-icon';
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -65,7 +78,7 @@ function ProjectPromptDialogComponent({
     (requestClose: () => void) => (event: React.FormEvent<HTMLFormElement>) => {
       event.preventDefault();
 
-      if (mode === 'icon') {
+      if (isIconMode) {
         if (selectedPresetId) {
           onConfirm(buildProjectPresetIconValue(selectedPresetId));
           requestClose();
@@ -92,13 +105,13 @@ function ProjectPromptDialogComponent({
       onConfirm(trimmed);
       requestClose();
     },
-    [customValue, mode, onConfirm, selectedPresetId],
+    [customValue, isIconMode, onConfirm, selectedPresetId],
   );
 
   return (
     <AnimatedModal
       onClose={onClose}
-      panelClassName={`project-dialog${mode === 'icon' ? ' project-dialog--icon' : ''}`}
+      panelClassName={`project-dialog${isIconMode ? ' project-dialog--icon' : ''}`}
     >
       {(requestClose) => (
         <form onSubmit={handleSubmit(requestClose)}>
@@ -109,15 +122,15 @@ function ProjectPromptDialogComponent({
               ref={inputRef}
               className='project-dialog__input'
               value={customValue}
-              maxLength={mode === 'icon' ? 8 : 64}
+              maxLength={isIconMode ? 8 : 64}
               onChange={(event) =>
-                mode === 'icon'
+                isIconMode
                   ? handleCustomChange(event.target.value)
                   : setCustomValue(event.target.value)
               }
             />
           </label>
-          {mode === 'icon' ? (
+          {isIconMode ? (
             <div className='project-dialog__presets'>
               <span className='project-dialog__presets-label'>Ícones</span>
               <div className='project-dialog__presets-grid'>

@@ -68,6 +68,13 @@ export function useHomeDashboardMacParakeet(enabled: boolean) {
             };
           }
 
+          if (!nextSnapshot.available && previousSnapshot.transcriptions.length > 0) {
+            return {
+              ...nextSnapshot,
+              transcriptions: [],
+            };
+          }
+
           return nextSnapshot;
         });
       } catch {

@@ -37,7 +37,6 @@ function AgentTurnViewComponent({
     turn.running ||
     isAgentTurnSummaryVisible(turn.summary);
   const stickySentinelRef = useRef<HTMLDivElement>(null);
-  const activityReleaseSentinelRef = useRef<HTMLDivElement>(null);
   const hasPendingInteractive = useMemo(
     () =>
       turn.activities.some(
@@ -47,14 +46,13 @@ function AgentTurnViewComponent({
       ),
     [turn.activities],
   );
-  const stickyPromptActive = isLatestTurn && !hasPendingInteractive;
+  const stickyPromptActive = !hasPendingInteractive;
   const { isStuck: isPromptStuck, phase: stickyPhase } = useStickyPromptState(
     stickySentinelRef,
     scrollContainerRef,
     turn.id,
     {
       disabled: !stickyPromptActive,
-      releaseSentinelRef: hasActivities ? activityReleaseSentinelRef : undefined,
     },
   );
 
@@ -63,7 +61,7 @@ function AgentTurnViewComponent({
       <div ref={stickySentinelRef} className='agent-view__user-prompt-sticky-sentinel' aria-hidden='true' />
       <div
         className={`agent-view__user-prompt-sticky${stickyPromptActive ? ' agent-view__user-prompt-sticky--enabled' : ''}${isPromptStuck ? ' agent-view__user-prompt-sticky--stuck' : ''}${stickyPhase === 'in' ? ' agent-view__user-prompt-sticky--enter' : ''}${stickyPhase === 'out' ? ' agent-view__user-prompt-sticky--exit' : ''}`}
-        style={{ zIndex: turnIndex + 1 }}
+        style={isPromptStuck ? { zIndex: turnIndex + 1 } : undefined}
       >
         <AgentUserPrompt
           turn={turn}
@@ -75,13 +73,7 @@ function AgentTurnViewComponent({
         />
       </div>
       {hasActivities ? (
-        <>
-          <div
-            ref={activityReleaseSentinelRef}
-            className='agent-view__user-prompt-sticky-sentinel'
-            aria-hidden='true'
-          />
-          <AgentActivityList
+        <AgentActivityList
             activities={turn.activities}
             running={turn.running}
             summary={turn.summary}
@@ -90,8 +82,7 @@ function AgentTurnViewComponent({
             paneId={paneId}
             isLatestTurn={isLatestTurn}
             onSubmitQuestion={onSubmitQuestion}
-          />
-        </>
+        />
       ) : null}
     </div>
   );

@@ -28,6 +28,11 @@ import {
 } from '@/utils/terminalTaskCompletion';
 import { completeAgentGitTurn, trackAgentGitPrompt } from '@/utils/agentGitTurn';
 import { handleAutomationPaneShellPrompt } from '@/utils/automationPaneExecution';
+import {
+  feedMobileReleaseOutput,
+  handleMobileReleaseShellPrompt,
+  startMobileReleaseFromCommand,
+} from '@/utils/mobileReleaseTracker';
 import { useAgentGitChangeStore } from '@/stores/useAgentGitChangeStore';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import { shouldMarkAgentAwaiting } from '@/utils/projectAgentStatus';
@@ -319,6 +324,17 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
           window.nexus.terminal.write(ptyIdRef.current, data);
         }
       },
+      print: (data: string) => {
+        const terminal = terminalRef.current;
+
+        if (!canUseTerminal(terminal, disposedRef)) {
+          return;
+        }
+
+        terminal.write(data);
+        terminal.scrollToBottom();
+      },
+      canPrint: () => canUseTerminal(terminalRef.current, disposedRef),
       isWritable: () => Boolean(ptyIdRef.current),
       interruptAndRun: async (command: string) => {
         const activePtyId = ptyIdRef.current;
@@ -333,6 +349,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         });
         window.nexus.terminal.write(activePtyId, `${command}\n`);
         useTerminalSessionStore.getState().setLastCommand(paneIdRef.current, command);
+        void startMobileReleaseFromCommand(paneIdRef.current, command);
 
         if (
           shouldMarkAgentAwaiting(
@@ -656,6 +673,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       }
 
       handleAutomationPaneShellPrompt(paneIdRef.current);
+      handleMobileReleaseShellPrompt(paneIdRef.current);
     });
 
     const parseStream = createTerminalOutputParser(
@@ -692,6 +710,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
             return;
           }
 
+          void startMobileReleaseFromCommand(paneId, command);
           window.nexus.terminal.write(ptyId, `${command}\n`);
         });
       },
@@ -741,6 +760,8 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         } else {
           session.setLastCommand(paneId, trimmed);
         }
+
+        void startMobileReleaseFromCommand(paneId, trimmed);
       }
 
       if (isAgentSessionRef.current) {
@@ -799,6 +820,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       }
 
       agentReadyDetector.feed(data);
+      feedMobileReleaseOutput(paneIdRef.current, data);
 
       if (!isVisibleRef.current || isProjectSwitching()) {
         scheduleSyncPasteImagesFromPromptRef.current(true);

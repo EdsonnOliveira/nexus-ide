@@ -12,6 +12,7 @@ import {
   useAnchoredDropdownMenu,
 } from '@/hooks/useAnchoredDropdownMenu';
 import type { CalendarEventItem } from '@/types';
+import { startCalendarEventCall } from '@/utils/calendarEventStartCall';
 import { resolveCalendarExternalUrl, resolveCalendarMeetingInfo } from '@/utils/calendarEventStyle';
 
 interface SidebarCalendarEventPopupProps {
@@ -59,12 +60,9 @@ function SidebarCalendarEventPopupComponent({
   }, []);
 
   const handleStartCall = useCallback(() => {
-    if (!meetingInfo?.url) {
-      return;
-    }
-
-    handleOpenExternalUrl(meetingInfo.url);
-  }, [handleOpenExternalUrl, meetingInfo?.url]);
+    void startCalendarEventCall(event);
+    requestClose();
+  }, [event, requestClose]);
 
   return createPortal(
     <TitleBarPopupShell
@@ -81,7 +79,7 @@ function SidebarCalendarEventPopupComponent({
         <CalendarEventFooterActions
           onOpenInCalendar={handleOpenInCalendar}
           onStartCall={handleStartCall}
-          showStartCall={Boolean(meetingInfo?.url)}
+          showStartCall
         />
       }
     >

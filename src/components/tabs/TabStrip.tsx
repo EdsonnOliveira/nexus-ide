@@ -3,6 +3,7 @@ import { TAB_DRAG_MIME } from '@/constants/tabDrag';
 import { useTabCloseShortcut } from '@/hooks/useTabCloseShortcut';
 import { useTabIndexShortcuts } from '@/hooks/useTabIndexShortcuts';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useTabActions } from '@/stores/useTabStore';
@@ -13,6 +14,7 @@ import { TabToolbar } from '@/components/tabs/TabToolbar';
 import type { TabBarItem } from '@/types';
 import { getPanesFromItem, resolveActiveTabBarItem } from '@/utils/tabGroups';
 import { isPaneAgentLoading } from '@/utils/projectAgentStatus';
+import { getProjectPingTone } from '@/utils/projectPingTone';
 import { countPinnedTabs } from '@/utils/tabOrder';
 
 interface TabContextMenuState {
@@ -55,6 +57,39 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
   const agentBusyByPane = useTerminalSessionStore((state) => state.agentBusyByPane);
   const awaitingResponseByPane = useTerminalSessionStore((state) => state.awaitingResponseByPane);
   const activeAgentByPane = useTerminalSessionStore((state) => state.activeAgentByPane);
+  const notifiedAgentPaneByProject = useProjectNotificationStore(
+    (state) => state.notifiedAgentPaneByProject,
+  );
+
+  const notifiedPaneId = useMemo(() => {
+    if (!activeProjectId) {
+      return null;
+    }
+
+    return notifiedAgentPaneByProject[activeProjectId] ?? null;
+  }, [activeProjectId, notifiedAgentPaneByProject]);
+
+  const tabNotificationMap = useMemo(() => {
+    const map = new Map<string, boolean>();
+
+    if (!notifiedPaneId) {
+      return map;
+    }
+
+    for (const tab of tabs) {
+      map.set(
+        tab.id,
+        getPanesFromItem(tab).some((pane) => pane.id === notifiedPaneId),
+      );
+    }
+
+    return map;
+  }, [notifiedPaneId, tabs]);
+
+  const pingTone = useMemo(
+    () => (activeProject ? getProjectPingTone(activeProject.color) : 'red'),
+    [activeProject],
+  );
 
   const tabRestartingMap = useMemo(() => {
     const map = new Map<string, boolean>();
@@ -240,6 +275,8 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
                 index={index}
                 isFocused={tab.id === activeTabItem?.id}
                 isRestarting={tabRestartingMap.get(tab.id) ?? false}
+                hasNotification={tabNotificationMap.get(tab.id) ?? false}
+                pingTone={pingTone}
                 isDropTarget={dropTargetIndex === index}
                 onSelect={handleSelectTab}
                 onClose={handleCloseTab}

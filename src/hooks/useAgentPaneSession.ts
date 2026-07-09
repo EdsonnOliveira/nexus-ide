@@ -14,6 +14,13 @@ import { registerAgentPrintPaneHandlers } from '@/utils/agentPrintBridge';
 import { recordHomeDashboardActivity } from '@/utils/recordHomeDashboardActivity';
 import { cliAgentToTerminalAgent, resolveAgentTabCli } from '@/utils/agentTabHelpers';
 import { trackAgentGitPrompt } from '@/utils/agentGitTurn';
+import {
+  feedMobileReleaseOutput,
+  finalizeMobileReleasesForPane,
+  handleMobileReleaseShellToolEvents,
+  startMobileReleaseFromCommand,
+} from '@/utils/mobileReleaseTracker';
+import { handleAgentShellToolTerminalEvents } from '@/utils/agentShellToolTerminal';
 import { isAgentSetupCommand } from '@/utils/parseAgentModeCommand';
 import { shouldMarkAgentAwaiting } from '@/utils/projectAgentStatus';
 import { cleanAgentPtyChunk } from '@/utils/stripAnsi';
@@ -89,6 +96,7 @@ const STREAM_JSON_INCOMPLETE_ORPHAN_FINALIZE_MS = 120_000;
 const STREAM_JSON_ABSOLUTE_MAX_MS = 600_000;
 const STREAM_JSON_DEAD_PROCESS_FINALIZE_MS = 8_000;
 const STREAM_JSON_IDLE_CHECK_MS = 4_000;
+const STREAM_JSON_STARTUP_GRACE_MS = 45_000;
 const APPROVAL_CONFIRM_DELAY_MS = 450;
 const SUBMIT_GATE_TIMEOUT_MS = 20_000;
 const SUBMIT_SETUP_TIMEOUT_MS = 8_000;
@@ -193,7 +201,7 @@ export function useAgentPaneSession({
   const agentPrintRunActiveRef = useRef(false);
   const agentPrintRunTokenRef = useRef('');
   const hasStreamJsonChunkRef = useRef(false);
-  const lastStreamJsonChunkAtRef = useRef(0);
+  const lastStreamJsonChunkAtRef = useRef(Date.now());
   const outputTailRef = useRef('');
   const onTurnsChangeRef = useRef(onTurnsChange);
   const onPtyCreatedRef = useRef(onPtyCreated);
@@ -217,6 +225,8 @@ export function useAgentPaneSession({
   const submitTimeoutRef = useRef<number | null>(null);
   const cwdParserRef = useRef(createNexusCwdStreamParser(() => {}));
   const streamJsonAutoRetryRef = useRef(false);
+  const streamJsonBootstrappedRef = useRef(false);
+  const stalePtyClearedRef = useRef<string | null>(null);
 
   const [activePtyId, setActivePtyId] = useState<string | null>(tab.ptyId ?? null);
   const [isAgentReady, setIsAgentReady] = useState(false);
@@ -264,10 +274,16 @@ export function useAgentPaneSession({
     );
   }, []);
 
+  const markStreamJsonTurnStarted = useCallback(() => {
+    hasStreamJsonChunkRef.current = false;
+    lastStreamJsonChunkAtRef.current = Date.now();
+  }, []);
+
   const bindAgentPrintRunToken = useCallback((paneId: string, runToken: string) => {
     agentPrintRunTokenRef.current = runToken;
     agentPrintRunActiveRef.current = true;
     hasStreamJsonChunkRef.current = false;
+    lastStreamJsonChunkAtRef.current = Date.now();
     useTerminalSessionStore.getState().setAgentPrintRunToken(paneId, runToken);
   }, []);
 
@@ -564,6 +580,7 @@ export function useAgentPaneSession({
       streamJsonStateRef.current = createAgentStreamJsonParserState();
       turnOutputBufferRef.current = '';
       clearAgentPrintRunToken(paneId);
+      finalizeMobileReleasesForPane(paneId);
     } else {
       const outputSlice =
         turnOutputBufferRef.current.trim() ||
@@ -712,9 +729,18 @@ export function useAgentPaneSession({
         syncContextUsageFromStreamJson(streamUpdate.usage);
       }
 
+      if (streamUpdate.shellToolEvents.length > 0) {
+        handleMobileReleaseShellToolEvents(paneIdRef.current, streamUpdate.shellToolEvents);
+        void handleAgentShellToolTerminalEvents(
+          paneIdRef.current,
+          streamUpdate.shellToolEvents,
+          agentRootPath,
+        );
+      }
+
       return streamUpdate.shouldFinalize;
     },
-    [syncContextUsageFromStreamJson, updateActiveTurn],
+    [agentRootPath, syncContextUsageFromStreamJson, updateActiveTurn],
   );
 
   const writeToPty = useCallback((text: string) => {
@@ -971,6 +997,8 @@ export function useAgentPaneSession({
         } else {
           session.setLastCommand(paneId, commandLine);
         }
+
+        void startMobileReleaseFromCommand(paneId, commandLine);
       }
 
       if (usesStreamJson && commandLine && isAgentSetupCommand(commandLine)) {
@@ -1142,6 +1170,9 @@ export function useAgentPaneSession({
     turnOutputBufferRef.current = '';
     parserStateRef.current = createAgentTranscriptParserState();
     streamJsonStateRef.current = createAgentStreamJsonParserState();
+    if (usesStreamJson) {
+      markStreamJsonTurnStarted();
+    }
     persistTurns(nextTurns, { flush: true });
 
     if (!usesStreamJson) {
@@ -1162,7 +1193,7 @@ export function useAgentPaneSession({
     resetAgentReadyDetectors(paneIdRef.current);
     setIsAgentReady(false);
     startStreamJsonAgentRun(prompt, imageRefs);
-  }, [persistTurns, resetAgentReadyDetectors, startStreamJsonAgentRun, usesStreamJson]);
+  }, [markStreamJsonTurnStarted, persistTurns, resetAgentReadyDetectors, startStreamJsonAgentRun, usesStreamJson]);
 
   const dispatchFollowUpToPty = useCallback(
     (item: AgentFollowUp, force = false): boolean => {
@@ -1238,6 +1269,7 @@ export function useAgentPaneSession({
 
       if (usesStreamJson) {
         turn.activities = createInitialTurnActivities();
+        markStreamJsonTurnStarted();
       }
 
       turnOutputStartRef.current = outputTailRef.current.length;
@@ -1280,6 +1312,7 @@ export function useAgentPaneSession({
     },
     [
       appendPendingFollowUpTurn,
+      markStreamJsonTurnStarted,
       persistTurns,
       resetAgentReadyDetectors,
       startStreamJsonAgentRun,
@@ -1475,6 +1508,7 @@ export function useAgentPaneSession({
 
         if (usesStreamJson) {
           turn.activities = createInitialTurnActivities();
+          markStreamJsonTurnStarted();
         }
 
         persistTurns([...turnsRef.current, turn], { flush: true });
@@ -1509,6 +1543,7 @@ export function useAgentPaneSession({
       clearApprovalConfirmTimer,
       enqueueFollowUp,
       finalizeActiveTurn,
+      markStreamJsonTurnStarted,
       persistTurns,
       rollbackAgentFromTurn,
       sendPromptToPty,
@@ -1817,7 +1852,7 @@ export function useAgentPaneSession({
     const nextTurns = [...turns];
     const activeTurn = nextTurns[resolvedIndex]!;
     const withoutThought = activeTurn.activities.filter(
-      (entry) => entry.kind !== 'thought' && entry.kind !== 'live_status',
+      (entry) => entry.kind !== 'thought' && entry.kind !== 'live_status' && entry.kind !== 'tool_run',
     );
 
     nextTurns[resolvedIndex] = finalizeAgentTurn(
@@ -1837,6 +1872,48 @@ export function useAgentPaneSession({
     });
   }, [persistTurns, writeToPty]);
 
+  const tabCliAgent = resolveAgentTabCli(tab);
+  const tabRestoreCommand = tab.restoreCommand?.trim() ?? '';
+
+  useEffect(() => {
+    streamJsonBootstrappedRef.current = false;
+    stalePtyClearedRef.current = null;
+  }, [tab.id]);
+
+  const bootstrapStreamJsonAgent = useCallback(() => {
+    if (streamJsonBootstrappedRef.current) {
+      return;
+    }
+
+    streamJsonBootstrappedRef.current = true;
+
+    const paneId = paneIdRef.current;
+    const session = useTerminalSessionStore.getState();
+
+    session.takePendingLaunchCommand(paneId);
+    session.setActiveAgent(paneId, tabCliAgent);
+    setIsAgentReady(true);
+  }, [tabCliAgent]);
+
+  const clearStaleAgentPty = useCallback(async (currentPtyId: string) => {
+    if (stalePtyClearedRef.current === currentPtyId) {
+      return;
+    }
+
+    stalePtyClearedRef.current = currentPtyId;
+
+    if (await window.nexus.terminal.has(currentPtyId)) {
+      window.nexus.terminal.kill(currentPtyId);
+    }
+
+    ptyIdRef.current = null;
+    setActivePtyId(null);
+
+    if (tab.ptyId) {
+      onPtyLostRef.current();
+    }
+  }, [tab.ptyId]);
+
   const spawnAgentPty = useCallback(async () => {
     if (creatingRef.current || ptyIdRef.current) {
       return;
@@ -1845,15 +1922,13 @@ export function useAgentPaneSession({
     deferAutoSpawnRef.current = false;
     creatingRef.current = true;
     try {
-      const terminalAgent = cliAgentToTerminalAgent(resolveAgentTabCli(tab));
+      const terminalAgent = cliAgentToTerminalAgent(tabCliAgent);
       const createdPtyId = await window.nexus.terminal.create(agentRootPath, terminalAgent);
       ptyIdRef.current = createdPtyId;
       setActivePtyId(createdPtyId);
       setIsAgentReady(false);
       onPtyCreatedRef.current(createdPtyId);
-
-      const cliAgent = resolveAgentTabCli(tab);
-      useTerminalSessionStore.getState().setActiveAgent(paneIdRef.current, cliAgent);
+      useTerminalSessionStore.getState().setActiveAgent(paneIdRef.current, tabCliAgent);
 
       window.setTimeout(() => {
         if (ptyIdRef.current !== createdPtyId) {
@@ -1862,12 +1937,12 @@ export function useAgentPaneSession({
 
         const pendingCommand = buildAgentPaneLaunchCommand(
           useTerminalSessionStore.getState().takePendingLaunchCommand(paneIdRef.current) ??
-            tab.restoreCommand?.trim() ??
-            resolveAgentTabCli(tab),
+            tabRestoreCommand ??
+            tabCliAgent,
         );
 
         if (!pendingCommand) {
-          if (isCursorAgentStreamJsonCli(resolveAgentTabCli(tab))) {
+          if (isCursorAgentStreamJsonCli(tabCliAgent)) {
             setIsAgentReady(true);
           }
           return;
@@ -1879,7 +1954,7 @@ export function useAgentPaneSession({
     } finally {
       creatingRef.current = false;
     }
-  }, [agentRootPath, tab]);
+  }, [agentRootPath, tabCliAgent, tabRestoreCommand]);
 
   useEffect(() => {
     void (async () => {
@@ -1888,6 +1963,21 @@ export function useAgentPaneSession({
       }
 
       if (deferAutoSpawnRef.current) {
+        if (usesStreamJson) {
+          bootstrapStreamJsonAgent();
+        }
+
+        return;
+      }
+
+      if (usesStreamJson) {
+        const stalePtyId = ptyIdRef.current ?? tab.ptyId;
+
+        if (stalePtyId) {
+          await clearStaleAgentPty(stalePtyId);
+        }
+
+        bootstrapStreamJsonAgent();
         return;
       }
 
@@ -1897,11 +1987,6 @@ export function useAgentPaneSession({
         ptyIdRef.current = currentPtyId;
         setActivePtyId(currentPtyId);
         useTerminalSessionStore.getState().takePendingLaunchCommand(paneIdRef.current);
-
-        if (isCursorAgentStreamJsonCli(resolveAgentTabCli(tab))) {
-          setIsAgentReady(true);
-        }
-
         return;
       }
 
@@ -1909,17 +1994,21 @@ export function useAgentPaneSession({
         ptyIdRef.current = null;
         setActivePtyId(null);
         setIsAgentReady(false);
-        onPtyLostRef.current();
+
+        if (tab.ptyId) {
+          onPtyLostRef.current();
+        }
       }
 
       if (!ptyIdRef.current && !creatingRef.current) {
         await spawnAgentPty();
       }
     })();
-  }, [isRuntimeActive, spawnAgentPty, tab.ptyId]);
+  }, [isRuntimeActive, spawnAgentPty, tab.id, tab.ptyId, tabCliAgent, usesStreamJson]);
 
   const isBootstrapping =
-    !deferAutoSpawnRef.current && (!activePtyId || hasPendingLaunch);
+    !deferAutoSpawnRef.current &&
+    (usesStreamJson ? !isAgentReady && hasPendingLaunch : !activePtyId || hasPendingLaunch);
 
   useEffect(() => {
     if (!activePtyId || !isRuntimeActive || isAgentReady) {
@@ -2033,6 +2122,7 @@ export function useAgentPaneSession({
       }
 
       agentDetector.feed(data);
+      feedMobileReleaseOutput(paneId, data);
 
       const cleaned = cwdParserRef.current(cleanAgentPtyChunk(data)).replace(/\r/g, '\n');
 
@@ -2078,7 +2168,8 @@ export function useAgentPaneSession({
                 (entry) =>
                   entry.kind !== 'response' &&
                   !(entry.kind === 'thought' && !entry.label.trim()) &&
-                  entry.kind !== 'live_status',
+                  entry.kind !== 'live_status' &&
+                  entry.kind !== 'tool_run',
               ),
               createFailedPromptActivity(launchError),
             ],
@@ -2106,11 +2197,17 @@ export function useAgentPaneSession({
       finalizeActiveTurn();
       ptyIdRef.current = null;
       setActivePtyId(null);
-      setIsAgentReady(false);
       setContextUsage(null);
       setContextUsageLoading(false);
       contextUsageReportPendingRef.current = false;
       clearContextUsageReportTimer();
+
+      if (usesStreamJson && !turnsRef.current.some((turn) => turn.running)) {
+        setIsAgentReady(true);
+        return;
+      }
+
+      setIsAgentReady(false);
       onPtyLostRef.current();
     });
 
@@ -2199,7 +2296,8 @@ export function useAgentPaneSession({
                 (entry) =>
                   entry.kind !== 'response' &&
                   !(entry.kind === 'thought' && !entry.label.trim()) &&
-                  entry.kind !== 'live_status',
+                  entry.kind !== 'live_status' &&
+                  entry.kind !== 'tool_run',
               ),
               createFailedPromptActivity(payload.error),
             ],
@@ -2221,7 +2319,8 @@ export function useAgentPaneSession({
                 (entry) =>
                   entry.kind !== 'response' &&
                   !(entry.kind === 'thought' && !entry.label.trim()) &&
-                  entry.kind !== 'live_status',
+                  entry.kind !== 'live_status' &&
+                  entry.kind !== 'tool_run',
               ),
               createFailedPromptActivity(
                 payload.error ?? 'Não foi possível executar o agent. Verifique se o cursor-agent está instalado.',
@@ -2282,8 +2381,8 @@ export function useAgentPaneSession({
           !streamJsonStateRef.current.shouldFinalize &&
           turnsRef.current.some((turn) => turn.running)
         ) {
-          agentPrintRunActiveRef.current = false;
-          lastStreamJsonChunkAtRef.current = Date.now();
+          applyStreamJsonChunk('');
+          finalizeActiveTurn(true);
           finishAgentPrintRun();
           streamJsonAutoRetryRef.current = false;
           return;
@@ -2317,7 +2416,10 @@ export function useAgentPaneSession({
       }
 
       const paneId = paneIdRef.current;
-      const idleMs = Date.now() - lastStreamJsonChunkAtRef.current;
+      const latestTurn = [...turnsRef.current].reverse().find((turn) => turn.running);
+      const turnStartedAt = latestTurn?.startedAt ?? Date.now();
+      const idleAnchor = Math.max(lastStreamJsonChunkAtRef.current, turnStartedAt);
+      const idleMs = Date.now() - idleAnchor;
       const storedToken = resolveAgentPrintRunToken(paneId);
 
       void window.nexus.agentPrint.isRunning(paneId).then((processRunning) => {
@@ -2352,13 +2454,19 @@ export function useAgentPaneSession({
           return;
         }
 
-        const latestTurn = [...turnsRef.current].reverse().find((turn) => turn.running);
         const streamState = streamJsonStateRef.current;
         const hasPendingInteraction =
           hasPendingStreamJsonInteraction(streamState) ||
           Boolean(latestTurn && hasPendingAgentQuestion(latestTurn.activities));
 
         if (hasPendingInteraction && (processRunning || agentPrintRunActiveRef.current || storedToken)) {
+          return;
+        }
+
+        if (
+          !hasStreamJsonChunkRef.current &&
+          Date.now() - turnStartedAt < STREAM_JSON_STARTUP_GRACE_MS
+        ) {
           return;
         }
 
@@ -2492,7 +2600,7 @@ export function useAgentPaneSession({
     isBusy,
     isBootstrapping,
     isSubmitting,
-    isWritable: Boolean(ptyIdRef.current),
+    isWritable: usesStreamJson ? isAgentReady : Boolean(ptyIdRef.current),
     contextUsage,
     contextUsageLoading,
     requestContextUsageReport,

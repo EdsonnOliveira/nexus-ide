@@ -3,12 +3,14 @@ import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 
 interface ProjectFlagCreateDialogProps {
   projectName: string;
+  entityLabel?: string;
   onConfirm: (reason: string) => void;
   onClose: () => void;
 }
 
 function ProjectFlagCreateDialogComponent({
   projectName,
+  entityLabel = 'projeto',
   onConfirm,
   onClose,
 }: ProjectFlagCreateDialogProps) {
@@ -41,7 +43,8 @@ function ProjectFlagCreateDialogComponent({
         <form onSubmit={handleSubmit(requestClose)}>
           <span className='project-dialog__title'>Criar flag</span>
           <p className='project-dialog__message'>
-            Sinalizar o projeto <strong>{projectName}</strong>
+            Sinalizar {entityLabel === 'workspace' ? 'a workspace' : 'o projeto'}{' '}
+            <strong>{projectName}</strong>
           </p>
           <label className='project-dialog__label'>
             Motivo

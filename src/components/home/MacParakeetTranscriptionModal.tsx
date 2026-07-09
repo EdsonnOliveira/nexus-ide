@@ -1,4 +1,4 @@
-import { Check, Copy, ListTodo, Loader2, MessageSquareText, Mic, Pencil, Sparkles, X } from 'lucide-react';
+import { CalendarDays, Check, Clock, Copy, ListTodo, Loader2, MessageSquareText, Mic, Pencil, Sparkles, Timer, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgentResponseCopyPill } from '@/components/agent/AgentResponseCopyPill';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
@@ -299,10 +299,16 @@ function MacParakeetTranscriptionModalComponent({
               {resolveMacParakeetSourceLabel(detail.sourceType)}
             </span>
             <span className='macparakeet-transcription-modal__meta-item'>
+              <Timer size={12} strokeWidth={2} className='macparakeet-transcription-modal__meta-icon' aria-hidden='true' />
+              {formatMacParakeetDuration(detail.durationMs)}
+            </span>
+            <span className='macparakeet-transcription-modal__meta-item'>
+              <CalendarDays size={12} strokeWidth={2} className='macparakeet-transcription-modal__meta-icon' aria-hidden='true' />
               {formatMacParakeetDate(detail.createdAt)}
             </span>
             <span className='macparakeet-transcription-modal__meta-item'>
-              {formatMacParakeetDuration(detail.durationMs)}
+              <Clock size={12} strokeWidth={2} className='macparakeet-transcription-modal__meta-icon' aria-hidden='true' />
+              {formatMacParakeetSegmentTime(detail.createdAt)}
             </span>
             {detail.channelName ? (
               <span className='macparakeet-transcription-modal__meta-item'>{detail.channelName}</span>

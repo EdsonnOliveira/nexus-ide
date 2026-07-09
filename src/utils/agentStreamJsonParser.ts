@@ -24,6 +24,13 @@ export interface AgentStreamJsonUsage {
   cacheWriteTokens: number;
 }
 
+export interface StreamJsonShellToolEvent {
+  type: 'started' | 'completed';
+  command: string;
+  output: string;
+  exitCode: number | null;
+}
+
 export interface AgentStreamJsonParserState {
   jsonBuffer: string;
   activities: AgentActivity[];
@@ -49,6 +56,8 @@ export interface AgentStreamJsonParserState {
   questionActivityId: string | null;
   pendingPlan: boolean;
   planActivityId: string | null;
+  shellToolEvents: StreamJsonShellToolEvent[];
+  runningToolRunStack: string[];
 }
 
 export interface StreamJsonTurnUpdate {
@@ -57,6 +66,7 @@ export interface StreamJsonTurnUpdate {
   sessionId: string | null;
   responseText: string | null;
   usage: AgentStreamJsonUsage | null;
+  shellToolEvents: StreamJsonShellToolEvent[];
 }
 
 function createActivity(
@@ -99,7 +109,80 @@ export function createAgentStreamJsonParserState(): AgentStreamJsonParserState {
     questionActivityId: null,
     pendingPlan: false,
     planActivityId: null,
+    shellToolEvents: [],
+    runningToolRunStack: [],
   };
+}
+
+function extractShellToolOutput(result: unknown): string {
+  if (typeof result === 'string') {
+    return result;
+  }
+
+  if (!result || typeof result !== 'object') {
+    return '';
+  }
+
+  const record = result as Record<string, unknown>;
+  const success = record.success;
+
+  if (success && typeof success === 'object') {
+    const successRecord = success as Record<string, unknown>;
+
+    return [successRecord.stdout, successRecord.stderr, successRecord.output, successRecord.content, successRecord.text]
+      .filter((value): value is string => typeof value === 'string')
+      .join('\n');
+  }
+
+  const directOutput = [record.stdout, record.stderr, record.output, record.content, record.text]
+    .filter((value): value is string => typeof value === 'string')
+    .join('\n');
+
+  if (directOutput.trim()) {
+    return directOutput;
+  }
+
+  const failure = record.error ?? record.rejected ?? record.failure;
+
+  if (failure && typeof failure === 'object') {
+    const failureRecord = failure as Record<string, unknown>;
+
+    return [failureRecord.message, failureRecord.stderr, failureRecord.stdout, failureRecord.output]
+      .filter((value): value is string => typeof value === 'string')
+      .join('\n');
+  }
+
+  return '';
+}
+
+function extractShellToolExitCode(result: unknown): number | null {
+  if (!result || typeof result !== 'object') {
+    return null;
+  }
+
+  const record = result as Record<string, unknown>;
+  const success = record.success;
+  const failure = record.error ?? record.rejected ?? record.failure;
+  const candidates = [
+    record.exitCode,
+    record.exit_code,
+    success && typeof success === 'object'
+      ? (success as Record<string, unknown>).exitCode ??
+        (success as Record<string, unknown>).exit_code
+      : null,
+    failure && typeof failure === 'object'
+      ? (failure as Record<string, unknown>).exitCode ??
+        (failure as Record<string, unknown>).exit_code
+      : null,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 function basenamePath(filePath: string): string {
@@ -267,6 +350,21 @@ function settleThought(state: AgentStreamJsonParserState): void {
   state.thoughtId = null;
 }
 
+function sealActiveResponseSegment(state: AgentStreamJsonParserState): void {
+  if (!state.responseId) {
+    return;
+  }
+
+  const responseId = state.responseId;
+
+  state.activities = state.activities.map((entry) =>
+    entry.id === responseId && entry.kind === 'response'
+      ? { ...entry, streaming: undefined }
+      : entry,
+  );
+  state.responseId = null;
+}
+
 function upsertResponse(state: AgentStreamJsonParserState, text: string, streaming: boolean): void {
   const trimmed = text.trim();
 
@@ -288,10 +386,7 @@ function upsertResponse(state: AgentStreamJsonParserState, text: string, streami
 
   const response = createActivity('response', trimmed, { streaming: streaming ? true : undefined });
   state.responseId = response.id;
-  state.activities = [
-    ...state.activities.filter((entry) => entry.kind !== 'response'),
-    response,
-  ];
+  state.activities = [...state.activities, response];
 }
 
 function upsertFileRead(state: AgentStreamJsonParserState, filePath: string, label?: string): void {
@@ -694,6 +789,10 @@ function isRenderableStreamJsonActivity(entry: AgentActivity): boolean {
     return Boolean(entry.filePath?.trim());
   }
 
+  if (entry.kind === 'tool_run') {
+    return Boolean(entry.label.trim() || entry.toolCommand?.trim());
+  }
+
   return false;
 }
 
@@ -730,7 +829,7 @@ function trackFileMutationToolCall(
     success.linesAdded ?? 0,
     success.linesRemoved ?? fallbackDeletions,
   );
-  state.activities = state.activities.filter((entry) => entry.kind !== 'live_status');
+  completeToolRun(state);
 }
 
 function handleToolCallCompleted(state: AgentStreamJsonParserState, toolCall: unknown): void {
@@ -807,26 +906,50 @@ function handleToolCallCompleted(state: AgentStreamJsonParserState, toolCall: un
   const readToolCall = payload.readToolCall as { args?: { path?: string } } | undefined;
 
   if (readToolCall) {
-    state.activities = state.activities.filter((entry) => entry.kind !== 'live_status');
+    completeToolRun(state);
     return;
   }
 
   const globToolCall = payload.globToolCall as { args?: { globPattern?: string } } | undefined;
 
   if (globToolCall) {
-    state.activities = state.activities.filter((entry) => entry.kind !== 'live_status');
+    completeToolRun(state);
     return;
   }
 
   const grepToolCall = payload.grepToolCall as { args?: { pattern?: string } } | undefined;
 
   if (grepToolCall) {
-    state.activities = state.activities.filter((entry) => entry.kind !== 'live_status');
+    completeToolRun(state);
+    return;
+  }
+
+  const shellToolCall = payload.shellToolCall as
+    | {
+        args?: { command?: string };
+        result?: unknown;
+      }
+    | undefined;
+
+  if (shellToolCall?.args?.command) {
+    const command = shellToolCall.args.command.trim();
+    state.shellToolEvents.push({
+      type: 'completed',
+      command,
+      output: extractShellToolOutput(shellToolCall.result),
+      exitCode: extractShellToolExitCode(shellToolCall.result),
+    });
+    completeToolRun(state, {
+      label: 'Run',
+      toolCommand: command,
+      toolOutput: extractShellToolOutput(shellToolCall.result),
+      toolExitCode: extractShellToolExitCode(shellToolCall.result),
+    });
     return;
   }
 
   if (payload.mcpToolCall || payload.shellToolCall) {
-    state.activities = state.activities.filter((entry) => entry.kind !== 'live_status');
+    completeToolRun(state, { label: 'Ran tool' });
   }
 }
 
@@ -841,27 +964,50 @@ function trackShellCommand(state: AgentStreamJsonParserState, command: string): 
   state.shellCommandCount = state.shellCommands.length;
 }
 
-function upsertLiveStatus(state: AgentStreamJsonParserState, label: string): void {
+function startToolRun(
+  state: AgentStreamJsonParserState,
+  label: string,
+  extra: Partial<AgentActivity> = {},
+): void {
   const trimmed = label.trim();
 
   if (!trimmed) {
     return;
   }
 
-  const existing = state.activities.find((entry) => entry.kind === 'live_status');
+  const activity = createActivity('tool_run', trimmed, {
+    streaming: true,
+    ...extra,
+  });
 
-  if (existing) {
-    state.activities = state.activities.map((entry) =>
-      entry.id === existing.id ? { ...entry, label: trimmed } : entry,
-    );
+  state.activities = [...state.activities, activity];
+  state.runningToolRunStack.push(activity.id);
+}
+
+function completeToolRun(
+  state: AgentStreamJsonParserState,
+  extra: Partial<AgentActivity> = {},
+): void {
+  const id = state.runningToolRunStack.pop();
+
+  if (!id) {
     return;
   }
 
-  state.activities = [...state.activities, createActivity('live_status', trimmed)];
+  state.activities = state.activities.map((entry) =>
+    entry.id === id
+      ? {
+          ...entry,
+          streaming: undefined,
+          ...extra,
+        }
+      : entry,
+  );
 }
 
 function handleToolCallStarted(state: AgentStreamJsonParserState, toolCall: unknown): void {
   captureResponseLeadBeforeTools(state);
+  sealActiveResponseSegment(state);
 
   if (!toolCall || typeof toolCall !== 'object') {
     return;
@@ -885,7 +1031,9 @@ function handleToolCallStarted(state: AgentStreamJsonParserState, toolCall: unkn
   const readToolCall = payload.readToolCall as { args?: { path?: string } } | undefined;
 
   if (readToolCall?.args?.path) {
-    upsertLiveStatus(state, `Reading ${basenamePath(readToolCall.args.path)}`);
+    startToolRun(state, `Reading ${basenamePath(readToolCall.args.path)}`, {
+      filePath: readToolCall.args.path,
+    });
     upsertFileRead(state, readToolCall.args.path);
     return;
   }
@@ -893,14 +1041,18 @@ function handleToolCallStarted(state: AgentStreamJsonParserState, toolCall: unkn
   const editToolCall = payload.editToolCall as { args?: { path?: string } } | undefined;
 
   if (editToolCall?.args?.path) {
-    upsertLiveStatus(state, `Editing ${basenamePath(editToolCall.args.path)}`);
+    startToolRun(state, `Editing ${basenamePath(editToolCall.args.path)}`, {
+      filePath: editToolCall.args.path,
+    });
     return;
   }
 
   const writeToolCall = payload.writeToolCall as { args?: { path?: string } } | undefined;
 
   if (writeToolCall?.args?.path) {
-    upsertLiveStatus(state, `Writing ${basenamePath(writeToolCall.args.path)}`);
+    startToolRun(state, `Writing ${basenamePath(writeToolCall.args.path)}`, {
+      filePath: writeToolCall.args.path,
+    });
     return;
   }
 
@@ -909,8 +1061,15 @@ function handleToolCallStarted(state: AgentStreamJsonParserState, toolCall: unkn
   if (shellToolCall?.args?.command) {
     const command = shellToolCall.args.command.trim();
     trackShellCommand(state, command);
-    const preview = command.split(/\s+/).slice(0, 4).join(' ');
-    upsertLiveStatus(state, preview ? `Running ${preview}` : 'Running command');
+    state.shellToolEvents.push({
+      type: 'started',
+      command,
+      output: '',
+      exitCode: null,
+    });
+    startToolRun(state, 'Running', {
+      toolCommand: command,
+    });
     return;
   }
 
@@ -924,7 +1083,7 @@ function handleToolCallStarted(state: AgentStreamJsonParserState, toolCall: unkn
     const label = directory
       ? `Glob ${pattern} in ${basenamePath(directory)}`
       : `Glob ${pattern}`;
-    upsertLiveStatus(state, label);
+    startToolRun(state, label);
     upsertFileRead(state, directory ?? pattern, label);
     return;
   }
@@ -935,13 +1094,13 @@ function handleToolCallStarted(state: AgentStreamJsonParserState, toolCall: unkn
     const pattern = grepToolCall.args.pattern.trim();
     const path = grepToolCall.args.path?.trim();
     const label = path ? `Grep ${pattern} in ${basenamePath(path)}` : `Grep ${pattern}`;
-    upsertLiveStatus(state, label);
+    startToolRun(state, label);
     upsertFileRead(state, path ?? pattern, label);
     return;
   }
 
   if (payload.mcpToolCall) {
-    upsertLiveStatus(state, 'Running tool');
+    startToolRun(state, 'Running tool');
   }
 }
 
@@ -1125,6 +1284,8 @@ export function feedAgentStreamJsonChunk(
     state.pendingResponseText !== previousResponseText ||
     nextActivitySignature !== previousActivitySignature;
   const shouldFinalize = state.shouldFinalize && !previousFinalize;
+  const shellToolEvents = [...state.shellToolEvents];
+  state.shellToolEvents = [];
 
   return {
     hasUpdate,
@@ -1132,6 +1293,7 @@ export function feedAgentStreamJsonChunk(
     sessionId: state.sessionId,
     responseText: state.pendingResponseText || null,
     usage: state.pendingUsage,
+    shellToolEvents,
   };
 }
 
@@ -1155,6 +1317,7 @@ export function isAgentStreamJsonStateAwaitingCompletion(
       entry.kind === 'file_read' ||
       entry.kind === 'file_edit' ||
       entry.kind === 'live_status' ||
+      entry.kind === 'tool_run' ||
       entry.kind === 'thought' ||
       entry.kind === 'response',
   );
@@ -1204,8 +1367,10 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
   consumeJsonObjects(state);
   state.jsonBuffer = '';
 
-  let activities = state.activities
-    .filter((entry) => entry.kind !== 'live_status')
+  const sourceActivities = state.activities.length > 0 ? state.activities : turn.activities;
+
+  let activities = sourceActivities
+    .filter((entry) => entry.kind !== 'live_status' && entry.kind !== 'tool_run')
     .map((entry) => {
       if (entry.kind === 'thought' && entry.streaming) {
         return {

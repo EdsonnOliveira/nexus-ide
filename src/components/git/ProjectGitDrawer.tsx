@@ -55,7 +55,14 @@ import type { GitRepoDiscovery } from '@/types/git';
 import type { ProjectDirectoryEntry } from '@/types';
 import { mentionExplorerEntryInAgent } from '@/utils/explorerAgentMention';
 import { toProjectRelativePath } from '@/utils/explorerRelativePath';
-import { buildFlatChanges, buildGitChangeTree, type GitChangeTreeNode, type GitChangesViewMode, type GitFlatChange } from '@/utils/gitFlatChanges';
+import {
+  buildFlatChanges,
+  buildGitChangeTree,
+  getGitChangeDecoration,
+  type GitChangeTreeNode,
+  type GitChangesViewMode,
+  type GitFlatChange,
+} from '@/utils/gitFlatChanges';
 import { findGitFlatChangeByPath, gitChangePathsMatch, toRepoAbsolutePath } from '@/utils/gitPaths';
 import { resolvePaneAgentCommand } from '@/utils/projectAgentStatus';
 import { sanitizeAgentPrompt } from '@/utils/terminalShellPrompt';
@@ -294,7 +301,6 @@ interface GitChangeRowProps {
   onToggleSelected: (path: string, selected: boolean) => void;
   onStage: (path: string) => void;
   onUnstage: (path: string) => void;
-  onDiscard: (path: string) => void;
   onOpenDiff: (
     filePath: string,
     options: { staged: boolean; untracked?: boolean; agentPrompt?: string },
@@ -311,11 +317,10 @@ const GitChangeRow = memo(function GitChangeRowComponent({
   onToggleSelected,
   onStage,
   onUnstage,
-  onDiscard,
   onOpenDiff,
   onContextMenu,
 }: GitChangeRowProps) {
-  const isNew = change.status === 'untracked' || change.status === 'added';
+  const decoration = useMemo(() => getGitChangeDecoration(change), [change]);
   const isTreeRow = treeDepth !== undefined;
   const displayPath = isTreeRow ? (change.path.split('/').pop() ?? change.path) : change.path;
   const { onMouseEnter, onMouseLeave, hintNode } = useDelayedHoverHint(change.path);
@@ -332,7 +337,7 @@ const GitChangeRow = memo(function GitChangeRowComponent({
     (event: ReactMouseEvent<HTMLDivElement>) => {
       const target = event.target as HTMLElement;
 
-      if (target.closest('.git-scm__file-revert, .git-scm__file-checkbox, .app-checkbox')) {
+      if (target.closest('.git-scm__file-checkbox, .app-checkbox')) {
         return;
       }
 
@@ -357,14 +362,6 @@ const GitChangeRow = memo(function GitChangeRowComponent({
     onToggleSelected(change.path, !selected);
   }, [change.path, onToggleSelected, selected]);
 
-  const handleDiscard = useCallback(
-    (event: ReactMouseEvent<HTMLButtonElement>) => {
-      event.stopPropagation();
-      onDiscard(change.path);
-    },
-    [change.path, onDiscard],
-  );
-
   const handleContextMenu = useCallback(
     (event: ReactMouseEvent<HTMLDivElement>) => {
       event.preventDefault();
@@ -383,7 +380,7 @@ const GitChangeRow = memo(function GitChangeRowComponent({
 
       const target = event.target as HTMLElement;
 
-      if (target.closest('.git-scm__file-revert, .git-scm__file-checkbox, .app-checkbox')) {
+      if (target.closest('.git-scm__file-checkbox, .app-checkbox')) {
         event.preventDefault();
         return;
       }
@@ -412,23 +409,9 @@ const GitChangeRow = memo(function GitChangeRowComponent({
       {isTreeRow ? <span className='git-scm__tree-chevron' aria-hidden /> : null}
       <GitChangeEntryIcon path={change.path} />
       <span className='git-scm__file-path app-button__label'>{displayPath}</span>
-      <span className='git-scm__file-stats'>
-        {change.additions > 0 ? (
-          <span className='git-scm__file-stat git-scm__file-stat--add'>+{change.additions}</span>
-        ) : null}
-        {change.deletions > 0 ? (
-          <span className='git-scm__file-stat git-scm__file-stat--del'>-{change.deletions}</span>
-        ) : null}
+      <span className={`git-scm__file-badge git-scm__file-badge--${decoration.kind}`}>
+        {decoration.badge}
       </span>
-      {isNew ? <span className='git-scm__file-new'>Novo</span> : null}
-      <button
-        type='button'
-        className='git-scm__file-revert app-button app-button--enter'
-        aria-label='Descartar alterações'
-        onClick={handleDiscard}
-      >
-        <RotateCcw size={12} strokeWidth={2.25} />
-      </button>
       <AppCheckbox
         className='git-scm__file-checkbox'
         checked={selected}
@@ -500,7 +483,6 @@ interface GitChangeTreeBranchProps {
   onToggleSelected: (path: string, selected: boolean) => void;
   onStage: (path: string) => void;
   onUnstage: (path: string) => void;
-  onDiscard: (path: string) => void;
   onOpenDiff: (
     filePath: string,
     options: { staged: boolean; untracked?: boolean; agentPrompt?: string },
@@ -519,7 +501,6 @@ const GitChangeTreeBranch = memo(function GitChangeTreeBranchComponent({
   onToggleSelected,
   onStage,
   onUnstage,
-  onDiscard,
   onOpenDiff,
   onContextMenu,
 }: GitChangeTreeBranchProps) {
@@ -548,7 +529,6 @@ const GitChangeTreeBranch = memo(function GitChangeTreeBranchComponent({
                 onToggleSelected={onToggleSelected}
                 onStage={onStage}
                 onUnstage={onUnstage}
-                onDiscard={onDiscard}
                 onOpenDiff={onOpenDiff}
                 onContextMenu={onContextMenu}
               />
@@ -572,7 +552,6 @@ const GitChangeTreeBranch = memo(function GitChangeTreeBranchComponent({
       onToggleSelected={onToggleSelected}
       onStage={onStage}
       onUnstage={onUnstage}
-      onDiscard={onDiscard}
       onOpenDiff={onOpenDiff}
       onContextMenu={onContextMenu}
     />
@@ -590,7 +569,6 @@ interface GitChangesListProps {
   onToggleSelected: (path: string, selected: boolean) => void;
   onStage: (path: string) => void;
   onUnstage: (path: string) => void;
-  onDiscard: (path: string) => void;
   onOpenDiff: (
     filePath: string,
     options: { staged: boolean; untracked?: boolean; agentPrompt?: string },
@@ -609,7 +587,6 @@ const GitChangesList = memo(function GitChangesListComponent({
   onToggleSelected,
   onStage,
   onUnstage,
-  onDiscard,
   onOpenDiff,
   onContextMenu,
 }: GitChangesListProps) {
@@ -631,7 +608,6 @@ const GitChangesList = memo(function GitChangesListComponent({
             onToggleSelected={onToggleSelected}
             onStage={onStage}
             onUnstage={onUnstage}
-            onDiscard={onDiscard}
             onOpenDiff={onOpenDiff}
             onContextMenu={onContextMenu}
           />
@@ -655,7 +631,6 @@ const GitChangesList = memo(function GitChangesListComponent({
           onToggleSelected={onToggleSelected}
           onStage={onStage}
           onUnstage={onUnstage}
-          onDiscard={onDiscard}
           onOpenDiff={onOpenDiff}
           onContextMenu={onContextMenu}
         />
@@ -1348,7 +1323,6 @@ function ProjectGitDrawerComponent({
                     onToggleSelected={handleToggleSelected}
                     onStage={handleStage}
                     onUnstage={handleUnstage}
-                    onDiscard={handleDiscard}
                     onOpenDiff={handleOpenDiff}
                     onContextMenu={handleChangeContextMenu}
                   />
@@ -1397,7 +1371,6 @@ function ProjectGitDrawerComponent({
                             onToggleSelected={handleToggleSelected}
                             onStage={handleStage}
                             onUnstage={handleUnstage}
-                            onDiscard={handleDiscard}
                             onOpenDiff={handleOpenDiff}
                             onContextMenu={handleChangeContextMenu}
                           />
@@ -1422,7 +1395,6 @@ function ProjectGitDrawerComponent({
                           onToggleSelected={handleToggleSelected}
                           onStage={handleStage}
                           onUnstage={handleUnstage}
-                          onDiscard={handleDiscard}
                           onOpenDiff={handleOpenDiff}
                           onContextMenu={handleChangeContextMenu}
                         />
@@ -1437,14 +1409,15 @@ function ProjectGitDrawerComponent({
       </div>
 
       <div className='git-panel__commit'>
-        <textarea
+        <input
+          type='text'
           className='git-panel__commit-input'
           placeholder='Mensagem do commit'
           value={commitMessage}
-          rows={3}
           onChange={(event) => setCommitMessage(event.target.value)}
           onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+            if (event.key === 'Enter') {
+              event.preventDefault();
               handleCommit();
             }
           }}

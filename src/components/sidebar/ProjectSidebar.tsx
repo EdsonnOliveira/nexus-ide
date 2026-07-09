@@ -8,6 +8,7 @@ import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
 import { useAgentComposerDraftStore } from '@/stores/useAgentComposerDraftStore';
 import { ProjectListItem } from '@/components/sidebar/ProjectListItem';
+import { WorkspaceMark } from '@/components/sidebar/WorkspaceMark';
 import { useDailyGeneration } from '@/components/home/DailyGenerationProvider';
 import { ProjectContextMenu } from '@/components/sidebar/ProjectContextMenu';
 import { ProjectPromptDialog } from '@/components/sidebar/ProjectPromptDialog';
@@ -25,10 +26,13 @@ import { SidebarMailInboxPopup } from '@/components/sidebar/SidebarMailInboxPopu
 import { SidebarMailPanel } from '@/components/sidebar/SidebarMailPanel';
 import { SidebarCalendarEvents } from '@/components/sidebar/SidebarCalendarEvents';
 import { SidebarVercelDeployCard } from '@/components/sidebar/SidebarVercelDeployCard';
+import { SidebarMobileReleaseCard } from '@/components/sidebar/SidebarMobileReleaseCard';
 import { SidebarVercelIcon } from '@/components/sidebar/SidebarVercelIcon';
 import { SidebarVercelTokenPopup } from '@/components/sidebar/SidebarVercelTokenPopup';
 import { WorkspaceMenu } from '@/components/sidebar/WorkspaceMenu';
+import { WorkspaceContextMenu } from '@/components/sidebar/WorkspaceContextMenu';
 import { useVercelDeployments } from '@/hooks/useVercelDeployments';
+import { useMobileReleases } from '@/hooks/useMobileReleases';
 import {
   fetchSidebarVideoTitle,
   isYouTubeLiveUrl,
@@ -37,13 +41,20 @@ import {
 import { openSidebarWhatsAppLink } from '@/utils/sidebarWhatsAppLink';
 import { ProjectMoveWorkspaceMenu } from '@/components/sidebar/ProjectMoveWorkspaceMenu';
 import { WorkspaceDeleteDialog } from '@/components/sidebar/WorkspaceDeleteDialog';
-import type { ContextMenuState, MailMailboxRef, ProjectPromptMode } from '@/types';
+import type {
+  ContextMenuState,
+  MailMailboxRef,
+  ProjectPromptMode,
+  Workspace,
+  WorkspaceContextMenuState,
+} from '@/types';
 import { buildRunningAgentProjectIdSet } from '@/utils/projectAgentStatus';
 import { buildRunningAutomationProjectIdSet } from '@/utils/projectAutomationStatus';
 import {
   buildSidebarProjects,
   getHiddenNotifiedProjects,
   getNotifiedWorkspaceIds,
+  getRunningAgentWorkspaceIds,
 } from '@/utils/projectNotificationVisibility';
 import { getProjectPingTone } from '@/utils/projectPingTone';
 
@@ -60,6 +71,7 @@ function ProjectSidebarComponent() {
   const removeProject = useProjectStore((state) => state.removeProject);
   const stopProject = useProjectStore((state) => state.stopProject);
   const createWorkspace = useProjectStore((state) => state.createWorkspace);
+  const updateWorkspace = useProjectStore((state) => state.updateWorkspace);
   const selectWorkspace = useProjectStore((state) => state.selectWorkspace);
   const removeWorkspace = useProjectStore((state) => state.removeWorkspace);
   const moveProjectToWorkspace = useProjectStore((state) => state.moveProjectToWorkspace);
@@ -130,19 +142,30 @@ function ProjectSidebarComponent() {
     refreshTokenConfigured: refreshVercelTokenConfigured,
     dismiss: dismissVercelDeployCard,
   } = useVercelDeployments(true);
+  const { visibleReleases: visibleMobileReleases, dismissRelease: dismissMobileRelease } =
+    useMobileReleases();
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [workspaceContextMenu, setWorkspaceContextMenu] = useState<WorkspaceContextMenuState | null>(
+    null,
+  );
   const { openDailyDateMenu, viewCached, hasCachedResult, selectedSkill, isSkillAvailableForProject, runningProjectId } =
     useDailyGeneration();
   const [promptMode, setPromptMode] = useState<ProjectPromptMode | null>(null);
   const [promptProjectId, setPromptProjectId] = useState<string | null>(null);
+  const [promptWorkspaceId, setPromptWorkspaceId] = useState<string | null>(null);
   const [colorProjectId, setColorProjectId] = useState<string | null>(null);
-  const [logoCrop, setLogoCrop] = useState<{ projectId: string; sourcePath: string } | null>(null);
+  const [logoCrop, setLogoCrop] = useState<{
+    projectId?: string;
+    workspaceId?: string;
+    sourcePath: string;
+  } | null>(null);
   const [deleteProjectId, setDeleteProjectId] = useState<string | null>(null);
   const [moveProjectId, setMoveProjectId] = useState<string | null>(null);
   const [moveMenuPosition, setMoveMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const [deleteWorkspaceId, setDeleteWorkspaceId] = useState<string | null>(null);
   const [flagCreateProjectId, setFlagCreateProjectId] = useState<string | null>(null);
+  const [flagCreateWorkspaceId, setFlagCreateWorkspaceId] = useState<string | null>(null);
   const [pendingFlagAccess, setPendingFlagAccess] = useState<{
     projectId: string;
     previousProjectId: string | null;
@@ -177,6 +200,22 @@ function ProjectSidebarComponent() {
     () => getNotifiedWorkspaceIds(projects, notifiedAgentPaneByProject),
     [notifiedAgentPaneByProject, projects],
   );
+
+  const runningAgentWorkspaceIds = useMemo(
+    () => getRunningAgentWorkspaceIds(projects, runningAgentProjectIds),
+    [projects, runningAgentProjectIds],
+  );
+
+  const workspaceFilterHasRunningAgent = useMemo(() => {
+    if (activeWorkspaceId === null) {
+      return runningAgentProjectIds.size > 0;
+    }
+
+    return projects.some(
+      (project) =>
+        project.workspaceId !== activeWorkspaceId && runningAgentProjectIds.has(project.id),
+    );
+  }, [activeWorkspaceId, projects, runningAgentProjectIds]);
 
   const workspaceFilterHasNotification = useMemo(() => {
     if (activeWorkspaceId === null) {
@@ -215,6 +254,11 @@ function ProjectSidebarComponent() {
     return workspaces.find((workspace) => workspace.id === activeWorkspaceId)?.name ?? 'Todos os projetos';
   }, [activeWorkspaceId, workspaces]);
 
+  const activeWorkspace = useMemo(
+    () => workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null,
+    [activeWorkspaceId, workspaces],
+  );
+
   const canMoveProject = workspaces.length > 1;
   const canDeleteWorkspace = workspaces.length > 1;
 
@@ -238,9 +282,19 @@ function ProjectSidebarComponent() {
     [contextMenu?.projectId, projects],
   );
 
+  const workspaceContextTarget = useMemo(
+    () => workspaces.find((workspace) => workspace.id === workspaceContextMenu?.workspaceId) ?? null,
+    [workspaceContextMenu?.workspaceId, workspaces],
+  );
+
   const promptProject = useMemo(
     () => projects.find((project) => project.id === promptProjectId) ?? null,
     [promptProjectId, projects],
+  );
+
+  const promptWorkspace = useMemo(
+    () => workspaces.find((workspace) => workspace.id === promptWorkspaceId) ?? null,
+    [promptWorkspaceId, workspaces],
   );
 
   const colorProject = useMemo(
@@ -251,6 +305,11 @@ function ProjectSidebarComponent() {
   const logoCropProject = useMemo(
     () => projects.find((project) => project.id === logoCrop?.projectId) ?? null,
     [logoCrop?.projectId, projects],
+  );
+
+  const logoCropWorkspace = useMemo(
+    () => workspaces.find((workspace) => workspace.id === logoCrop?.workspaceId) ?? null,
+    [logoCrop?.workspaceId, workspaces],
   );
 
   const projectToDelete = useMemo(
@@ -271,6 +330,11 @@ function ProjectSidebarComponent() {
   const flagCreateProject = useMemo(
     () => projects.find((project) => project.id === flagCreateProjectId) ?? null,
     [flagCreateProjectId, projects],
+  );
+
+  const flagCreateWorkspace = useMemo(
+    () => workspaces.find((workspace) => workspace.id === flagCreateWorkspaceId) ?? null,
+    [flagCreateWorkspaceId, workspaces],
   );
 
   const pendingFlagProject = useMemo(
@@ -513,6 +577,7 @@ function ProjectSidebarComponent() {
   const handleCloseWorkspaceMenu = useCallback(() => {
     setWorkspaceMenuOpen(false);
     setWorkspaceMenuRect(null);
+    setWorkspaceContextMenu(null);
   }, []);
 
   const handleSelectWorkspace = useCallback(
@@ -527,9 +592,87 @@ function ProjectSidebarComponent() {
     setPromptMode('workspace');
   }, []);
 
-  const handleDeleteWorkspace = useCallback((workspaceId: string) => {
-    setDeleteWorkspaceId(workspaceId);
+  const closeWorkspaceMenusForAction = useCallback(() => {
+    setWorkspaceContextMenu(null);
+    setWorkspaceMenuOpen(false);
+    setWorkspaceMenuRect(null);
   }, []);
+
+  const handleDeleteWorkspace = useCallback(
+    (workspaceId: string) => {
+      closeWorkspaceMenusForAction();
+      setDeleteWorkspaceId(workspaceId);
+    },
+    [closeWorkspaceMenusForAction],
+  );
+
+  const handleWorkspaceContextMenu = useCallback((workspace: Workspace, x: number, y: number) => {
+    setWorkspaceContextMenu({ workspaceId: workspace.id, x, y });
+  }, []);
+
+  const handleCloseWorkspaceContextMenu = useCallback(() => {
+    setWorkspaceContextMenu(null);
+  }, []);
+
+  const handleSetWorkspaceLogo = useCallback(
+    async (workspaceId: string) => {
+      closeWorkspaceMenusForAction();
+
+      try {
+        const sourcePath = await window.nexus.dialog.openImage();
+
+        if (!sourcePath) {
+          return;
+        }
+
+        setLogoCrop({ workspaceId, sourcePath });
+      } catch {
+        return;
+      }
+    },
+    [closeWorkspaceMenusForAction],
+  );
+
+  const handleRemoveWorkspaceLogo = useCallback(
+    async (workspaceId: string) => {
+      closeWorkspaceMenusForAction();
+      const workspace = workspaces.find((item) => item.id === workspaceId);
+
+      if (!workspace?.logo) {
+        return;
+      }
+
+      await window.nexus.projects.removeLogo(workspace.logo);
+      await updateWorkspace(workspaceId, { logo: null });
+    },
+    [closeWorkspaceMenusForAction, updateWorkspace, workspaces],
+  );
+
+  const handleSetWorkspaceIcon = useCallback(
+    (workspaceId: string) => {
+      closeWorkspaceMenusForAction();
+      setPromptWorkspaceId(workspaceId);
+      setPromptMode('workspace-icon');
+    },
+    [closeWorkspaceMenusForAction],
+  );
+
+  const handleRenameWorkspace = useCallback(
+    (workspaceId: string) => {
+      closeWorkspaceMenusForAction();
+      setPromptWorkspaceId(workspaceId);
+      setPromptMode('workspace-rename');
+    },
+    [closeWorkspaceMenusForAction],
+  );
+
+  const handleCreateWorkspaceFlag = useCallback(
+    (workspaceId: string) => {
+      closeWorkspaceMenusForAction();
+      setFlagCreateWorkspaceId(workspaceId);
+    },
+    [closeWorkspaceMenusForAction],
+  );
 
   const handleDeleteWorkspaceClose = useCallback(() => {
     setDeleteWorkspaceId(null);
@@ -569,10 +712,19 @@ function ProjectSidebarComponent() {
 
   const handleFlagCreateClose = useCallback(() => {
     setFlagCreateProjectId(null);
+    setFlagCreateWorkspaceId(null);
   }, []);
 
   const handleFlagCreateConfirm = useCallback(
     (reason: string) => {
+      if (flagCreateWorkspaceId) {
+        void updateWorkspace(flagCreateWorkspaceId, {
+          flag: { reason, createdAt: Date.now() },
+        });
+        setFlagCreateWorkspaceId(null);
+        return;
+      }
+
       if (!flagCreateProjectId) {
         return;
       }
@@ -582,7 +734,7 @@ function ProjectSidebarComponent() {
       });
       setFlagCreateProjectId(null);
     },
-    [flagCreateProjectId, updateProject],
+    [flagCreateProjectId, flagCreateWorkspaceId, updateProject, updateWorkspace],
   );
 
   const handleFlagAccessDismiss = useCallback(() => {
@@ -683,7 +835,14 @@ function ProjectSidebarComponent() {
       }
 
       try {
-        await window.nexus.projects.saveLogoFromDataUrl(logoCrop.projectId, dataUrl);
+        if (logoCrop.workspaceId) {
+          await window.nexus.projects.saveWorkspaceLogoFromDataUrl(logoCrop.workspaceId, dataUrl);
+        } else if (logoCrop.projectId) {
+          await window.nexus.projects.saveLogoFromDataUrl(logoCrop.projectId, dataUrl);
+        } else {
+          return;
+        }
+
         const appState = await window.nexus.projects.list();
         useProjectStore.setState({
           projects: appState.projects,
@@ -781,6 +940,7 @@ function ProjectSidebarComponent() {
   const handlePromptClose = useCallback(() => {
     setPromptMode(null);
     setPromptProjectId(null);
+    setPromptWorkspaceId(null);
   }, []);
 
   const handlePromptConfirm = useCallback(
@@ -789,6 +949,21 @@ function ProjectSidebarComponent() {
         await createWorkspace(value);
         setPromptMode(null);
         setPromptProjectId(null);
+        setPromptWorkspaceId(null);
+        return;
+      }
+
+      if (promptMode === 'workspace-rename' && promptWorkspaceId) {
+        await updateWorkspace(promptWorkspaceId, { name: value });
+        setPromptMode(null);
+        setPromptWorkspaceId(null);
+        return;
+      }
+
+      if (promptMode === 'workspace-icon' && promptWorkspaceId) {
+        await updateWorkspace(promptWorkspaceId, { icon: value, iconCustomized: true });
+        setPromptMode(null);
+        setPromptWorkspaceId(null);
         return;
       }
 
@@ -803,7 +978,7 @@ function ProjectSidebarComponent() {
 
       await updateProject(promptProjectId, { icon: value, iconCustomized: true });
     },
-    [createWorkspace, promptMode, promptProjectId, updateProject],
+    [createWorkspace, promptMode, promptProjectId, promptWorkspaceId, updateProject, updateWorkspace],
   );
 
   const handleColorClose = useCallback(() => {
@@ -842,7 +1017,11 @@ function ProjectSidebarComponent() {
         >
           <span className='sidebar__filter-label'>
             <span className='sidebar__filter-icon-wrap'>
-              <span className='sidebar__filter-dot' aria-hidden='true' />
+              {activeWorkspace ? (
+                <WorkspaceMark workspace={activeWorkspace} size='filter' />
+              ) : (
+                <span className='sidebar__filter-dot' aria-hidden='true' />
+              )}
               {filterPingTone ? (
                 <span
                   className={`project-item__ping project-item__ping--${filterPingTone} sidebar__filter-ping`}
@@ -851,6 +1030,12 @@ function ProjectSidebarComponent() {
               ) : null}
             </span>
             <span className='sidebar__filter-text'>{workspaceFilterLabel}</span>
+            {workspaceFilterHasRunningAgent ? (
+              <span
+                className='project-item__agent project-item__agent--loading sidebar__filter-agent'
+                aria-label='Agent em execução'
+              />
+            ) : null}
           </span>
           <ChevronDown size={14} />
         </button>
@@ -887,6 +1072,14 @@ function ProjectSidebarComponent() {
         {mailPanelOpen && activeProjectMailInbox ? (
           <SidebarMailPanel mailbox={activeProjectMailInbox} />
         ) : null}
+
+        {visibleMobileReleases.map((release) => (
+          <SidebarMobileReleaseCard
+            key={release.uid}
+            release={release}
+            onDismiss={() => dismissMobileRelease(release.uid)}
+          />
+        ))}
 
         {vercelActiveDeployment ? (
           <SidebarVercelDeployCard deployment={vercelActiveDeployment} onDismiss={dismissVercelDeployCard} />
@@ -1002,12 +1195,29 @@ function ProjectSidebarComponent() {
           anchorRect={workspaceMenuRect}
           workspaces={workspaces}
           activeWorkspaceId={activeWorkspaceId}
-          canDeleteWorkspace={canDeleteWorkspace}
           hasHiddenNotifications={notifiedWorkspaceIds.size > 0}
           notifiedWorkspaceIds={notifiedWorkspaceIds}
+          hasRunningAgent={runningAgentProjectIds.size > 0}
+          runningAgentWorkspaceIds={runningAgentWorkspaceIds}
           onClose={handleCloseWorkspaceMenu}
           onSelect={handleSelectWorkspace}
           onCreate={handleCreateWorkspace}
+          onContextMenu={handleWorkspaceContextMenu}
+        />
+      ) : null}
+
+      {workspaceContextMenu && workspaceContextTarget ? (
+        <WorkspaceContextMenu
+          workspace={workspaceContextTarget}
+          x={workspaceContextMenu.x}
+          y={workspaceContextMenu.y}
+          canDelete={canDeleteWorkspace}
+          onClose={handleCloseWorkspaceContextMenu}
+          onSetLogo={(workspaceId) => void handleSetWorkspaceLogo(workspaceId)}
+          onRemoveLogo={(workspaceId) => void handleRemoveWorkspaceLogo(workspaceId)}
+          onSetIcon={handleSetWorkspaceIcon}
+          onRename={handleRenameWorkspace}
+          onCreateFlag={handleCreateWorkspaceFlag}
           onDelete={handleDeleteWorkspace}
         />
       ) : null}
@@ -1048,10 +1258,22 @@ function ProjectSidebarComponent() {
         />
       ) : null}
 
-      {promptMode && (promptMode === 'workspace' || promptProject) ? (
+      {promptMode &&
+      (promptMode === 'workspace' ||
+        promptMode === 'workspace-rename' ||
+        promptMode === 'workspace-icon' ||
+        promptProject) ? (
         <ProjectPromptDialog
           mode={promptMode}
-          initialValue={promptMode === 'rename' && promptProject ? promptProject.name : promptProject?.icon ?? ''}
+          initialValue={
+            promptMode === 'rename' && promptProject
+              ? promptProject.name
+              : promptMode === 'workspace-rename' && promptWorkspace
+                ? promptWorkspace.name
+                : promptMode === 'workspace-icon' && promptWorkspace
+                  ? promptWorkspace.icon
+                  : (promptProject?.icon ?? '')
+          }
           onConfirm={(value) => void handlePromptConfirm(value)}
           onClose={handlePromptClose}
         />
@@ -1065,10 +1287,10 @@ function ProjectSidebarComponent() {
         />
       ) : null}
 
-      {logoCrop && logoCropProject ? (
+      {logoCrop && (logoCropProject || logoCropWorkspace) ? (
         <ProjectLogoCropDialog
           sourcePath={logoCrop.sourcePath}
-          projectName={logoCropProject.name}
+          projectName={logoCropProject?.name ?? logoCropWorkspace?.name ?? ''}
           onConfirm={(dataUrl) => void handleLogoCropConfirm(dataUrl)}
           onClose={handleLogoCropClose}
         />
@@ -1082,9 +1304,10 @@ function ProjectSidebarComponent() {
         />
       ) : null}
 
-      {flagCreateProject ? (
+      {flagCreateProject || flagCreateWorkspace ? (
         <ProjectFlagCreateDialog
-          projectName={flagCreateProject.name}
+          projectName={flagCreateProject?.name ?? flagCreateWorkspace?.name ?? ''}
+          entityLabel={flagCreateWorkspace ? 'workspace' : 'projeto'}
           onConfirm={handleFlagCreateConfirm}
           onClose={handleFlagCreateClose}
         />

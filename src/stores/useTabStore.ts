@@ -27,7 +27,7 @@ import {
 } from '@/utils/tabGroups';
 import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
 import { findDiffTabByPath, findFilePreviewTabByPath, findFileTabByPath } from '@/utils/fileTabs';
-import { toGitRelativePath, toRepoAbsolutePath } from '@/utils/gitPaths';
+import { resolveGitDiffContext } from '@/utils/gitPaths';
 import { resolveAgentGitPromptForFile } from '@/utils/resolveAgentGitPromptForFile';
 import { resolveFileViewMode } from '@/utils/fileViewMode';
 import { isTabPinned, reorderTabBarItems, toggleTabPinned } from '@/utils/tabOrder';
@@ -667,9 +667,11 @@ export function useTabActions(): TabStoreActions {
 
       const staged = options.staged;
       const untracked = options.untracked ?? false;
-      const repoPath = options.repoPath ?? project.path;
-      const gitRelativePath = toGitRelativePath(repoPath, filePath);
-      const absoluteFilePath = toRepoAbsolutePath(repoPath, gitRelativePath);
+      const { repoPath, gitRelativePath, absoluteFilePath } = await resolveGitDiffContext(
+        project.path,
+        filePath,
+        options.repoPath,
+      );
       const agentPrompt =
         options.agentPrompt ??
         resolveAgentGitPromptForFile(project.id, absoluteFilePath, repoPath) ??

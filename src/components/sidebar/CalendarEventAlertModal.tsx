@@ -7,6 +7,7 @@ import {
 } from '@/components/sidebar/CalendarEventDetailsPanel';
 import { CalendarMeetingIcon } from '@/components/sidebar/CalendarMeetingIcon';
 import type { CalendarEventItem } from '@/types';
+import { startCalendarEventCall } from '@/utils/calendarEventStartCall';
 import { resolveCalendarExternalUrl, resolveCalendarMeetingInfo } from '@/utils/calendarEventStyle';
 
 interface CalendarEventAlertModalProps {
@@ -38,12 +39,9 @@ function CalendarEventAlertModalComponent({ event, onClose, onOpenInCalendar }: 
   }, [event.startAt, onClose, onOpenInCalendar]);
 
   const handleStartCall = useCallback(() => {
-    if (!meetingInfo?.url) {
-      return;
-    }
-
-    handleOpenExternalUrl(meetingInfo.url);
-  }, [handleOpenExternalUrl, meetingInfo?.url]);
+    void startCalendarEventCall(event);
+    onClose();
+  }, [event, onClose]);
 
   return (
     <AnimatedModal
@@ -80,7 +78,7 @@ function CalendarEventAlertModalComponent({ event, onClose, onOpenInCalendar }: 
           <CalendarEventFooterActions
             onOpenInCalendar={handleOpenInCalendar}
             onStartCall={handleStartCall}
-            showStartCall={Boolean(meetingInfo?.url)}
+            showStartCall
           />
         </div>
       )}

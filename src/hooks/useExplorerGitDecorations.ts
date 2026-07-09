@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import type { GitStatusResult } from '@/types/git';
-import { buildFlatChanges, type GitFlatChange } from '@/utils/gitFlatChanges';
+import { buildFlatChanges, getGitChangeDecoration, type GitFlatChange } from '@/utils/gitFlatChanges';
 import { findGitFlatChangeByPath, toGitRelativePath } from '@/utils/gitPaths';
 import { GIT_REPO_REFRESH_EVENT } from '@/utils/gitRepoRefresh';
 
@@ -10,17 +10,7 @@ export interface ExplorerGitDecoration {
 }
 
 function toDecoration(change: GitFlatChange): ExplorerGitDecoration {
-  if (change.status === 'untracked' || change.status === 'added') {
-    return {
-      kind: 'new',
-      badge: change.status === 'added' ? 'A' : 'U',
-    };
-  }
-
-  return {
-    kind: 'modified',
-    badge: 'M',
-  };
+  return getGitChangeDecoration(change);
 }
 
 function areGitFlatChangesEqual(left: GitFlatChange[], right: GitFlatChange[]): boolean {

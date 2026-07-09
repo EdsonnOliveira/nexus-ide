@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { BookOpen, Check, ChevronDown, ChevronRight, Hexagon, Image, Plus } from 'lucide-react';
+import { BookOpen, Check, ChevronDown, ChevronRight, FileText, Hexagon, Image, Plus } from 'lucide-react';
 import { AgentHintLeading } from '@/components/agent/AgentHintLeading';
 import {
   positionContextSubmenuWithinViewport,
@@ -90,6 +90,7 @@ interface AgentComposerPlusMenuProps {
   isVisible: boolean;
   onRunCommand: (command: string) => void;
   onAttachImage: () => void;
+  onAttachFile: () => void;
 }
 
 function AgentComposerPlusMenuComponent({
@@ -98,6 +99,7 @@ function AgentComposerPlusMenuComponent({
   isVisible,
   onRunCommand,
   onAttachImage,
+  onAttachFile,
 }: AgentComposerPlusMenuProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -168,10 +170,15 @@ function AgentComposerPlusMenuComponent({
     [handleClose, onRunCommand],
   );
 
-  const handleAttach = useCallback(() => {
+  const handleAttachImage = useCallback(() => {
     onAttachImage();
     handleClose();
   }, [handleClose, onAttachImage]);
+
+  const handleAttachFile = useCallback(() => {
+    onAttachFile();
+    handleClose();
+  }, [handleClose, onAttachFile]);
 
   if (!isVisible) {
     return (
@@ -214,7 +221,8 @@ function AgentComposerPlusMenuComponent({
               activeAgentMode={activeAgentMode}
               onClose={handleClose}
               onSelect={handleSelect}
-              onAttachImage={handleAttach}
+              onAttachImage={handleAttachImage}
+              onAttachFile={handleAttachFile}
             />,
             document.body,
           )
@@ -326,6 +334,7 @@ interface AgentComposerPlusMenuPanelProps {
   onClose: () => void;
   onSelect: (command: string) => void;
   onAttachImage: () => void;
+  onAttachFile: () => void;
 }
 
 function AgentComposerPlusMenuPanelComponent({
@@ -342,6 +351,7 @@ function AgentComposerPlusMenuPanelComponent({
   onClose,
   onSelect,
   onAttachImage,
+  onAttachFile,
 }: AgentComposerPlusMenuPanelProps) {
   const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
     onClose,
@@ -409,6 +419,10 @@ function AgentComposerPlusMenuPanelComponent({
       <button type='button' className='context-menu__item app-button' onClick={onAttachImage}>
         <Image size={14} strokeWidth={2} aria-hidden='true' />
         <span>Imagem</span>
+      </button>
+      <button type='button' className='context-menu__item app-button' onClick={onAttachFile}>
+        <FileText size={14} strokeWidth={2} aria-hidden='true' />
+        <span>Arquivo</span>
       </button>
       <AgentComposerSubmenuRow
         kind='models'

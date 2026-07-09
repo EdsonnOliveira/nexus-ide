@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import { removeProjectLogo, saveProjectLogo, saveProjectLogoFromDataUrl } from '../services/logoStore';
 import { projectStore } from '../services/projectStore';
-import type { AppState, ProjectUpdatePayload } from '../../types';
+import type { AppState, ProjectUpdatePayload, WorkspaceUpdatePayload } from '../../types';
 
 export function registerProjectHandlers(): void {
   ipcMain.handle('projects:list', () => projectStore.list());
@@ -30,7 +30,13 @@ export function registerProjectHandlers(): void {
 
   ipcMain.handle('projects:createWorkspace', (_, name: string) => projectStore.createWorkspace(name));
 
+  ipcMain.handle('projects:updateWorkspace', (_, id: string, data: WorkspaceUpdatePayload) =>
+    projectStore.updateWorkspace(id, data),
+  );
+
   ipcMain.handle('projects:removeWorkspace', (_, id: string) => {
+    const workspace = projectStore.list().workspaces.find((item) => item.id === id);
+    removeProjectLogo(workspace?.logo ?? null);
     projectStore.removeWorkspace(id);
   });
 
@@ -70,7 +76,7 @@ export function registerProjectHandlers(): void {
     removeProjectLogo(logoPath);
   });
 
-  ipcMain.handle('projects:saveLogoFromDataUrl', async (_, projectId: string, dataUrl: string) => {
+    ipcMain.handle('projects:saveLogoFromDataUrl', async (_, projectId: string, dataUrl: string) => {
     const project = projectStore.list().projects.find((item) => item.id === projectId);
 
     if (!project) {
@@ -83,6 +89,23 @@ export function registerProjectHandlers(): void {
 
     const logoPath = saveProjectLogoFromDataUrl(projectId, dataUrl);
     projectStore.update(projectId, { logo: logoPath });
+
+    return logoPath;
+  });
+
+  ipcMain.handle('projects:saveWorkspaceLogoFromDataUrl', async (_, workspaceId: string, dataUrl: string) => {
+    const workspace = projectStore.list().workspaces.find((item) => item.id === workspaceId);
+
+    if (!workspace) {
+      throw new Error('Workspace not found');
+    }
+
+    if (workspace.logo) {
+      removeProjectLogo(workspace.logo);
+    }
+
+    const logoPath = saveProjectLogoFromDataUrl(workspaceId, dataUrl);
+    projectStore.updateWorkspace(workspaceId, { logo: logoPath });
 
     return logoPath;
   });

@@ -45,6 +45,7 @@ export type AgentActivityKind =
   | 'file_edit'
   | 'file_read'
   | 'live_status'
+  | 'tool_run'
   | 'response'
   | 'question'
   | 'plan';
@@ -94,6 +95,9 @@ export interface AgentActivity {
   planTodos?: AgentPlanTodo[];
   planStatus?: AgentPlanStatus;
   planUri?: string;
+  toolCommand?: string;
+  toolOutput?: string;
+  toolExitCode?: number | null;
 }
 
 export interface AgentTurnSummaryFileRef {
@@ -337,9 +341,28 @@ export interface PasswordCollection {
   browserUrl?: string | null;
 }
 
+export interface ProjectFlag {
+  reason: string;
+  createdAt: number;
+}
+
 export interface Workspace {
   id: string;
   name: string;
+  color: string;
+  icon: string;
+  iconCustomized: boolean;
+  logo: string | null;
+  flag?: ProjectFlag | null;
+}
+
+export interface WorkspaceUpdatePayload {
+  name?: string;
+  color?: string;
+  icon?: string;
+  iconCustomized?: boolean;
+  logo?: string | null;
+  flag?: ProjectFlag | null;
 }
 
 export interface ProjectAgentResponseSkill {
@@ -347,11 +370,6 @@ export interface ProjectAgentResponseSkill {
   hintId: string;
   label: string;
   command: string;
-}
-
-export interface ProjectFlag {
-  reason: string;
-  createdAt: number;
 }
 
 export interface Project {
@@ -511,3 +529,10 @@ export interface MacParakeetTranscriptSegment {
   answer: string | null;
   isQuestion: boolean;
 }
+
+export type MacParakeetStartCallResult =
+  | { ok: true; callSessionId: string; title: string }
+  | {
+      ok: false;
+      reason: 'unsupported' | 'not_installed' | 'unauthorized' | 'invalid_title' | 'create_failed';
+    };

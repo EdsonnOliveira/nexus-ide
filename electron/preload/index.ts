@@ -6,6 +6,7 @@ import type {
   TerminalAgent,
   TerminalPasteImageSaved,
   Workspace,
+  WorkspaceUpdatePayload,
 } from '../types';
 
 function toLocalFileUrl(filePath: string): string {
@@ -20,6 +21,8 @@ const nexusApi = {
     list: (): Promise<AppState> => ipcRenderer.invoke('projects:list'),
     createWorkspace: (name: string): Promise<Workspace> =>
       ipcRenderer.invoke('projects:createWorkspace', name),
+    updateWorkspace: (id: string, data: WorkspaceUpdatePayload): Promise<Workspace | null> =>
+      ipcRenderer.invoke('projects:updateWorkspace', id, data),
     removeWorkspace: (id: string): Promise<void> => ipcRenderer.invoke('projects:removeWorkspace', id),
     selectWorkspace: (id: string | null): Promise<void> =>
       ipcRenderer.invoke('projects:selectWorkspace', id),
@@ -34,6 +37,8 @@ const nexusApi = {
       ipcRenderer.invoke('projects:saveLogo', projectId, sourcePath),
     saveLogoFromDataUrl: (projectId: string, dataUrl: string): Promise<string> =>
       ipcRenderer.invoke('projects:saveLogoFromDataUrl', projectId, dataUrl),
+    saveWorkspaceLogoFromDataUrl: (workspaceId: string, dataUrl: string): Promise<string> =>
+      ipcRenderer.invoke('projects:saveWorkspaceLogoFromDataUrl', workspaceId, dataUrl),
     removeLogo: (logoPath: string | null): Promise<void> =>
       ipcRenderer.invoke('projects:removeLogo', logoPath),
     setSidebarVideoSession: (session: AppState['sidebarVideoSession']): Promise<void> =>
@@ -346,6 +351,7 @@ const nexusApi = {
       ipcRenderer.invoke('macParakeet:getTranscriptions', sourceType, forceRefresh),
     getTranscriptionDetail: (id) => ipcRenderer.invoke('macParakeet:getTranscriptionDetail', id),
     openApp: () => ipcRenderer.invoke('macParakeet:openApp'),
+    startCallFromEvent: (title) => ipcRenderer.invoke('macParakeet:startCallFromEvent', title),
     renameTranscriptionTitle: (id, title) =>
       ipcRenderer.invoke('macParakeet:renameTranscriptionTitle', id, title),
   },

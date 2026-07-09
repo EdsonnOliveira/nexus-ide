@@ -92,6 +92,30 @@ export function shouldShowSkillChipAbovePrompt(content: string, skillChipLabel: 
   return normalizeSkillToken(chip) !== normalizeSkillToken(bubble);
 }
 
+export function isSkillOnlyPrompt(
+  user: {
+    content: string;
+    skillLabel?: string;
+    agentPrompt?: string;
+  },
+  bubbleContent: string,
+  attachmentCount = 0,
+): boolean {
+  const { hasSkillPrompt, skillChipLabel } = resolveAgentSkillDisplayState(user);
+
+  if (!hasSkillPrompt || attachmentCount > 0) {
+    return false;
+  }
+
+  const bubble = bubbleContent.trim();
+
+  if (!bubble) {
+    return true;
+  }
+
+  return normalizeSkillToken(bubble) === normalizeSkillToken(skillChipLabel);
+}
+
 export function resolveAgentSkillDisplayState(user: {
   content: string;
   skillLabel?: string;

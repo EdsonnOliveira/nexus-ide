@@ -135,15 +135,19 @@ export function useAnchoredDropdownMenu(
   positionMenu: (menu: HTMLDivElement) => void,
   deps: readonly unknown[],
   host: 'dropdown' | 'modal' = 'dropdown',
+  options?: { closeOthers?: boolean },
 ) {
   const menuRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const { phase, requestClose } = useAnimatedUnmount(onClose);
   const [isPositioned, setIsPositioned] = useState(false);
+  const closeOthers = options?.closeOthers !== false;
 
   useEffect(() => {
-    closeAllAnchoredDropdowns();
+    if (closeOthers) {
+      closeAllAnchoredDropdowns();
+    }
 
     if (host === 'modal') {
       const unregisterModal = registerModalOpen();
@@ -159,13 +163,16 @@ export function useAnchoredDropdownMenu(
 
     const unregisterOpen = registerAnchoredDropdownOpen();
     const unregisterCloser = registerAnchoredDropdownCloser(forceClose);
-    closeAllAnchoredDropdowns(forceClose);
+
+    if (closeOthers) {
+      closeAllAnchoredDropdowns(forceClose);
+    }
 
     return () => {
       unregisterOpen();
       unregisterCloser();
     };
-  }, [host]);
+  }, [closeOthers, host]);
 
   useLayoutEffect(() => {
     const menu = menuRef.current;

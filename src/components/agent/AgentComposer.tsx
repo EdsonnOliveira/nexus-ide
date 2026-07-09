@@ -58,6 +58,7 @@ import {
   canAcceptAgentComposerDrop,
   resolveAgentComposerDropEffect,
   resolveAgentComposerDropMentions,
+  resolveAgentComposerPathMention,
 } from '@/utils/agentComposerDrop';
 import {
   buildAgentPromptImageMention,
@@ -1058,7 +1059,7 @@ function AgentComposerComponent({
     [onDraftChange, resetPromptHistoryNavigation, skillDraft, syncComposerInputScroll],
   );
 
-  const handleAttach = useCallback(async () => {
+  const handleAttachImage = useCallback(async () => {
     const sourcePath = await window.nexus.dialog.openImage();
 
     if (!sourcePath) {
@@ -1073,6 +1074,20 @@ function AgentComposerComponent({
 
     await attachImageWithMention(dataUrl);
   }, [attachImageWithMention]);
+
+  const handleAttachFile = useCallback(async () => {
+    const sourcePath = await window.nexus.dialog.openFile();
+
+    if (!sourcePath) {
+      return;
+    }
+
+    const mention = await resolveAgentComposerPathMention(projectPath, sourcePath);
+
+    if (mention) {
+      insertPathMentions([mention]);
+    }
+  }, [insertPathMentions, projectPath]);
 
   const handlePaste = useCallback(
     (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -1230,7 +1245,8 @@ function AgentComposerComponent({
                 cwd={projectPath}
                 isVisible={isVisible}
                 onRunCommand={onRunCommand}
-                onAttachImage={() => void handleAttach()}
+                onAttachImage={() => void handleAttachImage()}
+                onAttachFile={() => void handleAttachFile()}
               />
               {activeMode !== 'agent' && activeModeOption ? (
                 <AgentComposerModeChip
