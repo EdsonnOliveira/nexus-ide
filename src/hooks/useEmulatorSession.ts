@@ -182,6 +182,7 @@ export function useEmulatorSession({
   const [frameSize, setFrameSize] = useState({ width: 390, height: 844 });
   const sessionIdRef = useRef<string | null>(tab.sessionId);
   const startGenerationRef = useRef(0);
+  const intentionalStopRef = useRef(false);
   const pendingImageFrameRef = useRef<{
     chunk: Uint8Array;
     codec: 'jpeg' | 'png';
@@ -440,10 +441,6 @@ export function useEmulatorSession({
       return;
     }
 
-    if (captureBackendRef.current === 'simulator-server') {
-      return;
-    }
-
     if (!sessionIdRef.current) {
       sessionIdRef.current = payload.sessionId;
     }
@@ -515,6 +512,10 @@ export function useEmulatorSession({
   useEffect(() => {
     const unsubscribeCreated = window.nexus.emulator.onSessionCreated((payload) => {
       if (payload.tabId !== tab.id) {
+        return;
+      }
+
+      if (intentionalStopRef.current) {
         return;
       }
 
@@ -606,6 +607,14 @@ export function useEmulatorSession({
         return;
       }
 
+      if (
+        intentionalStopRef.current &&
+        payload.state !== 'stopped' &&
+        payload.state !== 'error'
+      ) {
+        return;
+      }
+
       setSessionState(payload.state);
       setSessionMessage(payload.message ?? null);
 
@@ -642,9 +651,17 @@ export function useEmulatorSession({
       if (payload.state === 'running' || payload.state === 'stopped' || payload.state === 'error') {
         setIsStarting(false);
       }
+
+      if (payload.state === 'running') {
+        intentionalStopRef.current = false;
+      }
     });
     const unsubscribeStreamStats = window.nexus.emulator.onStreamStats((payload) => {
       if (payload.tabId !== tab.id) {
+        return;
+      }
+
+      if (intentionalStopRef.current) {
         return;
       }
 
@@ -716,6 +733,7 @@ export function useEmulatorSession({
       return;
     }
 
+    intentionalStopRef.current = false;
     const generation = startGenerationRef.current + 1;
     startGenerationRef.current = generation;
 
@@ -786,6 +804,7 @@ export function useEmulatorSession({
   ]);
 
   const stopSession = useCallback(async () => {
+    intentionalStopRef.current = true;
     startGenerationRef.current += 1;
 
     setSessionState('stopped');

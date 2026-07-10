@@ -1,4 +1,5 @@
 import type { AgentTurn, Project } from '@/types';
+import { isAgentTurnActivelyRunning } from '@/utils/projectAgentStatus';
 import { collectProjectPanes } from '@/utils/tabGroups';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 
@@ -104,11 +105,11 @@ export function projectHasLiveAgentSession(
       continue;
     }
 
-    if (pane.turns?.some((turn) => turn.running)) {
+    if (pane.turns?.some((turn) => isAgentTurnActivelyRunning(turn))) {
       return true;
     }
 
-    if (isPaneAgentSessionLive(pane.id, session)) {
+    if (session.agentPrintRunTokenByPane[pane.id]) {
       return true;
     }
   }

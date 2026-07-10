@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync } from 'node:fs';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { resolveDirectoryPath } from './directoryListing';
@@ -17,7 +17,8 @@ interface CursorAgentSessionMeta {
   updatedAtMs?: number;
 }
 
-const MAX_HISTORY_ENTRIES = 40;
+const MAX_HISTORY_ENTRIES = 5;
+const HISTORY_META_PROBE_COUNT = 8;
 
 function resolveWorkspaceHash(workspacePath: string): string {
   const resolved = resolveDirectoryPath(workspacePath);
@@ -38,9 +39,27 @@ export async function listCursorAgentHistory(
     return [];
   }
 
+  const rankedSessions = (
+    await Promise.all(
+      sessionIds.map(async (sessionId) => {
+        const metaPath = join(chatsDir, sessionId, 'meta.json');
+
+        try {
+          const fileStat = await stat(metaPath);
+          return { sessionId, mtimeMs: fileStat.mtimeMs };
+        } catch {
+          return null;
+        }
+      }),
+    )
+  )
+    .filter((entry): entry is { sessionId: string; mtimeMs: number } => entry !== null)
+    .sort((left, right) => right.mtimeMs - left.mtimeMs)
+    .slice(0, HISTORY_META_PROBE_COUNT);
+
   const sessions: CursorAgentHistoryEntry[] = [];
 
-  for (const sessionId of sessionIds) {
+  for (const { sessionId } of rankedSessions) {
     const metaPath = join(chatsDir, sessionId, 'meta.json');
 
     try {

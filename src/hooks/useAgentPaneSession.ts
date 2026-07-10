@@ -122,6 +122,16 @@ const CONTEXT_USAGE_REPORT_DELAY_MS = 700;
 const AGENT_OUTPUT_TAIL_SIZE = 8192;
 const AGENT_TURN_OUTPUT_MAX = 512 * 1024;
 
+function resolveAgentPaneActiveWorkload(paneId: string, hasRunningTurn: boolean): boolean {
+  const session = useTerminalSessionStore.getState();
+
+  return (
+    hasRunningTurn ||
+    Boolean(session.awaitingResponseByPane[paneId]) ||
+    Boolean(session.agentPrintRunTokenByPane[paneId])
+  );
+}
+
 interface UseAgentPaneSessionOptions {
   tab: AgentTab;
   projectPath: string;
@@ -350,6 +360,9 @@ export function useAgentPaneSession({
     Boolean(state.awaitingResponseByPane[tab.id]),
   );
   const isAgentBusy = useTerminalSessionStore((state) => Boolean(state.agentBusyByPane[tab.id]));
+  const agentPrintRunToken = useTerminalSessionStore(
+    (state) => state.agentPrintRunTokenByPane[tab.id] ?? null,
+  );
   const hasPendingLaunch = useTerminalSessionStore((state) =>
     Boolean(state.pendingLaunchCommands[tab.id] && !tab.ptyId),
   );
@@ -358,8 +371,8 @@ export function useAgentPaneSession({
     hasPendingLaunch ||
     isTurnRunning ||
     isSubmitting ||
-    (isAwaiting && isTurnRunning) ||
-    (isAgentBusy && isTurnRunning);
+    Boolean(agentPrintRunToken) ||
+    (isAwaiting && isAgentBusy);
 
   const syncOutputTailFromScrollback = useCallback(async () => {
     const ptyId = ptyIdRef.current;
@@ -486,6 +499,28 @@ export function useAgentPaneSession({
     turnsRef.current = trimmedTurns;
     onTurnsChangeRef.current(trimmedTurns, { persist: true });
   }, [cancelPersistTurnsDebounce]);
+
+  useEffect(() => {
+    const paneId = tab.id;
+    const storeRunning = (tab.turns ?? []).some((turn) => turn.running);
+    const localRunning = turnsRef.current.some((turn) => turn.running);
+
+    if (!localRunning) {
+      const session = useTerminalSessionStore.getState();
+
+      if (
+        session.awaitingResponseByPane[paneId] ||
+        session.agentBusyByPane[paneId] ||
+        session.agentNotifyEligibleByPane[paneId]
+      ) {
+        session.resetAgentWorkload(paneId);
+      }
+    }
+
+    if (!localRunning && storeRunning) {
+      flushPersistTurns();
+    }
+  }, [flushPersistTurns, tab.id, tab.turns, turnsRevision]);
 
   const schedulePersistTurns = useCallback(() => {
     cancelPersistTurnsDebounce();
@@ -2431,7 +2466,7 @@ export function useAgentPaneSession({
         syncAgentBusyFromTail(
           paneId,
           tail,
-          true,
+          resolveAgentPaneActiveWorkload(paneId, false),
           useTerminalSessionStore.getState().setAgentBusy,
         );
       }
@@ -2498,7 +2533,7 @@ export function useAgentPaneSession({
         syncAgentBusyFromTail(
           paneId,
           outputTailRef.current,
-          true,
+          resolveAgentPaneActiveWorkload(paneId, hasRunningTurn),
           useTerminalSessionStore.getState().setAgentBusy,
         );
 

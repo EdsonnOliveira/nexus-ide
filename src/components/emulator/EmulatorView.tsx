@@ -918,11 +918,7 @@ function EmulatorViewComponent({
               title='Parar'
               onClick={handleToggleSession}
             >
-              {showBootSpinner ? (
-                <Loader2 size={14} className='emulator-view__spinner' />
-              ) : (
-                <Square size={14} strokeWidth={2} aria-hidden />
-              )}
+              <Square size={14} strokeWidth={2} aria-hidden />
             </button>
           ) : null}
         </div>

@@ -1,5 +1,6 @@
 import { Fragment, memo, useCallback, useMemo, useState } from 'react';
 import { TAB_DRAG_MIME } from '@/constants/tabDrag';
+import { useStableLoadingMap } from '@/hooks/useStableLoadingMap';
 import { useTabCloseShortcut } from '@/hooks/useTabCloseShortcut';
 import { useTabIndexShortcuts } from '@/hooks/useTabIndexShortcuts';
 import { useProjectStore } from '@/stores/useProjectStore';
@@ -13,7 +14,7 @@ import { TabItem } from '@/components/tabs/TabItem';
 import { TabToolbar } from '@/components/tabs/TabToolbar';
 import type { TabBarItem } from '@/types';
 import { getPanesFromItem, resolveActiveTabBarItem } from '@/utils/tabGroups';
-import { isPaneAgentLoading } from '@/utils/projectAgentStatus';
+import { isAgentPaneTabLoading, isPaneAgentLoading } from '@/utils/projectAgentStatus';
 import { getProjectPingTone } from '@/utils/projectPingTone';
 import { countPinnedTabs } from '@/utils/tabOrder';
 
@@ -56,6 +57,7 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
   const pendingLaunchCommands = useTerminalSessionStore((state) => state.pendingLaunchCommands);
   const agentBusyByPane = useTerminalSessionStore((state) => state.agentBusyByPane);
   const awaitingResponseByPane = useTerminalSessionStore((state) => state.awaitingResponseByPane);
+  const agentPrintRunTokenByPane = useTerminalSessionStore((state) => state.agentPrintRunTokenByPane);
   const activeAgentByPane = useTerminalSessionStore((state) => state.activeAgentByPane);
   const notifiedAgentPaneByProject = useProjectNotificationStore(
     (state) => state.notifiedAgentPaneByProject,
@@ -91,7 +93,7 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
     [activeProject],
   );
 
-  const tabRestartingMap = useMemo(() => {
+  const tabRestartingMapRaw = useMemo(() => {
     const map = new Map<string, boolean>();
 
     for (const tab of tabs) {
@@ -102,10 +104,7 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
         tab.id,
         agentPanes.some((pane) => {
           if (pane.type === 'agent') {
-            const hasRunningTurn = (pane.turns ?? []).some((turn) => turn.running);
-            const isBootstrapping = !pane.ptyId && Boolean(pendingLaunchCommands[pane.id]);
-
-            return hasRunningTurn || isBootstrapping;
+            return isAgentPaneTabLoading(pane, pendingLaunchCommands, agentPrintRunTokenByPane);
           }
 
           const hasPendingLaunch =
@@ -117,7 +116,14 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
             Boolean(restartingPaneIds[pane.id]) ||
             Boolean(executingPaneIds[pane.id]) ||
             hasPendingLaunch ||
-            isPaneAgentLoading(pane, awaitingResponseByPane, activeAgentByPane, agentBusyByPane)
+            isPaneAgentLoading(
+              pane,
+              awaitingResponseByPane,
+              activeAgentByPane,
+              agentBusyByPane,
+              agentPrintRunTokenByPane,
+              pendingLaunchCommands,
+            )
           );
         }),
       );
@@ -127,12 +133,15 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
   }, [
     activeAgentByPane,
     agentBusyByPane,
+    agentPrintRunTokenByPane,
     awaitingResponseByPane,
     executingPaneIds,
     pendingLaunchCommands,
     restartingPaneIds,
     tabs,
   ]);
+
+  const tabRestartingMap = useStableLoadingMap(tabRestartingMapRaw);
 
   const contextTab = useMemo(
     () => tabs.find((tab) => tab.id === contextMenu?.tabId) ?? null,

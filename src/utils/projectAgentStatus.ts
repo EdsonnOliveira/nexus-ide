@@ -1,5 +1,5 @@
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
-import type { Project, Tab } from '@/types';
+import type { AgentTurn, Project, Tab } from '@/types';
 import { isAgentPaneTab, resolveAgentTabCli } from '@/utils/agentTabHelpers';
 import { isAgentSetupCommand } from '@/utils/parseAgentModeCommand';
 import { collectProjectPanes, findPaneTab } from '@/utils/tabGroups';
@@ -88,14 +88,53 @@ export function shouldMarkAgentAwaiting(
   return Boolean(activeAgentByPane[paneId]);
 }
 
+export function isAgentTurnActivelyRunning(turn: AgentTurn): boolean {
+  if (!turn.running || turn.pendingFollowUp) {
+    return false;
+  }
+
+  if (turn.completedAt) {
+    return false;
+  }
+
+  return !turn.activities.some(
+    (entry) =>
+      entry.kind === 'response' &&
+      entry.streaming !== true &&
+      entry.label.trim().length > 0,
+  );
+}
+
+export function isAgentPaneTabLoading(
+  pane: Tab,
+  pendingLaunchCommands: Record<string, string> = {},
+  agentPrintRunTokenByPane: Record<string, string> = {},
+): boolean {
+  if (pane.type !== 'agent') {
+    return false;
+  }
+
+  if ((pane.turns ?? []).some((turn) => isAgentTurnActivelyRunning(turn))) {
+    return true;
+  }
+
+  if (!pane.ptyId && Boolean(pendingLaunchCommands[pane.id])) {
+    return true;
+  }
+
+  return Boolean(agentPrintRunTokenByPane[pane.id]);
+}
+
 export function isPaneAgentLoading(
   pane: Tab,
   awaitingResponseByPane: Record<string, boolean>,
   activeAgentByPane: Record<string, string | null>,
   agentBusyByPane: Record<string, boolean>,
+  agentPrintRunTokenByPane: Record<string, string> = {},
+  pendingLaunchCommands: Record<string, string> = {},
 ): boolean {
   if (pane.type === 'agent') {
-    return (pane.turns ?? []).some((turn) => turn.running);
+    return isAgentPaneTabLoading(pane, pendingLaunchCommands, agentPrintRunTokenByPane);
   }
 
   if (!hasLaunchedAgentCli(pane, activeAgentByPane)) {
@@ -110,8 +149,17 @@ function isPaneAgentRunning(
   awaitingResponseByPane: Record<string, boolean>,
   activeAgentByPane: Record<string, string | null>,
   agentBusyByPane: Record<string, boolean>,
+  agentPrintRunTokenByPane: Record<string, string>,
+  pendingLaunchCommands: Record<string, string>,
 ): boolean {
-  return isPaneAgentLoading(pane, awaitingResponseByPane, activeAgentByPane, agentBusyByPane);
+  return isPaneAgentLoading(
+    pane,
+    awaitingResponseByPane,
+    activeAgentByPane,
+    agentBusyByPane,
+    agentPrintRunTokenByPane,
+    pendingLaunchCommands,
+  );
 }
 
 export function buildRunningAgentProjectIdSet(
@@ -119,12 +167,23 @@ export function buildRunningAgentProjectIdSet(
   awaitingResponseByPane: Record<string, boolean>,
   activeAgentByPane: Record<string, string | null>,
   agentBusyByPane: Record<string, boolean>,
+  agentPrintRunTokenByPane: Record<string, string> = {},
+  pendingLaunchCommands: Record<string, string> = {},
 ): Set<string> {
   const runningProjectIds = new Set<string>();
 
   for (const project of projects) {
     for (const pane of collectProjectPanes(project.tabs)) {
-      if (isPaneAgentRunning(pane, awaitingResponseByPane, activeAgentByPane, agentBusyByPane)) {
+      if (
+        isPaneAgentRunning(
+          pane,
+          awaitingResponseByPane,
+          activeAgentByPane,
+          agentBusyByPane,
+          agentPrintRunTokenByPane,
+          pendingLaunchCommands,
+        )
+      ) {
         runningProjectIds.add(project.id);
         break;
       }

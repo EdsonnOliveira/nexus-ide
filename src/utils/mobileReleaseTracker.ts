@@ -50,8 +50,6 @@ const PHASE_PATTERNS_BY_KIND: Record<MobileReleaseKind, Array<{ pattern: RegExp;
 const IOS_TESTFLIGHT_SUCCESS_PATTERNS = [
   /TestFlight upload submitted successfully/i,
   /Skipping TestFlight upload/i,
-  /\bIPA:\s*(.+)/i,
-  /^Done\.\s*$/m,
 ];
 
 function detectKindsFromCommand(command: string): MobileReleaseKind[] {
@@ -555,15 +553,11 @@ function matchKindSuccess(kind: MobileReleaseKind, plain: string): string | null
     case 'android-apk':
       return extractArtifactPath(APK_SUCCESS_PATTERNS, plain);
     case 'ios-testflight':
-      if (/TestFlight upload submitted successfully/i.test(plain)) {
-        return extractArtifactPath([/\bIPA:\s*(.+)/i], plain);
+      if (!isIosTestFlightSuccess(plain)) {
+        return null;
       }
 
-      if (/\bIPA:\s*(.+)/i.test(plain)) {
-        return extractArtifactPath([/\bIPA:\s*(.+)/i], plain);
-      }
-
-      return null;
+      return extractArtifactPath([/\bIPA:\s*(.+)/i], plain);
     default:
       return null;
   }

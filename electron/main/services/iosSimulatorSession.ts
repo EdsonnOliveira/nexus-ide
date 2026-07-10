@@ -556,8 +556,38 @@ async function bootSimulator(udid: string): Promise<void> {
   }
 }
 
-async function waitForBootComplete(udid: string, xcrunPath: string): Promise<void> {
-  await runCommand(xcrunPath, ['simctl', 'bootstatus', udid]);
+async function waitForBootComplete(
+  udid: string,
+  xcrunPath: string,
+  isCancelled: () => boolean,
+  onChild: (child: ChildProcess) => void,
+): Promise<void> {
+  if (isCancelled()) {
+    throw new Error('Session cancelled');
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(xcrunPath, ['simctl', 'bootstatus', udid], { env: process.env });
+    onChild(child);
+
+    child.on('close', (code) => {
+      if (isCancelled()) {
+        reject(new Error('Session cancelled'));
+        return;
+      }
+
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      reject(new Error('Falha ao aguardar boot do simulador iOS.'));
+    });
+
+    child.on('error', () => {
+      reject(new Error('Falha ao aguardar boot do simulador iOS.'));
+    });
+  });
 }
 
 async function readSimulatorScreenInfoFromSimctl(
@@ -735,6 +765,10 @@ export async function createIosSimulatorSession(
   ];
 
   let stopped = false;
+  let bootStatusProcess: ChildProcess | null = null;
+  let simulatorServerController: SimulatorServerStreamController | null = null;
+  let idbVideoStream: IdbVideoStreamController | null = null;
+  let idbScreenshotStream: IdbScreenshotStreamController | null = null;
 
   const isCancelled = (): boolean => stopped || (controls?.isCancelled() ?? false);
 
@@ -744,6 +778,14 @@ export async function createIosSimulatorSession(
 
   controls?.registerAbort(async () => {
     stopped = true;
+    stopProcess(bootStatusProcess);
+    bootStatusProcess = null;
+    await simulatorServerController?.stop();
+    simulatorServerController = null;
+    await idbVideoStream?.stop();
+    idbVideoStream = null;
+    await idbScreenshotStream?.stop();
+    idbScreenshotStream = null;
     await cleanupTempDir();
     events.onState('stopped');
   });
@@ -755,7 +797,10 @@ export async function createIosSimulatorSession(
     throw new Error('Session cancelled');
   }
 
-  await waitForBootComplete(udid, xcrun.path);
+  await waitForBootComplete(udid, xcrun.path, isCancelled, (child) => {
+    bootStatusProcess = child;
+  });
+  bootStatusProcess = null;
 
   if (isCancelled()) {
     throw new Error('Session cancelled');
@@ -787,7 +832,6 @@ export async function createIosSimulatorSession(
   }
 
   const simServerTool = resolveSimulatorServerPath();
-  let simulatorServerController: SimulatorServerStreamController | null = null;
   let useSimulatorServer = false;
   let activeStreamUrl: string | null = null;
   let idbFallbackReason: string | null = null;
@@ -823,8 +867,6 @@ export async function createIosSimulatorSession(
   let latestPendingJpeg: string | null = null;
   let processDrainScheduled = false;
   let isLandscape = false;
-  let idbVideoStream: IdbVideoStreamController | null = null;
-  let idbScreenshotStream: IdbScreenshotStreamController | null = null;
   let useIdbVideoStream = false;
   let useIdbScreenshotStream = false;
   let activeStreamCodec: EmulatorVideoCodec = STREAM_CODEC;
@@ -1293,7 +1335,6 @@ export async function createIosSimulatorSession(
       targetFps,
       streamFps,
       fallbackReason: idbFallbackReason ?? undefined,
-      streamUrl: activeStreamUrl ?? undefined,
     });
   };
 
@@ -1301,25 +1342,30 @@ export async function createIosSimulatorSession(
     emitFrame(firstFrame);
   }
 
+  if (useSimulatorServer && simulatorServerController) {
+    simulatorServerController.startFrameRelay((frame) => {
+      emitFrame(frame);
+    });
+  }
+
   events.onState('running', undefined, {
     captureBackend,
     targetFps,
     streamFps: 0,
     fallbackReason: idbFallbackReason ?? undefined,
-    streamUrl: activeStreamUrl ?? undefined,
   });
 
-  if (!useSimulatorServer) {
-    statsTimer = setInterval(publishStreamStats, 1000);
+  statsTimer = setInterval(publishStreamStats, 1000);
 
-    if (!useIdbCapture) {
-      scheduleCapture();
-    }
+  if (!useSimulatorServer && !useIdbCapture) {
+    scheduleCapture();
   }
 
   return {
     async stop() {
       stopped = true;
+      stopProcess(bootStatusProcess);
+      bootStatusProcess = null;
 
       if (statsTimer) {
         clearInterval(statsTimer);

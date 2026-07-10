@@ -134,14 +134,6 @@ function TabContextMenuComponent({
   }, [historyLoaded, historyLoading, project.path]);
 
   useEffect(() => {
-    if (!showAgentHistory) {
-      return;
-    }
-
-    void loadHistory();
-  }, [loadHistory, showAgentHistory]);
-
-  useEffect(() => {
     return () => {
       if (historyCloseTimerRef.current !== null) {
         window.clearTimeout(historyCloseTimerRef.current);

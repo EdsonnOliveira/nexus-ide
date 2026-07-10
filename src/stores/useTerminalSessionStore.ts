@@ -281,10 +281,6 @@ export const useTerminalSessionStore = create<TerminalSessionState>((set, get) =
       return;
     }
 
-    if (!shouldNotify && isEligible && isBusy) {
-      return;
-    }
-
     if (shouldNotify) {
       const projectId = findProjectIdByPaneId(paneId);
 

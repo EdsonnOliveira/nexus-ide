@@ -48,6 +48,7 @@ class EmulatorSessionManager {
   #sessions = new Map<string, ActiveEmulatorSession>();
   #pendingStarts = new Map<string, PendingEmulatorStart>();
   #snapshots = new Map<string, SessionSnapshot>();
+  #cancelledSessionIds = new Set<string>();
   #getWindow: WindowGetter = () => null;
 
   setWindowGetter(getter: WindowGetter): void {
@@ -61,6 +62,18 @@ class EmulatorSessionManager {
     message?: string,
     stats?: EmulatorStreamStats,
   ): void {
+    if (
+      this.#cancelledSessionIds.has(sessionId) &&
+      state !== 'stopped' &&
+      state !== 'error'
+    ) {
+      return;
+    }
+
+    if (state === 'stopped' || state === 'error') {
+      this.#cancelledSessionIds.delete(sessionId);
+    }
+
     const window = this.#getWindow();
 
     if (!window || window.isDestroyed()) {
@@ -175,6 +188,7 @@ class EmulatorSessionManager {
 
     if (pendingExisting) {
       pendingExisting.cancelled = true;
+      this.#cancelledSessionIds.add(pendingExisting.sessionId);
 
       if (pendingExisting.abort) {
         await pendingExisting.abort();
@@ -330,6 +344,7 @@ class EmulatorSessionManager {
 
     if (pending) {
       pending.cancelled = true;
+      this.#cancelledSessionIds.add(pending.sessionId);
 
       if (pending.abort) {
         await pending.abort();

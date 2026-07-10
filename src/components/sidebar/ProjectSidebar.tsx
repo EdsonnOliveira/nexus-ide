@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, CirclePlay, Mail, Music, PanelLeft, Plus } from 'lucide-react';
 import { useProjectIndexShortcuts } from '@/hooks/useProjectIndexShortcuts';
+import { useStableLoadingMap } from '@/hooks/useStableLoadingMap';
 import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
@@ -99,9 +100,29 @@ function ProjectSidebarComponent() {
   const awaitingResponseByPane = useTerminalSessionStore((state) => state.awaitingResponseByPane);
   const activeAgentByPane = useTerminalSessionStore((state) => state.activeAgentByPane);
   const agentBusyByPane = useTerminalSessionStore((state) => state.agentBusyByPane);
+  const agentPrintRunTokenByPane = useTerminalSessionStore((state) => state.agentPrintRunTokenByPane);
+  const pendingLaunchCommands = useTerminalSessionStore((state) => state.pendingLaunchCommands);
+  const runningAgentProjectIdsRaw = useMemo(() => {
+    const runningIds = buildRunningAgentProjectIdSet(
+      projects,
+      awaitingResponseByPane,
+      activeAgentByPane,
+      agentBusyByPane,
+      agentPrintRunTokenByPane,
+      pendingLaunchCommands,
+    );
+    const map = new Map<string, boolean>();
+
+    for (const projectId of runningIds) {
+      map.set(projectId, true);
+    }
+
+    return map;
+  }, [activeAgentByPane, agentBusyByPane, agentPrintRunTokenByPane, awaitingResponseByPane, pendingLaunchCommands, projects]);
+  const runningAgentProjectIdsStable = useStableLoadingMap(runningAgentProjectIdsRaw);
   const runningAgentProjectIds = useMemo(
-    () => buildRunningAgentProjectIdSet(projects, awaitingResponseByPane, activeAgentByPane, agentBusyByPane),
-    [activeAgentByPane, agentBusyByPane, awaitingResponseByPane, projects],
+    () => new Set(runningAgentProjectIdsStable.keys()),
+    [runningAgentProjectIdsStable],
   );
   const executingAutomationByProject = useAutomationExecutionStore(
     (state) => state.executingAutomationByProject,

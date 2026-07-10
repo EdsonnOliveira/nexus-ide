@@ -186,6 +186,17 @@ export function detectAgentFollowUpReadyInChunk(turnBuffer: string): boolean {
   return isShellPromptInTail(tailPlain);
 }
 
+function hasPaneAgentWorkloadTracking(
+  paneId: string,
+  session: ReturnType<typeof useTerminalSessionStore.getState>,
+): boolean {
+  return Boolean(
+    session.awaitingResponseByPane[paneId] ||
+      session.agentNotifyEligibleByPane[paneId] ||
+      session.agentPrintRunTokenByPane[paneId],
+  );
+}
+
 export function syncAgentBusyFromTail(
   paneId: string,
   tail: string,
@@ -194,8 +205,10 @@ export function syncAgentBusyFromTail(
   onLiveAgentBusy?: () => void,
   onAgentReady?: () => void,
 ): void {
-  if (!hasActiveAgent) {
-    const session = useTerminalSessionStore.getState();
+  const session = useTerminalSessionStore.getState();
+  const hasActiveTracking = hasPaneAgentWorkloadTracking(paneId, session);
+
+  if (!hasActiveAgent && !hasActiveTracking) {
     const hasWorkload =
       session.awaitingResponseByPane[paneId] ||
       session.agentNotifyEligibleByPane[paneId] ||
@@ -210,16 +223,22 @@ export function syncAgentBusyFromTail(
   }
 
   const tailPlain = stripAnsi(tail.slice(-TURN_TAIL_SIZE));
-  const session = useTerminalSessionStore.getState();
   const isAwaitingTurn = Boolean(session.awaitingResponseByPane[paneId]);
 
   if (detectAgentReadyInChunk(tail) || detectAgentFollowUpReadyInChunk(tail)) {
-    setAgentBusy(paneId, false);
+    if (!isAwaitingTurn) {
+      setAgentBusy(paneId, false);
+    }
+
     onAgentReady?.();
     return;
   }
 
   if (detectAgentBusyInChunk(tail)) {
+    if (!hasActiveTracking) {
+      return;
+    }
+
     setAgentBusy(paneId, true);
     onLiveAgentBusy?.();
     return;
