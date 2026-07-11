@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import type { GitStatusResult } from '@/types/git';
+import { createDebouncedCallback } from '@/utils/createDebouncedCallback';
 import { buildFlatChanges, getGitChangeDecoration, type GitFlatChange } from '@/utils/gitFlatChanges';
 import { findGitFlatChangeByPath, toGitRelativePath } from '@/utils/gitPaths';
 import { GIT_REPO_REFRESH_EVENT } from '@/utils/gitRepoRefresh';
+import { requestGitStatus } from '@/utils/gitStatusRequest';
 
 export interface ExplorerGitDecoration {
   kind: 'modified' | 'new';
@@ -61,7 +63,7 @@ export function useExplorerGitDecorations(
         return;
       }
 
-      const status = await window.nexus.git.getStatus(activeRepo);
+      const status = await requestGitStatus(activeRepo);
 
       if (!cancelled) {
         applyStatus(status, setChanges);
@@ -81,7 +83,7 @@ export function useExplorerGitDecorations(
         return;
       }
 
-      const status = await window.nexus.git.getStatus(primaryRepo);
+      const status = await requestGitStatus(primaryRepo);
 
       if (!cancelled) {
         applyStatus(status, setChanges);
@@ -90,6 +92,10 @@ export function useExplorerGitDecorations(
 
     void setup();
 
+    const debouncedRefresh = createDebouncedCallback(() => {
+      void refreshStatus();
+    }, 250);
+
     const unsubscribe = window.nexus.git.onRepoChange((changedPath) => {
       const activeRepo = repoPathRef.current;
 
@@ -97,7 +103,7 @@ export function useExplorerGitDecorations(
         return;
       }
 
-      void refreshStatus();
+      debouncedRefresh.schedule();
     });
 
     const handleGitRefresh = (event: Event) => {
@@ -108,13 +114,14 @@ export function useExplorerGitDecorations(
         return;
       }
 
-      void refreshStatus();
+      debouncedRefresh.schedule();
     };
 
     window.addEventListener(GIT_REPO_REFRESH_EVENT, handleGitRefresh);
 
     return () => {
       cancelled = true;
+      debouncedRefresh.cancel();
       unsubscribe();
       window.removeEventListener(GIT_REPO_REFRESH_EVENT, handleGitRefresh);
     };

@@ -32,6 +32,8 @@ const PARAKEET_AI_BUNDLE_ID = 'org.parakeetai.ParakeetAI';
 const PARAKEET_AI_PROTOCOL = 'parakeetai';
 const PARAKEET_AI_DEFAULT_APP_VERSION = '3.6.14';
 const HOME_DASHBOARD_PARAKEET_LIMIT = 12;
+const PARAKEET_AI_PAGE_SIZE = 50;
+const PARAKEET_AI_MAX_LIST_PAGES = 6;
 const SNIPPET_FALLBACK_LENGTH = 120;
 const REQUEST_TIMEOUT_MS = 15_000;
 
@@ -815,23 +817,58 @@ async function fetchTranscriptionChunks(
   return result.data ?? [];
 }
 
-async function fetchCallSessionsRaw(
+function isInternalParakeetHelperSession(session: ParakeetAiCallSession): boolean {
+  const title = session.title?.trim().toLowerCase() ?? '';
+  return title === 'nexus tradução' || title === 'nexus-translate' || title === 'nexus translate';
+}
+
+function isListableCallSession(
+  session: ParakeetAiCallSession,
+  sourceType: MacParakeetSourceType | null,
+): boolean {
+  if (session.deleted || isInternalParakeetHelperSession(session)) {
+    return false;
+  }
+
+  if (!session.activatedAt) {
+    return false;
+  }
+
+  if (sourceType && normalizeSourceType(session.mode) !== sourceType) {
+    return false;
+  }
+
+  return true;
+}
+
+async function fetchCallSessionsPage(
   sessionToken: string,
-): Promise<{ sessions: ParakeetAiCallSession[]; unauthorized: boolean }> {
-  const result = await fetchTrpc<{ data: ParakeetAiCallSession[] }>(
-    'callSession.getMany',
-    {
-      limit: 50,
-      offset: 0,
-    },
-    sessionToken,
-  );
+  offset: number,
+): Promise<{ sessions: ParakeetAiCallSession[]; hasMore: boolean; unauthorized: boolean }> {
+  const result = await fetchTrpc<{
+    data: ParakeetAiCallSession[];
+    hasMore?: boolean;
+  }>('callSession.getMany', { limit: PARAKEET_AI_PAGE_SIZE, offset }, sessionToken);
 
   if (result.unauthorized) {
-    return { sessions: [], unauthorized: true };
+    return { sessions: [], hasMore: false, unauthorized: true };
   }
 
   const sessions = result.data?.data ?? [];
+  const hasMore = Boolean(result.data?.hasMore) && sessions.length > 0;
+
+  return { sessions, hasMore, unauthorized: false };
+}
+
+async function fetchCallSessionsRaw(
+  sessionToken: string,
+): Promise<{ sessions: ParakeetAiCallSession[]; unauthorized: boolean }> {
+  const { sessions, unauthorized } = await fetchCallSessionsPage(sessionToken, 0);
+
+  if (unauthorized) {
+    return { sessions: [], unauthorized: true };
+  }
+
   cacheCallSessions(sessions);
   return { sessions, unauthorized: false };
 }
@@ -840,30 +877,38 @@ async function fetchCallSessions(
   sourceType: MacParakeetSourceType | null,
   sessionToken: string,
 ): Promise<{ sessions: ParakeetAiCallSession[]; unauthorized: boolean }> {
-  const { sessions, unauthorized } = await fetchCallSessionsRaw(sessionToken);
+  const listable: ParakeetAiCallSession[] = [];
+  const fetched: ParakeetAiCallSession[] = [];
+  let offset = 0;
 
-  if (unauthorized) {
-    return { sessions: [], unauthorized: true };
+  for (let page = 0; page < PARAKEET_AI_MAX_LIST_PAGES; page += 1) {
+    const { sessions, hasMore, unauthorized } = await fetchCallSessionsPage(sessionToken, offset);
+
+    if (unauthorized) {
+      return { sessions: [], unauthorized: true };
+    }
+
+    if (sessions.length === 0) {
+      break;
+    }
+
+    fetched.push(...sessions);
+
+    for (const session of sessions) {
+      if (isListableCallSession(session, sourceType)) {
+        listable.push(session);
+      }
+    }
+
+    if (listable.length >= HOME_DASHBOARD_PARAKEET_LIMIT || !hasMore) {
+      break;
+    }
+
+    offset += sessions.length;
   }
 
-  return {
-    sessions: sessions.filter((session) => {
-      if (session.deleted) {
-        return false;
-      }
-
-      if (session.saveTranscription === false) {
-        return false;
-      }
-
-      if (sourceType && normalizeSourceType(session.mode) !== sourceType) {
-        return false;
-      }
-
-      return true;
-    }),
-    unauthorized: false,
-  };
+  cacheCallSessions(fetched);
+  return { sessions: listable, unauthorized: false };
 }
 
 async function fetchCallSessionById(
@@ -1033,7 +1078,7 @@ export async function getMacParakeetTranscriptionDetail(
   }
 
   const session = await fetchCallSessionById(trimmedId, sessionToken);
-  if (!session || session.deleted || session.saveTranscription === false) {
+  if (!session || session.deleted || isInternalParakeetHelperSession(session)) {
     return null;
   }
 

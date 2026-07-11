@@ -44,8 +44,16 @@ if (existsSync(calendarHelperSourcePath)) {
   execFileSync('chmod', ['+x', calendarHelperBinaryPath]);
 }
 
+const mailReaderSourcePath = path.join(rootDir, 'resources/shell/macosMailReader.swift');
+
 if (existsSync(notificationReaderSourcePath)) {
-  run('swiftc', ['-o', notificationReaderBinaryPath, notificationReaderSourcePath, '-l', 'sqlite3']);
+  const compileArgs = ['-o', notificationReaderBinaryPath, notificationReaderSourcePath, '-l', 'sqlite3'];
+
+  if (existsSync(mailReaderSourcePath)) {
+    compileArgs.splice(2, 0, mailReaderSourcePath);
+  }
+
+  run('swiftc', compileArgs);
   execFileSync('chmod', ['+x', notificationReaderBinaryPath]);
   mkdirSync(path.dirname(notificationHelperBinaryPath), { recursive: true });
   copyFileSync(notificationReaderBinaryPath, notificationHelperBinaryPath);

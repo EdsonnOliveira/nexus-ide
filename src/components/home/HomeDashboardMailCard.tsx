@@ -33,6 +33,7 @@ function writeStoredMailUnreadOnly(unreadOnly: boolean): void {
 function HomeDashboardMailCardComponent() {
   const {
     mailboxOptions,
+    accessGranted,
     selectedMailbox,
     selectedMailboxId,
     selectOptions,
@@ -144,10 +145,24 @@ function HomeDashboardMailCardComponent() {
         <EmptyState icon={Mail} message='E-mail disponível apenas no macOS' compact />
       ) : loadingMailboxes ? (
         <HomeDashboardMailSkeleton />
+      ) : !accessGranted ? (
+        <EmptyState
+          icon={Mail}
+          message='Permita Acesso total ao disco para ler e-mails com o Mail fechado'
+          compact
+        >
+          <button
+            type='button'
+            className='home-dashboard__permission-hint app-button app-button--enter'
+            onClick={() => void window.nexus.systemNotifications.openFullDiskAccessSettings()}
+          >
+            Permitir acesso aos e-mails
+          </button>
+        </EmptyState>
       ) : selectOptions.length === 0 ? (
-        <EmptyState icon={Mail} message='Mail indisponível ou sem contas' compact />
+        <EmptyState icon={Mail} message='Nenhuma conta do Mail encontrada' compact />
       ) : !snapshot.mailReady ? (
-        <EmptyState icon={Mail} message='Mail indisponível' compact />
+        <EmptyState icon={Mail} message='Não foi possível ler a caixa de e-mail' compact />
       ) : showSkeleton ? (
         <HomeDashboardMailSkeleton />
       ) : showEmpty ? (

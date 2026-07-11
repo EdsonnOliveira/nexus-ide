@@ -373,6 +373,14 @@ export function highlightTextLinesByNumber(
     return map;
   }
 
+  if (content.length > 200_000 || textLines.length > 4_000) {
+    textLines.forEach((line, index) => {
+      map.set(index + 1, escapeHtml(line));
+    });
+
+    return map;
+  }
+
   const highlightedLines = highlightCodeLines(textLines.join('\n'), filePath);
 
   textLines.forEach((line, index) => {

@@ -26,6 +26,14 @@ function normalizeShellCommand(command: string): string {
   return command.replace(/\s+/g, ' ').trim();
 }
 
+function matchesNativeRunCommand(segment: string): boolean {
+  return (
+    /^(?:npx\s+)?expo\s+run:(?:ios|android)(?:\s|$)/.test(segment) ||
+    /^(?:npx\s+)?react-native\s+run-(?:ios|android)(?:\s|$)/.test(segment) ||
+    /^(?:npx\s+)?expo\s+start(?:\s|$)/.test(segment)
+  );
+}
+
 function matchesDevTerminalScript(segment: string): boolean {
   const trimmed = segment.trim();
 
@@ -61,7 +69,7 @@ function matchesDevTerminalScript(segment: string): boolean {
     return true;
   }
 
-  return /^(?:npx\s+)?expo\s+start(?:\s|$)/.test(trimmed);
+  return matchesNativeRunCommand(trimmed);
 }
 
 export function shouldOpenAgentShellToolTerminal(command: string): boolean {
@@ -76,46 +84,86 @@ export function shouldOpenAgentShellToolTerminal(command: string): boolean {
   return segments.some((segment) => matchesDevTerminalScript(segment));
 }
 
-function resolveScriptName(command: string): string | null {
-  const normalized = normalizeShellCommand(command);
-  const segments = normalized.split(/\s*(?:&&|\|\||;)\s*/);
+function resolveSegmentScriptName(segment: string): string | null {
+  const trimmed = segment.trim();
 
-  for (const segment of segments) {
-    const trimmed = segment.trim();
-    const yarnMatch = trimmed.match(/^yarn(?:\s+run)?\s+([a-zA-Z0-9:_-]+)/);
+  if (!trimmed) {
+    return null;
+  }
 
-    if (yarnMatch) {
-      return yarnMatch[1].toLowerCase();
-    }
+  const yarnMatch = trimmed.match(/^yarn(?:\s+run)?\s+([a-zA-Z0-9:_-]+)/);
 
-    if (/^npm\s+start(?:\s|$)/.test(trimmed)) {
-      return 'start';
-    }
+  if (yarnMatch) {
+    return yarnMatch[1].toLowerCase();
+  }
 
-    const npmMatch = trimmed.match(/^npm\s+run\s+([a-zA-Z0-9:_-]+)/);
+  if (/^npm\s+start(?:\s|$)/.test(trimmed)) {
+    return 'start';
+  }
 
-    if (npmMatch) {
-      return npmMatch[1].toLowerCase();
-    }
+  const npmMatch = trimmed.match(/^npm\s+run\s+([a-zA-Z0-9:_-]+)/);
 
-    const pnpmMatch = trimmed.match(/^pnpm(?:\s+run)?\s+([a-zA-Z0-9:_-]+)/);
+  if (npmMatch) {
+    return npmMatch[1].toLowerCase();
+  }
 
-    if (pnpmMatch) {
-      return pnpmMatch[1].toLowerCase();
-    }
+  const pnpmMatch = trimmed.match(/^pnpm(?:\s+run)?\s+([a-zA-Z0-9:_-]+)/);
 
-    const bunMatch = trimmed.match(/^bun(?:\s+run)?\s+([a-zA-Z0-9:_-]+)/);
+  if (pnpmMatch) {
+    return pnpmMatch[1].toLowerCase();
+  }
 
-    if (bunMatch) {
-      return bunMatch[1].toLowerCase();
-    }
+  const bunMatch = trimmed.match(/^bun(?:\s+run)?\s+([a-zA-Z0-9:_-]+)/);
 
-    if (/^(?:npx\s+)?expo\s+start(?:\s|$)/.test(trimmed)) {
-      return 'start';
-    }
+  if (bunMatch) {
+    return bunMatch[1].toLowerCase();
+  }
+
+  if (/^(?:npx\s+)?expo\s+start(?:\s|$)/.test(trimmed)) {
+    return 'start';
+  }
+
+  if (/^(?:npx\s+)?expo\s+run:ios(?:\s|$)/.test(trimmed)) {
+    return 'ios';
+  }
+
+  if (/^(?:npx\s+)?expo\s+run:android(?:\s|$)/.test(trimmed)) {
+    return 'android';
+  }
+
+  if (/^(?:npx\s+)?react-native\s+run-ios(?:\s|$)/.test(trimmed)) {
+    return 'ios';
+  }
+
+  if (/^(?:npx\s+)?react-native\s+run-android(?:\s|$)/.test(trimmed)) {
+    return 'android';
   }
 
   return null;
+}
+
+function resolveScriptName(command: string): string | null {
+  const normalized = normalizeShellCommand(command);
+  const segments = normalized.split(/\s*(?:&&|\|\||;)\s*/);
+  let fallback: string | null = null;
+
+  for (const segment of segments) {
+    const scriptName = resolveSegmentScriptName(segment);
+
+    if (!scriptName) {
+      continue;
+    }
+
+    if (AGENT_TERMINAL_SCRIPT_NAMES.has(scriptName)) {
+      return scriptName;
+    }
+
+    if (!fallback) {
+      fallback = scriptName;
+    }
+  }
+
+  return fallback;
 }
 
 function buildShellToolTerminalTitle(command: string): string {
@@ -204,9 +252,11 @@ function registerShellToolCompleted(
   }
 
   const scriptName = resolveScriptName(event.command);
-  const isLongRunning = scriptName ? ['dev', 'start', 'serve', 'ios', 'android', 'web'].includes(scriptName) : false;
+  const isLongRunning = scriptName
+    ? ['dev', 'start', 'serve', 'ios', 'android', 'web'].includes(scriptName)
+    : false;
 
-  if (isLongRunning && event.exitCode === null) {
+  if (isLongRunning) {
     useAgentShellTerminalStore.getState().updateEntry(agentPaneId, paneId, {
       status: 'running',
     });

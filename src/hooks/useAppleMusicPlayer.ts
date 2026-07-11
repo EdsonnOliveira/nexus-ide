@@ -62,12 +62,27 @@ export function useAppleMusicPlayer(enabled: boolean) {
     const pollMs =
       nowPlaying.state === 'playing' ? POLL_INTERVAL_PLAYING_MS : POLL_INTERVAL_IDLE_MS;
 
-    const intervalId = window.setInterval(() => {
+    const tick = () => {
+      if (document.visibilityState === 'hidden') {
+        return;
+      }
+
       void refreshNowPlaying();
-    }, pollMs);
+    };
+
+    const intervalId = window.setInterval(tick, pollMs);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshNowPlaying();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
       window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [enabled, nowPlaying.state, refreshNowPlaying]);
 

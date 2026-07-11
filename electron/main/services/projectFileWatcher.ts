@@ -49,7 +49,7 @@ export function watchProjectFiles(dirPath: string): void {
 
     state.debounceTimer = setTimeout(() => {
       notifyProjectChanged(resolved, changedPath, structural);
-    }, 600);
+    }, 1000);
   };
 
   try {

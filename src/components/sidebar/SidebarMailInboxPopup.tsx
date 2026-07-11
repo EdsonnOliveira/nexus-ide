@@ -30,6 +30,7 @@ function SidebarMailInboxPopupComponent({
   onSave,
 }: SidebarMailInboxPopupProps) {
   const [mailboxOptions, setMailboxOptions] = useState<MailMailboxOption[]>([]);
+  const [accessGranted, setAccessGranted] = useState(true);
   const [loadingMailboxes, setLoadingMailboxes] = useState(true);
   const [selectedMailboxId, setSelectedMailboxId] = useState(
     initialMailbox ? encodeMailboxOptionId(initialMailbox) : '',
@@ -48,16 +49,18 @@ function SidebarMailInboxPopupComponent({
     const loadMailboxes = async () => {
       if (!window.nexus?.mail) {
         if (!cancelled) {
+          setAccessGranted(false);
           setLoadingMailboxes(false);
         }
         return;
       }
 
       try {
-        const options = await window.nexus.mail.getMailboxes();
+        const snapshot = await window.nexus.mail.getMailboxes();
 
         if (!cancelled) {
-          setMailboxOptions(options);
+          setAccessGranted(snapshot.accessGranted);
+          setMailboxOptions(snapshot.options);
         }
       } finally {
         if (!cancelled) {
@@ -169,8 +172,22 @@ function SidebarMailInboxPopupComponent({
 
         {loadingMailboxes ? (
           <span className='sidebar-mail-popup__loading'>Carregando caixas...</span>
+        ) : !accessGranted ? (
+          <EmptyState
+            icon={Mail}
+            message='Permita acesso total ao disco para ler e-mails com o Mail fechado'
+            compact
+          >
+            <button
+              type='button'
+              className='sidebar-mail-popup__submit app-button app-button--enter'
+              onClick={() => void window.nexus.systemNotifications.openFullDiskAccessSettings()}
+            >
+              Permitir acesso aos e-mails
+            </button>
+          </EmptyState>
         ) : mailboxOptions.length === 0 ? (
-          <EmptyState icon={Mail} message='Mail indisponível ou sem contas' compact />
+          <EmptyState icon={Mail} message='Nenhuma conta do Mail encontrada' compact />
         ) : (
           <label className='sidebar-mail-popup__field'>
             <span className='sidebar-mail-popup__label'>Conta de e-mail</span>
@@ -191,7 +208,7 @@ function SidebarMailInboxPopupComponent({
         <button
           type='submit'
           className='sidebar-mail-popup__submit app-button app-button--enter'
-          disabled={loadingMailboxes || mailboxOptions.length === 0}
+          disabled={loadingMailboxes || !accessGranted || mailboxOptions.length === 0}
         >
           {submitOpensPanel ? 'Salvar e abrir' : 'Salvar'}
         </button>

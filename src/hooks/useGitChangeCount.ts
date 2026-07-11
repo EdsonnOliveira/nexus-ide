@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createDebouncedCallback } from '@/utils/createDebouncedCallback';
 import { countGitStatusChanges } from '@/utils/gitFlatChanges';
 import { GIT_REPO_REFRESH_EVENT } from '@/utils/gitRepoRefresh';
+import { requestGitStatus } from '@/utils/gitStatusRequest';
 
 export interface GitChangeCounts {
   total: number;
@@ -23,7 +25,7 @@ export function useGitChangeCounts(projectPath: string | null): GitChangeCounts 
     const syncRepoCounts = async (repoPaths: string[]) => {
       const entries = await Promise.all(
         repoPaths.map(async (repoPath) => {
-          const status = await window.nexus.git.getStatus(repoPath);
+          const status = await requestGitStatus(repoPath);
           return [repoPath, countGitStatusChanges(status)] as const;
         }),
       );
@@ -58,7 +60,7 @@ export function useGitChangeCounts(projectPath: string | null): GitChangeCounts 
     const updateRepoCount = (repoPath: string) => {
       void window.nexus.git
         .invalidateCache(repoPath)
-        .then(() => window.nexus.git.getStatus(repoPath))
+        .then(() => requestGitStatus(repoPath))
         .then((status) => {
           if (!cancelled) {
             setByRepo((current) => ({
@@ -69,12 +71,27 @@ export function useGitChangeCounts(projectPath: string | null): GitChangeCounts 
         });
     };
 
+    const debouncedUpdates = new Map<string, ReturnType<typeof createDebouncedCallback>>();
+
+    const scheduleRepoUpdate = (repoPath: string) => {
+      let debounced = debouncedUpdates.get(repoPath);
+
+      if (!debounced) {
+        debounced = createDebouncedCallback(() => {
+          updateRepoCount(repoPath);
+        }, 250);
+        debouncedUpdates.set(repoPath, debounced);
+      }
+
+      debounced.schedule();
+    };
+
     const unsubscribe = window.nexus.git.onRepoChange((changedPath) => {
       if (!repoPathsRef.current.includes(changedPath)) {
         return;
       }
 
-      updateRepoCount(changedPath);
+      scheduleRepoUpdate(changedPath);
     });
 
     const handleGitRefresh = (event: Event) => {
@@ -84,7 +101,7 @@ export function useGitChangeCounts(projectPath: string | null): GitChangeCounts 
         return;
       }
 
-      updateRepoCount(detail.repoPath);
+      scheduleRepoUpdate(detail.repoPath);
     };
 
     window.addEventListener(GIT_REPO_REFRESH_EVENT, handleGitRefresh);
@@ -93,6 +110,10 @@ export function useGitChangeCounts(projectPath: string | null): GitChangeCounts 
       cancelled = true;
       unsubscribe();
       window.removeEventListener(GIT_REPO_REFRESH_EVENT, handleGitRefresh);
+
+      for (const debounced of debouncedUpdates.values()) {
+        debounced.cancel();
+      }
 
       for (const repoPath of repoPathsRef.current) {
         void window.nexus.git.unwatch(repoPath);

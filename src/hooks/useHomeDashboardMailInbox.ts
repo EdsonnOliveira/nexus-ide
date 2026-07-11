@@ -7,6 +7,7 @@ export const HOME_DASHBOARD_MAIL_LIMIT = 12;
 const EMPTY_SNAPSHOT: MailInboxSnapshot = {
   platformSupported: true,
   mailReady: false,
+  accessGranted: false,
   available: false,
   mailboxLabel: '',
   messages: [],
@@ -56,6 +57,7 @@ async function fetchAggregatedMailboxSnapshot(
 
   const platformSupported = results.some((entry) => entry.snapshot.platformSupported);
   const mailReady = results.some((entry) => entry.snapshot.mailReady);
+  const accessGranted = results.some((entry) => entry.snapshot.accessGranted);
   const available = results.some((entry) => entry.snapshot.available);
 
   const messages = results
@@ -68,6 +70,7 @@ async function fetchAggregatedMailboxSnapshot(
   return {
     platformSupported,
     mailReady,
+    accessGranted,
     available,
     mailboxLabel: 'Todas as caixas',
     messages,

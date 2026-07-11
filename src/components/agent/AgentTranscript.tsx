@@ -173,6 +173,10 @@ function AgentTranscriptComponent({
     window.setTimeout(() => {
       pinScrollToBottom();
     }, 0);
+
+    window.setTimeout(() => {
+      pinScrollToBottom();
+    }, 120);
   }, [pinScrollToBottom]);
 
   useEffect(() => {
@@ -292,25 +296,13 @@ function AgentTranscriptComponent({
         return;
       }
 
-      const nextHeight = container.scrollHeight;
-      const previousHeight = contentHeightRef.current;
       const targetTop = getScrollContainerTargetTop(container);
       const distanceFromBottom = targetTop - container.scrollTop;
-      const contentGrew = nextHeight > previousHeight + 1;
 
-      contentHeightRef.current = nextHeight;
-
-      if (!contentGrew && distanceFromBottom <= SCROLL_BOTTOM_THRESHOLD_PX) {
-        return;
-      }
-
-      if (!contentGrew && distanceFromBottom > SCROLL_BOTTOM_THRESHOLD_PX) {
-        stickToBottomRef.current = false;
-        notifyAtBottomChange(false);
-        return;
-      }
+      contentHeightRef.current = container.scrollHeight;
 
       if (distanceFromBottom <= 1) {
+        notifyAtBottomChange(true);
         return;
       }
 

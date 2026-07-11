@@ -134,22 +134,10 @@ function AgentThoughtBlockComponent({
         return;
       }
 
-      const nextHeight = body.scrollHeight;
-      const previousHeight = contentHeightRef.current;
       const targetTop = getThoughtBodyTargetTop(body);
       const distanceFromBottom = targetTop - body.scrollTop;
-      const contentGrew = nextHeight > previousHeight + 1;
 
-      contentHeightRef.current = nextHeight;
-
-      if (!contentGrew && distanceFromBottom <= SCROLL_BOTTOM_THRESHOLD_PX) {
-        return;
-      }
-
-      if (!contentGrew && distanceFromBottom > SCROLL_BOTTOM_THRESHOLD_PX) {
-        stickToBottomRef.current = false;
-        return;
-      }
+      contentHeightRef.current = body.scrollHeight;
 
       if (distanceFromBottom <= 1) {
         return;

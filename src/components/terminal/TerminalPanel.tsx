@@ -667,6 +667,21 @@ const WorkspaceSplit = memo(function WorkspaceSplitComponent({
   );
 });
 
+const KEEP_ALIVE_PANE_TYPES = new Set<Tab['type']>([
+  'browser',
+  'terminal',
+  'agent',
+  'emulator',
+]);
+
+function shouldKeepTabAlive(item: TabBarItem): boolean {
+  if (item.type === 'split') {
+    return item.panes.some((pane) => KEEP_ALIVE_PANE_TYPES.has(pane.type));
+  }
+
+  return KEEP_ALIVE_PANE_TYPES.has(item.type);
+}
+
 function isPaneInActiveLayout(project: Project, isProjectActive: boolean, paneId: string): boolean {
   if (!isProjectActive) {
     return false;
@@ -854,19 +869,8 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
     [activeTabItem?.id, isProjectActive, onSplitRatioCommit],
   );
 
-  const tabItemsWithBrowser = useMemo(
-    () =>
-      project.tabs.filter((item) => {
-        if (item.type === 'browser') {
-          return true;
-        }
-
-        if (item.type === 'split') {
-          return item.panes.some((pane) => pane.type === 'browser');
-        }
-
-        return false;
-      }),
+  const keptAliveTabs = useMemo(
+    () => project.tabs.filter((item) => shouldKeepTabAlive(item)),
     [project.tabs],
   );
 
@@ -874,17 +878,15 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
     return null;
   }
 
-  const activeHasBrowser =
-    activeTabItem.type === 'browser' ||
-    (activeTabItem.type === 'split' && activeTabItem.panes.some((pane) => pane.type === 'browser'));
+  const activeIsKeptAlive = shouldKeepTabAlive(activeTabItem);
 
   return (
     <WorkspacePaneProvider value={workspacePaneContext}>
       <div
         className={`terminal-panel__view${isProjectActive ? ' terminal-panel__view--active' : ''}`}
       >
-        {!activeHasBrowser ? renderTabLayout(activeTabItem) : null}
-        {tabItemsWithBrowser.map((tabItem) => renderTabLayout(tabItem))}
+        {!activeIsKeptAlive ? renderTabLayout(activeTabItem) : null}
+        {keptAliveTabs.map((tabItem) => renderTabLayout(tabItem))}
       </div>
     </WorkspacePaneProvider>
   );

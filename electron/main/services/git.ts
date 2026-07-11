@@ -12,7 +12,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import type { BrowserWindow } from 'electron';
 import { shouldIgnoreWatchPath } from './watchIgnorePaths';
-import { bufferToDataUrl } from './imageLoader';
+import { bufferToDataUrlIfWithinLimit, MAX_IMAGE_DATA_URL_BYTES } from './imageLoader';
 import { resolveDirectoryPath } from './directoryListing';
 
 const execFileAsync = promisify(execFile);
@@ -91,10 +91,15 @@ export interface GitDailyStats {
 export type GitCommandResult = { ok: true } | { ok: false; error: string };
 
 const statusCache = new Map<string, { expiresAt: number; result: GitStatusResult }>();
-const CACHE_TTL_MS = 2_000;
+const discoveryCache = new Map<string, { expiresAt: number; repos: GitRepoDiscovery[] }>();
+const CACHE_TTL_MS = 5_000;
+const DISCOVERY_CACHE_TTL_MS = 30_000;
+const WATCH_DEBOUNCE_MS = 1_000;
 const MAX_GIT_DISCOVERY_DEPTH = 6;
 const MAX_UNTRACKED_LINE_COUNT_BYTES = 128 * 1024;
-const MAX_UNTRACKED_LINE_STATS = 400;
+const MAX_UNTRACKED_LINE_STATS = 80;
+const MAX_DIFF_TEXT_CHARS = 1_500_000;
+const MAX_GIT_BLOB_BUFFER_BYTES = MAX_IMAGE_DATA_URL_BYTES;
 
 function buildGitPorcelainStatusArgs(): string[] {
   return ['status', '--porcelain=1', '-b', '--untracked-files=all'];
@@ -346,6 +351,13 @@ function findNestedGitRepos(projectPath: string): GitRepoDiscovery[] {
 
 export function discoverGitRepos(projectPath: string): GitRepoDiscovery[] {
   const resolved = resolveRepo(projectPath);
+  const now = Date.now();
+  const cached = discoveryCache.get(resolved);
+
+  if (cached && cached.expiresAt > now) {
+    return cached.repos;
+  }
+
   const repos: GitRepoDiscovery[] = [];
 
   if (isGitRepo(resolved)) {
@@ -358,7 +370,10 @@ export function discoverGitRepos(projectPath: string): GitRepoDiscovery[] {
 
   repos.push(...findNestedGitRepos(resolved));
 
-  return repos.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  const sorted = repos.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  discoveryCache.set(resolved, { expiresAt: now + DISCOVERY_CACHE_TTL_MS, repos: sorted });
+
+  return sorted;
 }
 
 function resolveProjectGitRepo(projectPath: string): string | null {
@@ -372,7 +387,9 @@ function resolveProjectGitRepo(projectPath: string): string | null {
 }
 
 function invalidateCache(dirPath: string): void {
-  statusCache.delete(resolveRepo(dirPath));
+  const resolved = resolveRepo(dirPath);
+  statusCache.delete(resolved);
+  discoveryCache.delete(resolved);
 }
 
 function invalidateCacheAndNotify(dirPath: string): void {
@@ -1133,9 +1150,13 @@ async function readGitBlobBuffer(repoRoot: string, spec: string): Promise<Buffer
     const resolved = resolveRepo(repoRoot);
     const { stdout } = await execFileAsync('git', ['-C', resolved, 'show', spec], {
       encoding: 'buffer',
-      maxBuffer: 50 * 1024 * 1024,
+      maxBuffer: MAX_GIT_BLOB_BUFFER_BYTES,
       timeout: 120_000,
     });
+
+    if (stdout.length > MAX_GIT_BLOB_BUFFER_BYTES) {
+      return null;
+    }
 
     return stdout;
   } catch {
@@ -1145,6 +1166,12 @@ async function readGitBlobBuffer(repoRoot: string, spec: string): Promise<Buffer
 
 async function readWorktreeFileBuffer(absolutePath: string): Promise<Buffer | null> {
   try {
+    const fileStats = statSync(absolutePath);
+
+    if (!fileStats.isFile() || fileStats.size > MAX_GIT_BLOB_BUFFER_BYTES) {
+      return null;
+    }
+
     return await readFile(absolutePath);
   } catch {
     return null;
@@ -1152,11 +1179,15 @@ async function readWorktreeFileBuffer(absolutePath: string): Promise<Buffer | nu
 }
 
 function toImageDataUrl(buffer: Buffer | null, absolutePath: string): string | null {
-  if (!buffer || buffer.length === 0) {
-    return null;
+  return bufferToDataUrlIfWithinLimit(buffer, absolutePath);
+}
+
+function truncateDiffText(content: string): string {
+  if (content.length <= MAX_DIFF_TEXT_CHARS) {
+    return content;
   }
 
-  return bufferToDataUrl(buffer, absolutePath);
+  return `${content.slice(0, MAX_DIFF_TEXT_CHARS)}\n\n… (diff truncado para manter o app estável)`;
 }
 
 async function readGitBlob(repoRoot: string, spec: string): Promise<string | null> {
@@ -1197,7 +1228,11 @@ export async function getGitFileDiffSides(
   const { relativePath, absolutePath } = resolveGitFileInRepo(resolved, filePath);
 
   if (options.untracked) {
-    return { path: relativePath, before: '', after: readWorktreeFile(absolutePath) };
+    return {
+      path: relativePath,
+      before: '',
+      after: truncateDiffText(readWorktreeFile(absolutePath)),
+    };
   }
 
   if (options.staged) {
@@ -1205,7 +1240,11 @@ export async function getGitFileDiffSides(
     const indexContent = await readGitBlob(resolved, `:${relativePath}`);
     const after = indexContent ?? readWorktreeFile(absolutePath);
 
-    return { path: relativePath, before, after };
+    return {
+      path: relativePath,
+      before: truncateDiffText(before),
+      after: truncateDiffText(after),
+    };
   }
 
   const indexContent = await readGitBlob(resolved, `:${relativePath}`);
@@ -1213,7 +1252,11 @@ export async function getGitFileDiffSides(
   const before = indexContent ?? headContent ?? '';
   const after = readWorktreeFile(absolutePath);
 
-  return { path: relativePath, before, after };
+  return {
+    path: relativePath,
+    before: truncateDiffText(before),
+    after: truncateDiffText(after),
+  };
 }
 
 export async function getGitFileDiffImageSides(
@@ -1422,8 +1465,9 @@ export function watchGitRepo(dirPath: string): void {
 
     state.debounceTimer = setTimeout(() => {
       invalidateCache(resolved);
+      discoveryCache.delete(resolved);
       notifyRepoChanged(resolved);
-    }, 600);
+    }, WATCH_DEBOUNCE_MS);
   };
 
   const metaWatchers: FSWatcher[] = [];

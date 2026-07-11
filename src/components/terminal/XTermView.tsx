@@ -877,7 +877,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       agentReadyDetector.feed(data);
       feedMobileReleaseOutput(paneIdRef.current, data);
 
-      if (!isVisibleRef.current || isProjectSwitching()) {
+      if (isProjectSwitching()) {
         scheduleSyncPasteImagesFromPromptRef.current(true);
         return;
       }
@@ -1144,7 +1144,13 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
           return;
         }
 
-        if (activePtyId && (await window.nexus.terminal.has(activePtyId))) {
+        const needsReplay = terminal.buffer.active.length <= 1;
+
+        if (
+          needsReplay &&
+          activePtyId &&
+          (await window.nexus.terminal.has(activePtyId))
+        ) {
           if (generation !== scrollbackReplayGenerationRef.current) {
             return;
           }

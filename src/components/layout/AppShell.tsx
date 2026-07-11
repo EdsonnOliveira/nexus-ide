@@ -129,6 +129,15 @@ function AppShellComponent() {
       return false;
     }
 
+    const hasBusyPane =
+      Object.values(agentBusyByPane).some(Boolean) ||
+      Object.values(awaitingResponseByPane).some(Boolean) ||
+      Object.values(agentPrintRunTokenByPane).some(Boolean);
+
+    if (!hasBusyPane) {
+      return false;
+    }
+
     const session = {
       agentPrintRunTokenByPane,
       agentBusyByPane,
@@ -326,7 +335,7 @@ function AppShellComponent() {
             hidden={!activeProject || undefined}
             aria-hidden={!activeProject || undefined}
           >
-            <PaneErrorBoundary key={activeProjectId ?? 'background-agents'}>
+            <PaneErrorBoundary>
               {initialized && projectsMigrated ? (
                 <MainWorkspacePanel ready={initialized && projectsMigrated} />
               ) : (

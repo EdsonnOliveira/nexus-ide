@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync } from 'node:fs';
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { resolveDirectoryPath } from './directoryListing';
@@ -19,6 +19,33 @@ interface CursorAgentSessionMeta {
 
 const MAX_HISTORY_ENTRIES = 5;
 const HISTORY_META_PROBE_COUNT = 8;
+const MAX_TRANSCRIPT_BYTES = 2 * 1024 * 1024;
+
+async function readTranscriptWithinLimit(filePath: string): Promise<string | null> {
+  try {
+    const fileStats = await stat(filePath);
+
+    if (!fileStats.isFile()) {
+      return null;
+    }
+
+    if (fileStats.size <= MAX_TRANSCRIPT_BYTES) {
+      return await readFile(filePath, 'utf8');
+    }
+
+    const handle = await open(filePath, 'r');
+
+    try {
+      const buffer = Buffer.alloc(MAX_TRANSCRIPT_BYTES);
+      await handle.read(buffer, 0, MAX_TRANSCRIPT_BYTES, fileStats.size - MAX_TRANSCRIPT_BYTES);
+      return buffer.toString('utf8');
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return null;
+  }
+}
 
 function resolveWorkspaceHash(workspacePath: string): string {
   const resolved = resolveDirectoryPath(workspacePath);
@@ -153,11 +180,7 @@ export async function loadCursorAgentSessionTranscript(
   const directPath = resolveCursorAgentTranscriptPath(workspacePath, trimmed);
 
   if (directPath) {
-    try {
-      return await readFile(directPath, 'utf8');
-    } catch {
-      return null;
-    }
+    return readTranscriptWithinLimit(directPath);
   }
 
   const slug = resolveCursorProjectSlug(workspacePath);
@@ -168,9 +191,5 @@ export async function loadCursorAgentSessionTranscript(
     return null;
   }
 
-  try {
-    return await readFile(fallbackPath, 'utf8');
-  } catch {
-    return null;
-  }
+  return readTranscriptWithinLimit(fallbackPath);
 }

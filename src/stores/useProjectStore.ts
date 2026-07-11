@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppState, MailMailboxRef, Project, ProjectUpdatePayload, Tab, TabBarItem, Workspace, WorkspaceUpdatePayload } from '@/types';
+import type { AgentTurn, AppState, MailMailboxRef, Project, ProjectUpdatePayload, Tab, TabBarItem, Workspace, WorkspaceUpdatePayload } from '@/types';
 import { PROJECT_COLORS } from '@/types';
 import {
   migrateProjectTestEntry,
@@ -16,6 +16,7 @@ import {
   resetProjectSwitchState,
 } from '@/utils/projectSwitch';
 import { findPaneTab, updatePaneInTabs } from '@/utils/tabGroups';
+import { shouldPreferLocalAgentTurnHistory } from '@/utils/paneAgentSession';
 import {
   restoreSidebarVideoSession,
   toPersistedSidebarVideoSession,
@@ -323,10 +324,95 @@ function mergePtyIdsIntoTabs(
   });
 }
 
+function buildAgentTurnsMap(projects: Project[]): Map<string, AgentTurn[]> {
+  const turnsByPane = new Map<string, AgentTurn[]>();
+
+  for (const project of projects) {
+    for (const item of project.tabs) {
+      const panes = item.type === 'split' ? item.panes : [item];
+
+      for (const pane of panes) {
+        if (pane.type !== 'agent') {
+          continue;
+        }
+
+        const turns = pane.turns ?? [];
+
+        if (turns.length > 0) {
+          turnsByPane.set(pane.id, turns);
+        }
+      }
+    }
+  }
+
+  return turnsByPane;
+}
+
+function mergeAgentTurnsIntoTabs(
+  tabs: TabBarItem[],
+  prevTurnsByPane: Map<string, AgentTurn[]>,
+): TabBarItem[] {
+  return tabs.map((item) => {
+    if (item.type === 'split') {
+      return {
+        ...item,
+        panes: item.panes.map((pane) => {
+          if (pane.type !== 'agent') {
+            return pane;
+          }
+
+          const prevTurns = prevTurnsByPane.get(pane.id);
+
+          if (!prevTurns || prevTurns.length === 0) {
+            return pane;
+          }
+
+          const nextTurns = pane.turns ?? [];
+          const prevRunning = prevTurns.some((turn) => turn.running);
+
+          if (nextTurns.length === 0) {
+            return prevRunning ? { ...pane, turns: prevTurns } : pane;
+          }
+
+          if (shouldPreferLocalAgentTurnHistory(prevTurns, nextTurns)) {
+            return { ...pane, turns: prevTurns };
+          }
+
+          return pane;
+        }),
+      };
+    }
+
+    if (item.type !== 'agent') {
+      return item;
+    }
+
+    const prevTurns = prevTurnsByPane.get(item.id);
+
+    if (!prevTurns || prevTurns.length === 0) {
+      return item;
+    }
+
+    const nextTurns = item.turns ?? [];
+    const prevRunning = prevTurns.some((turn) => turn.running);
+
+    if (nextTurns.length === 0) {
+      return prevRunning ? { ...item, turns: prevTurns } : item;
+    }
+
+    if (shouldPreferLocalAgentTurnHistory(prevTurns, nextTurns)) {
+      return { ...item, turns: prevTurns };
+    }
+
+    return item;
+  });
+}
+
 function preserveRuntimePtyIds(next: AppState, prev: AppState): AppState {
   const prevMap = buildTerminalPtyIdMap(prev.projects);
+  const prevTurnsByPane = buildAgentTurnsMap(prev.projects);
 
-  if (prevMap.size === 0) {
+  if (prevMap.size === 0 && prevTurnsByPane.size === 0) {
     return next;
   }
 
@@ -334,14 +420,23 @@ function preserveRuntimePtyIds(next: AppState, prev: AppState): AppState {
     ...next,
     projects: next.projects.map((project) => {
       const paneMap = prevMap.get(project.id);
+      let tabs = project.tabs;
 
-      if (!paneMap) {
+      if (paneMap) {
+        tabs = mergePtyIdsIntoTabs(tabs, paneMap);
+      }
+
+      if (prevTurnsByPane.size > 0) {
+        tabs = mergeAgentTurnsIntoTabs(tabs, prevTurnsByPane);
+      }
+
+      if (tabs === project.tabs) {
         return project;
       }
 
       return {
         ...project,
-        tabs: mergePtyIdsIntoTabs(project.tabs, paneMap),
+        tabs,
       };
     }),
   };

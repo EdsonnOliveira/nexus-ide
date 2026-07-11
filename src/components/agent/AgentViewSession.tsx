@@ -64,10 +64,16 @@ function AgentViewSessionComponent({
     const incomingTurns = sessionTab.turns ?? [];
     const incomingTurnCount = incomingTurns.length;
     const hadTurnsBefore = previousTurnCountRef.current > 0;
-
-    previousTurnCountRef.current = incomingTurnCount;
+    const sessionLive = isPaneAgentSessionLive(tab.id, readPaneAgentSessionSnapshot());
+    const localRunning = turns.some((turn) => turn.running);
 
     if (incomingTurnCount === 0) {
+      if (localRunning || sessionLive) {
+        return;
+      }
+
+      previousTurnCountRef.current = 0;
+
       if (turns.length > 0) {
         setTurns([]);
       }
@@ -80,11 +86,13 @@ function AgentViewSessionComponent({
       return;
     }
 
-    if (turns.some((turn) => turn.running)) {
+    previousTurnCountRef.current = incomingTurnCount;
+
+    if (localRunning) {
       return;
     }
 
-    if (isPaneAgentSessionLive(tab.id, readPaneAgentSessionSnapshot())) {
+    if (sessionLive) {
       return;
     }
 
@@ -111,10 +119,12 @@ function AgentViewSessionComponent({
       window.requestAnimationFrame(pin);
     });
 
-    const timeoutId = window.setTimeout(pin, 0);
+    const timeoutIds = [0, 50, 150, 400].map((delay) => window.setTimeout(pin, delay));
 
     return () => {
-      window.clearTimeout(timeoutId);
+      for (const timeoutId of timeoutIds) {
+        window.clearTimeout(timeoutId);
+      }
     };
   }, [isVisible, projectId, tab.id, turns.length]);
 

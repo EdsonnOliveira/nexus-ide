@@ -116,7 +116,7 @@ const SUBMIT_SETUP_TIMEOUT_MS = 8_000;
 const COMPOSER_READY_POLL_MS = 250;
 const COMPOSER_READY_MAX_MS = 12_000;
 const STREAM_JSON_AUTO_RETRY_DELAY_MS = 600;
-const STREAMING_TURNS_UI_MS = 80;
+const STREAMING_TURNS_UI_MS = 200;
 const PERSIST_TURNS_DEBOUNCE_MS = 1200;
 const CONTEXT_USAGE_REPORT_DELAY_MS = 700;
 const AGENT_OUTPUT_TAIL_SIZE = 8192;
@@ -429,13 +429,22 @@ export function useAgentPaneSession({
 
   useEffect(() => {
     const incoming = sanitizeAgentTurnHistory(tab.turns ?? []);
+    const localTurns = turnsRef.current;
+    const localRunning = localTurns.some((turn) => turn.running);
+    const session = useTerminalSessionStore.getState();
+    const storedToken = session.agentPrintRunTokenByPane[tab.id];
+    const sessionLive =
+      Boolean(storedToken) ||
+      Boolean(session.agentBusyByPane[tab.id]) ||
+      Boolean(session.awaitingResponseByPane[tab.id]) ||
+      agentPrintRunActiveRef.current;
 
     if (incoming.length === 0) {
-      const session = useTerminalSessionStore.getState();
+      if (localRunning || sessionLive) {
+        return;
+      }
 
-      if (session.resumeChatIdByPane[tab.id]) {
-        turnsRef.current = incoming;
-        setTurnsRevision((revision) => revision + 1);
+      if (session.resumeChatIdByPane[tab.id] && localTurns.length > 0) {
         return;
       }
 
@@ -449,10 +458,7 @@ export function useAgentPaneSession({
       return;
     }
 
-    const localTurns = turnsRef.current;
-    const localRunning = localTurns.some((turn) => turn.running);
     const incomingRunning = incoming.some((turn) => turn.running);
-    const storedToken = useTerminalSessionStore.getState().agentPrintRunTokenByPane[tab.id];
 
     if ((agentPrintRunActiveRef.current || storedToken) && localRunning) {
       return;
@@ -503,11 +509,12 @@ export function useAgentPaneSession({
   useEffect(() => {
     const paneId = tab.id;
     const storeRunning = (tab.turns ?? []).some((turn) => turn.running);
-    const localRunning = turnsRef.current.some((turn) => turn.running);
+    const localTurns = turnsRef.current;
+    const localRunning = localTurns.some((turn) => turn.running);
+    const session = useTerminalSessionStore.getState();
+    const hasPrintToken = Boolean(session.agentPrintRunTokenByPane[paneId]);
 
-    if (!localRunning) {
-      const session = useTerminalSessionStore.getState();
-
+    if (!localRunning && !storeRunning && !hasPrintToken) {
       if (
         session.awaitingResponseByPane[paneId] ||
         session.agentBusyByPane[paneId] ||
@@ -517,7 +524,7 @@ export function useAgentPaneSession({
       }
     }
 
-    if (!localRunning && storeRunning) {
+    if (!localRunning && storeRunning && localTurns.length > 0) {
       flushPersistTurns();
     }
   }, [flushPersistTurns, tab.id, tab.turns, turnsRevision]);

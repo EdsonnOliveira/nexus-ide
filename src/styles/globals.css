@@ -4666,6 +4666,23 @@ input {
   color: #fff;
 }
 
+.sidebar-mail-panel__permission {
+  margin-top: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(59, 130, 246, 0.14);
+  color: #bfdbfe;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sidebar-mail-panel__permission:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.28);
+  color: #fff;
+}
+
 .sidebar-vercel-popup {
   width: min(320px, calc(100vw - 16px));
   padding: 14px;
@@ -18282,7 +18299,8 @@ body.workspace-split--resizing * {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  width: 100%;
+  width: auto;
+  margin: 8px 14px 0;
   padding: 10px 12px;
   border-radius: 14px;
   background: color-mix(in srgb, var(--surface-elevated) 88%, transparent);

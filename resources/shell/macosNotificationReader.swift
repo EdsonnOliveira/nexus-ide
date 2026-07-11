@@ -450,27 +450,36 @@ func readNotifications(limit: Int) -> NotificationSnapshot {
     return NotificationSnapshot(accessGranted: false, items: [])
 }
 
-let rawArgs = Array(CommandLine.arguments.dropFirst())
-let outputPath = rawArgs.first
-let action = rawArgs.count >= 2 ? rawArgs[1] : "list"
+@main
+struct NexusNotificationHelperMain {
+    static func main() {
+        let rawArgs = Array(CommandLine.arguments.dropFirst())
+        let outputPath = rawArgs.first
+        let action = rawArgs.count >= 2 ? rawArgs[1] : "list"
 
-if action == "delete", rawArgs.count >= 3 {
-    let recId = Int64(rawArgs[2]) ?? 0
-    emitMutationResult(deleteNotification(recId: recId), outputPath: outputPath)
-    exit(0)
+        if handleMailHelperAction(action: action, rawArgs: rawArgs, outputPath: outputPath) {
+            exit(0)
+        }
+
+        if action == "delete", rawArgs.count >= 3 {
+            let recId = Int64(rawArgs[2]) ?? 0
+            emitMutationResult(deleteNotification(recId: recId), outputPath: outputPath)
+            exit(0)
+        }
+
+        if action == "delete-all" {
+            let limit = Int(rawArgs.count >= 3 ? rawArgs[2] : "30") ?? 30
+            let safeLimit = min(max(limit, 1), 50)
+            emitMutationResult(deleteAllNotifications(limit: safeLimit), outputPath: outputPath)
+            exit(0)
+        }
+
+        let limitArg = action == "list"
+            ? (rawArgs.count >= 3 ? rawArgs[2] : "30")
+            : (Int(action) != nil ? action : "30")
+        let limit = Int(limitArg) ?? 30
+        let safeLimit = min(max(limit, 1), 50)
+        emitSnapshot(readNotifications(limit: safeLimit), outputPath: outputPath)
+        exit(0)
+    }
 }
-
-if action == "delete-all" {
-    let limit = Int(rawArgs.count >= 3 ? rawArgs[2] : "30") ?? 30
-    let safeLimit = min(max(limit, 1), 50)
-    emitMutationResult(deleteAllNotifications(limit: safeLimit), outputPath: outputPath)
-    exit(0)
-}
-
-let limitArg = action == "list"
-    ? (rawArgs.count >= 3 ? rawArgs[2] : "30")
-    : (Int(action) != nil ? action : "30")
-let limit = Int(limitArg) ?? 30
-let safeLimit = min(max(limit, 1), 50)
-emitSnapshot(readNotifications(limit: safeLimit), outputPath: outputPath)
-exit(0)

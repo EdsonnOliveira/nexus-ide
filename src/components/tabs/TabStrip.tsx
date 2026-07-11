@@ -1,4 +1,5 @@
 import { Fragment, memo, useCallback, useMemo, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { TAB_DRAG_MIME } from '@/constants/tabDrag';
 import { useStableLoadingMap } from '@/hooks/useStableLoadingMap';
 import { useTabCloseShortcut } from '@/hooks/useTabCloseShortcut';
@@ -33,17 +34,14 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
   useTabCloseShortcut();
   useTabIndexShortcuts();
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
-  const projects = useProjectStore((state) => state.projects);
+  const activeProject = useProjectStore((state) =>
+    state.projects.find((project) => project.id === state.activeProjectId) ?? null,
+  );
   const { selectTab, closeTab, closeAllTabs, renameTab, unsplitTab, reorderTab, togglePinTab } =
     useTabActions();
   const [contextMenu, setContextMenu] = useState<TabContextMenuState | null>(null);
   const [renameTabId, setRenameTabId] = useState<string | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
-
-  const activeProject = useMemo(
-    () => projects.find((project) => project.id === activeProjectId) ?? null,
-    [activeProjectId, projects],
-  );
 
   const tabs = useMemo(() => activeProject?.tabs ?? [], [activeProject?.tabs]);
   const pinnedCount = useMemo(() => countPinnedTabs(tabs), [tabs]);
@@ -52,13 +50,32 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
     () => resolveActiveTabBarItem(tabs, activeProject?.activeTabId ?? null),
     [activeProject?.activeTabId, tabs],
   );
-  const restartingPaneIds = useTerminalSessionStore((state) => state.restartingPaneIds);
+  const paneIdsKey = useMemo(
+    () =>
+      tabs
+        .flatMap((tab) => getPanesFromItem(tab).map((pane) => pane.id))
+        .sort()
+        .join('|'),
+    [tabs],
+  );
+  const sessionFlags = useTerminalSessionStore(
+    useShallow((state) => {
+      const paneIds = paneIdsKey ? paneIdsKey.split('|').filter(Boolean) : [];
+      const flags: Record<string, boolean | string | null> = {};
+
+      for (const paneId of paneIds) {
+        flags[`restarting:${paneId}`] = Boolean(state.restartingPaneIds[paneId]);
+        flags[`pending:${paneId}`] = state.pendingLaunchCommands[paneId] ?? null;
+        flags[`busy:${paneId}`] = Boolean(state.agentBusyByPane[paneId]);
+        flags[`awaiting:${paneId}`] = Boolean(state.awaitingResponseByPane[paneId]);
+        flags[`print:${paneId}`] = state.agentPrintRunTokenByPane[paneId] ?? null;
+        flags[`agent:${paneId}`] = state.activeAgentByPane[paneId] ?? null;
+      }
+
+      return flags;
+    }),
+  );
   const executingPaneIds = useAutomationExecutionStore((state) => state.executingPaneIds);
-  const pendingLaunchCommands = useTerminalSessionStore((state) => state.pendingLaunchCommands);
-  const agentBusyByPane = useTerminalSessionStore((state) => state.agentBusyByPane);
-  const awaitingResponseByPane = useTerminalSessionStore((state) => state.awaitingResponseByPane);
-  const agentPrintRunTokenByPane = useTerminalSessionStore((state) => state.agentPrintRunTokenByPane);
-  const activeAgentByPane = useTerminalSessionStore((state) => state.activeAgentByPane);
   const notifiedAgentPaneByProject = useProjectNotificationStore(
     (state) => state.notifiedAgentPaneByProject,
   );
@@ -95,6 +112,32 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
 
   const tabRestartingMapRaw = useMemo(() => {
     const map = new Map<string, boolean>();
+    const pendingLaunchCommands: Record<string, string> = {};
+    const agentPrintRunTokenByPane: Record<string, string> = {};
+    const awaitingResponseByPane: Record<string, boolean> = {};
+    const activeAgentByPane: Record<string, string | null> = {};
+    const agentBusyByPane: Record<string, boolean> = {};
+    const restartingPaneIds: Record<string, boolean> = {};
+
+    for (const [key, value] of Object.entries(sessionFlags)) {
+      const separator = key.indexOf(':');
+      const kind = key.slice(0, separator);
+      const paneId = key.slice(separator + 1);
+
+      if (kind === 'restarting') {
+        restartingPaneIds[paneId] = Boolean(value);
+      } else if (kind === 'pending' && typeof value === 'string') {
+        pendingLaunchCommands[paneId] = value;
+      } else if (kind === 'busy') {
+        agentBusyByPane[paneId] = Boolean(value);
+      } else if (kind === 'awaiting') {
+        awaitingResponseByPane[paneId] = Boolean(value);
+      } else if (kind === 'print' && typeof value === 'string') {
+        agentPrintRunTokenByPane[paneId] = value;
+      } else if (kind === 'agent') {
+        activeAgentByPane[paneId] = typeof value === 'string' ? value : null;
+      }
+    }
 
     for (const tab of tabs) {
       const agentPanes = getPanesFromItem(tab).filter(
@@ -130,16 +173,7 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
     }
 
     return map;
-  }, [
-    activeAgentByPane,
-    agentBusyByPane,
-    agentPrintRunTokenByPane,
-    awaitingResponseByPane,
-    executingPaneIds,
-    pendingLaunchCommands,
-    restartingPaneIds,
-    tabs,
-  ]);
+  }, [executingPaneIds, sessionFlags, tabs]);
 
   const tabRestartingMap = useStableLoadingMap(tabRestartingMapRaw);
 

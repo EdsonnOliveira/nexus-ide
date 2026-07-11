@@ -1,7 +1,9 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { extname } from 'node:path';
 import path from 'node:path';
+
+export const MAX_IMAGE_DATA_URL_BYTES = 4 * 1024 * 1024;
 
 const MIME_TYPES: Record<string, string> = {
   '.png': 'image/png',
@@ -23,6 +25,18 @@ export function bufferToDataUrl(buffer: Buffer, filePath: string): string {
   return `data:${mimeType};base64,${buffer.toString('base64')}`;
 }
 
+export function bufferToDataUrlIfWithinLimit(
+  buffer: Buffer | null,
+  filePath: string,
+  maxBytes = MAX_IMAGE_DATA_URL_BYTES,
+): string | null {
+  if (!buffer || buffer.length === 0 || buffer.length > maxBytes) {
+    return null;
+  }
+
+  return bufferToDataUrl(buffer, filePath);
+}
+
 export async function readImageAsDataUrl(filePath: string): Promise<string | null> {
   const resolvedPath = path.resolve(filePath);
 
@@ -30,6 +44,16 @@ export async function readImageAsDataUrl(filePath: string): Promise<string | nul
     return null;
   }
 
+  try {
+    const fileStats = await stat(resolvedPath);
+
+    if (!fileStats.isFile() || fileStats.size > MAX_IMAGE_DATA_URL_BYTES) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
   const buffer = await readFile(resolvedPath);
-  return bufferToDataUrl(buffer, resolvedPath);
+  return bufferToDataUrlIfWithinLimit(buffer, resolvedPath);
 }

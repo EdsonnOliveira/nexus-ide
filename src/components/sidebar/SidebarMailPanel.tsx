@@ -32,8 +32,12 @@ function SidebarMailPanelComponent({ mailbox }: SidebarMailPanelProps) {
       return 'Disponível apenas no macOS';
     }
 
+    if (!snapshot.accessGranted) {
+      return 'Permita acesso total ao disco';
+    }
+
     if (!snapshot.mailReady) {
-      return 'Mail indisponível';
+      return 'Não foi possível ler a caixa';
     }
 
     if (!snapshot.available) {
@@ -41,7 +45,13 @@ function SidebarMailPanelComponent({ mailbox }: SidebarMailPanelProps) {
     }
 
     return snapshot.mailboxLabel;
-  }, [snapshot.available, snapshot.mailReady, snapshot.mailboxLabel, snapshot.platformSupported]);
+  }, [
+    snapshot.accessGranted,
+    snapshot.available,
+    snapshot.mailReady,
+    snapshot.mailboxLabel,
+    snapshot.platformSupported,
+  ]);
 
   const handleOpenMessage = useCallback(
     (messageId: string) => {
@@ -74,6 +84,20 @@ function SidebarMailPanelComponent({ mailbox }: SidebarMailPanelProps) {
       <div className='sidebar-mail-panel__list-wrap app-button--enter'>
         {showSkeleton ? (
           <MailListSkeleton />
+        ) : !snapshot.accessGranted ? (
+          <EmptyState
+            icon={Mail}
+            message='Permita acesso total ao disco para ler e-mails com o Mail fechado'
+            compact
+          >
+            <button
+              type='button'
+              className='sidebar-mail-panel__permission app-button app-button--enter'
+              onClick={() => void window.nexus.systemNotifications.openFullDiskAccessSettings()}
+            >
+              Permitir acesso aos e-mails
+            </button>
+          </EmptyState>
         ) : showEmpty ? (
           <EmptyState icon={Mail} message='Nenhum e-mail nesta caixa' compact />
         ) : showList ? (

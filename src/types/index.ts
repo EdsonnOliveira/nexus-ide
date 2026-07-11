@@ -598,6 +598,12 @@ export interface MailMailboxOption {
   label: string;
 }
 
+export interface MailMailboxesSnapshot {
+  platformSupported: boolean;
+  accessGranted: boolean;
+  options: MailMailboxOption[];
+}
+
 export interface MailMessageItem {
   id: string;
   subject: string;
@@ -609,6 +615,7 @@ export interface MailMessageItem {
 export interface MailInboxSnapshot {
   platformSupported: boolean;
   mailReady: boolean;
+  accessGranted: boolean;
   available: boolean;
   mailboxLabel: string;
   messages: MailMessageItem[];
@@ -1097,7 +1104,7 @@ export interface NexusAPI {
     openLink: (url: string) => Promise<void>;
   };
   mail: {
-    getMailboxes: () => Promise<MailMailboxOption[]>;
+    getMailboxes: () => Promise<MailMailboxesSnapshot>;
     getInboxMessages: (mailbox: MailMailboxRef) => Promise<MailInboxSnapshot>;
     openMessage: (mailbox: MailMailboxRef, messageId: string) => Promise<void>;
   };

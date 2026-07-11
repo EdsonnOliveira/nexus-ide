@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GitBranchInfo, GitCommandResult, GitStatusResult, GitStashEntry } from '@/types/git';
+import { createDebouncedCallback } from '@/utils/createDebouncedCallback';
 import { GIT_REPO_REFRESH_EVENT } from '@/utils/gitRepoRefresh';
+import { requestGitStatus } from '@/utils/gitStatusRequest';
 
 interface UseGitStatusResult {
   status: GitStatusResult | null;
@@ -47,7 +49,7 @@ export function useGitStatus(repoPath: string | null, enabled: boolean): UseGitS
 
     try {
       const [nextStatus, nextBranches, nextStashes] = await Promise.all([
-        window.nexus.git.getStatus(path),
+        requestGitStatus(path),
         window.nexus.git.listBranches(path),
         window.nexus.git.stashList(path),
       ]);
@@ -103,9 +105,13 @@ export function useGitStatus(repoPath: string | null, enabled: boolean): UseGitS
 
     void refresh();
 
+    const debouncedRefresh = createDebouncedCallback(() => {
+      void refresh();
+    }, 250);
+
     const unsubscribe = window.nexus.git.onRepoChange((changedPath) => {
       if (changedPath === repoPath) {
-        void refresh();
+        debouncedRefresh.schedule();
       }
     });
 
@@ -113,13 +119,14 @@ export function useGitStatus(repoPath: string | null, enabled: boolean): UseGitS
       const detail = (event as CustomEvent<{ repoPath: string }>).detail;
 
       if (detail.repoPath === repoPath) {
-        void refresh();
+        debouncedRefresh.schedule();
       }
     };
 
     window.addEventListener(GIT_REPO_REFRESH_EVENT, handleGitRefresh);
 
     return () => {
+      debouncedRefresh.cancel();
       unsubscribe();
       window.removeEventListener(GIT_REPO_REFRESH_EVENT, handleGitRefresh);
     };

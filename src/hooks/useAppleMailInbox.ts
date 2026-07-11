@@ -6,6 +6,7 @@ const POLL_INTERVAL_MS = 30_000;
 const EMPTY_SNAPSHOT: MailInboxSnapshot = {
   platformSupported: true,
   mailReady: false,
+  accessGranted: false,
   available: false,
   mailboxLabel: '',
   messages: [],

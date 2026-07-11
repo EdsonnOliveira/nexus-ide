@@ -56,6 +56,7 @@ function mailboxMatchesOption(mailbox: MailMailboxRef, option: MailMailboxOption
 
 export function useHomeDashboardMail() {
   const [mailboxOptions, setMailboxOptions] = useState<MailMailboxOption[]>([]);
+  const [accessGranted, setAccessGranted] = useState(true);
   const [selectedMailbox, setSelectedMailbox] = useState<MailMailboxRef | null>(null);
   const [loadingMailboxes, setLoadingMailboxes] = useState(true);
 
@@ -66,23 +67,25 @@ export function useHomeDashboardMail() {
       if (!window.nexus?.mail) {
         if (!cancelled) {
           setMailboxOptions([]);
+          setAccessGranted(false);
           setLoadingMailboxes(false);
         }
         return;
       }
 
       try {
-        const options = await window.nexus.mail.getMailboxes();
+        const snapshot = await window.nexus.mail.getMailboxes();
 
         if (cancelled) {
           return;
         }
 
-        setMailboxOptions(options);
+        setAccessGranted(snapshot.accessGranted);
+        setMailboxOptions(snapshot.options);
 
         const storedMailbox = readStoredMailbox();
         const storedOption = storedMailbox
-          ? options.find((option) => mailboxMatchesOption(storedMailbox, option))
+          ? snapshot.options.find((option) => mailboxMatchesOption(storedMailbox, option))
           : null;
 
         setSelectedMailbox(storedOption ? mailboxFromOption(storedOption) : null);
@@ -162,6 +165,7 @@ export function useHomeDashboardMail() {
 
   return {
     mailboxOptions,
+    accessGranted,
     selectedMailbox,
     selectedMailboxId,
     selectOptions,

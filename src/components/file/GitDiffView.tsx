@@ -172,9 +172,14 @@ function GitDiffViewComponent({
   const fileName = useMemo(() => filePath.split('/').pop() ?? filePath, [filePath]);
   const isImageDiff = useMemo(() => isImageFileName(fileName), [fileName]);
   const baseLines = useMemo(() => buildGitDiffLines(before, after), [after, before]);
-  const lines = useMemo(
+  const allLines = useMemo(
     () => injectAgentPromptsIntoDiffLines(baseLines, agentPromptTurns),
     [agentPromptTurns, baseLines],
+  );
+  const isDiffTruncated = allLines.length > 2_500;
+  const lines = useMemo(
+    () => (isDiffTruncated ? allLines.slice(0, 2_500) : allLines),
+    [allLines, isDiffTruncated],
   );
   const hasChanges = useMemo(() => gitDiffHasChanges(before, after), [after, before]);
   const changeLineIndices = useMemo(() => getGitDiffChangeLineIndices(lines), [lines]);
@@ -530,51 +535,59 @@ function GitDiffViewComponent({
             {!hasChanges ? (
               <div className='git-diff-view__empty'>Nenhuma alteração neste arquivo</div>
             ) : (
-              lines.map((line, index) => {
-                if (line.kind === 'prompt') {
+              <>
+                {isDiffTruncated ? (
+                  <div className='git-diff-view__empty'>
+                    Diff grande — exibindo as primeiras 2500 linhas para manter o app estável
+                  </div>
+                ) : null}
+                {lines.map((line, index) => {
+                  if (line.kind === 'prompt') {
+                    return (
+                      <div
+                        key={`prompt-${index}`}
+                        className='git-diff-view__row git-diff-view__row--prompt'
+                      >
+                        <span className='git-diff-view__line-num git-diff-view__line-num--old' />
+                        <span className='git-diff-view__line-num git-diff-view__line-num--new' />
+                        <span className='git-diff-view__sign git-diff-view__sign--prompt'>»</span>
+                        <span className='git-diff-view__content git-diff-view__content--prompt'>
+                          <GitDiffPromptRow prompt={line.content} onOpen={handleOpenPromptModal} />
+                        </span>
+                      </div>
+                    );
+                  }
+
+                  const changeIndex = lineIndexToChangeIndex.get(index);
+                  const isChangeLine = changeIndex !== undefined;
+
                   return (
                     <div
-                      key={`prompt-${index}`}
-                      className='git-diff-view__row git-diff-view__row--prompt'
+                      key={`${line.kind}-${index}`}
+                      ref={isChangeLine ? setRowRef(index) : undefined}
+                      data-change-index={isChangeLine ? changeIndex : undefined}
+                      className={`git-diff-view__row git-diff-view__row--${line.kind}${isChangeLine && changeIndex === currentChangeIndex ? ' git-diff-view__row--current' : ''}`}
                     >
-                      <span className='git-diff-view__line-num git-diff-view__line-num--old' />
-                      <span className='git-diff-view__line-num git-diff-view__line-num--new' />
-                      <span className='git-diff-view__sign git-diff-view__sign--prompt'>»</span>
-                      <span className='git-diff-view__content git-diff-view__content--prompt'>
-                        <GitDiffPromptRow prompt={line.content} onOpen={handleOpenPromptModal} />
+                      <span className='git-diff-view__line-num git-diff-view__line-num--old'>
+                        {line.oldLineNumber ?? ''}
                       </span>
+                      <span className='git-diff-view__line-num git-diff-view__line-num--new'>
+                        {line.newLineNumber ?? ''}
+                      </span>
+                      <span className='git-diff-view__sign'>
+                        {line.kind === 'add' ? '+' : line.kind === 'remove' ? '-' : ' '}
+                      </span>
+                      <span
+                        className='git-diff-view__content hljs'
+                        dangerouslySetInnerHTML={{
+                          __html:
+                            resolveGitDiffLineHtml(line, beforeHighlights, afterHighlights) || ' ',
+                        }}
+                      />
                     </div>
                   );
-                }
-
-                const changeIndex = lineIndexToChangeIndex.get(index);
-                const isChangeLine = changeIndex !== undefined;
-
-                return (
-                  <div
-                    key={`${line.kind}-${index}`}
-                    ref={isChangeLine ? setRowRef(index) : undefined}
-                    data-change-index={isChangeLine ? changeIndex : undefined}
-                    className={`git-diff-view__row git-diff-view__row--${line.kind}${isChangeLine && changeIndex === currentChangeIndex ? ' git-diff-view__row--current' : ''}`}
-                  >
-                    <span className='git-diff-view__line-num git-diff-view__line-num--old'>
-                      {line.oldLineNumber ?? ''}
-                    </span>
-                    <span className='git-diff-view__line-num git-diff-view__line-num--new'>
-                      {line.newLineNumber ?? ''}
-                    </span>
-                    <span className='git-diff-view__sign'>
-                      {line.kind === 'add' ? '+' : line.kind === 'remove' ? '-' : ' '}
-                    </span>
-                    <span
-                      className='git-diff-view__content hljs'
-                      dangerouslySetInnerHTML={{
-                        __html: resolveGitDiffLineHtml(line, beforeHighlights, afterHighlights) || ' ',
-                      }}
-                    />
-                  </div>
-                );
-              })
+                })}
+              </>
             )}
           </div>
         </div>

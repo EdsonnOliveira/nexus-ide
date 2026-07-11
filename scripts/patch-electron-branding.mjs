@@ -19,6 +19,7 @@ const calendarHelperSourcePath = path.join(rootDir, 'resources/shell/macosCalend
 const calendarHelperBinaryPath = path.join(rootDir, 'resources/shell/macosCalendarHelper');
 const calendarHelperInfoPlistPath = path.join(rootDir, 'resources/shell/CalendarHelper-Info.plist');
 const notificationReaderSourcePath = path.join(rootDir, 'resources/shell/macosNotificationReader.swift');
+const mailReaderSourcePath = path.join(rootDir, 'resources/shell/macosMailReader.swift');
 const notificationReaderBinaryPath = path.join(rootDir, 'resources/shell/macosNotificationReader');
 const notificationHelperAppPath = path.join(rootDir, 'resources/shell/NotificationHelper.app');
 const notificationHelperBinaryPath = path.join(
@@ -133,7 +134,13 @@ function buildNotificationReader() {
     return;
   }
 
-  run('swiftc', ['-o', notificationReaderBinaryPath, notificationReaderSourcePath, '-l', 'sqlite3']);
+  const compileArgs = ['-o', notificationReaderBinaryPath, notificationReaderSourcePath, '-l', 'sqlite3'];
+
+  if (existsSync(mailReaderSourcePath)) {
+    compileArgs.splice(2, 0, mailReaderSourcePath);
+  }
+
+  run('swiftc', compileArgs);
   execFileSync('chmod', ['+x', notificationReaderBinaryPath]);
 
   run('mkdir', ['-p', path.dirname(notificationHelperBinaryPath)]);
@@ -162,7 +169,20 @@ function patchNexusAppBundle() {
   }
 
   if (existsSync(nexusAppPath)) {
-    rmSync(nexusAppPath, { recursive: true, force: true });
+    const removeResult = spawnSync('/bin/rm', ['-rf', nexusAppPath], {
+      cwd: rootDir,
+      stdio: 'inherit',
+      env: process.env,
+    });
+
+    if (removeResult.status !== 0 && existsSync(nexusAppPath)) {
+      try {
+        rmSync(nexusAppPath, { recursive: true, force: true });
+      } catch (error) {
+        console.error('[patch-electron-branding] Failed to remove existing Nexus.app:', error);
+        process.exit(1);
+      }
+    }
   }
 
   run('cp', ['-R', electronSourceAppPath, nexusAppPath]);

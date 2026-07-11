@@ -11,15 +11,28 @@ export function useMobileReleases() {
 
   useEffect(() => {
     const refresh = () => {
+      if (document.visibilityState === 'hidden') {
+        return;
+      }
+
       setVisibleReleases(getVisibleReleases());
     };
 
     refresh();
 
-    const intervalId = window.setInterval(refresh, 1000);
+    const intervalId = window.setInterval(refresh, 2000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        setVisibleReleases(getVisibleReleases());
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
       window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [getVisibleReleases, releases, dismissedUids]);
 
