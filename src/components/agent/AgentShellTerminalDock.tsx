@@ -145,7 +145,7 @@ function AgentShellTerminalPanelComponent({
             paneId={entry.paneId}
             projectPath={projectPath}
             ptyId={entry.ptyId}
-            isVisible
+            isVisible={isOpen}
             isRuntimeActive
             isFocused={isOpen}
             cwd={cwd}

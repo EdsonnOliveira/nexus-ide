@@ -9,11 +9,17 @@ export interface DirectoryEntry {
 }
 
 const IGNORED_DIRECTORY_NAMES = new Set([
+  '.cxx',
+  '.expo',
   '.git',
+  '.gradle',
   '.hg',
+  '.kotlin',
   '.nexus',
   '.svn',
   '__pycache__',
+  'DerivedData',
+  'Pods',
   'coverage',
   'dist',
   'dist-electron',

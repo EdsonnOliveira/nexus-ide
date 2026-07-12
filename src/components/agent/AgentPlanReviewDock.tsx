@@ -19,6 +19,8 @@ interface PlanReviewBuildButtonProps {
   isBuilding: boolean;
   isSubmitting: boolean;
   isBusy: boolean;
+  isContentReady: boolean;
+  isLoadingContent: boolean;
   onClick: () => void;
 }
 
@@ -38,6 +40,20 @@ function buildPlanPreviewMarkdown(activity: AgentActivity): string {
   }
 
   return sections.join('\n');
+}
+
+function resolvePlanEmptyMessage(activity: AgentActivity, loadTimedOut: boolean): string {
+  const hasBody = Boolean(activity.planBody?.trim() || activity.planOverview?.trim());
+
+  if (hasBody) {
+    return 'Plano pronto para revisão.';
+  }
+
+  if (activity.planUri?.trim() && !loadTimedOut) {
+    return 'Carregando conteúdo do plano…';
+  }
+
+  return 'Conteúdo do plano indisponível. Descarte e peça um novo plano.';
 }
 
 function resolvePlanArchiveStatusLabel(status: AgentPlanStatus | undefined): string {
@@ -60,19 +76,27 @@ function PlanReviewBuildButtonComponent({
   isBuilding,
   isSubmitting,
   isBusy,
+  isContentReady,
+  isLoadingContent,
   onClick,
 }: PlanReviewBuildButtonProps) {
   return (
     <button
       type='button'
       className='agent-view__plan-review-build app-button app-button--enter'
-      disabled={isBusy || isSubmitting || isBuilding}
+      disabled={isBusy || isSubmitting || isBuilding || !isContentReady}
       onClick={onClick}
     >
       <span className='app-button__label'>
-        {isBuilding || isSubmitting ? 'Executando plano…' : 'Build'}
+        {isBuilding || isSubmitting
+          ? 'Executando plano…'
+          : isLoadingContent
+            ? 'Carregando…'
+            : 'Build'}
       </span>
-      <span className='agent-view__plan-review-build-shortcut'>⌘↵</span>
+      {!isLoadingContent ? (
+        <span className='agent-view__plan-review-build-shortcut'>⌘↵</span>
+      ) : null}
       <ChevronDown size={14} strokeWidth={2.25} className='agent-view__plan-review-build-chevron' />
     </button>
   );
@@ -82,10 +106,11 @@ const PlanReviewBuildButton = memo(PlanReviewBuildButtonComponent);
 
 interface PlanReviewBodyProps {
   previewHtml: string;
+  emptyMessage: string;
   className?: string;
 }
 
-function PlanReviewBodyComponent({ previewHtml, className }: PlanReviewBodyProps) {
+function PlanReviewBodyComponent({ previewHtml, emptyMessage, className }: PlanReviewBodyProps) {
   const bodyRef = useMarkdownCodeHighlight<HTMLDivElement>(previewHtml);
 
   if (previewHtml) {
@@ -102,7 +127,7 @@ function PlanReviewBodyComponent({ previewHtml, className }: PlanReviewBodyProps
     <div
       className={`agent-view__plan-review-body agent-view__plan-review-body--empty${className ? ` ${className}` : ''}`}
     >
-      Plano pronto para revisão.
+      {emptyMessage}
     </div>
   );
 }
@@ -118,9 +143,19 @@ function AgentPlanReviewDockComponent({
 }: AgentPlanReviewDockProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [loadTimedOut, setLoadTimedOut] = useState(false);
   const isArchive = mode === 'archive';
   const isPending = mode === 'pending';
   const isBuilding = activity.planStatus === 'building';
+  const hasPlanContent = Boolean(activity.planBody?.trim() || activity.planOverview?.trim());
+  const isLoadingPlanBody = Boolean(
+    isPending && activity.planUri?.trim() && !hasPlanContent && !loadTimedOut,
+  );
+  const isContentReady = hasPlanContent;
+  const emptyMessage = useMemo(
+    () => resolvePlanEmptyMessage(activity, loadTimedOut),
+    [activity, loadTimedOut],
+  );
   const previewMarkdown = useMemo(() => buildPlanPreviewMarkdown(activity), [activity]);
   const previewHtml = useDeferredMarkdownHtml(previewMarkdown);
   const archiveStatusLabel = useMemo(
@@ -128,8 +163,23 @@ function AgentPlanReviewDockComponent({
     [activity.planStatus],
   );
 
+  useEffect(() => {
+    if (!isPending || hasPlanContent || !activity.planUri?.trim()) {
+      setLoadTimedOut(false);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setLoadTimedOut(true);
+    }, 4500);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [activity.planUri, hasPlanContent, isPending]);
+
   const handleAccept = useCallback(() => {
-    if (!isPending || !onAccept || isBusy || isSubmitting || isBuilding) {
+    if (!isPending || !onAccept || isBusy || isSubmitting || isBuilding || !isContentReady) {
       return;
     }
 
@@ -142,7 +192,7 @@ function AgentPlanReviewDockComponent({
         setIsSubmitting(false);
       }
     })();
-  }, [activity.id, isBuilding, isBusy, isPending, isSubmitting, onAccept]);
+  }, [activity.id, isBuilding, isBusy, isContentReady, isPending, isSubmitting, onAccept]);
 
   const handleReject = useCallback(() => {
     if (!isPending || !onReject || isBusy || isSubmitting || isBuilding) {
@@ -170,7 +220,7 @@ function AgentPlanReviewDockComponent({
         return;
       }
 
-      if (isBusy || isSubmitting || isBuilding) {
+      if (isBusy || isSubmitting || isBuilding || !isContentReady) {
         return;
       }
 
@@ -183,7 +233,7 @@ function AgentPlanReviewDockComponent({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleAccept, isBuilding, isBusy, isPending, isSubmitting]);
+  }, [handleAccept, isBuilding, isBusy, isContentReady, isPending, isSubmitting]);
 
   return (
     <>
@@ -213,7 +263,7 @@ function AgentPlanReviewDockComponent({
           ) : null}
 
           <div className='agent-view__plan-review-shell'>
-            <PlanReviewBody previewHtml={previewHtml} />
+            <PlanReviewBody previewHtml={previewHtml} emptyMessage={emptyMessage} />
 
             <div className='agent-view__plan-review-actions-float'>
               <button
@@ -229,6 +279,8 @@ function AgentPlanReviewDockComponent({
                 <PlanReviewBuildButton
                   isBuilding={isBuilding}
                   isBusy={isBusy}
+                  isContentReady={isContentReady}
+                  isLoadingContent={isLoadingPlanBody}
                   isSubmitting={isSubmitting}
                   onClick={handleAccept}
                 />
@@ -263,12 +315,18 @@ function AgentPlanReviewDockComponent({
               </div>
 
               <div className='agent-plan-review-modal__shell'>
-                <PlanReviewBody previewHtml={previewHtml} className='agent-plan-review-modal__body' />
+                <PlanReviewBody
+                  previewHtml={previewHtml}
+                  emptyMessage={emptyMessage}
+                  className='agent-plan-review-modal__body'
+                />
                 {isPending ? (
                   <div className='agent-plan-review-modal__build-float'>
                     <PlanReviewBuildButton
                       isBuilding={isBuilding}
                       isBusy={isBusy}
+                      isContentReady={isContentReady}
+                      isLoadingContent={isLoadingPlanBody}
                       isSubmitting={isSubmitting}
                       onClick={handleAccept}
                     />

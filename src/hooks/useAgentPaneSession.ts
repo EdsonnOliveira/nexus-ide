@@ -95,8 +95,11 @@ import {
 import { trimAgentTurnHistory, sanitizeAgentTurnHistory } from '@/utils/trimAgentTurnHistory';
 import { shouldPreferLocalAgentTurnHistory } from '@/utils/paneAgentSession';
 import { writeDebugSessionLog } from '@/utils/debugSessionLog';
+import { useToastStore } from '@/stores/useToastStore';
 
 const LAUNCH_COMMAND_DELAY_MS = 350;
+const PLAN_BODY_RESOLVE_MAX_ATTEMPTS = 8;
+const PLAN_BODY_RESOLVE_BASE_DELAY_MS = 250;
 const PROMPT_CLEAR_DELAY_MS = 50;
 const PTY_CLEAR_INPUT = '\x15';
 const STUCK_TURN_TIMEOUT_MS = 45_000;
@@ -2030,6 +2033,7 @@ export function useAgentPaneSession({
       }
 
       if (!planBody) {
+        useToastStore.getState().showToast('Não foi possível carregar o conteúdo do plano');
         return false;
       }
 
@@ -2115,26 +2119,18 @@ export function useAgentPaneSession({
   );
 
   useEffect(() => {
-    const turns = turnsRef.current;
-    const latestTurn = turns[turns.length - 1];
+    const planId = pendingPlanActivity?.id;
+    const planUri = pendingPlanActivity?.planUri;
 
-    if (!latestTurn || latestTurn.running) {
-      return;
-    }
-
-    const pendingPlan = findPendingAgentPlanActivity(latestTurn.activities);
-
-    if (!pendingPlan?.planUri || pendingPlan.planBody?.trim()) {
+    if (!planId || !planUri || pendingPlanActivity?.planBody?.trim()) {
       return;
     }
 
     let cancelled = false;
+    let attempt = 0;
+    let timeoutId: number | undefined;
 
-    void resolvePlanBodyFromUri(pendingPlan.planUri).then((planBody) => {
-      if (cancelled || !planBody?.trim()) {
-        return;
-      }
-
+    const applyPlanBody = (planBody: string) => {
       const nextTurns = turnsRef.current.map((turn, index) => {
         if (index !== turnsRef.current.length - 1) {
           return turn;
@@ -2143,7 +2139,7 @@ export function useAgentPaneSession({
         return {
           ...turn,
           activities: turn.activities.map((entry) =>
-            entry.id === pendingPlan.id
+            entry.id === planId
               ? {
                   ...entry,
                   planBody,
@@ -2158,12 +2154,44 @@ export function useAgentPaneSession({
       });
 
       persistTurns(nextTurns, { flush: true });
-    });
+    };
+
+    const tryResolve = () => {
+      void resolvePlanBodyFromUri(planUri).then((planBody) => {
+        if (cancelled) {
+          return;
+        }
+
+        if (planBody?.trim()) {
+          applyPlanBody(planBody.trim());
+          return;
+        }
+
+        attempt += 1;
+
+        if (attempt >= PLAN_BODY_RESOLVE_MAX_ATTEMPTS) {
+          return;
+        }
+
+        timeoutId = window.setTimeout(tryResolve, PLAN_BODY_RESOLVE_BASE_DELAY_MS * attempt);
+      });
+    };
+
+    tryResolve();
 
     return () => {
       cancelled = true;
+
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
     };
-  }, [persistTurns, pendingPlanActivity?.id, pendingPlanActivity?.planUri, turnsRevision, tab.turns]);
+  }, [
+    persistTurns,
+    pendingPlanActivity?.id,
+    pendingPlanActivity?.planUri,
+    pendingPlanActivity?.planBody,
+  ]);
 
   const editAgentTurn = useCallback(
     (turnId: string): boolean => {
@@ -2985,8 +3013,17 @@ export function useAgentPaneSession({
         const hasPendingInteraction =
           hasPendingStreamJsonInteraction(streamState) ||
           Boolean(latestTurn && hasPendingAgentQuestion(latestTurn.activities));
+        const hasRenderablePendingInteraction = Boolean(
+          latestTurn &&
+            (hasPendingAgentPlan(latestTurn.activities) ||
+              hasPendingAgentQuestion(latestTurn.activities)),
+        );
 
-        if (hasPendingInteraction && (processRunning || agentPrintRunActiveRef.current || storedToken)) {
+        if (hasPendingInteraction && (processRunning || agentPrintRunActiveRef.current)) {
+          return;
+        }
+
+        if (hasPendingInteraction && storedToken && !hasRenderablePendingInteraction) {
           return;
         }
 

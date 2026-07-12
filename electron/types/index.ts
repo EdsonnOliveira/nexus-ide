@@ -395,6 +395,12 @@ export interface ProjectAgentResponseSkill {
   command: string;
 }
 
+export interface ProjectTerminalQuickCommand {
+  id: string;
+  label: string;
+  command: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -417,6 +423,7 @@ export interface Project {
   testEntries?: ProjectTestEntry[];
   agentGitGroups?: AgentGitChangeGroup[];
   agentResponseSkills?: ProjectAgentResponseSkill[];
+  terminalQuickCommands?: ProjectTerminalQuickCommand[];
   flag?: ProjectFlag | null;
 }
 
@@ -455,6 +462,7 @@ export interface ProjectUpdatePayload {
   testEntries?: ProjectTestEntry[];
   agentGitGroups?: AgentGitChangeGroup[];
   agentResponseSkills?: ProjectAgentResponseSkill[];
+  terminalQuickCommands?: ProjectTerminalQuickCommand[];
   flag?: ProjectFlag | null;
 }
 

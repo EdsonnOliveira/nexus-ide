@@ -496,6 +496,7 @@ const TabPane = memo(function TabPaneComponent({
       />
       <TerminalFooter
         tab={tab}
+        projectId={projectId}
         cwd={terminalCwd}
         isVisible={isVisible}
         keyboardActive={hintsKeyboardActive && isFocused}

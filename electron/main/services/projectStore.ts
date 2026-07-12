@@ -279,6 +279,7 @@ function normalizeProject(project: Project & { layout?: unknown }, fallbackWorks
     testEntries: (project.testEntries ?? []).map(migrateTestEntry),
     agentGitGroups: project.agentGitGroups ?? [],
     agentResponseSkills: project.agentResponseSkills ?? [],
+    terminalQuickCommands: project.terminalQuickCommands ?? [],
     flag: project.flag ?? null,
     tabs: (project.tabs ?? []).map((tab) => normalizeTabBarItem(tab as TabBarItem, project.path)),
   };

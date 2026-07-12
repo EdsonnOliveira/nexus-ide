@@ -11,6 +11,7 @@ import iconModeAsk from '@/assets/icon-mode-ask.svg';
 import iconModeDebug from '@/assets/icon-mode-debug.svg';
 import iconModeMultitask from '@/assets/icon-mode-multitask.svg';
 import iconModePlan from '@/assets/icon-mode-plan.svg';
+import { TerminalQuickCommandPills } from '@/components/terminal/TerminalQuickCommandPills';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { isOverlayBlockingTerminalHints } from '@/utils/overlayBlocking';
@@ -19,6 +20,7 @@ import { PROJECT_COLORS, type TerminalCommandHint, type TerminalTab } from '@/ty
 
 interface TerminalFooterProps {
   tab: TerminalTab;
+  projectId: string;
   cwd: string;
   isVisible: boolean;
   keyboardActive: boolean;
@@ -192,6 +194,7 @@ const TerminalFooterHintRow = memo(TerminalFooterHintRowComponent);
 
 function TerminalFooterComponent({
   tab,
+  projectId,
   cwd,
   isVisible,
   keyboardActive,
@@ -532,7 +535,11 @@ function TerminalFooterComponent({
   );
 
   if (visibleHints.length === 0) {
-    return null;
+    return (
+      <footer ref={footerRef} className={`terminal-footer terminal-footer--${tab.agent}`}>
+        <TerminalQuickCommandPills projectId={projectId} onRunCommand={onRunCommand} />
+      </footer>
+    );
   }
 
   return (
@@ -540,6 +547,7 @@ function TerminalFooterComponent({
       ref={footerRef}
       className={`terminal-footer terminal-footer--${tab.agent}`}
     >
+      <TerminalQuickCommandPills projectId={projectId} onRunCommand={onRunCommand} />
       <div className='terminal-footer__hints' role='listbox' aria-label='Sugestões do terminal'>
         {hintRows.map((row) => (
           <TerminalFooterHintRow

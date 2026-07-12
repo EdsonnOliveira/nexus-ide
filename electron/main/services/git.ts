@@ -94,7 +94,7 @@ const statusCache = new Map<string, { expiresAt: number; result: GitStatusResult
 const discoveryCache = new Map<string, { expiresAt: number; repos: GitRepoDiscovery[] }>();
 const CACHE_TTL_MS = 5_000;
 const DISCOVERY_CACHE_TTL_MS = 30_000;
-const WATCH_DEBOUNCE_MS = 1_000;
+const WATCH_DEBOUNCE_MS = 1_500;
 const MAX_GIT_DISCOVERY_DEPTH = 6;
 const MAX_UNTRACKED_LINE_COUNT_BYTES = 128 * 1024;
 const MAX_UNTRACKED_LINE_STATS = 80;
@@ -116,11 +116,13 @@ function buildGitStatusArgs(): string[] {
 
 const GIT_DISCOVERY_IGNORED_DIRS = new Set([
   '.cursor',
+  '.cxx',
   '.nexus',
   '.expo',
   '.git',
   '.gradle',
   '.hg',
+  '.kotlin',
   '.netlify',
   '.nuxt',
   '.output',
@@ -141,6 +143,7 @@ const GIT_DISCOVERY_IGNORED_DIRS = new Set([
   'coverage',
   'dist',
   'dist-electron',
+  'intermediates',
   'node_modules',
   'out',
   'release',
@@ -1491,12 +1494,14 @@ export function watchGitRepo(dirPath: string): void {
 
   try {
     const watcher = watch(resolved, { recursive: true }, (_event, filename) => {
-      if (typeof filename === 'string' && filename.length > 0) {
-        const changedPath = path.join(resolved, filename);
+      if (typeof filename !== 'string' || filename.length === 0) {
+        return;
+      }
 
-        if (shouldIgnoreWatchPath(resolved, changedPath)) {
-          return;
-        }
+      const changedPath = path.join(resolved, filename);
+
+      if (shouldIgnoreWatchPath(resolved, changedPath)) {
+        return;
       }
 
       scheduleNotify();

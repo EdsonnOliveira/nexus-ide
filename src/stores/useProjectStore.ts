@@ -129,6 +129,7 @@ function migrateProject(project: Project, fallbackWorkspaceId: string): Project 
     testEntries: (legacyProject.testEntries ?? []).map(migrateProjectTestEntry),
     agentGitGroups: legacyProject.agentGitGroups ?? [],
     agentResponseSkills: legacyProject.agentResponseSkills ?? [],
+    terminalQuickCommands: legacyProject.terminalQuickCommands ?? [],
     flag: legacyProject.flag ?? null,
   };
 }
