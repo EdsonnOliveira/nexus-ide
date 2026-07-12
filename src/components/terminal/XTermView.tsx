@@ -14,10 +14,13 @@ import '@xterm/xterm/css/xterm.css';
 import { TERMINAL_AGENTS } from '@/constants/terminalAgents';
 import { buildTerminalTheme } from '@/constants/terminalTheme';
 import { TerminalLinkContextMenu } from '@/components/terminal/TerminalLinkContextMenu';
-import type { TerminalAgent } from '@/types';
+import { TerminalPromptBadges } from '@/components/terminal/TerminalPromptBadges';
+import { TerminalCommandHistoryPopup } from '@/components/terminal/TerminalCommandHistoryPopup';
+import type { TerminalAgent, XTermViewHandle } from '@/types';
 import { saveScrollbackForPane } from '@/utils/persistTerminalSession';
 import { findUrlAtTerminalPosition, registerNexusTerminalLinks } from '@/utils/terminalLink';
 import { createTerminalOutputParser } from '@/utils/terminalStream';
+import type { TerminalPromptInfo } from '@/utils/terminalPromptInfo';
 import {
   createAgentReadyStreamDetector,
   createSettledCallback,
@@ -40,6 +43,10 @@ import { parseCdCommandLine } from '@/utils/terminalCwd';
 import { isOverlayBlockingTerminalHints } from '@/utils/overlayBlocking';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useTerminalPasteImageStore } from '@/stores/useTerminalPasteImageStore';
+import {
+  useShellCommandHistoryStore,
+  type ShellCommandHistoryEntry,
+} from '@/stores/useShellCommandHistoryStore';
 import { attachAgentPromptImageToPane } from '@/utils/attachAgentPromptImage';
 import { readClipboardImageDataUrl } from '@/utils/terminalClipboardImage';
 import {
@@ -50,8 +57,11 @@ import {
 } from '@/utils/terminalPasteImageTokens';
 import { readShellPromptInput, sanitizeAgentPrompt } from '@/utils/terminalShellPrompt';
 import { isProjectSwitching } from '@/utils/projectSwitch';
-import { readTerminalCellDimensions } from '@/utils/terminalBadgeMetrics';
-import type { XTermViewHandle } from '@/types';
+import {
+  computeCommandHistoryPosition,
+  computePromptBadgesPosition,
+  readTerminalCellDimensions,
+} from '@/utils/terminalBadgeMetrics';
 
 interface XTermViewProps {
   paneId: string;
@@ -381,12 +391,201 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
   const isVisibleRef = useRef(isVisible);
   const disposedRef = useRef(false);
   const scrollbackReplayGenerationRef = useRef(0);
+  const promptBadgesVisibleRef = useRef(false);
+  const syncPromptBadgesPositionRef = useRef<() => void>(() => undefined);
+  const commandHistoryOpenRef = useRef(false);
+  const commandHistoryIndexRef = useRef(0);
+  const commandHistoryDraftRef = useRef('');
+  const commandHistoryEntriesRef = useRef<ShellCommandHistoryEntry[]>([]);
+  const inputLineRef = useRef('');
+  const syncCommandHistoryPositionRef = useRef<() => void>(() => undefined);
+  const applyHistoryCommandRef = useRef<(command: string) => void>(() => undefined);
+  const closeCommandHistoryRef = useRef<(restoreDraft?: boolean) => void>(() => undefined);
+  const openOrNavigateCommandHistoryRef = useRef<(direction: 'up' | 'down') => boolean>(() => false);
   const [linkMenu, setLinkMenu] = useState<{ url: string; x: number; y: number } | null>(null);
+  const [promptInfo, setPromptInfo] = useState<TerminalPromptInfo | null>(null);
+  const [promptBadgesVisible, setPromptBadgesVisible] = useState(false);
+  const [promptBadgesPos, setPromptBadgesPos] = useState({ top: 0, left: 0 });
+  const [commandHistoryOpen, setCommandHistoryOpen] = useState(false);
+  const [commandHistoryIndex, setCommandHistoryIndex] = useState(0);
+  const [commandHistoryEntries, setCommandHistoryEntries] = useState<ShellCommandHistoryEntry[]>([]);
+  const [commandHistoryPos, setCommandHistoryPos] = useState({ top: 0, left: 0 });
 
   paneIdRef.current = paneId;
   restoreCommandRef.current = restoreCommand;
   isVisibleRef.current = isVisible;
   isAgentSessionRef.current = isAgentSession;
+
+  const syncPromptBadgesPosition = useCallback(() => {
+    const terminal = terminalRef.current;
+    const mount = containerRef.current;
+    const shell = mount?.parentElement;
+
+    if (
+      !terminal ||
+      !mount ||
+      !shell ||
+      !promptBadgesVisibleRef.current ||
+      isAgentSessionRef.current
+    ) {
+      return;
+    }
+
+    const next = computePromptBadgesPosition(shell, mount, terminal);
+
+    if (!next) {
+      return;
+    }
+
+    setPromptBadgesPos((prev) =>
+      prev.top === next.top && prev.left === next.left ? prev : next,
+    );
+  }, []);
+
+  syncPromptBadgesPositionRef.current = syncPromptBadgesPosition;
+
+  const syncCommandHistoryPosition = useCallback(() => {
+    const terminal = terminalRef.current;
+    const mount = containerRef.current;
+    const shell = mount?.parentElement;
+
+    if (!terminal || !mount || !shell || !commandHistoryOpenRef.current) {
+      return;
+    }
+
+    const next = computeCommandHistoryPosition(shell, mount, terminal);
+
+    if (!next) {
+      return;
+    }
+
+    setCommandHistoryPos((prev) =>
+      prev.top === next.top && prev.left === next.left ? prev : next,
+    );
+  }, []);
+
+  syncCommandHistoryPositionRef.current = syncCommandHistoryPosition;
+
+  const applyHistoryCommand = useCallback((command: string) => {
+    const ptyId = ptyIdRef.current;
+
+    if (!ptyId) {
+      return;
+    }
+
+    inputLineRef.current = command;
+    window.nexus.terminal.write(ptyId, `\x15${command}`);
+  }, []);
+
+  applyHistoryCommandRef.current = applyHistoryCommand;
+
+  const closeCommandHistory = useCallback((restoreDraft = false) => {
+    if (!commandHistoryOpenRef.current) {
+      return;
+    }
+
+    if (restoreDraft) {
+      applyHistoryCommandRef.current(commandHistoryDraftRef.current);
+    }
+
+    commandHistoryOpenRef.current = false;
+    commandHistoryIndexRef.current = 0;
+    commandHistoryEntriesRef.current = [];
+    setCommandHistoryOpen(false);
+    setCommandHistoryIndex(0);
+    setCommandHistoryEntries([]);
+  }, []);
+
+  closeCommandHistoryRef.current = closeCommandHistory;
+
+  const openOrNavigateCommandHistory = useCallback(
+    (direction: 'up' | 'down') => {
+      if (isAgentSessionRef.current || !promptBadgesVisibleRef.current) {
+        return false;
+      }
+
+      const entries = useShellCommandHistoryStore.getState().getEntries(projectPathRef.current);
+
+      if (entries.length === 0) {
+        return false;
+      }
+
+      if (!commandHistoryOpenRef.current) {
+        if (direction !== 'up') {
+          return false;
+        }
+
+        commandHistoryDraftRef.current = inputLineRef.current;
+        commandHistoryOpenRef.current = true;
+        commandHistoryIndexRef.current = 0;
+        commandHistoryEntriesRef.current = entries;
+        setCommandHistoryEntries(entries);
+        setCommandHistoryIndex(0);
+        setCommandHistoryOpen(true);
+        applyHistoryCommandRef.current(entries[0]?.command ?? '');
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            syncCommandHistoryPositionRef.current();
+          });
+        });
+        return true;
+      }
+
+      if (direction === 'up') {
+        const nextIndex = Math.min(
+          commandHistoryIndexRef.current + 1,
+          commandHistoryEntriesRef.current.length - 1,
+        );
+
+        if (nextIndex === commandHistoryIndexRef.current) {
+          return true;
+        }
+
+        commandHistoryIndexRef.current = nextIndex;
+        setCommandHistoryIndex(nextIndex);
+        applyHistoryCommandRef.current(commandHistoryEntriesRef.current[nextIndex]?.command ?? '');
+        return true;
+      }
+
+      if (commandHistoryIndexRef.current <= 0) {
+        closeCommandHistoryRef.current(true);
+        return true;
+      }
+
+      const nextIndex = commandHistoryIndexRef.current - 1;
+      commandHistoryIndexRef.current = nextIndex;
+      setCommandHistoryIndex(nextIndex);
+      applyHistoryCommandRef.current(commandHistoryEntriesRef.current[nextIndex]?.command ?? '');
+      return true;
+    },
+    [],
+  );
+
+  openOrNavigateCommandHistoryRef.current = openOrNavigateCommandHistory;
+
+  const handleSelectCommandHistoryIndex = useCallback(
+    (index: number) => {
+      const entry = commandHistoryEntriesRef.current[index];
+
+      if (!entry) {
+        return;
+      }
+
+      commandHistoryIndexRef.current = index;
+      setCommandHistoryIndex(index);
+      applyHistoryCommandRef.current(entry.command);
+      closeCommandHistoryRef.current(false);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (isAgentSession) {
+      promptBadgesVisibleRef.current = false;
+      setPromptBadgesVisible(false);
+      closeCommandHistoryRef.current(false);
+    }
+  }, [isAgentSession]);
 
   useImperativeHandle(
     ref,
@@ -649,13 +848,17 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       return;
     }
 
+    void document.fonts.load("13px 'FiraCode Nerd Font Mono'");
+    void document.fonts.load("13px 'Symbols Nerd Font Mono'");
+
     const terminal = new Terminal({
       cursorBlink: true,
       cursorStyle: 'bar',
       cursorWidth: 1,
-      fontFamily: 'SF Mono, Fira Code, Cascadia Code, Menlo, monospace',
+      fontFamily:
+        "'FiraCode Nerd Font Mono', 'Symbols Nerd Font Mono', Fira Code, SF Mono, Menlo, monospace",
       fontSize: 13,
-      lineHeight: 1.35,
+      lineHeight: 1.5,
       letterSpacing: 0,
       theme: buildTerminalTheme(agentRef.current),
       allowTransparency: true,
@@ -692,6 +895,23 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       );
     });
 
+    void document.fonts.ready.then(() => {
+      if (!canUseTerminal(terminal, disposedRef)) {
+        return;
+      }
+
+      terminal.refresh(0, terminal.rows - 1);
+      scheduleTerminalGeometrySync(
+        fitAddon,
+        terminal,
+        container,
+        ptyIdRef.current,
+        stickToBottomRef,
+        isVisibleRef.current,
+        disposedRef,
+      );
+    });
+
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
 
@@ -712,6 +932,49 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         }
       }
 
+      if (!isAgentSessionRef.current && promptBadgesVisibleRef.current) {
+        if (commandHistoryOpenRef.current && event.key === 'Escape') {
+          event.preventDefault();
+          closeCommandHistoryRef.current(true);
+          return false;
+        }
+
+        if (commandHistoryOpenRef.current && event.key === 'Enter') {
+          closeCommandHistoryRef.current(false);
+          return true;
+        }
+
+        if (event.key === 'ArrowUp') {
+          if (
+            !commandHistoryOpenRef.current &&
+            inputLineRef.current.length > 0
+          ) {
+            return true;
+          }
+
+          if (openOrNavigateCommandHistoryRef.current('up')) {
+            event.preventDefault();
+            return false;
+          }
+        }
+
+        if (event.key === 'ArrowDown' && commandHistoryOpenRef.current) {
+          event.preventDefault();
+          openOrNavigateCommandHistoryRef.current('down');
+          return false;
+        }
+
+        if (
+          commandHistoryOpenRef.current &&
+          event.key.length === 1 &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey
+        ) {
+          closeCommandHistoryRef.current(false);
+        }
+      }
+
       if (event.key === 'ArrowDown' && !hintsKeyboardActiveRef.current && onFocusHintsRef.current) {
         if (isOverlayBlockingTerminalHints()) {
           return true;
@@ -721,9 +984,9 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
           return true;
         }
 
-        const terminal = terminalRef.current;
+        const activeTerminal = terminalRef.current;
 
-        if (terminal && readShellPromptInput(terminal).length > 0) {
+        if (activeTerminal && readShellPromptInput(activeTerminal).length > 0) {
           return true;
         }
 
@@ -747,6 +1010,8 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       resizeFrameRef.current = window.requestAnimationFrame(() => {
         resizeFrameRef.current = null;
         fitTerminal(fitAddon, terminal, container, ptyIdRef.current, stickToBottomRef, isVisibleRef.current);
+        syncPromptBadgesPositionRef.current();
+        syncCommandHistoryPositionRef.current();
       });
     });
 
@@ -771,6 +1036,25 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         }
       },
       completeIfAwaiting,
+      (info) => {
+        if (isAgentSessionRef.current) {
+          return;
+        }
+
+        setPromptInfo(info);
+        promptBadgesVisibleRef.current = true;
+        setPromptBadgesVisible(true);
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            syncPromptBadgesPositionRef.current();
+          });
+        });
+      },
+      () => {
+        promptBadgesVisibleRef.current = false;
+        setPromptBadgesVisible(false);
+        closeCommandHistoryRef.current(false);
+      },
     );
 
     parseStreamRef.current = parseStream;
@@ -827,16 +1111,22 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       () => agentReadyDetector.reset(),
     );
 
-    let inputLine = '';
+    inputLineRef.current = '';
 
     const handleSubmittedLine = (line: string) => {
       const trimmed = line.trim();
+
+      closeCommandHistoryRef.current(false);
 
       if (trimmed) {
         stickToBottomRef.current = true;
 
         const session = useTerminalSessionStore.getState();
         const paneId = paneIdRef.current;
+
+        if (!isAgentSessionRef.current) {
+          useShellCommandHistoryStore.getState().push(projectPathRef.current, trimmed);
+        }
 
         if (shouldMarkAgentAwaiting(paneId, trimmed, session.activeAgentByPane)) {
           session.setLastCommand(paneId, trimmed);
@@ -867,6 +1157,8 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
 
     const scrollDisposable = terminal.onScroll(() => {
       stickToBottomRef.current = isTerminalAtBottom(terminal);
+      syncPromptBadgesPositionRef.current();
+      syncCommandHistoryPositionRef.current();
     });
 
     const unsubscribeData = window.nexus.terminal.onData((incomingPtyId, data) => {
@@ -890,6 +1182,13 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
 
       writeTerminalOutput(activeTerminal, parseStream(data), stickToBottomRef);
       scheduleSyncPasteImagesFromPromptRef.current(true);
+
+      if (promptBadgesVisibleRef.current) {
+        requestAnimationFrame(() => {
+          syncPromptBadgesPositionRef.current();
+          syncCommandHistoryPositionRef.current();
+        });
+      }
     });
 
     const unsubscribeExit = window.nexus.terminal.onExit((incomingPtyId, code) => {
@@ -917,27 +1216,27 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       for (const char of data) {
         if (char === '\r' || char === '\n') {
           const submittedLine = isAgentSessionRef.current
-            ? readShellPromptInput(terminal) || sanitizeAgentPrompt(inputLine)
-            : inputLine;
+            ? readShellPromptInput(terminal) || sanitizeAgentPrompt(inputLineRef.current)
+            : inputLineRef.current;
           handleSubmittedLine(submittedLine);
-          inputLine = '';
+          inputLineRef.current = '';
           scheduleSyncPasteImagesFromPromptRef.current(true);
           continue;
         }
 
         if (char === '\u007f') {
-          inputLine = inputLine.slice(0, -1);
+          inputLineRef.current = inputLineRef.current.slice(0, -1);
           scheduleSyncPasteImagesFromPromptRef.current(true);
           continue;
         }
 
         if (char === '\u0015') {
-          inputLine = '';
+          inputLineRef.current = '';
           continue;
         }
 
         if (char.charCodeAt(0) >= 32) {
-          inputLine += char;
+          inputLineRef.current += char;
         }
       }
     });
@@ -1261,6 +1560,19 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     requestTerminalRestart();
   }, [requestTerminalRestart]);
 
+  const handlePromptBadgeCommand = useCallback((command: string) => {
+    const activePtyId = ptyIdRef.current;
+    const trimmed = command.trim();
+
+    if (!activePtyId || !trimmed) {
+      return;
+    }
+
+    inputLineRef.current = '';
+    closeCommandHistoryRef.current(false);
+    window.nexus.terminal.write(activePtyId, `\x15${trimmed}\n`);
+  }, []);
+
   return (
     <>
       <div
@@ -1269,6 +1581,26 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         onMouseDown={handleContainerMouseDown}
       >
         <div ref={containerRef} className='terminal-panel__xterm-mount' />
+        {!isAgentSession ? (
+          <TerminalPromptBadges
+            info={promptInfo}
+            visible={promptBadgesVisible}
+            top={promptBadgesPos.top}
+            left={promptBadgesPos.left}
+            cwd={cwd}
+            onRunCommand={handlePromptBadgeCommand}
+          />
+        ) : null}
+        {!isAgentSession ? (
+          <TerminalCommandHistoryPopup
+            entries={commandHistoryEntries}
+            selectedIndex={commandHistoryIndex}
+            visible={commandHistoryOpen}
+            top={commandHistoryPos.top}
+            left={commandHistoryPos.left}
+            onSelectIndex={handleSelectCommandHistoryIndex}
+          />
+        ) : null}
       </div>
       {linkMenu ? (
         <TerminalLinkContextMenu

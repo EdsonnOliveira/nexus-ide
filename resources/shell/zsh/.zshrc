@@ -1,6 +1,3 @@
-typeset -g PROMPT='%~ %# '
-typeset -g RPROMPT=''
-
 export PATH="${HOME}/.local/bin:${HOME}/.cursor/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
 
 export STARSHIP_DISABLE=1
@@ -10,11 +7,19 @@ export DISABLE_UPDATE_PROMPT=true
 export OMZ_DISABLE_PROMPT_FIX=true
 export ZSH_THEME=''
 
-[[ -s "${HOME}/.nvm/nvm.sh" ]] && source "${HOME}/.nvm/nvm.sh"
-[[ -s "${HOME}/.cargo/env" ]] && source "${HOME}/.cargo/env"
-
 autoload -Uz add-zsh-hook colors
 colors
+
+PROMPT_EOL_MARK=''
+
+if [[ -f "${ZDOTDIR:-}/nexus-prompt.zsh" ]]; then
+  source "${ZDOTDIR}/nexus-prompt.zsh"
+elif [[ -f "${NEXUS_SHELL_DIR:-}/zsh/nexus-prompt.zsh" ]]; then
+  source "${NEXUS_SHELL_DIR}/zsh/nexus-prompt.zsh"
+fi
+
+[[ -s "${HOME}/.nvm/nvm.sh" ]] && source "${HOME}/.nvm/nvm.sh"
+[[ -s "${HOME}/.cargo/env" ]] && source "${HOME}/.cargo/env"
 
 _nexus_emit_cwd() {
   print -rn $'\x1eNEXUS_CWD\x1f'"${PWD}"$'\x1e'
@@ -28,11 +33,11 @@ cd() {
   fi
 }
 
-chpwd_functions=(_nexus_emit_cwd)
-precmd_functions=(_nexus_emit_cwd)
-
 TRAPWINCH() {
   zle && zle -R
 }
+
+add-zsh-hook precmd _nexus_emit_cwd
+add-zsh-hook chpwd _nexus_emit_cwd
 
 _nexus_emit_cwd

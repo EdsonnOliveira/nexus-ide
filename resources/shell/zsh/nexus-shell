@@ -9,6 +9,5 @@ export POWERLEVEL9K_INSTANT_PROMPT=off
 export DISABLE_UPDATE_PROMPT=true
 export OMZ_DISABLE_PROMPT_FIX=true
 export ZSH_THEME=''
-export PROMPT='%~ %# '
 export RPROMPT=''
 exec /bin/zsh --no-global-rcs -i "$@"

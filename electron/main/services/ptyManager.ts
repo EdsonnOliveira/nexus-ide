@@ -18,21 +18,49 @@ interface PtySession {
 const SCROLLBACK_LIMIT = 512 * 1024;
 
 function getAppRoot(): string {
-  if (app.isPackaged) {
-    const appPath = app.getAppPath();
+  const fromEnv = process.env.APP_ROOT;
+  const fromModule = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
-    if (appPath.endsWith('.asar')) {
-      return `${appPath}.unpacked`;
-    }
-
-    return appPath;
+  if (fromEnv && existsSync(path.join(fromEnv, 'resources/shell/zsh/nexus-shell'))) {
+    return fromEnv;
   }
 
-  return process.env.APP_ROOT || path.join(path.dirname(fileURLToPath(import.meta.url)), '../..');
+  if (app.isPackaged) {
+    const appPath = app.getAppPath();
+    const packagedRoot = appPath.endsWith('.asar') ? `${appPath}.unpacked` : appPath;
+
+    if (existsSync(path.join(packagedRoot, 'resources/shell/zsh/nexus-shell'))) {
+      return packagedRoot;
+    }
+  }
+
+  if (fromEnv) {
+    return fromEnv;
+  }
+
+  return fromModule;
 }
 
 function getShellResources(): string {
-  return path.join(getAppRoot(), 'resources/shell');
+  const candidates = [
+    path.join(getAppRoot(), 'resources/shell'),
+    process.env.APP_ROOT ? path.join(process.env.APP_ROOT, 'resources/shell') : '',
+    path.join(process.cwd(), 'resources/shell'),
+    path.join(app.getAppPath(), 'resources/shell'),
+    path.join(process.resourcesPath, 'app.asar.unpacked/resources/shell'),
+    path.join(process.resourcesPath, 'resources/shell'),
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '../../resources/shell'),
+  ].filter((value) => value.length > 0);
+
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate);
+
+    if (existsSync(path.join(resolved, 'zsh/nexus-shell'))) {
+      return resolved;
+    }
+  }
+
+  return path.resolve(path.join(getAppRoot(), 'resources/shell'));
 }
 
 function getZshConfigDir(): string {
@@ -59,6 +87,12 @@ const BLOCKED_ENV_KEYS = new Set([
 ]);
 
 function resolveShell(): string {
+  const zshConfigDir = getZshConfigDir();
+
+  if (existsSync(path.join(zshConfigDir, '.zshrc'))) {
+    return '/bin/zsh';
+  }
+
   const nexusZshWrapper = getNexusZshWrapper();
 
   if (existsSync(nexusZshWrapper)) {
@@ -126,7 +160,6 @@ function buildEnv(agent: TerminalAgent, shell: string): Record<string, string> {
   if (isZshShell(shell)) {
     nextEnv.ZDOTDIR = path.resolve(getZshConfigDir());
     nextEnv.NEXUS_SHELL_DIR = getShellResources();
-    nextEnv.PROMPT = '%~ %# ';
     nextEnv.RPROMPT = '';
   }
 
@@ -134,12 +167,7 @@ function buildEnv(agent: TerminalAgent, shell: string): Record<string, string> {
 }
 
 function buildShellArgs(shell: string): string[] {
-  const nexusZshWrapper = getNexusZshWrapper();
   const bashRcFile = getBashRcFile();
-
-  if (shell === nexusZshWrapper) {
-    return [];
-  }
 
   if (isBashShell(shell) && existsSync(bashRcFile)) {
     return ['--rcfile', bashRcFile, '-i'];

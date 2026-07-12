@@ -1025,6 +1025,7 @@ export interface NexusAPI {
     openDevTools: (guestWebContentsId: number, devtoolsWebContentsId: number) => Promise<void>;
     closeDevTools: (guestWebContentsId: number) => Promise<void>;
     captureScreenshot: (guestWebContentsId: number) => Promise<boolean>;
+    onOpenInTab: (callback: (url: string) => void) => () => void;
   };
   session: {
     getScrollback: (paneId: string) => Promise<string>;

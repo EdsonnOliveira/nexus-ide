@@ -41,6 +41,12 @@ export default defineConfig(({ command }) => {
         '@': path.join(__dirname, 'src'),
       },
     },
+    css: {
+      transformer: 'postcss',
+    },
+    build: {
+      cssMinify: 'esbuild',
+    },
     plugins: [
       react(),
       electronSimple({

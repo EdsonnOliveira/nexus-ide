@@ -156,7 +156,8 @@ function AppShellComponent() {
     projectsMigrated ? (activeProject?.path ?? null) : null,
   );
   const projectPaths = useMemo(() => projects.map((project) => project.path), [projects]);
-  const { openFileTab, openFilePreviewTab, openFileCodeTab, openDiffTab, selectPane } = useTabActions();
+  const { openFileTab, openFilePreviewTab, openFileCodeTab, openDiffTab, openBrowserTab, selectPane } =
+    useTabActions();
 
   const handleOpenExplorerFile = useCallback(
     (entry: { path: string; name: string }) => {
@@ -269,6 +270,18 @@ function AppShellComponent() {
 
     return unsubscribe;
   }, [nexusReady, toggleGlobalSearch]);
+
+  useEffect(() => {
+    if (!nexusReady) {
+      return;
+    }
+
+    const unsubscribe = window.nexus.browser.onOpenInTab((url) => {
+      void openBrowserTab(url);
+    });
+
+    return unsubscribe;
+  }, [nexusReady, openBrowserTab]);
 
   useEffect(() => {
     if (!nexusReady) {

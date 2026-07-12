@@ -1024,6 +1024,7 @@ function completeToolRun(
 function handleToolCallStarted(state: AgentStreamJsonParserState, toolCall: unknown): void {
   captureResponseLeadBeforeTools(state);
   sealActiveResponseSegment(state);
+  settleThought(state);
 
   if (!toolCall || typeof toolCall !== 'object') {
     return;
@@ -1352,7 +1353,9 @@ export function resolveStreamJsonStallLiveStatus(
   state: AgentStreamJsonParserState,
   idleMs: number,
 ): string | null {
-  if (findStreamingThoughtActivity(state)?.streaming) {
+  const streamingThought = findStreamingThoughtActivity(state);
+
+  if (streamingThought?.streaming && streamingThought.label.trim()) {
     return null;
   }
 
@@ -1368,6 +1371,10 @@ export function resolveStreamJsonStallLiveStatus(
 
   if (state.pendingResponseText.trim() || state.responseId) {
     return `Agent executando… (${idleSeconds}s)`;
+  }
+
+  if (streamingThought?.streaming && !streamingThought.label.trim()) {
+    return `Agent trabalhando… (${idleSeconds}s)`;
   }
 
   return `Aguardando resposta do agent… (${idleSeconds}s)`;

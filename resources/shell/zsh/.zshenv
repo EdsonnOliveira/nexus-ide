@@ -5,5 +5,5 @@ export DISABLE_UPDATE_PROMPT=true
 export OMZ_DISABLE_PROMPT_FIX=true
 export ZSH_THEME=''
 
-typeset -g PROMPT='%~ %# '
+typeset -g PROMPT='%# '
 typeset -g RPROMPT=''

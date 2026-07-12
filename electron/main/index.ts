@@ -346,7 +346,7 @@ function requestAppReloadFromShortcut(): void {
 }
 
 function requestBrowserReloadFromShortcut(): void {
-  win?.webContents.reload();
+  win?.webContents.send('app:browser-reload');
 }
 
 function openGlobalSearchFromShortcut(): void {
@@ -430,13 +430,23 @@ app.whenReady().then(() => {
   registerShortcuts();
 });
 
+function requestOpenBrowserTab(url: string): void {
+  if (!url.startsWith('https:') && !url.startsWith('http:')) {
+    return;
+  }
+
+  win?.webContents.send('browser:open-in-tab', url);
+}
+
 function registerWebviewHandlers(): void {
   app.on('web-contents-created', (_event, contents) => {
     if (contents.getType() !== 'webview') {
       return;
     }
 
-    attachBrowserWebviewContextMenu(contents);
+    attachBrowserWebviewContextMenu(contents, {
+      onOpenInAppTab: requestOpenBrowserTab,
+    });
 
     contents.on('before-input-event', (event, input) => {
       if (isBrowserReloadShortcut(input)) {
@@ -454,10 +464,7 @@ function registerWebviewHandlers(): void {
     });
 
     contents.setWindowOpenHandler(({ url }) => {
-      if (url.startsWith('https:') || url.startsWith('http:')) {
-        void shell.openExternal(url);
-      }
-
+      requestOpenBrowserTab(url);
       return { action: 'deny' };
     });
   });

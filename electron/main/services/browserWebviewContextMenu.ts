@@ -6,7 +6,14 @@ import {
   type WebContents,
 } from 'electron';
 
-export function attachBrowserWebviewContextMenu(contents: WebContents): void {
+type BrowserWebviewContextMenuOptions = {
+  onOpenInAppTab?: (url: string) => void;
+};
+
+export function attachBrowserWebviewContextMenu(
+  contents: WebContents,
+  options: BrowserWebviewContextMenuOptions = {},
+): void {
   contents.on('context-menu', (_event, params) => {
     const template: MenuItemConstructorOptions[] = [
       {
@@ -32,6 +39,12 @@ export function attachBrowserWebviewContextMenu(contents: WebContents): void {
           label: 'Abrir link',
           click: () => {
             void contents.loadURL(params.linkURL);
+          },
+        },
+        {
+          label: 'Abrir link em nova aba',
+          click: () => {
+            options.onOpenInAppTab?.(params.linkURL);
           },
         },
         {

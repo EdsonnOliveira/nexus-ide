@@ -245,14 +245,46 @@ function AgentActivityListComponent({
       .some((entry) => entry.kind === 'response');
   }, [visibleActivities]);
 
+  const hasProgressAfterThought = useMemo(() => {
+    const thoughtIndex = visibleActivities.findIndex((entry) => entry.kind === 'thought');
+
+    if (thoughtIndex === -1) {
+      return false;
+    }
+
+    return visibleActivities.slice(thoughtIndex + 1).some((entry) => {
+      if (entry.kind === 'response') {
+        return true;
+      }
+
+      if (entry.kind === 'file_read' || entry.kind === 'file_edit') {
+        return Boolean(entry.filePath?.trim());
+      }
+
+      if (entry.kind === 'tool_run') {
+        return Boolean(entry.label.trim() || entry.toolCommand?.trim());
+      }
+
+      if (entry.kind === 'live_status') {
+        return Boolean(entry.label.trim());
+      }
+
+      return false;
+    });
+  }, [visibleActivities]);
+
   const renderSingleActivity = (activity: AgentActivity): ReactNode => {
         if (activity.kind === 'thought') {
+          const collapseThought =
+            hasResponseAfterThought ||
+            (hasProgressAfterThought && !activity.label.trim());
+
           return (
             <AgentThoughtBlock
               key={activity.id}
               activity={activity}
-              defaultExpanded={!hasResponseAfterThought && !activity.collapsed}
-              forceCollapsed={hasResponseAfterThought}
+              defaultExpanded={!collapseThought && !activity.collapsed}
+              forceCollapsed={collapseThought}
             />
           );
         }

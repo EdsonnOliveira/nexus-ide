@@ -102,3 +102,80 @@ export function computeActiveBadgeLayer(
     visible: true,
   };
 }
+
+export function computePromptBadgesPosition(
+  shell: HTMLElement,
+  mount: HTMLElement,
+  terminal: Terminal,
+): { top: number; left: number } | null {
+  const cell = readTerminalCellDimensions(terminal, mount);
+  const screen = mount.querySelector('.xterm-screen');
+
+  if (!cell || !(screen instanceof HTMLElement)) {
+    return null;
+  }
+
+  const shellRect = shell.getBoundingClientRect();
+  const screenRect = screen.getBoundingClientRect();
+  const promptRowTop =
+    screenRect.top - shellRect.top + terminal.buffer.active.cursorY * cell.height;
+  const badgeHeight = 22;
+  const gapAbovePrompt = 10;
+
+  return {
+    top: Math.max(0, promptRowTop - gapAbovePrompt - badgeHeight),
+    left: screenRect.left - shellRect.left,
+  };
+}
+
+export function computeCommandHistoryPosition(
+  shell: HTMLElement,
+  mount: HTMLElement,
+  terminal: Terminal,
+): { top: number; left: number } | null {
+  const cell = readTerminalCellDimensions(terminal, mount);
+  const screen = mount.querySelector('.xterm-screen');
+
+  if (!cell || !(screen instanceof HTMLElement)) {
+    return null;
+  }
+
+  const shellRect = shell.getBoundingClientRect();
+  const screenRect = screen.getBoundingClientRect();
+  const promptRowBottom =
+    screenRect.top - shellRect.top + (terminal.buffer.active.cursorY + 1) * cell.height;
+
+  return {
+    top: promptRowBottom + 6,
+    left: screenRect.left - shellRect.left,
+  };
+}
+
+export function computeTerminalOverlayPosition(
+  shell: HTMLElement,
+  mount: HTMLElement,
+  terminal: Terminal,
+  rowOffsetFromCursor: number,
+): { top: number; left: number } | null {
+  const cell = readTerminalCellDimensions(terminal, mount);
+
+  if (!cell) {
+    return null;
+  }
+
+  const screen = mount.querySelector('.xterm-screen');
+
+  if (!(screen instanceof HTMLElement)) {
+    return null;
+  }
+
+  const row = Math.max(0, terminal.buffer.active.cursorY + rowOffsetFromCursor);
+  const shellRect = shell.getBoundingClientRect();
+  const screenRect = screen.getBoundingClientRect();
+  const badgeHeight = Math.min(22, cell.height);
+
+  return {
+    top: screenRect.top - shellRect.top + row * cell.height + Math.max(0, (cell.height - badgeHeight) / 2),
+    left: screenRect.left - shellRect.left,
+  };
+}

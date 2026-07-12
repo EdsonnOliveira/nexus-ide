@@ -256,6 +256,15 @@ const nexusApi = {
       ipcRenderer.invoke('browser:closeDevTools', guestWebContentsId),
     captureScreenshot: (guestWebContentsId: number): Promise<boolean> =>
       ipcRenderer.invoke('browser:captureScreenshot', guestWebContentsId),
+    onOpenInTab: (callback: (url: string) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, url: string) => {
+        if (typeof url === 'string' && url.length > 0) {
+          callback(url);
+        }
+      };
+      ipcRenderer.on('browser:open-in-tab', listener);
+      return () => ipcRenderer.off('browser:open-in-tab', listener);
+    },
   },
   session: {
     getScrollback: (paneId: string): Promise<string> =>

@@ -1,4 +1,8 @@
 import { createNexusCwdStreamParser } from '@/utils/terminalCwd';
+import {
+  createNexusPromptStreamParser,
+  type TerminalPromptInfo,
+} from '@/utils/terminalPromptInfo';
 
 const SOFT_INPUT_BG = '\x1b[48;2;28;28;32m';
 const SOFT_BORDER_FG = '\x1b[38;2;255;255;255m';
@@ -120,13 +124,22 @@ export function softenDarkTerminalBackgrounds(chunk: string): string {
 export function createTerminalOutputParser(
   onCwdChange: (cwd: string) => void,
   onShellPrompt?: () => void,
+  onPromptInfo?: (info: TerminalPromptInfo) => void,
+  onPromptHide?: () => void,
 ) {
   const parseCwd = createNexusCwdStreamParser((cwd) => {
     onCwdChange(cwd);
     onShellPrompt?.();
   });
 
-  return (chunk: string): string => softenDarkTerminalBackgrounds(parseCwd(chunk));
+  const parsePrompt = createNexusPromptStreamParser(
+    (info) => onPromptInfo?.(info),
+    () => onPromptHide?.(),
+  );
+
+  return (chunk: string): string =>
+    softenDarkTerminalBackgrounds(parsePrompt(parseCwd(chunk)));
 }
 
 export { SOFT_BORDER_FG, SOFT_INPUT_BG };
+export type { TerminalPromptInfo };

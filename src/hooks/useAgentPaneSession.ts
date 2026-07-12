@@ -1042,21 +1042,36 @@ export function useAgentPaneSession({
   const applyStreamJsonChunk = useCallback(
     (chunk: string): boolean => {
       if (chunk) {
-        hasStreamJsonChunkRef.current = true;
-        lastStreamJsonChunkAtRef.current = Date.now();
-        streamJsonStallLabelRef.current = '';
-        clearStreamJsonLiveStatus(streamJsonStateRef.current);
         clearStreamJsonSettleTimer();
       }
 
       const streamUpdate = feedAgentStreamJsonChunk(streamJsonStateRef.current, chunk);
+      const hasMeaningfulProgress =
+        streamUpdate.hasUpdate ||
+        streamUpdate.shouldFinalize ||
+        Boolean(streamUpdate.sessionId) ||
+        Boolean(streamUpdate.usage) ||
+        streamUpdate.shellToolEvents.length > 0;
+
+      let clearedStall = false;
+
+      if (hasMeaningfulProgress) {
+        hasStreamJsonChunkRef.current = true;
+        lastStreamJsonChunkAtRef.current = Date.now();
+
+        if (streamJsonStallLabelRef.current) {
+          streamJsonStallLabelRef.current = '';
+          clearStreamJsonLiveStatus(streamJsonStateRef.current);
+          clearedStall = true;
+        }
+      }
 
       if (streamUpdate.sessionId) {
         cursorAgentContinueRef.current = true;
         useTerminalSessionStore.getState().setResumeChatId(paneIdRef.current, streamUpdate.sessionId);
       }
 
-      if (streamUpdate.hasUpdate) {
+      if (streamUpdate.hasUpdate || clearedStall) {
         updateActiveTurn((turn) => ({
           ...turn,
           activities: streamJsonStateRef.current.activities.map((entry) => ({ ...entry })),
@@ -1076,7 +1091,7 @@ export function useAgentPaneSession({
         );
       }
 
-      if (chunk) {
+      if (chunk && hasMeaningfulProgress) {
         scheduleStreamJsonSettleCheck();
       }
 

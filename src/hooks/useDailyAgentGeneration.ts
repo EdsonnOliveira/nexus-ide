@@ -15,6 +15,7 @@ import {
 import {
   createAgentStreamJsonParserState,
   feedAgentStreamJsonChunk,
+  hasMeaningfulStreamJsonTurnOutput,
 } from '@/utils/agentStreamJsonParser';
 import { resolveDailyAgentFinalResponse } from '@/utils/dailyAgentResponse';
 import { buildDailyProjectMetaLabel } from '@/utils/buildDailyProjectMetaLabel';
@@ -31,11 +32,14 @@ export type {
   DailyGenerationContext,
 } from '@/utils/dailyAgentResultStore';
 
+const DAILY_AGENT_TIMEOUT_MS = 5 * 60 * 1000;
+
 interface ActiveDailyRun {
   tone: DailyResponseTone;
   paneId: string;
   unregister: () => void;
   runToken: string;
+  timeoutId: number | null;
 }
 
 function createLoadingResponses(): Record<DailyResponseTone, DailyAgentResultEntry> {
@@ -91,9 +95,28 @@ export function useDailyAgentGeneration(projects: Project[]) {
     syncCachedProjectIds();
   }, [projectIdsKey, projects, syncCachedProjectIds]);
 
+  const clearActiveRun = useCallback((tone: DailyResponseTone) => {
+    const activeRun = activeRunsRef.current.get(tone);
+
+    if (!activeRun) {
+      return;
+    }
+
+    if (activeRun.timeoutId !== null) {
+      window.clearTimeout(activeRun.timeoutId);
+    }
+
+    activeRun.unregister();
+    activeRunsRef.current.delete(tone);
+  }, []);
+
   const stopActiveRuns = useCallback(() => {
     if (window.nexus?.agentPrint) {
       for (const activeRun of activeRunsRef.current.values()) {
+        if (activeRun.timeoutId !== null) {
+          window.clearTimeout(activeRun.timeoutId);
+        }
+
         window.nexus.agentPrint.stop(activeRun.paneId);
         activeRun.unregister();
       }
@@ -106,13 +129,7 @@ export function useDailyAgentGeneration(projects: Project[]) {
 
   const finishRun = useCallback(
     (tone: DailyResponseTone) => {
-      const activeRun = activeRunsRef.current.get(tone);
-
-      if (activeRun) {
-        activeRun.unregister();
-        activeRunsRef.current.delete(tone);
-      }
-
+      clearActiveRun(tone);
       pendingRunsRef.current = Math.max(0, pendingRunsRef.current - 1);
 
       if (pendingRunsRef.current === 0) {
@@ -128,7 +145,7 @@ export function useDailyAgentGeneration(projects: Project[]) {
         });
       }
     },
-    [persistCurrentResult],
+    [clearActiveRun, persistCurrentResult],
   );
 
   const closeModal = useCallback(() => {
@@ -187,41 +204,103 @@ export function useDailyAgentGeneration(projects: Project[]) {
       const runToken = `${batchToken}:${tone}`;
       const paneId = `daily:${project.id}:${runToken}`;
       const parserState = createAgentStreamJsonParserState();
+      let settled = false;
+
+      const settle = (entry: DailyAgentResultEntry, options?: { stopProcess?: boolean }) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+
+        if (options?.stopProcess !== false) {
+          window.nexus.agentPrint.stop(paneId);
+        }
+
+        updateResponse(tone, entry);
+
+        if (entry.status === 'success' && entry.content.trim()) {
+          recordHomeDashboardActivity('prompts');
+          recordHomeDashboardActivity('agentExecutions');
+        }
+
+        finishRun(tone);
+      };
+
+      const completeFromParser = (fallbackError?: string) => {
+        feedAgentStreamJsonChunk(parserState, '');
+        const content = resolveDailyAgentFinalResponse(parserState);
+
+        if (content.trim()) {
+          settle({ content, status: 'success' });
+          return;
+        }
+
+        settle({
+          content: '',
+          status: 'error',
+          errorMessage: fallbackError ?? 'Não foi possível gerar a resposta.',
+        });
+      };
 
       const unregister = registerAgentPrintPaneHandlers(paneId, {
         onData: (_incomingPaneId, data, incomingRunToken) => {
-          if (incomingRunToken !== runToken) {
+          if (settled || incomingRunToken !== runToken) {
             return;
           }
 
-          feedAgentStreamJsonChunk(parserState, data);
+          const streamUpdate = feedAgentStreamJsonChunk(parserState, data);
+
+          if (
+            streamUpdate.shouldFinalize ||
+            (parserState.shouldFinalize && hasMeaningfulStreamJsonTurnOutput(parserState))
+          ) {
+            completeFromParser();
+          }
         },
         onDone: (_incomingPaneId, payload) => {
-          if (payload.runToken !== runToken) {
+          if (settled || payload.runToken !== runToken) {
             return;
           }
 
           feedAgentStreamJsonChunk(parserState, '');
-
           const content = resolveDailyAgentFinalResponse(parserState);
           const hasError = payload.code !== 0 || Boolean(payload.error);
 
-          updateResponse(tone, {
-            content,
-            status: hasError ? 'error' : 'success',
-            errorMessage:
-              hasError && !content
-                ? payload.error ?? 'Não foi possível gerar a resposta.'
-                : undefined,
-          });
+          if (content.trim()) {
+            settle(
+              {
+                content,
+                status: 'success',
+              },
+              { stopProcess: false },
+            );
+            return;
+          }
 
-          recordHomeDashboardActivity('prompts');
-          recordHomeDashboardActivity('agentExecutions');
-          finishRun(tone);
+          settle(
+            {
+              content: '',
+              status: 'error',
+              errorMessage:
+                hasError
+                  ? payload.error ?? 'Não foi possível gerar a resposta.'
+                  : 'Não foi possível gerar a resposta.',
+            },
+            { stopProcess: false },
+          );
         },
       });
 
-      activeRunsRef.current.set(tone, { tone, paneId, unregister, runToken });
+      const timeoutId = window.setTimeout(() => {
+        if (settled) {
+          return;
+        }
+
+        completeFromParser('A geração demorou demais e foi interrompida.');
+      }, DAILY_AGENT_TIMEOUT_MS);
+
+      activeRunsRef.current.set(tone, { tone, paneId, unregister, runToken, timeoutId });
 
       try {
         await window.nexus.agentPrint.start({
@@ -231,13 +310,12 @@ export function useDailyAgentGeneration(projects: Project[]) {
           runToken,
         });
       } catch (error) {
-        updateResponse(tone, {
+        settle({
           content: '',
           status: 'error',
           errorMessage:
             error instanceof Error ? error.message : 'Não foi possível iniciar o agent.',
         });
-        finishRun(tone);
       }
     },
     [finishRun, updateResponse],
@@ -262,7 +340,7 @@ export function useDailyAgentGeneration(projects: Project[]) {
       const batchToken = crypto.randomUUID();
 
       lastContextRef.current = options;
-      activeRunsRef.current.clear();
+      stopActiveRuns();
       pendingRunsRef.current = DAILY_RESPONSE_TONES.length;
 
       setRunningProjectId(options.project.id);
@@ -282,7 +360,7 @@ export function useDailyAgentGeneration(projects: Project[]) {
         ),
       );
     },
-    [runningProjectId, startToneRun],
+    [runningProjectId, startToneRun, stopActiveRuns],
   );
 
   const hasCachedResult = useCallback(
