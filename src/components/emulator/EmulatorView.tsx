@@ -631,7 +631,7 @@ function EmulatorViewComponent({
   }, [frameSize.height, frameSize.width, isRunning]);
 
   useEffect(() => {
-    if (sessionState !== 'running' || displaySizeRef.current) {
+    if (sessionState !== 'running') {
       return;
     }
 
@@ -641,10 +641,9 @@ function EmulatorViewComponent({
       return;
     }
 
-    let bestFit = { width: 0, height: 0 };
-    let lockTimeoutId = 0;
+    let frameId = 0;
 
-    const measureFit = () => {
+    const updateFit = () => {
       const bodyStyles = getComputedStyle(body);
       const paddingX =
         parseFloat(bodyStyles.paddingLeft) + parseFloat(bodyStyles.paddingRight);
@@ -661,37 +660,32 @@ function EmulatorViewComponent({
         return;
       }
 
-      if (nextFit.width > bestFit.width || nextFit.height > bestFit.height) {
-        bestFit = nextFit;
-      }
-    };
+      const current = displaySizeRef.current;
 
-    const lockDisplaySize = () => {
-      if (displaySizeRef.current || bestFit.width <= 0 || bestFit.height <= 0) {
+      if (
+        current &&
+        Math.abs(current.width - nextFit.width) < 2 &&
+        Math.abs(current.height - nextFit.height) < 2
+      ) {
         return;
       }
 
-      displaySizeRef.current = bestFit;
-      setDisplaySize(bestFit);
+      displaySizeRef.current = nextFit;
+      setDisplaySize(nextFit);
     };
 
-    const scheduleLock = () => {
-      window.clearTimeout(lockTimeoutId);
-      lockTimeoutId = window.setTimeout(lockDisplaySize, 320);
+    const scheduleFit = () => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(updateFit);
     };
 
-    measureFit();
-    scheduleLock();
+    scheduleFit();
 
-    const observer = new ResizeObserver(() => {
-      measureFit();
-      scheduleLock();
-    });
-
+    const observer = new ResizeObserver(scheduleFit);
     observer.observe(body);
 
     return () => {
-      window.clearTimeout(lockTimeoutId);
+      window.cancelAnimationFrame(frameId);
       observer.disconnect();
     };
   }, [frameSize.height, frameSize.width, sessionState]);
@@ -787,8 +781,7 @@ function EmulatorViewComponent({
                 {activeDeviceUdid ? (
                   <>
                     <span className='emulator-view__device-trigger-separator' aria-hidden>
-                      {' '}
-                      ·{' '}
+                      ·
                     </span>
                     <span className='emulator-view__device-trigger-udid'>{activeDeviceUdid}</span>
                   </>
@@ -811,8 +804,7 @@ function EmulatorViewComponent({
                   {deviceTriggerUdid ? (
                     <>
                       <span className='emulator-view__device-trigger-separator' aria-hidden>
-                        {' '}
-                        ·{' '}
+                        ·
                       </span>
                       <span className='emulator-view__device-trigger-udid'>{deviceTriggerUdid}</span>
                     </>
@@ -913,12 +905,12 @@ function EmulatorViewComponent({
           {isRunning ? (
             <button
               type='button'
-              className='emulator-view__action emulator-view__action--stop emulator-view__action--inline app-button app-button--enter'
+              className='emulator-view__action emulator-view__action--stop app-button app-button--enter'
               aria-label='Parar emulador'
               title='Parar'
               onClick={handleToggleSession}
             >
-              <Square size={14} strokeWidth={2} aria-hidden />
+              <Square size={12} strokeWidth={0} fill='currentColor' aria-hidden />
             </button>
           ) : null}
         </div>

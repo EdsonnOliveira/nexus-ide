@@ -13,6 +13,7 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { TERMINAL_AGENTS } from '@/constants/terminalAgents';
 import { buildTerminalTheme } from '@/constants/terminalTheme';
+import { TerminalCommandBlockMenu } from '@/components/terminal/TerminalCommandBlockMenu';
 import { TerminalLinkContextMenu } from '@/components/terminal/TerminalLinkContextMenu';
 import { TerminalPromptBadges } from '@/components/terminal/TerminalPromptBadges';
 import { TerminalCommandHistoryPopup } from '@/components/terminal/TerminalCommandHistoryPopup';
@@ -62,7 +63,12 @@ import {
   computePromptBadgesPosition,
   readTerminalCellDimensions,
 } from '@/utils/terminalBadgeMetrics';
-
+import {
+  computeCommandBlockMenuPosition,
+  findCommandBlockAtRow,
+  getTerminalCellPosition,
+  type TerminalCommandBlock,
+} from '@/utils/terminalCommandBlocks';
 interface XTermViewProps {
   paneId: string;
   projectPath: string;
@@ -410,6 +416,15 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
   const [commandHistoryIndex, setCommandHistoryIndex] = useState(0);
   const [commandHistoryEntries, setCommandHistoryEntries] = useState<ShellCommandHistoryEntry[]>([]);
   const [commandHistoryPos, setCommandHistoryPos] = useState({ top: 0, left: 0 });
+  const [commandBlockMenu, setCommandBlockMenu] = useState<{
+    block: TerminalCommandBlock;
+    top: number;
+    left: number;
+  } | null>(null);
+  const commandBlockMenuOpenRef = useRef(false);
+  const commandBlockMenuRef = useRef(commandBlockMenu);
+  const syncCommandBlockMenuPositionRef = useRef<() => void>(() => undefined);
+  commandBlockMenuRef.current = commandBlockMenu;
 
   paneIdRef.current = paneId;
   restoreCommandRef.current = restoreCommand;
@@ -465,6 +480,104 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
   }, []);
 
   syncCommandHistoryPositionRef.current = syncCommandHistoryPosition;
+
+  const syncCommandBlockMenuPosition = useCallback(() => {
+    const terminal = terminalRef.current;
+    const mount = containerRef.current;
+    const shell = mount?.parentElement;
+    const current = commandBlockMenuRef.current;
+
+    if (!terminal || !mount || !shell || !current) {
+      return;
+    }
+
+    const next = computeCommandBlockMenuPosition(shell, mount, terminal, current.block);
+
+    if (!next) {
+      if (!commandBlockMenuOpenRef.current) {
+        setCommandBlockMenu(null);
+      }
+
+      return;
+    }
+
+    setCommandBlockMenu((prev) => {
+      if (!prev) {
+        return prev;
+      }
+
+      if (prev.top === next.top && prev.left === next.left) {
+        return prev;
+      }
+
+      return { ...prev, top: next.top, left: next.left };
+    });
+  }, []);
+
+  syncCommandBlockMenuPositionRef.current = syncCommandBlockMenuPosition;
+
+  const handleCommandBlockMenuOpenChange = useCallback((open: boolean) => {
+    commandBlockMenuOpenRef.current = open;
+  }, []);
+
+  const handlePanelMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (isAgentSessionRef.current || commandBlockMenuOpenRef.current) {
+      return;
+    }
+
+    const terminal = terminalRef.current;
+    const mount = containerRef.current;
+    const shell = mount?.parentElement;
+
+    if (!terminal || !mount || !shell) {
+      return;
+    }
+
+    const position = getTerminalCellPosition(terminal, event.nativeEvent);
+
+    if (!position) {
+      setCommandBlockMenu(null);
+      return;
+    }
+
+    const block = findCommandBlockAtRow(terminal, position.row);
+
+    if (!block) {
+      setCommandBlockMenu(null);
+      return;
+    }
+
+    const nextPos = computeCommandBlockMenuPosition(shell, mount, terminal, block);
+
+    if (!nextPos) {
+      setCommandBlockMenu(null);
+      return;
+    }
+
+    setCommandBlockMenu((prev) => {
+      if (
+        prev &&
+        prev.block.startRow === block.startRow &&
+        prev.block.endRow === block.endRow &&
+        prev.block.command === block.command &&
+        prev.block.output === block.output &&
+        prev.top === nextPos.top &&
+        prev.left === nextPos.left
+      ) {
+        return prev;
+      }
+
+      return { block, top: nextPos.top, left: nextPos.left };
+    });
+  }, []);
+
+  const handlePanelMouseLeave = useCallback(() => {
+    if (commandBlockMenuOpenRef.current) {
+      return;
+    }
+
+    setCommandBlockMenu(null);
+  }, []);
 
   const applyHistoryCommand = useCallback((command: string) => {
     const ptyId = ptyIdRef.current;
@@ -584,6 +697,8 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       promptBadgesVisibleRef.current = false;
       setPromptBadgesVisible(false);
       closeCommandHistoryRef.current(false);
+      commandBlockMenuOpenRef.current = false;
+      setCommandBlockMenu(null);
     }
   }, [isAgentSession]);
 
@@ -1159,6 +1274,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       stickToBottomRef.current = isTerminalAtBottom(terminal);
       syncPromptBadgesPositionRef.current();
       syncCommandHistoryPositionRef.current();
+      syncCommandBlockMenuPositionRef.current();
     });
 
     const unsubscribeData = window.nexus.terminal.onData((incomingPtyId, data) => {
@@ -1579,6 +1695,8 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         className='terminal-panel__container'
         style={{ '--terminal-cursor': TERMINAL_AGENTS[agent].cursorColor } as CSSProperties}
         onMouseDown={handleContainerMouseDown}
+        onMouseMove={handlePanelMouseMove}
+        onMouseLeave={handlePanelMouseLeave}
       >
         <div ref={containerRef} className='terminal-panel__xterm-mount' />
         {!isAgentSession ? (
@@ -1599,6 +1717,17 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
             top={commandHistoryPos.top}
             left={commandHistoryPos.left}
             onSelectIndex={handleSelectCommandHistoryIndex}
+          />
+        ) : null}
+        {!isAgentSession && commandBlockMenu ? (
+          <TerminalCommandBlockMenu
+            visible
+            top={commandBlockMenu.top}
+            left={commandBlockMenu.left}
+            command={commandBlockMenu.block.command}
+            output={commandBlockMenu.block.output}
+            all={commandBlockMenu.block.all}
+            onOpenChange={handleCommandBlockMenuOpenChange}
           />
         ) : null}
       </div>

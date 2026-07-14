@@ -783,10 +783,15 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
   onUpdateAgentTab,
   onSplitRatioCommit,
 }: ProjectWorkspaceProps) {
-  const activeTabItem = useMemo(
-    () => resolveActiveTabBarItem(project.tabs, project.activeTabId),
-    [project.activeTabId, project.tabs],
-  );
+  const activeTabItem = useMemo(() => {
+    const resolved = resolveActiveTabBarItem(project.tabs, project.activeTabId);
+
+    if (resolved) {
+      return resolved;
+    }
+
+    return project.tabs[project.tabs.length - 1] ?? project.tabs[0] ?? null;
+  }, [project.activeTabId, project.tabs]);
 
   const isPaneVisibleForProject = useCallback(
     (paneId: string) => isPaneInActiveLayout(project, isProjectActive, paneId),

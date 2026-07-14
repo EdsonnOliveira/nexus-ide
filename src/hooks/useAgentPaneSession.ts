@@ -96,6 +96,7 @@ import { trimAgentTurnHistory, sanitizeAgentTurnHistory } from '@/utils/trimAgen
 import { shouldPreferLocalAgentTurnHistory } from '@/utils/paneAgentSession';
 import { writeDebugSessionLog } from '@/utils/debugSessionLog';
 import { useToastStore } from '@/stores/useToastStore';
+import { isAgentTurnSummaryVisible } from '@/utils/agentTurnSummary';
 
 const LAUNCH_COMMAND_DELAY_MS = 350;
 const PLAN_BODY_RESOLVE_MAX_ATTEMPTS = 8;
@@ -376,6 +377,51 @@ export function useAgentPaneSession({
     isSubmitting ||
     Boolean(agentPrintRunToken) ||
     (isAwaiting && isAgentBusy);
+
+  useEffect(() => {
+    if (!hasPendingPlan || isTurnRunning || isSubmitting) {
+      return;
+    }
+
+    const paneId = paneIdRef.current;
+    clearAgentPrintRunToken(paneId);
+    useTerminalSessionStore.getState().resetAgentWorkload(paneId);
+  }, [clearAgentPrintRunToken, hasPendingPlan, isSubmitting, isTurnRunning]);
+
+  useEffect(() => {
+    if (!isBusy || isTurnRunning || isSubmitting || hasPendingPlan || hasPendingQuestion) {
+      return;
+    }
+
+    const paneId = paneIdRef.current;
+    let cancelled = false;
+
+    const timeoutId = window.setTimeout(() => {
+      void window.nexus.agentPrint.isRunning(paneId).then((processRunning) => {
+        if (cancelled || processRunning) {
+          return;
+        }
+
+        clearAgentPrintRunToken(paneId);
+        const session = useTerminalSessionStore.getState();
+        session.takePendingLaunchCommand(paneId);
+        session.resetAgentWorkload(paneId);
+        setIsSubmitting(false);
+      });
+    }, 600);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    clearAgentPrintRunToken,
+    hasPendingPlan,
+    hasPendingQuestion,
+    isBusy,
+    isSubmitting,
+    isTurnRunning,
+  ]);
 
   const syncOutputTailFromScrollback = useCallback(async () => {
     const ptyId = ptyIdRef.current;
@@ -1429,6 +1475,7 @@ export function useAgentPaneSession({
   const stopAgent = useCallback((options?: { preserveFollowUps?: boolean }) => {
     const ptyId = ptyIdRef.current;
     const paneId = paneIdRef.current;
+    const session = useTerminalSessionStore.getState();
 
     submitAbortRef.current = true;
     submitInFlightRef.current = false;
@@ -1444,9 +1491,13 @@ export function useAgentPaneSession({
     approvalConfirmedTurnRef.current = null;
     clearApprovalConfirmTimer();
     resetAgentReadyDetectors(paneId);
+    streamJsonAutoRetryRef.current = false;
+
+    clearAgentPrintRunToken(paneId);
+    session.takePendingLaunchCommand(paneId);
+    session.resetAgentWorkload(paneId);
 
     if (usesStreamJson) {
-      clearAgentPrintRunToken(paneId);
       window.nexus.agentPrint.stop(paneId);
     }
 
@@ -1462,10 +1513,55 @@ export function useAgentPaneSession({
       suppressFollowUpFlushRef.current = true;
     }
 
-    finalizeActiveTurn(false, { force: true });
+    let finalizeGuard = 0;
+
+    while (turnsRef.current.some((turn) => turn.running) && finalizeGuard < 8) {
+      finalizeActiveTurn(false, { force: true });
+      finalizeGuard += 1;
+    }
+
+    const latestTurn = turnsRef.current[turnsRef.current.length - 1];
+
+    if (
+      latestTurn &&
+      !latestTurn.running &&
+      isAgentTurnSummaryVisible(latestTurn.summary) &&
+      !latestTurn.activities.some(
+        (entry) => entry.kind === 'response' && entry.label.trim().length > 0,
+      )
+    ) {
+      const fallbackLabel =
+        (latestTurn.summary?.editedFileCount ?? 0) > 0 ||
+        (latestTurn.summary?.commandCount ?? 0) > 0
+          ? 'Alterações aplicadas.'
+          : 'O agente encerrou sem uma resposta em texto.';
+
+      persistTurns(
+        turnsRef.current.map((turn, index) =>
+          index === turnsRef.current.length - 1
+            ? {
+                ...turn,
+                activities: [
+                  ...turn.activities,
+                  {
+                    id: crypto.randomUUID(),
+                    kind: 'response' as const,
+                    label: fallbackLabel,
+                    createdAt: Date.now(),
+                  },
+                ],
+              }
+            : turn,
+        ),
+        { flush: true },
+      );
+    }
+
     parserStateRef.current = createAgentTranscriptParserState();
     streamJsonStateRef.current = createAgentStreamJsonParserState();
-    useTerminalSessionStore.getState().resetAgentWorkload(paneId);
+    clearAgentPrintRunToken(paneId);
+    session.resetAgentWorkload(paneId);
+    setIsAgentReady(true);
 
     if (options?.preserveFollowUps) {
       suppressFollowUpFlushRef.current = false;
@@ -1474,7 +1570,15 @@ export function useAgentPaneSession({
     }
 
     return Boolean(ptyId) || usesStreamJson;
-  }, [clearAgentPrintRunToken, clearApprovalConfirmTimer, clearStreamJsonSettleTimer, finalizeActiveTurn, syncAgentReadyFromTail, usesStreamJson]);
+  }, [
+    clearAgentPrintRunToken,
+    clearApprovalConfirmTimer,
+    clearStreamJsonSettleTimer,
+    finalizeActiveTurn,
+    persistTurns,
+    syncAgentReadyFromTail,
+    usesStreamJson,
+  ]);
 
   const rollbackAgentFromTurn = useCallback(
     (turnId: string): boolean => {

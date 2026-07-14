@@ -1086,7 +1086,40 @@ input {
 }
 
 .home-dashboard__daily-section .home-dashboard__section-action {
-  width: min(100%, 260px);
+  width: auto;
+  max-width: none;
+  margin-left: auto;
+}
+
+.home-dashboard__daily-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  width: auto;
+  margin-left: auto;
+}
+
+.home-dashboard__daily-projects-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--card-accent) 28%, rgba(255, 255, 255, 0.08));
+  background: color-mix(in srgb, var(--card-accent) 8%, transparent);
+  color: color-mix(in srgb, var(--card-accent) 88%, white);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.home-dashboard__daily-projects-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--card-accent) 16%, rgba(255, 255, 255, 0.04));
+  border-color: color-mix(in srgb, var(--card-accent) 42%, rgba(255, 255, 255, 0.12));
+  color: color-mix(in srgb, var(--card-accent) 96%, white);
 }
 
 .home-dashboard__daily-section .home-dashboard__section-body {
@@ -1101,7 +1134,85 @@ input {
 }
 
 .home-dashboard__daily-select {
+  width: min(100%, 220px);
+  min-width: 160px;
+}
+
+.home-dashboard__daily-project-picker {
+  width: min(440px, calc(100vw - 32px));
+}
+
+.home-dashboard__daily-project-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: min(360px, 50vh);
+  overflow-y: auto;
+  margin-bottom: 12px;
+  padding-right: 2px;
+}
+
+.home-dashboard__daily-project-picker-select-all {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  margin-bottom: 2px;
+}
+
+.home-dashboard__daily-project-picker-select-all-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.home-dashboard__daily-project-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  text-align: left;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.home-dashboard__daily-project-picker-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.home-dashboard__daily-project-picker-item--active {
+  background: color-mix(in srgb, var(--accent) 10%, rgba(255, 255, 255, 0.04));
+}
+
+.home-dashboard__daily-project-picker-logo,
+.home-dashboard__daily-project-picker-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.home-dashboard__daily-project-picker-logo {
+  object-fit: cover;
+}
+
+.home-dashboard__daily-project-picker-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+}
+
+.home-dashboard__daily-project-picker-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .home-dashboard__daily-list {
@@ -9726,6 +9837,35 @@ body.workspace-split--resizing * {
   flex-wrap: wrap;
 }
 
+.terminal-command-block-menu__trigger {
+  position: absolute;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-sm, 6px);
+  background: rgba(28, 28, 32, 0.92);
+  color: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+}
+
+.terminal-command-block-menu__trigger:hover:not(:disabled) {
+  background: rgba(48, 48, 56, 0.96);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.terminal-command-block-menu__trigger[aria-expanded='true'] {
+  background: rgba(48, 48, 56, 0.96);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+
 .terminal-prompt-badge {
   pointer-events: auto;
   display: inline-flex;
@@ -13251,6 +13391,10 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   padding-right: 4px;
 }
 
+.emulator-view__device-bar--running .emulator-view__action--stop {
+  margin-left: auto;
+}
+
 .emulator-view__device-active {
   display: flex;
   align-items: center;
@@ -13263,15 +13407,6 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 
 .emulator-view__device-active .emulator-view__device-trigger-name {
   flex-shrink: 0;
-}
-
-.emulator-view__action--inline {
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  justify-content: center;
-  border-radius: 6px;
 }
 
 .emulator-view__device-trigger {
@@ -13308,6 +13443,7 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 .emulator-view__device-trigger-label {
   display: flex;
   align-items: center;
+  gap: 8px;
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -13324,7 +13460,9 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 
 .emulator-view__device-trigger-separator {
   flex-shrink: 0;
-  color: rgba(255, 255, 255, 0.35);
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  line-height: 1;
 }
 
 .emulator-view__device-trigger-udid {
@@ -13334,7 +13472,7 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   white-space: nowrap;
   font-family: var(--font-mono);
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(255, 255, 255, 0.55);
 }
 
 .emulator-view__device-trigger-icon {
@@ -13459,8 +13597,21 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   color: #6ee7b7;
 }
 
+.emulator-view__action--start.app-button:hover:not(:disabled) {
+  background: rgba(16, 185, 129, 0.22);
+  color: #a7f3d0;
+}
+
 .emulator-view__action--stop {
-  background: rgba(220, 38, 38, 0.18);
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+  background: rgba(239, 68, 68, 0.22);
+  color: #f87171;
+}
+
+.emulator-view__action--stop.app-button:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.34);
   color: #fca5a5;
 }
 
@@ -13660,7 +13811,7 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  padding: 8px;
   overflow: hidden;
 }
 
@@ -13906,6 +14057,11 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 
   .emulator-view__toolbar--running .emulator-view__stream-badge {
     order: 2;
+    margin-left: auto;
+  }
+
+  .emulator-view__toolbar--running .emulator-view__action--stop {
+    order: unset;
     margin-left: auto;
   }
 }

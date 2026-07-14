@@ -15,7 +15,7 @@ import {
   persistLeavingProjectState,
   resetProjectSwitchState,
 } from '@/utils/projectSwitch';
-import { findPaneTab, updatePaneInTabs } from '@/utils/tabGroups';
+import { findPaneTab, resolveFallbackActiveTabId, updatePaneInTabs } from '@/utils/tabGroups';
 import { shouldPreferLocalAgentTurnHistory } from '@/utils/paneAgentSession';
 import {
   restoreSidebarVideoSession,
@@ -109,28 +109,32 @@ function migrateLegacyGlobalWhatsAppLink(appState: AppState): AppState {
 
 function migrateProject(project: Project, fallbackWorkspaceId: string): Project {
   const legacyProject = project as Project & { layout?: unknown };
+  const { layout: legacyLayout, ...projectWithoutLegacyLayout } = legacyProject;
   const migrated = migrateLegacyProjectTabs(
-    legacyProject.tabs,
-    legacyProject.layout as never,
-    legacyProject.activeTabId,
-    legacyProject.path,
+    projectWithoutLegacyLayout.tabs,
+    legacyLayout as never,
+    projectWithoutLegacyLayout.activeTabId,
+    projectWithoutLegacyLayout.path,
   );
+  const tabs = trimAgentTurnsInTabBarItems(migrated.tabs);
+  const activeTabId = resolveFallbackActiveTabId(tabs, migrated.activeTabId);
 
   return {
-    ...legacyProject,
-    workspaceId: legacyProject.workspaceId ?? fallbackWorkspaceId,
-    iconCustomized: legacyProject.iconCustomized ?? legacyProject.icon.startsWith('preset:'),
-    tabs: trimAgentTurnsInTabBarItems(migrated.tabs),
-    activeTabId: migrated.activeTabId,
+    ...projectWithoutLegacyLayout,
+    workspaceId: projectWithoutLegacyLayout.workspaceId ?? fallbackWorkspaceId,
+    iconCustomized:
+      projectWithoutLegacyLayout.iconCustomized ?? projectWithoutLegacyLayout.icon.startsWith('preset:'),
+    tabs,
+    activeTabId,
     activePaneId: migrated.activePaneId,
-    automations: legacyProject.automations ?? [],
-    whatsappLink: legacyProject.whatsappLink ?? null,
-    mailInbox: legacyProject.mailInbox ?? null,
-    testEntries: (legacyProject.testEntries ?? []).map(migrateProjectTestEntry),
-    agentGitGroups: legacyProject.agentGitGroups ?? [],
-    agentResponseSkills: legacyProject.agentResponseSkills ?? [],
-    terminalQuickCommands: legacyProject.terminalQuickCommands ?? [],
-    flag: legacyProject.flag ?? null,
+    automations: projectWithoutLegacyLayout.automations ?? [],
+    whatsappLink: projectWithoutLegacyLayout.whatsappLink ?? null,
+    mailInbox: projectWithoutLegacyLayout.mailInbox ?? null,
+    testEntries: (projectWithoutLegacyLayout.testEntries ?? []).map(migrateProjectTestEntry),
+    agentGitGroups: projectWithoutLegacyLayout.agentGitGroups ?? [],
+    agentResponseSkills: projectWithoutLegacyLayout.agentResponseSkills ?? [],
+    terminalQuickCommands: projectWithoutLegacyLayout.terminalQuickCommands ?? [],
+    flag: projectWithoutLegacyLayout.flag ?? null,
   };
 }
 
@@ -203,11 +207,33 @@ async function migrateAppStateChunked(appState: AppState): Promise<AppState> {
   });
 }
 
-function applyState(set: (state: Partial<ProjectStoreState>) => void, appState: AppState) {
+function applyState(
+  set: (state: Partial<ProjectStoreState>) => void,
+  appState: AppState,
+  options?: { preserveActiveProjectId?: string | null },
+) {
+  const projects = appState.projects.map((project) => {
+    const activeTabId = resolveFallbackActiveTabId(project.tabs, project.activeTabId);
+
+    if (activeTabId === project.activeTabId) {
+      return project;
+    }
+
+    return { ...project, activeTabId };
+  });
+
+  const preservedActiveProjectId = options?.preserveActiveProjectId;
+  const activeProjectId =
+    preservedActiveProjectId && projects.some((project) => project.id === preservedActiveProjectId)
+      ? preservedActiveProjectId
+      : appState.activeProjectId && projects.some((project) => project.id === appState.activeProjectId)
+        ? appState.activeProjectId
+        : preservedActiveProjectId ?? appState.activeProjectId;
+
   set({
-    projects: appState.projects,
+    projects,
     workspaces: appState.workspaces,
-    activeProjectId: appState.activeProjectId,
+    activeProjectId,
     activeWorkspaceId: appState.activeWorkspaceId,
   });
 }
@@ -250,7 +276,12 @@ function scheduleProjectMigration(
 
       if (shouldPersistBadgeColors || shouldPersistTrimmedAgentHistory) {
         for (const project of appState.projects) {
+          const currentProject = get().projects.find((entry) => entry.id === project.id);
           const rawProject = rawState.projects.find((entry) => entry.id === project.id);
+
+          if (!currentProject) {
+            continue;
+          }
 
           if (
             !shouldPersistBadgeColors &&
@@ -259,7 +290,7 @@ function scheduleProjectMigration(
             continue;
           }
 
-          await window.nexus.projects.update(project.id, { tabs: project.tabs });
+          await window.nexus.projects.update(currentProject.id, { tabs: currentProject.tabs });
         }
       }
     } catch (error) {
@@ -448,7 +479,47 @@ function applyStatePreservingRuntime(
   appState: AppState,
   prev: AppState,
 ) {
-  applyState(set, preserveRuntimePtyIds(appState, prev));
+  applyState(set, preserveRuntimePtyIds(appState, prev), {
+    preserveActiveProjectId: prev.activeProjectId,
+  });
+}
+
+function reconcileOptimisticProjectUpdate(
+  appState: AppState,
+  optimisticProjects: Project[],
+  updatedId: string,
+): AppState {
+  return {
+    ...appState,
+    projects: appState.projects.map((project) => {
+      if (project.id !== updatedId) {
+        return project;
+      }
+
+      const optimisticProject = optimisticProjects.find((entry) => entry.id === updatedId);
+
+      if (!optimisticProject) {
+        return project;
+      }
+
+      const backendTabIds = new Set(project.tabs.map((tab) => tab.id));
+      const hasMissingOptimisticTab = optimisticProject.tabs.some((tab) => !backendTabIds.has(tab.id));
+
+      if (!hasMissingOptimisticTab && optimisticProject.tabs.length <= project.tabs.length) {
+        return project;
+      }
+
+      return {
+        ...project,
+        tabs: optimisticProject.tabs,
+        activeTabId: resolveFallbackActiveTabId(
+          optimisticProject.tabs,
+          optimisticProject.activeTabId,
+        ),
+        activePaneId: optimisticProject.activePaneId,
+      };
+    }),
+  };
 }
 
 function getWorkspaceProjects(projects: Project[], workspaceId: string | null): Project[] {
@@ -706,13 +777,29 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   },
   updateProject: async (id, data) => {
     const prevState = get();
+    const nextProjects = prevState.projects.map((project) => {
+      if (project.id !== id) {
+        return project;
+      }
+
+      const merged = { ...project, ...data };
+
+      return {
+        ...merged,
+        activeTabId: resolveFallbackActiveTabId(merged.tabs, merged.activeTabId ?? null),
+      };
+    });
+
+    set({ projects: nextProjects });
+
     await window.nexus.projects.update(id, data);
     const appState = migrateAppState(await window.nexus.projects.list());
-    applyStatePreservingRuntime(set, appState, prevState);
+    const reconciled = reconcileOptimisticProjectUpdate(appState, nextProjects, id);
+    applyStatePreservingRuntime(set, reconciled, { ...prevState, projects: nextProjects });
 
     if (data.agentGitGroups !== undefined) {
       const { hydrateAgentGitGroupsFromProjects } = await import('@/utils/persistAgentGitGroups');
-      hydrateAgentGitGroupsFromProjects(appState.projects);
+      hydrateAgentGitGroupsFromProjects(reconciled.projects);
     }
   },
   createWorkspace: async (name) => {

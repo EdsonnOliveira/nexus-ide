@@ -10,7 +10,6 @@ type AgentPlanReviewMode = 'pending' | 'archive';
 interface AgentPlanReviewDockProps {
   activity: AgentActivity;
   mode?: AgentPlanReviewMode;
-  isBusy?: boolean;
   onAccept?: (activityId: string) => boolean | Promise<boolean>;
   onReject?: (activityId: string) => boolean;
 }
@@ -18,7 +17,6 @@ interface AgentPlanReviewDockProps {
 interface PlanReviewBuildButtonProps {
   isBuilding: boolean;
   isSubmitting: boolean;
-  isBusy: boolean;
   isContentReady: boolean;
   isLoadingContent: boolean;
   onClick: () => void;
@@ -75,7 +73,6 @@ function resolvePlanArchiveStatusLabel(status: AgentPlanStatus | undefined): str
 function PlanReviewBuildButtonComponent({
   isBuilding,
   isSubmitting,
-  isBusy,
   isContentReady,
   isLoadingContent,
   onClick,
@@ -84,7 +81,7 @@ function PlanReviewBuildButtonComponent({
     <button
       type='button'
       className='agent-view__plan-review-build app-button app-button--enter'
-      disabled={isBusy || isSubmitting || isBuilding || !isContentReady}
+      disabled={isSubmitting || isBuilding || !isContentReady}
       onClick={onClick}
     >
       <span className='app-button__label'>
@@ -137,7 +134,6 @@ const PlanReviewBody = memo(PlanReviewBodyComponent);
 function AgentPlanReviewDockComponent({
   activity,
   mode = 'pending',
-  isBusy = false,
   onAccept,
   onReject,
 }: AgentPlanReviewDockProps) {
@@ -179,7 +175,7 @@ function AgentPlanReviewDockComponent({
   }, [activity.planUri, hasPlanContent, isPending]);
 
   const handleAccept = useCallback(() => {
-    if (!isPending || !onAccept || isBusy || isSubmitting || isBuilding || !isContentReady) {
+    if (!isPending || !onAccept || isSubmitting || isBuilding || !isContentReady) {
       return;
     }
 
@@ -192,15 +188,15 @@ function AgentPlanReviewDockComponent({
         setIsSubmitting(false);
       }
     })();
-  }, [activity.id, isBuilding, isBusy, isContentReady, isPending, isSubmitting, onAccept]);
+  }, [activity.id, isBuilding, isContentReady, isPending, isSubmitting, onAccept]);
 
   const handleReject = useCallback(() => {
-    if (!isPending || !onReject || isBusy || isSubmitting || isBuilding) {
+    if (!isPending || !onReject || isSubmitting || isBuilding) {
       return;
     }
 
     onReject(activity.id);
-  }, [activity.id, isBuilding, isBusy, isPending, isSubmitting, onReject]);
+  }, [activity.id, isBuilding, isPending, isSubmitting, onReject]);
 
   const handleOpenModal = useCallback(() => {
     setIsModalOpen(true);
@@ -220,7 +216,7 @@ function AgentPlanReviewDockComponent({
         return;
       }
 
-      if (isBusy || isSubmitting || isBuilding || !isContentReady) {
+      if (isSubmitting || isBuilding || !isContentReady) {
         return;
       }
 
@@ -233,7 +229,7 @@ function AgentPlanReviewDockComponent({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleAccept, isBuilding, isBusy, isContentReady, isPending, isSubmitting]);
+  }, [handleAccept, isBuilding, isContentReady, isPending, isSubmitting]);
 
   return (
     <>
@@ -250,7 +246,7 @@ function AgentPlanReviewDockComponent({
                 type='button'
                 className='agent-view__plan-review-dismiss app-button app-button--enter'
                 aria-label='Descartar plano'
-                disabled={isBusy || isSubmitting || isBuilding}
+                disabled={isSubmitting || isBuilding}
                 onClick={handleReject}
               >
                 <X size={14} strokeWidth={2.25} />
@@ -270,7 +266,7 @@ function AgentPlanReviewDockComponent({
                 type='button'
                 className='agent-view__plan-review-expand app-button app-button--enter'
                 aria-label='Abrir plano em tela cheia'
-                disabled={isPending && (isBusy || isSubmitting || isBuilding)}
+                disabled={isPending && (isSubmitting || isBuilding)}
                 onClick={handleOpenModal}
               >
                 <Maximize2 size={14} strokeWidth={2.25} />
@@ -278,7 +274,6 @@ function AgentPlanReviewDockComponent({
               {isPending ? (
                 <PlanReviewBuildButton
                   isBuilding={isBuilding}
-                  isBusy={isBusy}
                   isContentReady={isContentReady}
                   isLoadingContent={isLoadingPlanBody}
                   isSubmitting={isSubmitting}
@@ -324,7 +319,6 @@ function AgentPlanReviewDockComponent({
                   <div className='agent-plan-review-modal__build-float'>
                     <PlanReviewBuildButton
                       isBuilding={isBuilding}
-                      isBusy={isBusy}
                       isContentReady={isContentReady}
                       isLoadingContent={isLoadingPlanBody}
                       isSubmitting={isSubmitting}

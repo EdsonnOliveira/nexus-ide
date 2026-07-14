@@ -900,12 +900,12 @@ function AgentComposerComponent({
   );
 
   const handleSubmit = useCallback(() => {
-    if (interactionPending) {
+    if (canStop) {
+      onStop();
       return;
     }
 
-    if (canStop) {
-      onStop();
+    if (interactionPending) {
       return;
     }
 

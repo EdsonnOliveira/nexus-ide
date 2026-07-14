@@ -382,7 +382,6 @@ function AgentViewSessionComponent({
         {pendingPlanActivity && hasPendingPlan ? (
           <AgentPlanReviewDock
             activity={pendingPlanActivity}
-            isBusy={isBusy}
             onAccept={acceptPlan}
             onReject={handleRejectPlan}
           />

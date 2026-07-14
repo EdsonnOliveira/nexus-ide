@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { listChildDirectories } from './directoryListing';
 import { getInstalledCliAgentDefinitions } from './cliAgents';
 
 export interface TerminalCommandHint {
@@ -34,7 +33,6 @@ interface PackageJson {
 
 type PackageManager = 'yarn' | 'npm' | 'pnpm' | 'bun';
 
-const MAX_CD_HINTS = 5;
 const MAX_TOTAL_HINTS = 14;
 
 const ROOT_MARKERS = [
@@ -48,14 +46,6 @@ const ROOT_MARKERS = [
   'compose.yml',
   'compose.yaml',
 ];
-
-function buildCdCommand(folderName: string): string {
-  if (/^[a-zA-Z0-9._-]+$/.test(folderName)) {
-    return `cd ${folderName}\n`;
-  }
-
-  return `cd '${folderName.replace(/'/g, "'\\''")}'\n`;
-}
 
 export function findProjectRoot(startDir: string): string | null {
   let current = path.resolve(startDir);
@@ -176,6 +166,10 @@ function buildCliAgentHints(seen: Set<string>): TerminalCommandHint[] {
   const hints: TerminalCommandHint[] = [];
 
   for (const agent of getInstalledCliAgentDefinitions()) {
+    if (agent.command === 'cursor-agent') {
+      continue;
+    }
+
     pushHint(hints, seen, {
       id: `cli-${agent.id}`,
       badge: agent.badgeIcon,
@@ -183,21 +177,6 @@ function buildCliAgentHints(seen: Set<string>): TerminalCommandHint[] {
       badgeColor: agent.badgeColor,
       label: agent.label,
       command: `${agent.command}\n`,
-    });
-  }
-
-  return hints;
-}
-
-function buildCdHints(cwd: string, seen: Set<string>): TerminalCommandHint[] {
-  const hints: TerminalCommandHint[] = [];
-
-  for (const folderName of listChildDirectories(cwd).slice(0, MAX_CD_HINTS)) {
-    pushHint(hints, seen, {
-      id: `cd-${folderName}`,
-      badge: 'cd',
-      label: folderName,
-      command: buildCdCommand(folderName),
     });
   }
 
@@ -642,8 +621,6 @@ export function getTerminalHints(cwd: string): TerminalCommandHint[] {
   if (projectRoot) {
     hints.push(...buildProjectHints(projectRoot, seen));
   }
-
-  hints.push(...buildCdHints(resolvedCwd, seen));
 
   return hints.slice(0, MAX_TOTAL_HINTS);
 }

@@ -237,6 +237,21 @@ export function resolveActiveTabBarItem(
   return findSplitTabByPaneId(tabs, activeTabId);
 }
 
+export function resolveFallbackActiveTabId(
+  tabs: TabBarItem[],
+  activeTabId: string | null,
+): string | null {
+  if (tabs.length === 0) {
+    return null;
+  }
+
+  if (resolveActiveTabBarItem(tabs, activeTabId)) {
+    return activeTabId;
+  }
+
+  return tabs[tabs.length - 1]?.id ?? tabs[0]?.id ?? null;
+}
+
 export function collectProjectPanes(tabs: TabBarItem[]): Tab[] {
   const paneMap = new Map<string, Tab>();
 

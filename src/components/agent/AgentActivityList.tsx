@@ -366,6 +366,18 @@ function AgentActivityListComponent({
         return null;
   };
 
+  const emptyResponseFallback = useMemo(() => {
+    if (!summary) {
+      return 'O agente encerrou sem uma resposta em texto.';
+    }
+
+    if (summary.editedFileCount > 0 || summary.commandCount > 0) {
+      return 'Alterações aplicadas.';
+    }
+
+    return 'O agente encerrou sem uma resposta em texto.';
+  }, [summary]);
+
   return (
     <div className='agent-view__activities'>
       {activityChunks.map((chunk) => {
@@ -389,7 +401,12 @@ function AgentActivityListComponent({
         return <Fragment key={activity.id}>{renderSingleActivity(activity)}</Fragment>;
       })}
       {showSummary && summary && !hasVisibleResponse ? (
-        <AgentTurnSummaryLine summary={summary} projectPath={projectPath} />
+        <>
+          <div className='agent-view__response agent-view__response--settled app-button--enter'>
+            {emptyResponseFallback}
+          </div>
+          <AgentTurnSummaryLine summary={summary} projectPath={projectPath} />
+        </>
       ) : null}
       {running && visibleActivities.length === 0 ? (
         <div className='agent-view__status-line agent-view__status-line--live app-button--enter'>
