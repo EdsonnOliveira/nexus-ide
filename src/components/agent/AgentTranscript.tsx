@@ -15,6 +15,7 @@ interface AgentTranscriptProps {
   projectId: string;
   projectPath: string;
   paneId: string;
+  disableStickyPrompt?: boolean;
   onAtBottomChange?: (atBottom: boolean) => void;
   onEdit?: (turnId: string) => void;
   onRedo?: (turnId: string) => void;
@@ -116,6 +117,7 @@ function AgentTranscriptComponent({
   projectId,
   projectPath,
   paneId,
+  disableStickyPrompt = false,
   onAtBottomChange,
   onEdit,
   onRedo,
@@ -352,6 +354,7 @@ function AgentTranscriptComponent({
           projectId={projectId}
           projectPath={projectPath}
           paneId={paneId}
+          disableStickyPrompt={disableStickyPrompt}
           onEdit={onEdit}
           onRedo={onRedo}
           onSubmitQuestion={onSubmitQuestion}

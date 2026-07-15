@@ -57,6 +57,7 @@ import {
   getNotifiedWorkspaceIds,
   getRunningAgentWorkspaceIds,
 } from '@/utils/projectNotificationVisibility';
+import { filterProjectSurfaceNotifications } from '@/utils/homeDashboardAgents';
 import { getProjectPingTone } from '@/utils/projectPingTone';
 
 function ProjectSidebarComponent() {
@@ -94,8 +95,12 @@ function ProjectSidebarComponent() {
   });
   const setActiveProjectMailInbox = useProjectStore((state) => state.setActiveProjectMailInbox);
   const initialized = useProjectStore((state) => state.initialized);
-  const notifiedAgentPaneByProject = useProjectNotificationStore(
+  const notifiedAgentPaneByProjectRaw = useProjectNotificationStore(
     (state) => state.notifiedAgentPaneByProject,
+  );
+  const notifiedAgentPaneByProject = useMemo(
+    () => filterProjectSurfaceNotifications(notifiedAgentPaneByProjectRaw),
+    [notifiedAgentPaneByProjectRaw],
   );
   const awaitingResponseByPane = useTerminalSessionStore((state) => state.awaitingResponseByPane);
   const activeAgentByPane = useTerminalSessionStore((state) => state.activeAgentByPane);

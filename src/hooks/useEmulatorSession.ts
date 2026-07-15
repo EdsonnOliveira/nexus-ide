@@ -166,6 +166,8 @@ export function useEmulatorSession({
   isFocused,
   onUpdateTab,
 }: UseEmulatorSessionOptions): UseEmulatorSessionResult {
+  const onUpdateTabRef = useRef(onUpdateTab);
+  onUpdateTabRef.current = onUpdateTab;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamImgRef = useRef<HTMLImageElement | null>(null);
   const [setupStatus, setSetupStatus] = useState<EmulatorSetupStatus | null>(null);
@@ -249,45 +251,44 @@ export function useEmulatorSession({
     };
   }, [flushPendingMove, usesNativeStream]);
 
-  const applyAttachResult = useCallback(
-    (result: EmulatorAttachResult) => {
-      sessionIdRef.current = result.sessionId;
-      setSessionState(result.state);
-      setSessionMessage(result.message ?? null);
-      setIsStarting(result.state === 'booting');
+  const applyAttachResult = useCallback((result: EmulatorAttachResult) => {
+    sessionIdRef.current = result.sessionId;
+    setSessionState(result.state);
+    setSessionMessage(result.message ?? null);
+    setIsStarting(result.state === 'booting');
 
-      if (result.captureBackend) {
-        setCaptureBackend(result.captureBackend);
-      }
+    if (result.captureBackend) {
+      setCaptureBackend(result.captureBackend);
+    }
 
-      if (typeof result.targetFps === 'number') {
-        setTargetFps(result.targetFps);
-      }
+    if (typeof result.targetFps === 'number') {
+      setTargetFps(result.targetFps);
+    }
 
-      if (typeof result.streamFps === 'number') {
-        setStreamFps(result.streamFps);
-      }
+    if (typeof result.streamFps === 'number') {
+      setStreamFps(result.streamFps);
+    }
 
-      if (result.fallbackReason) {
-        setStreamFallbackReason(result.fallbackReason);
-      } else if (result.state === 'running') {
-        setStreamFallbackReason(null);
-      }
+    if (result.fallbackReason) {
+      setStreamFallbackReason(result.fallbackReason);
+    } else if (result.state === 'running') {
+      setStreamFallbackReason(null);
+    }
 
-      if (result.streamUrl) {
-        setStreamUrl(result.streamUrl);
-      }
+    if (result.streamUrl) {
+      setStreamUrl(result.streamUrl);
+    }
 
-      if (result.frameWidth && result.frameHeight) {
-        setFrameSize({ width: result.frameWidth, height: result.frameHeight });
-      }
-
-      onUpdateTab(tab.id, { sessionId: result.sessionId });
-    },
-    [onUpdateTab, tab.id],
-  );
+    if (result.frameWidth && result.frameHeight) {
+      setFrameSize({ width: result.frameWidth, height: result.frameHeight });
+    }
+  }, []);
 
   useEffect(() => {
+    if (!isRuntimeActive) {
+      return;
+    }
+
     let cancelled = false;
 
     void window.nexus.emulator.attachTab(tab.id).then((result) => {
@@ -296,12 +297,11 @@ export function useEmulatorSession({
       }
 
       if (!result) {
-        if (tab.sessionId) {
+        if (sessionIdRef.current) {
           sessionIdRef.current = null;
           setSessionState('stopped');
           setCaptureBackend(null);
           setStreamUrl(null);
-          onUpdateTab(tab.id, { sessionId: null });
         }
 
         return;
@@ -313,7 +313,7 @@ export function useEmulatorSession({
     return () => {
       cancelled = true;
     };
-  }, [applyAttachResult, onUpdateTab, tab.id]);
+  }, [applyAttachResult, isRuntimeActive, tab.id]);
 
   useEffect(() => {
     if (tab.sessionId) {
@@ -359,15 +359,15 @@ export function useEmulatorSession({
       }
 
       if (nextDevices[0]) {
-        onUpdateTab(tab.id, { deviceId: nextDevices[0].id });
+        onUpdateTabRef.current(tab.id, { deviceId: nextDevices[0].id });
         return;
       }
 
       if (tab.deviceId) {
-        onUpdateTab(tab.id, { deviceId: null });
+        onUpdateTabRef.current(tab.id, { deviceId: null });
       }
     },
-    [onUpdateTab, tab.deviceId, tab.id],
+    [tab.deviceId, tab.id],
   );
 
   const fetchDevices = useCallback(
@@ -520,11 +520,10 @@ export function useEmulatorSession({
       }
 
       sessionIdRef.current = payload.sessionId;
-      onUpdateTab(tab.id, { sessionId: payload.sessionId });
     });
 
     return unsubscribeCreated;
-  }, [onUpdateTab, tab.id]);
+  }, [tab.id]);
 
   useEffect(() => {
     if (!isRuntimeActive) {
@@ -704,10 +703,11 @@ export function useEmulatorSession({
 
       setDevices([]);
       setIsLoadingDevices(true);
-      onUpdateTab(tab.id, { platform, deviceId: null, sessionId: null });
+      sessionIdRef.current = null;
+      onUpdateTabRef.current(tab.id, { platform, deviceId: null, sessionId: null });
       setSessionState('stopped');
     },
-    [onUpdateTab, tab.id, tab.platform],
+    [tab.id, tab.platform],
   );
 
   const setDeviceId = useCallback(
@@ -720,12 +720,12 @@ export function useEmulatorSession({
         applyDeviceList(nextDevices);
       });
 
-      onUpdateTab(tab.id, {
+      onUpdateTabRef.current(tab.id, {
         deviceId,
         title: device ? `Emulador · ${device.name}` : tab.title,
       });
     },
-    [applyDeviceList, devices, onUpdateTab, tab.id, tab.platform, tab.title],
+    [applyDeviceList, devices, tab.id, tab.platform, tab.title],
   );
 
   const startSession = useCallback(async () => {
@@ -752,7 +752,7 @@ export function useEmulatorSession({
       const device = devices.find((entry) => entry.id === tab.deviceId);
 
       if (device) {
-        onUpdateTab(tab.id, { title: `Emulador · ${device.name}` });
+        onUpdateTabRef.current(tab.id, { title: `Emulador · ${device.name}` });
       }
 
       const sessionId = await window.nexus.emulator.start(tab.id, tab.platform, tab.deviceId);
@@ -763,7 +763,6 @@ export function useEmulatorSession({
       }
 
       sessionIdRef.current = sessionId;
-      onUpdateTab(tab.id, { sessionId });
     } catch (error) {
       if (generation !== startGenerationRef.current) {
         return;
@@ -773,7 +772,7 @@ export function useEmulatorSession({
       setSessionState('error');
       setSessionMessage(error instanceof Error ? error.message : 'Falha ao iniciar o emulador.');
     }
-  }, [devices, isStarting, onUpdateTab, tab.deviceId, tab.id, tab.platform]);
+  }, [devices, isStarting, tab.deviceId, tab.id, tab.platform]);
 
   useEffect(() => {
     if (
@@ -821,10 +820,9 @@ export function useEmulatorSession({
       scheduled: false,
     };
     pendingImageFrameRef.current = null;
-    onUpdateTab(tab.id, { sessionId: null });
 
     await window.nexus.emulator.stopByTabId(tab.id);
-  }, [onUpdateTab, tab.id]);
+  }, [tab.id]);
 
   const mapPointer = useCallback((event: React.PointerEvent<HTMLElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();

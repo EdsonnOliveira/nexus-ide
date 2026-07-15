@@ -699,6 +699,10 @@ export type MacParakeetStartCallResult =
       reason: 'unsupported' | 'not_installed' | 'unauthorized' | 'invalid_title' | 'create_failed';
     };
 
+export type MacParakeetTranslateConclusionResult =
+  | { ok: true; conclusion: string }
+  | { ok: false; reason: 'not_found' | 'empty' | 'unauthorized' | 'failed' };
+
 export type VercelDeploymentState =
   | 'READY'
   | 'ERROR'
@@ -1129,6 +1133,7 @@ export interface NexusAPI {
       forceRefresh?: boolean,
     ) => Promise<MacParakeetTranscriptionsSnapshot>;
     getTranscriptionDetail: (id: string) => Promise<MacParakeetTranscriptionDetail | null>;
+    translateConclusion: (id: string) => Promise<MacParakeetTranslateConclusionResult>;
     openApp: () => Promise<void>;
     startCallFromEvent: (title: string) => Promise<MacParakeetStartCallResult>;
     renameTranscriptionTitle: (

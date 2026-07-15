@@ -70,20 +70,26 @@ export function persistLeavingProjectState(projects: Project[], leavingProjectId
       const [
         { flushPendingTerminalSessionsToDisk, saveScrollbacksForProject },
         { flushAgentGitGroupsForLeavingProject },
+        { useProjectStore },
       ] = await Promise.all([
         import('@/utils/persistTerminalSession'),
         import('@/utils/persistAgentGitGroups'),
+        import('@/stores/useProjectStore'),
       ]);
 
-      await flushPendingTerminalSessionsToDisk(projects);
+      const latestProjects = useProjectStore.getState().projects;
+      const latestLeavingProject =
+        latestProjects.find((project) => project.id === leavingProjectId) ?? leavingProject;
+
+      await flushPendingTerminalSessionsToDisk(latestProjects);
       await Promise.all([
-        saveScrollbacksForProject(leavingProject),
-        flushAgentGitGroupsForLeavingProject(leavingProjectId, projects),
+        saveScrollbacksForProject(latestLeavingProject),
+        flushAgentGitGroupsForLeavingProject(leavingProjectId, latestProjects),
       ]);
-      await window.nexus.projects.update(leavingProject.id, {
-        tabs: leavingProject.tabs,
-        activeTabId: leavingProject.activeTabId,
-        activePaneId: leavingProject.activePaneId,
+      await window.nexus.projects.update(latestLeavingProject.id, {
+        tabs: latestLeavingProject.tabs,
+        activeTabId: latestLeavingProject.activeTabId,
+        activePaneId: latestLeavingProject.activePaneId,
       });
     } catch (error) {
       console.error('[project-switch] background persist failed', {

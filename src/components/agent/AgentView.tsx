@@ -17,6 +17,7 @@ export interface AgentViewProps {
   isVisible: boolean;
   isRuntimeActive: boolean;
   isFocused: boolean;
+  disableStickyPrompt?: boolean;
   onFocusPane: () => void;
   onPtyCreated: (ptyId: string) => void;
   onPtyLost: () => void;

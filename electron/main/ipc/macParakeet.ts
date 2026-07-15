@@ -6,6 +6,7 @@ import {
   openMacParakeetApp,
   renameMacParakeetTranscriptionTitle,
   startMacParakeetCallFromEvent,
+  translateMacParakeetTranscriptionConclusion,
 } from '../services/macParakeetTranscriptions';
 
 export function registerMacParakeetHandlers(): void {
@@ -16,6 +17,9 @@ export function registerMacParakeetHandlers(): void {
   );
   ipcMain.handle('macParakeet:getTranscriptionDetail', (_, id: string) =>
     getMacParakeetTranscriptionDetail(id),
+  );
+  ipcMain.handle('macParakeet:translateConclusion', (_, id: string) =>
+    translateMacParakeetTranscriptionConclusion(id),
   );
   ipcMain.handle('macParakeet:openApp', () => openMacParakeetApp());
   ipcMain.handle('macParakeet:startCallFromEvent', (_, title: string) =>

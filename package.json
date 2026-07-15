@@ -1,6 +1,6 @@
 {
   "name": "nexus-ide",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "private": true,
   "description": "Nexus IDE — AI-powered desktop IDE",
   "engines": {
@@ -38,12 +38,15 @@
     "macos-calendar": "file:native/macos-calendar",
     "material-icon-theme": "^5.35.0",
     "node-pty": "^1.0.0",
+    "vis-data": "^8.0.4",
+    "vis-network": "^10.1.0",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
     "@types/react": "^19.2.16",
     "@types/react-dom": "^19.2.3",
+    "@types/vis": "^4.21.27",
     "@vitejs/plugin-react": "^6.0.2",
     "electron": "^42.1.0",
     "electron-builder": "^26.8.1",

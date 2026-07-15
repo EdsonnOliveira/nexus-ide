@@ -1,10 +1,22 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { BookOpen, Check, ChevronDown, ChevronRight, FileText, Hexagon, Image, Plus } from 'lucide-react';
+import {
+  BookOpen,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  Hexagon,
+  Image,
+  MoreHorizontal,
+  Plus,
+  Trash2,
+} from 'lucide-react';
 import { AgentHintLeading } from '@/components/agent/AgentHintLeading';
 import {
   positionContextSubmenuWithinViewport,
   positionDropdownAboveAnchor,
+  positionDropdownBelowAnchor,
   useAnchoredDropdownMenu,
 } from '@/hooks/useAnchoredDropdownMenu';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
@@ -91,6 +103,13 @@ interface AgentComposerPlusMenuProps {
   onRunCommand: (command: string) => void;
   onAttachImage: () => void;
   onAttachFile: () => void;
+  onRemoveAgent?: () => void;
+  removeAgentLabel?: string;
+  triggerVariant?: 'plus' | 'more';
+  triggerClassName?: string;
+  ariaLabel?: string;
+  menuPlacement?: 'above' | 'below';
+  menuAlign?: 'start' | 'end';
 }
 
 function AgentComposerPlusMenuComponent({
@@ -100,6 +119,13 @@ function AgentComposerPlusMenuComponent({
   onRunCommand,
   onAttachImage,
   onAttachFile,
+  onRemoveAgent,
+  removeAgentLabel = 'Remover agent',
+  triggerVariant = 'plus',
+  triggerClassName,
+  ariaLabel = 'Adicionar contexto',
+  menuPlacement = 'above',
+  menuAlign = 'start',
 }: AgentComposerPlusMenuProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -180,15 +206,32 @@ function AgentComposerPlusMenuComponent({
     handleClose();
   }, [handleClose, onAttachFile]);
 
+  const handleRemoveAgent = useCallback(() => {
+    onRemoveAgent?.();
+    handleClose();
+  }, [handleClose, onRemoveAgent]);
+
+  const triggerClasses = [
+    triggerVariant === 'more' ? 'agent-view__composer-more' : 'agent-view__composer-add',
+    'app-button',
+    'app-button--enter',
+    open ? (triggerVariant === 'more' ? 'agent-view__composer-more--open' : 'agent-view__composer-add--open') : '',
+    triggerClassName ?? '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const triggerIcon =
+    triggerVariant === 'more' ? (
+      <MoreHorizontal size={16} strokeWidth={2} />
+    ) : (
+      <Plus size={16} strokeWidth={2} />
+    );
+
   if (!isVisible) {
     return (
-      <button
-        type='button'
-        className='agent-view__composer-add app-button app-button--enter'
-        aria-label='Adicionar contexto'
-        disabled
-      >
-        <Plus size={16} strokeWidth={2} />
+      <button type='button' className={triggerClasses} aria-label={ariaLabel} disabled>
+        {triggerIcon}
       </button>
     );
   }
@@ -198,13 +241,13 @@ function AgentComposerPlusMenuComponent({
       <button
         ref={triggerRef}
         type='button'
-        className={`agent-view__composer-add app-button app-button--enter${open ? ' agent-view__composer-add--open' : ''}`}
-        aria-label='Adicionar contexto'
+        className={triggerClasses}
+        aria-label={ariaLabel}
         aria-haspopup='menu'
         aria-expanded={open}
         onClick={handleToggle}
       >
-        <Plus size={16} strokeWidth={2} />
+        {triggerIcon}
       </button>
       {open && anchorRect
         ? createPortal(
@@ -219,10 +262,14 @@ function AgentComposerPlusMenuComponent({
               modelHints={filteredModels}
               skillHints={showSkillHints ? filteredSkills : []}
               activeAgentMode={activeAgentMode}
+              menuPlacement={menuPlacement}
+              menuAlign={menuAlign}
               onClose={handleClose}
               onSelect={handleSelect}
               onAttachImage={handleAttachImage}
               onAttachFile={handleAttachFile}
+              onRemoveAgent={onRemoveAgent ? handleRemoveAgent : undefined}
+              removeAgentLabel={removeAgentLabel}
             />,
             document.body,
           )
@@ -331,10 +378,14 @@ interface AgentComposerPlusMenuPanelProps {
   modelHints: TerminalCommandHint[];
   skillHints: TerminalCommandHint[];
   activeAgentMode: string;
+  menuPlacement: 'above' | 'below';
+  menuAlign: 'start' | 'end';
   onClose: () => void;
   onSelect: (command: string) => void;
   onAttachImage: () => void;
   onAttachFile: () => void;
+  onRemoveAgent?: () => void;
+  removeAgentLabel: string;
 }
 
 function AgentComposerPlusMenuPanelComponent({
@@ -348,15 +399,22 @@ function AgentComposerPlusMenuPanelComponent({
   modelHints,
   skillHints,
   activeAgentMode,
+  menuPlacement,
+  menuAlign,
   onClose,
   onSelect,
   onAttachImage,
   onAttachFile,
+  onRemoveAgent,
+  removeAgentLabel,
 }: AgentComposerPlusMenuPanelProps) {
   const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
     onClose,
-    (menu) => positionDropdownAboveAnchor(menu, anchorRect, 'start'),
-    [anchorRect],
+    (menu) =>
+      menuPlacement === 'below'
+        ? positionDropdownBelowAnchor(menu, anchorRect, menuAlign)
+        : positionDropdownAboveAnchor(menu, anchorRect, menuAlign),
+    [anchorRect, menuAlign, menuPlacement],
   );
 
   useEffect(() => {
@@ -442,6 +500,21 @@ function AgentComposerPlusMenuPanelComponent({
         items={skillHints}
         renderHintItem={renderHintItem}
       />
+      {onRemoveAgent &&
+      (!query.trim() ||
+        removeAgentLabel.toLowerCase().includes(query.trim().toLowerCase())) ? (
+        <>
+          <div className='context-menu__separator' />
+          <button
+            type='button'
+            className='context-menu__item context-menu__item--danger app-button'
+            onClick={onRemoveAgent}
+          >
+            <Trash2 size={14} strokeWidth={2} aria-hidden='true' />
+            <span>{removeAgentLabel}</span>
+          </button>
+        </>
+      ) : null}
     </div>
   );
 }

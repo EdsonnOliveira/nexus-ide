@@ -114,8 +114,21 @@ function applyTerminalGeometry(
   terminal: Terminal,
   mount: HTMLElement,
   ptyId: string | null,
+  disposedRef?: { current: boolean },
 ): void {
-  fitAddon.fit();
+  if (disposedRef?.current || !terminal.element) {
+    return;
+  }
+
+  try {
+    fitAddon.fit();
+  } catch {
+    return;
+  }
+
+  if (disposedRef?.current) {
+    return;
+  }
 
   const cell = readTerminalCellDimensions(terminal, mount);
   const viewportWidth = readTerminalViewportWidth(mount);
@@ -127,8 +140,12 @@ function applyTerminalGeometry(
   const cols = Math.max(2, Math.floor(viewportWidth / cell.width));
   const rows = Math.max(1, Math.floor(mount.clientHeight / cell.height));
 
-  if (cols !== terminal.cols || rows !== terminal.rows) {
-    terminal.resize(cols, rows);
+  try {
+    if (cols !== terminal.cols || rows !== terminal.rows) {
+      terminal.resize(cols, rows);
+    }
+  } catch {
+    return;
   }
 
   if (ptyId && terminal.cols > 0 && terminal.rows > 0) {
@@ -143,14 +160,19 @@ function fitTerminal(
   ptyId: string | null,
   stickToBottomRef: { current: boolean },
   isVisible: boolean,
+  disposedRef?: { current: boolean },
 ): void {
-  if (!isVisible) {
+  if (!isVisible || disposedRef?.current) {
     return;
   }
 
   const stickToBottom = stickToBottomRef.current;
 
-  applyTerminalGeometry(fitAddon, terminal, mount, ptyId);
+  applyTerminalGeometry(fitAddon, terminal, mount, ptyId, disposedRef);
+
+  if (disposedRef?.current) {
+    return;
+  }
 
   if (stickToBottom) {
     terminal.scrollToBottom();
@@ -184,11 +206,26 @@ function refreshTerminalDisplay(
   ptyId: string | null,
   stickToBottomRef: { current: boolean },
   isVisible: boolean,
+  disposedRef?: { current: boolean },
 ): void {
-  fitTerminal(fitAddon, terminal, mount, ptyId, stickToBottomRef, isVisible);
+  if (!terminal || disposedRef?.current) {
+    return;
+  }
 
-  if (terminal.rows > 0) {
+  if (disposedRef && !canUseTerminal(terminal, disposedRef)) {
+    return;
+  }
+
+  fitTerminal(fitAddon, terminal, mount, ptyId, stickToBottomRef, isVisible, disposedRef);
+
+  if (disposedRef?.current || terminal.rows <= 0) {
+    return;
+  }
+
+  try {
     terminal.refresh(0, terminal.rows - 1);
+  } catch {
+    return;
   }
 }
 
@@ -199,10 +236,23 @@ function scheduleTerminalDisplayRefresh(
   ptyId: string | null,
   stickToBottomRef: { current: boolean },
   isVisible: boolean,
+  disposedRef?: { current: boolean },
 ): void {
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      refreshTerminalDisplay(fitAddon, terminal, mount, ptyId, stickToBottomRef, isVisible);
+      if (disposedRef?.current) {
+        return;
+      }
+
+      refreshTerminalDisplay(
+        fitAddon,
+        terminal,
+        mount,
+        ptyId,
+        stickToBottomRef,
+        isVisible,
+        disposedRef,
+      );
     });
   });
 }
@@ -216,14 +266,30 @@ function scheduleTerminalGeometrySync(
   isVisible: boolean,
   disposedRef: { current: boolean },
 ): void {
-  scheduleTerminalDisplayRefresh(fitAddon, terminal, mount, ptyId, stickToBottomRef, isVisible);
+  scheduleTerminalDisplayRefresh(
+    fitAddon,
+    terminal,
+    mount,
+    ptyId,
+    stickToBottomRef,
+    isVisible,
+    disposedRef,
+  );
 
   void document.fonts.ready.then(() => {
     if (!canUseTerminal(terminal, disposedRef)) {
       return;
     }
 
-    refreshTerminalDisplay(fitAddon, terminal, mount, ptyId, stickToBottomRef, isVisible);
+    refreshTerminalDisplay(
+      fitAddon,
+      terminal,
+      mount,
+      ptyId,
+      stickToBottomRef,
+      isVisible,
+      disposedRef,
+    );
   });
 }
 
@@ -1124,7 +1190,20 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
 
       resizeFrameRef.current = window.requestAnimationFrame(() => {
         resizeFrameRef.current = null;
-        fitTerminal(fitAddon, terminal, container, ptyIdRef.current, stickToBottomRef, isVisibleRef.current);
+
+        if (!canUseTerminal(terminal, disposedRef)) {
+          return;
+        }
+
+        fitTerminal(
+          fitAddon,
+          terminal,
+          container,
+          ptyIdRef.current,
+          stickToBottomRef,
+          isVisibleRef.current,
+          disposedRef,
+        );
         syncPromptBadgesPositionRef.current();
         syncCommandHistoryPositionRef.current();
       });

@@ -20,10 +20,7 @@ import {
   applyAutoCalendarTitlesToTranscriptions,
   refreshAutoCalendarTitlesForItems,
 } from './macParakeetCalendarTitleMatch';
-import {
-  type MacParakeetConclusionTranslationContext,
-  translateMacParakeetConclusionToPortuguese,
-} from './macParakeetConclusionPt';
+import { translateMacParakeetConclusionToPortuguese } from './macParakeetConclusionPt';
 
 const PARAKEET_AI_API_URL = 'https://www.parakeet-ai.com';
 const PARAKEET_AI_DATA_DIR = join(homedir(), 'Library', 'Application Support', 'parakeetai-desktop');
@@ -585,63 +582,6 @@ function resolveConclusion(session: ParakeetAiCallSession): string | null {
   return null;
 }
 
-function buildConclusionTranslationContext(
-  sessionToken?: string | null,
-): MacParakeetConclusionTranslationContext | undefined {
-  const token = sessionToken ?? readParakeetAiSessionToken();
-  if (!token) {
-    return undefined;
-  }
-
-  return {
-    sessionToken: token,
-  };
-}
-
-async function resolveLocalizedConclusion(
-  session: ParakeetAiCallSession,
-  sessionToken?: string | null,
-): Promise<string | null> {
-  const conclusion = resolveConclusion(session);
-  if (!conclusion) {
-    return null;
-  }
-
-  return translateMacParakeetConclusionToPortuguese(
-    conclusion,
-    buildConclusionTranslationContext(sessionToken),
-  );
-}
-
-async function ensurePortugueseConclusion(
-  detail: MacParakeetTranscriptionDetail,
-  id?: string,
-  sessionToken?: string | null,
-): Promise<MacParakeetTranscriptionDetail> {
-  if (!detail.conclusion?.trim()) {
-    return detail;
-  }
-
-  const conclusion = await translateMacParakeetConclusionToPortuguese(
-    detail.conclusion,
-    buildConclusionTranslationContext(sessionToken),
-  );
-  if (conclusion === detail.conclusion) {
-    return detail;
-  }
-
-  const nextDetail = {
-    ...detail,
-    conclusion,
-  };
-
-  if (id) {
-    cacheTranscriptionDetail(id, nextDetail);
-  }
-
-  return nextDetail;
-}
-
 function resolveSnippet(session: ParakeetAiCallSession): string {
   const candidates = [session.shortDescription, session.description, session.notes];
 
@@ -660,28 +600,6 @@ function resolveSnippet(session: ParakeetAiCallSession): string {
   return '';
 }
 
-async function resolveLocalizedSnippet(
-  session: ParakeetAiCallSession,
-  sessionToken?: string | null,
-): Promise<string> {
-  const snippet = resolveSnippet(session);
-  if (!snippet) {
-    return '';
-  }
-
-  const source = snippet.endsWith('…') ? snippet.slice(0, -1).trimEnd() : snippet;
-  const translated = await translateMacParakeetConclusionToPortuguese(
-    source,
-    buildConclusionTranslationContext(sessionToken),
-  );
-
-  if (translated.length <= SNIPPET_FALLBACK_LENGTH) {
-    return translated;
-  }
-
-  return `${translated.slice(0, SNIPPET_FALLBACK_LENGTH).trimEnd()}…`;
-}
-
 function mapCallSession(session: ParakeetAiCallSession): MacParakeetTranscriptionItem {
   const subtitle = session.shortDescription?.trim() || session.description?.trim() || null;
 
@@ -696,23 +614,6 @@ function mapCallSession(session: ParakeetAiCallSession): MacParakeetTranscriptio
     isFavorite: false,
     isLive: isCallSessionLive(session),
   });
-}
-
-async function mapCallSessionLocalized(
-  session: ParakeetAiCallSession,
-  sessionToken?: string | null,
-): Promise<MacParakeetTranscriptionItem> {
-  const item = mapCallSession(session);
-  const snippet = await resolveLocalizedSnippet(session, sessionToken);
-
-  if (!snippet || snippet === item.snippet) {
-    return item;
-  }
-
-  return {
-    ...item,
-    snippet,
-  };
 }
 
 function buildTranscriptText(chunks: ParakeetAiTranscriptionChunk[]): string {
@@ -1024,13 +925,11 @@ export async function getMacParakeetTranscriptionsSnapshot(
       return emptySnapshot({ installed: true, available: false });
     }
 
-    let transcriptions = await Promise.all(
-      sessions
-        .slice()
-        .sort((left, right) => parseCreatedAtMs(right.createdAt) - parseCreatedAtMs(left.createdAt))
-        .slice(0, HOME_DASHBOARD_PARAKEET_LIMIT)
-        .map((session) => mapCallSessionLocalized(session, sessionToken)),
-    );
+    let transcriptions = sessions
+      .slice()
+      .sort((left, right) => parseCreatedAtMs(right.createdAt) - parseCreatedAtMs(left.createdAt))
+      .slice(0, HOME_DASHBOARD_PARAKEET_LIMIT)
+      .map((session) => mapCallSession(session));
 
     if (!forceRefresh) {
       transcriptions = await applyAutoCalendarTitlesToTranscriptions(sessions, transcriptions);
@@ -1074,7 +973,7 @@ export async function getMacParakeetTranscriptionDetail(
 
   const cachedDetail = readCachedTranscriptionDetail(trimmedId);
   if (cachedDetail) {
-    return ensurePortugueseConclusion(cachedDetail, trimmedId, sessionToken);
+    return cachedDetail;
   }
 
   const session = await fetchCallSessionById(trimmedId, sessionToken);
@@ -1100,13 +999,12 @@ export async function getMacParakeetTranscriptionDetail(
       .filter(Boolean)
       .join('\n\n');
 
-  const localizedItem = await mapCallSessionLocalized(session, sessionToken);
-  const [item] = await applyAutoCalendarTitlesToTranscriptions([session], [localizedItem]);
+  const [item] = await applyAutoCalendarTitlesToTranscriptions([session], [mapCallSession(session)]);
 
   const detail: MacParakeetTranscriptionDetail = {
     ...item,
     transcript,
-    conclusion: await resolveLocalizedConclusion(session, sessionToken),
+    conclusion: resolveConclusion(session),
     segments,
     sourceUrl: `${PARAKEET_AI_API_URL}/dashboard`,
   };
@@ -1116,6 +1014,53 @@ export async function getMacParakeetTranscriptionDetail(
   }
 
   return detail;
+}
+
+export type MacParakeetTranslateConclusionResult =
+  | { ok: true; conclusion: string }
+  | { ok: false; reason: 'not_found' | 'empty' | 'unauthorized' | 'failed' };
+
+export async function translateMacParakeetTranscriptionConclusion(
+  id: string,
+): Promise<MacParakeetTranslateConclusionResult> {
+  const trimmedId = id.trim();
+  if (!trimmedId || platform() !== 'darwin') {
+    return { ok: false, reason: 'not_found' };
+  }
+
+  const sessionToken = readParakeetAiSessionToken();
+  if (!sessionToken) {
+    return { ok: false, reason: 'unauthorized' };
+  }
+
+  const detail = await getMacParakeetTranscriptionDetail(trimmedId);
+  if (!detail) {
+    return { ok: false, reason: 'not_found' };
+  }
+
+  const sourceConclusion = detail.conclusion?.trim() ?? '';
+  if (!sourceConclusion) {
+    return { ok: false, reason: 'empty' };
+  }
+
+  try {
+    const conclusion = await translateMacParakeetConclusionToPortuguese(sourceConclusion, {
+      sessionToken,
+    });
+
+    if (!conclusion.trim()) {
+      return { ok: false, reason: 'failed' };
+    }
+
+    cacheTranscriptionDetail(trimmedId, {
+      ...detail,
+      conclusion,
+    });
+
+    return { ok: true, conclusion };
+  } catch {
+    return { ok: false, reason: 'failed' };
+  }
 }
 
 export function renameMacParakeetTranscriptionTitle(

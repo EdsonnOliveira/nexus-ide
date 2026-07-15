@@ -3266,17 +3266,13 @@ export function useAgentPaneSession({
   ]);
 
   useEffect(() => {
-    registerAgentPaneHandlers(paneIdRef.current, {
+    return registerAgentPaneHandlers(paneIdRef.current, {
       submit: submitPrompt,
       stop: stopAgent,
       write: appendDraft,
       runCommand,
       redo: redoAgentTurn,
     });
-
-    return () => {
-      registerAgentPaneHandlers(paneIdRef.current, null);
-    };
   }, [appendDraft, redoAgentTurn, runCommand, stopAgent, submitPrompt, tab.id]);
 
   return {

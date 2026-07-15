@@ -19,6 +19,7 @@ import {
   findPaneTab,
   findSplitTabByPaneId,
   mergeTabItems,
+  removePaneFromSplit,
   renameTabBarItem,
   resolveActiveTabBarItem,
   unsplitTabItems,
@@ -36,6 +37,7 @@ import { updateSplitRatioAtPath } from '@/utils/splitLayout';
 export interface TabStoreActions {
   addTab: (type: TabType) => Promise<void>;
   addAgentTab: (command: string) => Promise<void>;
+  addAgentTabForProject: (projectId: string, command: string) => Promise<string | null>;
   replaceAgentTab: (tabId: string) => Promise<void>;
   resumeAgentHistorySession: (tabId: string, chatId: string, projectPath: string) => Promise<void>;
   openBrowserTab: (url: string) => Promise<void>;
@@ -47,6 +49,7 @@ export interface TabStoreActions {
     options: { staged: boolean; untracked?: boolean; repoPath?: string; agentPrompt?: string },
   ) => Promise<void>;
   closeTab: (tabId: string) => Promise<void>;
+  closeTabForProject: (projectId: string, tabId: string) => Promise<void>;
   closeAllTabs: () => Promise<void>;
   selectTab: (tabId: string) => Promise<void>;
   selectPane: (paneId: string) => Promise<void>;
@@ -276,6 +279,40 @@ export function useTabActions(): TabStoreActions {
         activeTabId: tabId,
         activePaneId: null,
       });
+    },
+    addAgentTabForProject: async (projectId, command) => {
+      const project = useProjectStore.getState().projects.find((entry) => entry.id === projectId);
+
+      if (!project) {
+        return null;
+      }
+
+      const tabId = crypto.randomUUID();
+      const badgeColorIndex = createBadgeColorIndex(project.tabs);
+      const trimmed = command.trim();
+      const cliAgent = extractCliAgentCommand(trimmed) ?? terminalAgentToCli('cursor');
+      const nextTab: AgentTab = {
+        id: tabId,
+        title: `Agent ${countPanesByType(project.tabs, 'agent') + 1}`,
+        type: 'agent',
+        cliAgent,
+        ptyId: null,
+        messages: [],
+        turns: [],
+        restoreCommand: trimmed || cliAgent,
+        workingDirectory: resolveAgentPaneRootPath(project.path),
+        badgeColorIndex,
+      };
+
+      useTerminalSessionStore.getState().setPendingLaunchCommand(tabId, trimmed || cliAgent);
+
+      await updateProject(project.id, {
+        tabs: [...project.tabs, nextTab],
+        activeTabId: tabId,
+        activePaneId: null,
+      });
+
+      return tabId;
     },
     replaceAgentTab: async (tabId) => {
       const project = getProjectSnapshot();
@@ -763,6 +800,61 @@ export function useTabActions(): TabStoreActions {
         tabs: nextTabs,
         activeTabId,
         activePaneId: null,
+      });
+    },
+    closeTabForProject: async (projectId, tabId) => {
+      const project = useProjectStore.getState().projects.find((entry) => entry.id === projectId);
+
+      if (!project) {
+        return;
+      }
+
+      const closingTab = project.tabs.find((item) => item.id === tabId);
+
+      if (closingTab) {
+        if (isTabPinned(closingTab)) {
+          return;
+        }
+
+        killTabBarItem(closingTab);
+
+        const nextTabs = project.tabs.filter((item) => item.id !== tabId);
+        const activeTabId =
+          project.activeTabId === tabId ? (nextTabs[0]?.id ?? null) : project.activeTabId;
+
+        await updateProject(project.id, {
+          tabs: nextTabs,
+          activeTabId,
+          activePaneId: project.activePaneId === tabId ? null : project.activePaneId,
+        });
+        return;
+      }
+
+      const splitTab = findSplitTabByPaneId(project.tabs, tabId);
+
+      if (!splitTab) {
+        return;
+      }
+
+      const pane = splitTab.panes.find((entry) => entry.id === tabId);
+
+      if (!pane) {
+        return;
+      }
+
+      killTabBarItem(pane);
+
+      const nextTabs = removePaneFromSplit(project.tabs, splitTab.id, tabId);
+      const splitStillExists = nextTabs.some((item) => item.id === splitTab.id);
+      const activeTabId =
+        project.activeTabId === splitTab.id && !splitStillExists
+          ? (nextTabs[0]?.id ?? null)
+          : project.activeTabId;
+
+      await updateProject(project.id, {
+        tabs: nextTabs,
+        activeTabId,
+        activePaneId: project.activePaneId === tabId ? null : project.activePaneId,
       });
     },
     closeAllTabs: async () => {

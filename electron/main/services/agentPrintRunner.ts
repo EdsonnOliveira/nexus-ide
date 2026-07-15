@@ -44,11 +44,11 @@ function resolveAgentPrintCwd(cwd: string): string {
 
   if (trimmed) {
     try {
-      if (fs.statSync(trimmed).isDirectory()) {
-        return trimmed;
+      const resolved = path.resolve(trimmed);
+      if (fs.statSync(resolved).isDirectory()) {
+        return resolved;
       }
     } catch {
-      // fall through
     }
   }
 
@@ -79,12 +79,20 @@ class AgentPrintRunner {
     this.stop(options.paneId);
 
     const runToken = options.runToken;
-    const args = ['-p', '--output-format', 'stream-json', '--trust', '--force'];
+    const resolvedCwd = resolveAgentPrintCwd(options.cwd);
+    const args = [
+      '-p',
+      '--output-format',
+      'stream-json',
+      '--trust',
+      '--force',
+      '--workspace',
+      resolvedCwd,
+    ];
     const resumeChatId = options.resumeChatId?.trim();
 
     if (resumeChatId) {
       args.push('--resume', resumeChatId);
-      args.push('--workspace', resolveAgentPrintCwd(options.cwd));
     } else if (options.continueSession) {
       args.push('--continue');
     }
@@ -104,7 +112,6 @@ class AgentPrintRunner {
     }
 
     const executable = resolveCursorAgentExecutable();
-    const resolvedCwd = resolveAgentPrintCwd(options.cwd);
     const child = spawn(executable, args, {
       cwd: resolvedCwd,
       env: { ...process.env, PATH: buildCliPathEnv() },

@@ -8,6 +8,7 @@ type AgentPaneStop = () => boolean;
 type AgentPaneWrite = (text: string) => boolean;
 type AgentPaneRunCommand = (command: string) => boolean;
 type AgentPaneRedo = (turnId: string) => boolean | Promise<boolean>;
+type AgentPaneAttach = () => void;
 
 interface AgentPaneHandlers {
   submit: AgentPaneSubmit;
@@ -17,15 +18,25 @@ interface AgentPaneHandlers {
   redo: AgentPaneRedo;
 }
 
+interface AgentPaneAttachHandlers {
+  image: AgentPaneAttach;
+  file: AgentPaneAttach;
+}
+
 const handlersByPane = new Map<string, AgentPaneHandlers>();
+const attachHandlersByPane = new Map<string, AgentPaneAttachHandlers>();
 
-export function registerAgentPaneHandlers(paneId: string, handlers: AgentPaneHandlers | null): void {
-  if (!handlers) {
-    handlersByPane.delete(paneId);
-    return;
-  }
-
+export function registerAgentPaneHandlers(
+  paneId: string,
+  handlers: AgentPaneHandlers,
+): () => void {
   handlersByPane.set(paneId, handlers);
+
+  return () => {
+    if (handlersByPane.get(paneId) === handlers) {
+      handlersByPane.delete(paneId);
+    }
+  };
 }
 
 export function registerAgentPaneSubmit(paneId: string, submit: AgentPaneSubmit | null): void {
@@ -80,4 +91,38 @@ export async function redoAgentPaneTurn(paneId: string, turnId: string): Promise
 
 export function hasAgentPaneSubmit(paneId: string): boolean {
   return handlersByPane.has(paneId);
+}
+
+export function registerAgentPaneAttach(
+  paneId: string,
+  handlers: AgentPaneAttachHandlers | null,
+): void {
+  if (!handlers) {
+    attachHandlersByPane.delete(paneId);
+    return;
+  }
+
+  attachHandlersByPane.set(paneId, handlers);
+}
+
+export function attachAgentPaneImage(paneId: string): boolean {
+  const handler = attachHandlersByPane.get(paneId)?.image;
+
+  if (!handler) {
+    return false;
+  }
+
+  handler();
+  return true;
+}
+
+export function attachAgentPaneFile(paneId: string): boolean {
+  const handler = attachHandlersByPane.get(paneId)?.file;
+
+  if (!handler) {
+    return false;
+  }
+
+  handler();
+  return true;
 }

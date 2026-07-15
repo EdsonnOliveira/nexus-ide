@@ -19,6 +19,7 @@ import { useSystemNotifications } from '@/hooks/useSystemNotifications';
 import { useSystemStatus } from '@/hooks/useSystemStatus';
 import { useTitleBarClock } from '@/hooks/useTitleBarClock';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
+import { filterProjectSurfaceNotifications } from '@/utils/homeDashboardAgents';
 import { closeAllAnchoredDropdowns } from '@/utils/overlayBlocking';
 import { getRecentSystemNotificationCount } from '@/utils/notificationRelativeTime';
 import { startBatteryAlertSoundLoop, stopBatteryAlertSoundLoop } from '@/utils/batteryAlertSound';
@@ -40,7 +41,8 @@ function TitleBarComponent() {
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
 
   const hasNotifications = useMemo(() => {
-    const agentCount = Object.keys(notifiedAgentPaneByProject).length;
+    const agentCount = Object.keys(filterProjectSurfaceNotifications(notifiedAgentPaneByProject))
+      .length;
     const systemCount = getRecentSystemNotificationCount(systemNotifications.items);
 
     return agentCount > 0 || systemCount > 0;

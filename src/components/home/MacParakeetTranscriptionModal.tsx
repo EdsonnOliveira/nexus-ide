@@ -1,4 +1,4 @@
-import { CalendarDays, Check, Clock, Copy, ListTodo, Loader2, MessageSquareText, Mic, Pencil, Sparkles, Timer, X } from 'lucide-react';
+import { CalendarDays, Check, Clock, Copy, Languages, ListTodo, Loader2, MessageSquareText, Mic, Pencil, Sparkles, Timer, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgentResponseCopyPill } from '@/components/agent/AgentResponseCopyPill';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
@@ -23,8 +23,10 @@ interface MacParakeetTranscriptionTitleProps {
 interface MacParakeetTranscriptionModalProps {
   detail: MacParakeetTranscriptionDetail;
   detailLoading?: boolean;
+  translating?: boolean;
   onClose: () => void;
   onRenameTitle: (id: string, title: string) => Promise<string | null>;
+  onTranslateConclusion: () => void;
   onCreateTask: () => void;
   createTaskDisabled?: boolean;
 }
@@ -224,8 +226,10 @@ const MacParakeetTranscriptionTitle = memo(MacParakeetTranscriptionTitleComponen
 function MacParakeetTranscriptionModalComponent({
   detail,
   detailLoading = false,
+  translating = false,
   onClose,
   onRenameTitle,
+  onTranslateConclusion,
   onCreateTask,
   createTaskDisabled = false,
 }: MacParakeetTranscriptionModalProps) {
@@ -238,6 +242,7 @@ function MacParakeetTranscriptionModalComponent({
   const hasTranscription =
     !detailLoading && detail.segments.some((segment) => segment.kind === 'speech');
   const hasConclusion = !detailLoading && Boolean(detail.conclusion?.trim());
+  const canTranslate = hasConclusion && !detailLoading && !translating;
 
   const timeline = useMemo(
     () => detail.segments.filter((segment) => segment.kind === 'speech'),
@@ -363,6 +368,23 @@ function MacParakeetTranscriptionModalComponent({
 
           <div className='macparakeet-transcription-modal__footer'>
             <AgentResponseCopyPill content={copyContent} nexusGo />
+            <button
+              type='button'
+              className='agent-view__response-pill agent-view__response-copy app-button app-button--enter nexus-go-surface macparakeet-transcription-modal__translate'
+              aria-label='Traduzir conclusão para português'
+              disabled={!canTranslate}
+              onClick={() => {
+                setActiveTab('conclusion');
+                onTranslateConclusion();
+              }}
+            >
+              <span className='agent-view__response-copy-icon' aria-hidden='true'>
+                {translating ? <Loader2 size={12} className='macparakeet-transcription-modal__translate-spinner' /> : <Languages size={12} />}
+              </span>
+              <span className='agent-view__response-copy-label'>
+                {translating ? 'Traduzindo...' : 'Traduzir'}
+              </span>
+            </button>
             <button
               type='button'
               className='agent-view__response-pill agent-view__response-copy app-button app-button--enter nexus-go-surface macparakeet-transcription-modal__create-task'

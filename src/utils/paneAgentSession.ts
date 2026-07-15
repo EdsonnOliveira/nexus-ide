@@ -1,6 +1,7 @@
 import type { AgentTurn, Project } from '@/types';
+import { readHomeAgentMap } from '@/utils/homeDashboardAgents';
 import { isAgentTurnActivelyRunning } from '@/utils/projectAgentStatus';
-import { collectProjectPanes } from '@/utils/tabGroups';
+import { collectProjectPanes, findPaneTab } from '@/utils/tabGroups';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 
 function turnHasResponse(turn: AgentTurn): boolean {
@@ -109,7 +110,7 @@ export function projectHasLiveAgentSession(
       return true;
     }
 
-    if (session.agentPrintRunTokenByPane[pane.id]) {
+    if (isPaneAgentSessionLive(pane.id, session)) {
       return true;
     }
   }
@@ -132,12 +133,27 @@ export function resolveHostedAgentProjects(
     }
   }
 
+  const homeAgentMap = activeProjectId === null ? readHomeAgentMap() : null;
+
   for (const project of projects) {
     if (project.id === activeProjectId) {
       continue;
     }
 
     if (projectHasLiveAgentSession(project, session)) {
+      hostedIds.add(project.id);
+      continue;
+    }
+
+    if (!homeAgentMap) {
+      continue;
+    }
+
+    const homePaneIds = homeAgentMap[project.id] ?? [];
+
+    if (
+      homePaneIds.some((homePaneId) => findPaneTab(project.tabs, homePaneId)?.type === 'agent')
+    ) {
       hostedIds.add(project.id);
     }
   }

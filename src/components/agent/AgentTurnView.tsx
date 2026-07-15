@@ -14,6 +14,7 @@ interface AgentTurnViewProps {
   projectId: string;
   projectPath: string;
   paneId: string;
+  disableStickyPrompt?: boolean;
   onEdit?: (turnId: string) => void;
   onRedo?: (turnId: string) => void;
   onSubmitQuestion?: (activityId: string, answers: AgentQuestionAnswers) => boolean | Promise<boolean>;
@@ -28,6 +29,7 @@ function AgentTurnViewComponent({
   projectId,
   projectPath,
   paneId,
+  disableStickyPrompt = false,
   onEdit,
   onRedo,
   onSubmitQuestion,
@@ -46,7 +48,7 @@ function AgentTurnViewComponent({
       ),
     [turn.activities],
   );
-  const stickyPromptActive = !hasPendingInteractive;
+  const stickyPromptActive = !disableStickyPrompt && !hasPendingInteractive;
   const { isStuck: isPromptStuck, phase: stickyPhase } = useStickyPromptState(
     stickySentinelRef,
     scrollContainerRef,

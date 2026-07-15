@@ -17,6 +17,7 @@ import {
 } from '@/utils/projectSwitch';
 import { findPaneTab, resolveFallbackActiveTabId, updatePaneInTabs } from '@/utils/tabGroups';
 import { shouldPreferLocalAgentTurnHistory } from '@/utils/paneAgentSession';
+import { readHomeAgentMap } from '@/utils/homeDashboardAgents';
 import {
   restoreSidebarVideoSession,
   toPersistedSidebarVideoSession,
@@ -43,7 +44,7 @@ function hasMissingBadgeColorIndex(tabs: TabBarItem[]): boolean {
 
 export type ExplorerView = 'tree' | 'git';
 
-export type SidePanel = 'explorer' | 'passwords' | 'automations' | 'tasks' | 'tests' | null;
+export type SidePanel = 'explorer' | 'passwords' | 'automations' | 'tasks' | 'tests' | 'brain' | null;
 
 interface ProjectStoreState {
   projects: Project[];
@@ -79,6 +80,7 @@ interface ProjectStoreState {
   toggleAutomations: () => void;
   toggleTasks: () => void;
   toggleTests: () => void;
+  toggleBrain: () => void;
   setSidePanel: (panel: SidePanel | 'git') => void;
   startSidebarVideoSession: (session: SidebarVideoSession, lastLink?: string) => Promise<void>;
   setSidebarVideoLastLink: (link: string | null) => Promise<void>;
@@ -222,13 +224,36 @@ function applyState(
     return { ...project, activeTabId };
   });
 
+  const hasPreservedActiveProjectId = Boolean(
+    options && 'preserveActiveProjectId' in options,
+  );
   const preservedActiveProjectId = options?.preserveActiveProjectId;
-  const activeProjectId =
-    preservedActiveProjectId && projects.some((project) => project.id === preservedActiveProjectId)
-      ? preservedActiveProjectId
-      : appState.activeProjectId && projects.some((project) => project.id === appState.activeProjectId)
-        ? appState.activeProjectId
-        : preservedActiveProjectId ?? appState.activeProjectId;
+  let activeProjectId: string | null;
+
+  if (hasPreservedActiveProjectId) {
+    if (preservedActiveProjectId === null) {
+      activeProjectId = null;
+    } else if (
+      preservedActiveProjectId &&
+      projects.some((project) => project.id === preservedActiveProjectId)
+    ) {
+      activeProjectId = preservedActiveProjectId;
+    } else if (
+      appState.activeProjectId &&
+      projects.some((project) => project.id === appState.activeProjectId)
+    ) {
+      activeProjectId = appState.activeProjectId;
+    } else {
+      activeProjectId = null;
+    }
+  } else if (
+    appState.activeProjectId &&
+    projects.some((project) => project.id === appState.activeProjectId)
+  ) {
+    activeProjectId = appState.activeProjectId;
+  } else {
+    activeProjectId = appState.activeProjectId;
+  }
 
   set({
     projects,
@@ -440,17 +465,97 @@ function mergeAgentTurnsIntoTabs(
   });
 }
 
+function mergeMissingHomeBoundAgentTabs(
+  nextProjects: Project[],
+  prevProjects: Project[],
+): Project[] {
+  const homeMap = readHomeAgentMap();
+
+  if (Object.keys(homeMap).length === 0) {
+    return nextProjects;
+  }
+
+  const prevById = new Map(prevProjects.map((project) => [project.id, project]));
+  let changed = false;
+
+  const merged = nextProjects.map((project) => {
+    const paneIds = homeMap[project.id] ?? [];
+
+    if (paneIds.length === 0) {
+      return project;
+    }
+
+    const prevProject = prevById.get(project.id);
+
+    if (!prevProject) {
+      return project;
+    }
+
+    let tabs = project.tabs;
+    let projectChanged = false;
+
+    for (const paneId of paneIds) {
+      if (findPaneTab(tabs, paneId)) {
+        continue;
+      }
+
+      const prevTopLevel = prevProject.tabs.find((item) => item.id === paneId);
+      const prevPane =
+        prevTopLevel?.type === 'agent'
+          ? prevTopLevel
+          : (() => {
+              const found = findPaneTab(prevProject.tabs, paneId);
+              return found?.type === 'agent' ? found : null;
+            })();
+
+      if (!prevPane) {
+        continue;
+      }
+
+      tabs = [...tabs, prevPane];
+      projectChanged = true;
+    }
+
+    if (!projectChanged) {
+      return project;
+    }
+
+    changed = true;
+    return {
+      ...project,
+      tabs,
+    };
+  });
+
+  return changed ? merged : nextProjects;
+}
+
 function preserveRuntimePtyIds(next: AppState, prev: AppState): AppState {
   const prevMap = buildTerminalPtyIdMap(prev.projects);
   const prevTurnsByPane = buildAgentTurnsMap(prev.projects);
+  const withHomeAgents = mergeMissingHomeBoundAgentTabs(next.projects, prev.projects);
 
-  if (prevMap.size === 0 && prevTurnsByPane.size === 0) {
+  for (const project of withHomeAgents) {
+    const original = next.projects.find((entry) => entry.id === project.id);
+
+    if (!original || project.tabs.length <= original.tabs.length) {
+      continue;
+    }
+
+    void window.nexus.projects.update(project.id, {
+      tabs: project.tabs,
+      activeTabId: project.activeTabId,
+      activePaneId: project.activePaneId,
+    });
+  }
+
+  if (prevMap.size === 0 && prevTurnsByPane.size === 0 && withHomeAgents === next.projects) {
     return next;
   }
 
   return {
     ...next,
-    projects: next.projects.map((project) => {
+    projects: withHomeAgents.map((project) => {
       const paneMap = prevMap.get(project.id);
       let tabs = project.tabs;
 
@@ -476,12 +581,19 @@ function preserveRuntimePtyIds(next: AppState, prev: AppState): AppState {
 
 function applyStatePreservingRuntime(
   set: (state: Partial<ProjectStoreState>) => void,
+  get: () => ProjectStoreState,
   appState: AppState,
   prev: AppState,
 ) {
+  const current = get();
+
   applyState(set, preserveRuntimePtyIds(appState, prev), {
-    preserveActiveProjectId: prev.activeProjectId,
+    preserveActiveProjectId: current.activeProjectId,
   });
+
+  if (current.activeWorkspaceId !== appState.activeWorkspaceId) {
+    set({ activeWorkspaceId: current.activeWorkspaceId });
+  }
 }
 
 function reconcileOptimisticProjectUpdate(
@@ -652,7 +764,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
 
     await window.nexus.projects.add(projectPath, workspaceId);
     const appState = migrateAppState(await window.nexus.projects.list());
-    applyStatePreservingRuntime(set, appState, prevState);
+    applyStatePreservingRuntime(set, get, appState, prevState);
   },
   removeProject: async (id) => {
     const { useTerminalSessionStore } = await import('@/stores/useTerminalSessionStore');
@@ -687,7 +799,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     await flushAgentGitGroupsNow();
     await window.nexus.projects.remove(id);
     const appState = migrateAppState(await window.nexus.projects.list());
-    applyStatePreservingRuntime(set, appState, prevState);
+    applyStatePreservingRuntime(set, get, appState, prevState);
   },
   stopProject: async (id) => {
     const { useTerminalSessionStore } = await import('@/stores/useTerminalSessionStore');
@@ -795,7 +907,10 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     await window.nexus.projects.update(id, data);
     const appState = migrateAppState(await window.nexus.projects.list());
     const reconciled = reconcileOptimisticProjectUpdate(appState, nextProjects, id);
-    applyStatePreservingRuntime(set, reconciled, { ...prevState, projects: nextProjects });
+    applyStatePreservingRuntime(set, get, reconciled, {
+      ...prevState,
+      projects: nextProjects,
+    });
 
     if (data.agentGitGroups !== undefined) {
       const { hydrateAgentGitGroupsFromProjects } = await import('@/utils/persistAgentGitGroups');
@@ -806,13 +921,13 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     const prevState = get();
     await window.nexus.projects.createWorkspace(name);
     const appState = migrateAppState(await window.nexus.projects.list());
-    applyStatePreservingRuntime(set, appState, prevState);
+    applyStatePreservingRuntime(set, get, appState, prevState);
   },
   updateWorkspace: async (id, data) => {
     const prevState = get();
     await window.nexus.projects.updateWorkspace(id, data);
     const appState = migrateAppState(await window.nexus.projects.list());
-    applyStatePreservingRuntime(set, appState, prevState);
+    applyStatePreservingRuntime(set, get, appState, prevState);
   },
   selectWorkspace: async (id) => {
     const prevState = get();
@@ -864,7 +979,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     const prevState = get();
     await window.nexus.projects.removeWorkspace(id);
     const appState = migrateAppState(await window.nexus.projects.list());
-    applyStatePreservingRuntime(set, appState, prevState);
+    applyStatePreservingRuntime(set, get, appState, prevState);
   },
   moveProjectToWorkspace: async (projectId, workspaceId) => {
     await get().updateProject(projectId, { workspaceId });
@@ -941,6 +1056,10 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   toggleTests: () => {
     const current = get().sidePanel;
     set({ sidePanel: current === 'tests' ? null : 'tests' });
+  },
+  toggleBrain: () => {
+    const current = get().sidePanel;
+    set({ sidePanel: current === 'brain' ? null : 'brain' });
   },
   setSidePanel: (panel) => {
     if (panel === 'git') {

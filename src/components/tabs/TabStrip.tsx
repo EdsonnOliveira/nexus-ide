@@ -1,4 +1,5 @@
 import { Fragment, memo, useCallback, useMemo, useState } from 'react';
+import { Brain } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { TAB_DRAG_MIME } from '@/constants/tabDrag';
 import { useStableLoadingMap } from '@/hooks/useStableLoadingMap';
@@ -37,6 +38,9 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
   const activeProject = useProjectStore((state) =>
     state.projects.find((project) => project.id === state.activeProjectId) ?? null,
   );
+  const sidePanel = useProjectStore((state) => state.sidePanel);
+  const toggleBrain = useProjectStore((state) => state.toggleBrain);
+  const setSidePanel = useProjectStore((state) => state.setSidePanel);
   const { selectTab, closeTab, closeAllTabs, renameTab, unsplitTab, reorderTab, togglePinTab } =
     useTabActions();
   const [contextMenu, setContextMenu] = useState<TabContextMenuState | null>(null);
@@ -189,9 +193,12 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
 
   const handleSelectTab = useCallback(
     (tabId: string) => {
+      if (sidePanel === 'brain') {
+        setSidePanel(null);
+      }
       void selectTab(tabId);
     },
-    [selectTab],
+    [selectTab, setSidePanel, sidePanel],
   );
 
   const handleCloseTab = useCallback(
@@ -307,6 +314,14 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
   return (
     <>
       <div className='tab-bar'>
+        <button
+          type='button'
+          className={`tool-btn tab-bar__brain${sidePanel === 'brain' ? ' tool-btn--active' : ''}`}
+          aria-label='Cérebro do Projeto'
+          onClick={toggleBrain}
+        >
+          <Brain size={15} />
+        </button>
         <div className='tab-bar__tabs' onDragLeave={handleTabsDragLeave}>
           {tabs.map((tab, index) => (
             <Fragment key={tab.id}>
@@ -316,7 +331,7 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
               <TabItem
                 tab={tab}
                 index={index}
-                isFocused={tab.id === activeTabItem?.id}
+                isFocused={sidePanel !== 'brain' && tab.id === activeTabItem?.id}
                 isRestarting={tabRestartingMap.get(tab.id) ?? false}
                 hasNotification={tabNotificationMap.get(tab.id) ?? false}
                 pingTone={pingTone}

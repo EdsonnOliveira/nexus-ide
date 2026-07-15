@@ -359,6 +359,7 @@ const nexusApi = {
     getTranscriptions: (sourceType, forceRefresh) =>
       ipcRenderer.invoke('macParakeet:getTranscriptions', sourceType, forceRefresh),
     getTranscriptionDetail: (id) => ipcRenderer.invoke('macParakeet:getTranscriptionDetail', id),
+    translateConclusion: (id) => ipcRenderer.invoke('macParakeet:translateConclusion', id),
     openApp: () => ipcRenderer.invoke('macParakeet:openApp'),
     startCallFromEvent: (title) => ipcRenderer.invoke('macParakeet:startCallFromEvent', title),
     renameTranscriptionTitle: (id, title) =>

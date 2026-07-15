@@ -48,6 +48,8 @@ export function registerAgentPrintPaneHandlers(
   handlersByPane.set(paneId, handlers);
 
   return () => {
-    handlersByPane.delete(paneId);
+    if (handlersByPane.get(paneId) === handlers) {
+      handlersByPane.delete(paneId);
+    }
   };
 }

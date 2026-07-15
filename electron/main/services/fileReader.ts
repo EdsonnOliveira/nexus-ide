@@ -1,5 +1,5 @@
 import { existsSync, statSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const MAX_TEXT_BYTES = 2 * 1024 * 1024;
@@ -53,17 +53,28 @@ export async function readTextFile(filePath: string): Promise<ReadTextFileResult
   return { ok: true, content: buffer.toString('utf8') };
 }
 
+function canCreateMissingTextFile(resolvedPath: string): boolean {
+  const normalized = resolvedPath.replace(/\\/g, '/');
+  return normalized.includes('/.nexus/');
+}
+
 export async function writeTextFile(filePath: string, content: string): Promise<WriteTextFileResult> {
   const resolvedPath = resolveFilePath(filePath);
 
-  if (!resolvedPath || !existsSync(resolvedPath)) {
-    return { ok: false, error: 'Arquivo não encontrado' };
+  if (!resolvedPath) {
+    return { ok: false, error: 'Caminho inválido' };
   }
 
-  const stats = statSync(resolvedPath);
+  const exists = existsSync(resolvedPath);
 
-  if (!stats.isFile()) {
-    return { ok: false, error: 'Caminho inválido' };
+  if (exists) {
+    const stats = statSync(resolvedPath);
+
+    if (!stats.isFile()) {
+      return { ok: false, error: 'Caminho inválido' };
+    }
+  } else if (!canCreateMissingTextFile(resolvedPath)) {
+    return { ok: false, error: 'Arquivo não encontrado' };
   }
 
   const bytes = Buffer.byteLength(content, 'utf8');
@@ -73,6 +84,9 @@ export async function writeTextFile(filePath: string, content: string): Promise<
   }
 
   try {
+    if (!exists) {
+      await mkdir(path.dirname(resolvedPath), { recursive: true });
+    }
     await writeFile(resolvedPath, content, 'utf8');
     return { ok: true };
   } catch {

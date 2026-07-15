@@ -44,6 +44,7 @@ import { useTerminalPasteImageStore } from '@/stores/useTerminalPasteImageStore'
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { TERMINAL_AGENTS } from '@/constants/terminalAgents';
 import type { TerminalAgent } from '@/types';
+import { registerAgentPaneAttach } from '@/utils/agentPaneRegistry';
 import {
   attachAgentPromptImageToPane,
   readDroppedImageDataUrls,
@@ -1088,6 +1089,26 @@ function AgentComposerComponent({
       insertPathMentions([mention]);
     }
   }, [insertPathMentions, projectPath]);
+
+  useEffect(() => {
+    if (!isVisible) {
+      registerAgentPaneAttach(paneId, null);
+      return;
+    }
+
+    registerAgentPaneAttach(paneId, {
+      image: () => {
+        void handleAttachImage();
+      },
+      file: () => {
+        void handleAttachFile();
+      },
+    });
+
+    return () => {
+      registerAgentPaneAttach(paneId, null);
+    };
+  }, [handleAttachFile, handleAttachImage, isVisible, paneId]);
 
   const handlePaste = useCallback(
     (event: React.ClipboardEvent<HTMLTextAreaElement>) => {

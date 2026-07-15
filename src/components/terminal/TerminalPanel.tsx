@@ -23,6 +23,7 @@ import type { XTermViewHandle } from '@/types';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import { parseCdCommandLine } from '@/utils/terminalCwd';
 import { collectProjectPanes, findPaneTab, resolveActiveTabBarItem } from '@/utils/tabGroups';
+import { useIsHomeAgentOverlayPane } from '@/hooks/useHomeAgentOverlayPanes';
 import { persistTerminalCwd } from '@/utils/persistTerminalSession';
 import { registerTerminalHandle } from '@/utils/terminalHandleRegistry';
 import {
@@ -84,6 +85,10 @@ import type { ApiTab, EmulatorTab, Project, SplitLayoutNode, Tab, TabBarItem, Ag
 
 const LazyAgentView = lazy(() =>
   import('@/components/agent/AgentView').then((module) => ({ default: module.AgentView })),
+);
+
+const LazyBrainView = lazy(() =>
+  import('@/components/brain/BrainView').then((module) => ({ default: module.BrainView })),
 );
 
 interface WorkspaceSplitProps {
@@ -513,6 +518,7 @@ const TabPane = memo(function TabPaneComponent({
 const ProjectPaneSlot = memo(function ProjectPaneSlotComponent({ paneId }: { paneId: string }) {
   const {
     project,
+    isProjectActive,
     terminalRefs,
     onFocusPane,
     onPtyCreated,
@@ -526,6 +532,7 @@ const ProjectPaneSlot = memo(function ProjectPaneSlotComponent({ paneId }: { pan
     isPaneFocused,
     isPaneRuntimeActive,
   } = useWorkspacePaneContext();
+  const isHomeOverlayPane = useIsHomeAgentOverlayPane(paneId);
 
   const tab = findPaneTab(project.tabs, paneId);
 
@@ -538,6 +545,10 @@ const ProjectPaneSlot = memo(function ProjectPaneSlotComponent({ paneId }: { pan
   );
 
   if (!tab) {
+    return <div className='workspace-pane workspace-pane--slot' />;
+  }
+
+  if (!isProjectActive && tab.type === 'agent' && isHomeOverlayPane) {
     return <div className='workspace-pane workspace-pane--slot' />;
   }
 
@@ -707,15 +718,47 @@ function isPaneRuntimeActive(
   paneId: string,
   agentSession: PaneAgentSessionSnapshot,
 ): boolean {
-  if (findPaneTab(project.tabs, paneId) === null) {
+  const pane = findPaneTab(project.tabs, paneId);
+
+  if (!pane) {
     return false;
   }
 
-  if (isProjectActive) {
+  if (isPaneAgentSessionLive(paneId, agentSession)) {
     return true;
   }
 
-  return isPaneAgentSessionLive(paneId, agentSession);
+  if (!isProjectActive) {
+    return false;
+  }
+
+  if (pane.type === 'agent') {
+    return true;
+  }
+
+  if (pane.type === 'terminal' && pane.ptyId) {
+    return true;
+  }
+
+  return isPaneInActiveLayout(project, true, paneId);
+}
+
+function shouldKeepTabAliveForProject(
+  item: TabBarItem,
+  isProjectActive: boolean,
+  agentSession: PaneAgentSessionSnapshot,
+): boolean {
+  if (isProjectActive) {
+    return shouldKeepTabAlive(item);
+  }
+
+  if (item.type === 'split') {
+    return item.panes.some(
+      (pane) => pane.type === 'agent' && isPaneAgentSessionLive(pane.id, agentSession),
+    );
+  }
+
+  return item.type === 'agent' && isPaneAgentSessionLive(item.id, agentSession);
 }
 
 function isPaneFocused(project: Project, isProjectActive: boolean, paneId: string): boolean {
@@ -876,22 +919,29 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
   );
 
   const keptAliveTabs = useMemo(
-    () => project.tabs.filter((item) => shouldKeepTabAlive(item)),
-    [project.tabs],
+    () =>
+      project.tabs.filter((item) =>
+        shouldKeepTabAliveForProject(item, isProjectActive, agentSession),
+      ),
+    [agentSession, isProjectActive, project.tabs],
   );
 
   if (!project.tabs.length || !activeTabItem) {
     return null;
   }
 
-  const activeIsKeptAlive = shouldKeepTabAlive(activeTabItem);
+  const activeIsKeptAlive = shouldKeepTabAliveForProject(
+    activeTabItem,
+    isProjectActive,
+    agentSession,
+  );
 
   return (
     <WorkspacePaneProvider value={workspacePaneContext}>
       <div
         className={`terminal-panel__view${isProjectActive ? ' terminal-panel__view--active' : ''}`}
       >
-        {!activeIsKeptAlive ? renderTabLayout(activeTabItem) : null}
+        {isProjectActive && !activeIsKeptAlive ? renderTabLayout(activeTabItem) : null}
         {keptAliveTabs.map((tabItem) => renderTabLayout(tabItem))}
       </div>
     </WorkspacePaneProvider>
@@ -909,6 +959,7 @@ interface PaneCompletionTracker {
 function TerminalPanelComponent() {
   useAgentPrintBridge();
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
+  const sidePanel = useProjectStore((state) => state.sidePanel);
   const projects = useProjectStore((state) => state.projects);
   const agentPrintRunTokenByPane = useTerminalSessionStore((state) => state.agentPrintRunTokenByPane);
   const agentBusyByPane = useTerminalSessionStore((state) => state.agentBusyByPane);
@@ -1341,6 +1392,7 @@ function TerminalPanelComponent() {
   }
 
   const hasActiveProjectTabs = Boolean(activeProject?.tabs.length);
+  const isBrainOpen = Boolean(activeProject) && sidePanel === 'brain';
 
   return (
     <div className='terminal-workspace'>
@@ -1348,7 +1400,35 @@ function TerminalPanelComponent() {
         <TabStrip onTabDragStart={handleTabDragStart} onTabDragEnd={handleTabDragEnd} />
       ) : null}
 
-      {activeProject && !hasActiveProjectTabs ? (
+      {isBrainOpen ? (
+        <>
+          <Suspense fallback={<div className='empty-state'>Carregando Cérebro...</div>}>
+            <LazyBrainView />
+          </Suspense>
+          {paneHostReady && hostedProjects.length > 0 ? (
+            <div className='terminal-panel__offscreen-host' hidden aria-hidden='true'>
+              {hostedProjects.map((project) => (
+                <ProjectWorkspace
+                  key={project.id}
+                  project={project}
+                  isProjectActive={false}
+                  agentSession={agentSession}
+                  terminalRefs={terminalRefs}
+                  onFocusPane={handleFocusPane}
+                  onPtyCreated={handlePtyCreated}
+                  onPtyLost={handlePtyLost}
+                  onBrowserUrlChange={handleBrowserUrlChange}
+                  onOpenLinkInBrowser={handleOpenLinkInBrowser}
+                  onUpdateEmulatorTab={handleUpdateEmulatorTab}
+                  onUpdateApiTab={handleUpdateApiTab}
+                  onUpdateAgentTab={handleUpdateAgentTab}
+                  onSplitRatioCommit={handleSplitRatioCommit}
+                />
+              ))}
+            </div>
+          ) : null}
+        </>
+      ) : activeProject && !hasActiveProjectTabs ? (
         <div className='terminal-workspace__empty'>
           <div className='empty-state'>
             <div className='empty-state__icon' aria-hidden='true'>

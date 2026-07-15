@@ -60,6 +60,7 @@ function HomeDashboardMacParakeetCardComponent() {
   } = useHomeDashboardMacParakeet(true);
   const [activeDetail, setActiveDetail] = useState<MacParakeetTranscriptionDetail | null>(null);
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
+  const [translating, setTranslating] = useState(false);
   const detailRequestRef = useRef(0);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [taskFormState, setTaskFormState] = useState<MacParakeetTaskFormState | null>(null);
@@ -161,6 +162,7 @@ function HomeDashboardMacParakeetCardComponent() {
     detailRequestRef.current += 1;
     setActiveDetail(null);
     setDetailLoadingId(null);
+    setTranslating(false);
   }, []);
 
   const handleRenameTitle = useCallback(
@@ -177,6 +179,27 @@ function HomeDashboardMacParakeetCardComponent() {
     },
     [renameTitle],
   );
+
+  const handleTranslateConclusion = useCallback(async () => {
+    if (!activeDetail || translating || !window.nexus?.macParakeet) {
+      return;
+    }
+
+    setTranslating(true);
+
+    try {
+      const result = await window.nexus.macParakeet.translateConclusion(activeDetail.id);
+      if (result.ok) {
+        setActiveDetail((previousDetail) =>
+          previousDetail && previousDetail.id === activeDetail.id
+            ? { ...previousDetail, conclusion: result.conclusion }
+            : previousDetail,
+        );
+      }
+    } finally {
+      setTranslating(false);
+    }
+  }, [activeDetail, translating]);
 
   const handleOpenApp = useCallback(() => {
     void openApp();
@@ -259,7 +282,7 @@ function HomeDashboardMacParakeetCardComponent() {
       <HomeDashboardSection
         icon={AudioLines}
         title='Transcrições'
-        accent='#34d399'
+        accent='#94a3b8'
         className='home-dashboard__parakeet-section'
         enterDelayMs={200}
         headerAction={headerActions}
@@ -391,8 +414,10 @@ function HomeDashboardMacParakeetCardComponent() {
         <MacParakeetTranscriptionModal
           detail={activeDetail}
           detailLoading={detailLoadingId === activeDetail.id}
+          translating={translating}
           onClose={handleCloseDetail}
           onRenameTitle={handleRenameTitle}
+          onTranslateConclusion={() => void handleTranslateConclusion()}
           onCreateTask={handleCreateTask}
           createTaskDisabled={createTaskDisabled || detailLoadingId === activeDetail.id}
         />

@@ -121,6 +121,7 @@ function AppShellComponent() {
     () => projects.find((project) => project.id === activeProjectId) ?? null,
     [activeProjectId, projects],
   );
+  const isDrawerSidePanel = Boolean(sidePanel && sidePanel !== 'brain');
   const agentPrintRunTokenByPane = useTerminalSessionStore((state) => state.agentPrintRunTokenByPane);
   const agentBusyByPane = useTerminalSessionStore((state) => state.agentBusyByPane);
   const awaitingResponseByPane = useTerminalSessionStore((state) => state.awaitingResponseByPane);
@@ -372,8 +373,8 @@ function AppShellComponent() {
 
       {activeProject ? (
         <div
-          className={`project-explorer-slot side-panel-slot${sidePanel ? ' project-explorer-slot--open side-panel-slot--open' : ''}`}
-          aria-hidden={!sidePanel}
+          className={`project-explorer-slot side-panel-slot${isDrawerSidePanel ? ' project-explorer-slot--open side-panel-slot--open' : ''}`}
+          aria-hidden={!isDrawerSidePanel}
         >
           <Suspense
             fallback={

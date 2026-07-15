@@ -26,6 +26,7 @@ import { TERMINAL_AGENTS } from '@/constants/terminalAgents';
 import type { AgentTurn } from '@/types';
 import { cliAgentToTerminalAgent } from '@/utils/agentTabHelpers';
 import { buildAgentPromptHistory } from '@/utils/agentPromptAttachments';
+import { isHomeBoundAgentPane } from '@/utils/homeDashboardAgents';
 import { isPaneAgentSessionLive, readPaneAgentSessionSnapshot, shouldPreferLocalAgentTurnHistory } from '@/utils/paneAgentSession';
 import {
   resolveSanitizedAgentTab,
@@ -38,6 +39,7 @@ function AgentViewSessionComponent({
   isVisible,
   isRuntimeActive,
   isFocused,
+  disableStickyPrompt = false,
   onFocusPane,
   onPtyCreated,
   onPtyLost,
@@ -233,6 +235,14 @@ function AgentViewSessionComponent({
   );
 
   useEffect(() => {
+    if (isHomeBoundAgentPane(projectId, tab.id)) {
+      if (isFocused && isVisible) {
+        clearNotificationForPane(tab.id);
+      }
+
+      return;
+    }
+
     if (isVisible) {
       clearNotificationForPane(tab.id);
       return;
@@ -248,6 +258,7 @@ function AgentViewSessionComponent({
     clearNotificationForPane,
     hasPendingPlan,
     hasPendingQuestion,
+    isFocused,
     isVisible,
     projectId,
     restoreProjectNotification,
@@ -335,6 +346,7 @@ function AgentViewSessionComponent({
               projectId={projectId}
               projectPath={projectPath}
               paneId={tab.id}
+              disableStickyPrompt={disableStickyPrompt}
               onAtBottomChange={handleTranscriptAtBottomChange}
               onEdit={editAgentTurn}
               onRedo={redoAgentTurn}

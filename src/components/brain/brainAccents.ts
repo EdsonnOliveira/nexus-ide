@@ -1,0 +1,58 @@
+export const BRAIN_ACCENTS = {
+  purple: '#c084fc',
+  blue: '#60a5fa',
+  green: '#34d399',
+  amber: '#fbbf24',
+  pink: '#f472b6',
+  cyan: '#22d3ee',
+  orange: '#fb923c',
+  slate: '#94a3b8',
+  red: '#f87171',
+  indigo: '#818cf8',
+} as const;
+
+export type BrainAccentKey = keyof typeof BRAIN_ACCENTS;
+
+export const BRAIN_TAB_ACCENTS: Record<string, string> = {
+  summary: BRAIN_ACCENTS.purple,
+  documents: BRAIN_ACCENTS.blue,
+  meetings: BRAIN_ACCENTS.green,
+  decisions: BRAIN_ACCENTS.amber,
+  prompts: BRAIN_ACCENTS.pink,
+  agents: BRAIN_ACCENTS.cyan,
+  concepts: BRAIN_ACCENTS.indigo,
+  timeline: BRAIN_ACCENTS.orange,
+  people: BRAIN_ACCENTS.blue,
+  questions: BRAIN_ACCENTS.green,
+  memory: BRAIN_ACCENTS.purple,
+  map: BRAIN_ACCENTS.cyan,
+};
+
+export const BRAIN_KIND_ACCENTS: Record<string, string> = {
+  concept: BRAIN_ACCENTS.purple,
+  document: BRAIN_ACCENTS.blue,
+  meeting: BRAIN_ACCENTS.green,
+  decision: BRAIN_ACCENTS.amber,
+  prompt: BRAIN_ACCENTS.pink,
+  agent: BRAIN_ACCENTS.cyan,
+  file: BRAIN_ACCENTS.slate,
+  person: BRAIN_ACCENTS.blue,
+  question: BRAIN_ACCENTS.green,
+  memory: BRAIN_ACCENTS.purple,
+  openapi: BRAIN_ACCENTS.blue,
+  markdown: BRAIN_ACCENTS.green,
+  pdf: BRAIN_ACCENTS.red,
+  notion: BRAIN_ACCENTS.slate,
+  figma: BRAIN_ACCENTS.pink,
+  word: BRAIN_ACCENTS.blue,
+  wiki: BRAIN_ACCENTS.amber,
+  readme: BRAIN_ACCENTS.cyan,
+  accepted: BRAIN_ACCENTS.green,
+  proposed: BRAIN_ACCENTS.amber,
+  superseded: BRAIN_ACCENTS.slate,
+  rejected: BRAIN_ACCENTS.red,
+  indexed: BRAIN_ACCENTS.green,
+  syncing: BRAIN_ACCENTS.amber,
+  outdated: BRAIN_ACCENTS.orange,
+  draft: BRAIN_ACCENTS.slate,
+};

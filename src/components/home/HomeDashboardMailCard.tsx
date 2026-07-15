@@ -131,7 +131,7 @@ function HomeDashboardMailCardComponent() {
     <HomeDashboardSection
       icon={Mail}
       title='E-mail'
-      accent='#38bdf8'
+      accent='#94a3b8'
       className='home-dashboard__mail-section'
       enterDelayMs={220}
       headerAction={headerActions}

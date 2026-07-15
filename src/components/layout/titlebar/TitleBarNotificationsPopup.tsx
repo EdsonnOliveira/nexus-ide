@@ -13,6 +13,7 @@ import { useProjectNotificationStore } from '@/stores/useProjectNotificationStor
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useTabActions } from '@/stores/useTabStore';
 import { useTitleBarPopupDismiss } from '@/components/layout/titlebar/useTitleBarPopupDismiss';
+import { isProjectSurfaceNotification } from '@/utils/homeDashboardAgents';
 import { formatNotificationRelativeTime } from '@/utils/notificationRelativeTime';
 
 interface TitleBarNotificationsPopupProps {
@@ -53,7 +54,9 @@ function TitleBarNotificationsPopupComponent({
   const notifiedProjects = useMemo(
     () =>
       projects
-        .filter((project) => Boolean(notifiedAgentPaneByProject[project.id]))
+        .filter((project) =>
+          isProjectSurfaceNotification(project.id, notifiedAgentPaneByProject[project.id]),
+        )
         .map((project) => ({
           project,
           paneId: notifiedAgentPaneByProject[project.id],

@@ -157,7 +157,7 @@ function HomeDashboardDailyCardComponent({
       <HomeDashboardSection
         icon={Sparkles}
         title='Daily'
-        accent='#fbbf24'
+        accent='#94a3b8'
         className='home-dashboard__daily-section'
         enterDelayMs={enterDelayMs}
         headerAction={headerActions}

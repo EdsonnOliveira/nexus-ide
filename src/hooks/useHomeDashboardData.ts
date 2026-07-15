@@ -4,6 +4,7 @@ import type { ProjectTask } from '@/types/task';
 import { useAppleCalendarEvents } from '@/hooks/useAppleCalendarEvents';
 import { useSystemNotifications } from '@/hooks/useSystemNotifications';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
+import { isProjectSurfaceNotification } from '@/utils/homeDashboardAgents';
 import { buildDefaultTaskFilters, filterProjectTasks } from '@/utils/taskFilters';
 import { isLocalTaskCompleted } from '@/utils/taskJson';
 
@@ -97,7 +98,9 @@ export function useHomeDashboardData(projects: Project[], activeWorkspaceId: str
   const notifiedProjects = useMemo(
     () =>
       visibleProjects
-        .filter((project) => Boolean(notifiedAgentPaneByProject[project.id]))
+        .filter((project) =>
+          isProjectSurfaceNotification(project.id, notifiedAgentPaneByProject[project.id]),
+        )
         .map((project) => ({
           project,
           paneId: notifiedAgentPaneByProject[project.id] ?? null,

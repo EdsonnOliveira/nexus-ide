@@ -1,6 +1,7 @@
 import { useAgentShellTerminalStore } from '@/stores/useAgentShellTerminalStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import type { StreamJsonShellToolEvent } from '@/utils/agentStreamJsonParser';
+import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
 import { findPaneTab } from '@/utils/tabGroups';
 import { useProjectStore } from '@/stores/useProjectStore';
 
@@ -178,11 +179,19 @@ function buildShellToolTerminalTitle(command: string): string {
 }
 
 function resolveShellToolCwd(agentPaneId: string, cwd: string | null): string {
-  const project = useProjectStore.getState().getActiveProject();
+  const trimmedCwd = cwd?.trim();
+
+  if (trimmedCwd) {
+    return trimmedCwd;
+  }
+
+  const projectId = findProjectIdByPaneId(agentPaneId);
+  const project = projectId
+    ? (useProjectStore.getState().projects.find((entry) => entry.id === projectId) ?? null)
+    : useProjectStore.getState().getActiveProject();
   const agentTab = project ? findPaneTab(project.tabs, agentPaneId) : null;
 
   return (
-    cwd?.trim() ||
     (agentTab?.type === 'agent' ? agentTab.workingDirectory?.trim() : null) ||
     project?.path ||
     ''

@@ -1,4 +1,5 @@
 import type { Project } from '@/types';
+import { isProjectSurfaceNotification } from '@/utils/homeDashboardAgents';
 
 export function buildSidebarProjects(
   projects: Project[],
@@ -18,7 +19,7 @@ export function buildSidebarProjects(
   }
 
   for (const project of projects) {
-    if (notifiedAgentPaneByProject[project.id]) {
+    if (isProjectSurfaceNotification(project.id, notifiedAgentPaneByProject[project.id])) {
       allowedIds.add(project.id);
     }
   }
@@ -34,7 +35,9 @@ export function getHiddenNotifiedProjects(
   const visibleIds = new Set(filteredProjects.map((project) => project.id));
 
   return projects.filter(
-    (project) => notifiedAgentPaneByProject[project.id] && !visibleIds.has(project.id),
+    (project) =>
+      isProjectSurfaceNotification(project.id, notifiedAgentPaneByProject[project.id]) &&
+      !visibleIds.has(project.id),
   );
 }
 
@@ -45,7 +48,10 @@ export function getNotifiedWorkspaceIds(
   const workspaceIds = new Set<string>();
 
   for (const project of projects) {
-    if (notifiedAgentPaneByProject[project.id] && project.workspaceId) {
+    if (
+      isProjectSurfaceNotification(project.id, notifiedAgentPaneByProject[project.id]) &&
+      project.workspaceId
+    ) {
       workspaceIds.add(project.workspaceId);
     }
   }
