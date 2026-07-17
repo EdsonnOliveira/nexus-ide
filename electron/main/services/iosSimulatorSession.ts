@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type {
   EmulatorCaptureBackend,
+  EmulatorDeviceOrientation,
   EmulatorSessionState,
   EmulatorStreamStats,
   EmulatorVideoCodec,
@@ -33,7 +34,12 @@ export interface EmulatorSessionEvents {
   onVideoChunk: (
     chunk: Buffer,
     codec: EmulatorVideoCodec,
-    size?: { width: number; height: number },
+    size?: { width: number; height: number; orientation?: EmulatorDeviceOrientation },
+  ) => void;
+  onFrameSize?: (
+    width: number,
+    height: number,
+    orientation?: EmulatorDeviceOrientation,
   ) => void;
 }
 
@@ -44,7 +50,11 @@ export interface EmulatorSessionHandle {
   pressHome(): Promise<void>;
   pressAppSwitcher(): Promise<void>;
   pressBack(): Promise<void>;
-  rotate(): Promise<void>;
+  rotate(): Promise<{
+    ok: boolean;
+    landscape: boolean;
+    orientation: EmulatorDeviceOrientation;
+  }>;
   takeScreenshot(outputPath: string): Promise<void>;
   typeText(text: string): Promise<void>;
   sendInput(line: string): Promise<boolean>;
@@ -56,6 +66,8 @@ interface SimulatorScreenInfo {
 }
 
 const MIN_FRAME_BYTES = 1_200;
+const MAX_STREAM_BUFFER_BYTES = 16 * 1024 * 1024;
+const MIN_FRAME_INTERVAL_MS = 50;
 const DEFAULT_INPUT_SIZE = { inputWidth: 390, inputHeight: 844 };
 const STREAM_CODEC: EmulatorVideoCodec = 'jpeg';
 const IDB_STREAM_FPS = 60;
@@ -64,12 +76,59 @@ const IDB_SCREENSHOT_FPS = 12;
 const IDB_COMPANION_START_TIMEOUT_MS = 10_000;
 const IDB_FIRST_FRAME_TIMEOUT_MS = 12_000;
 const IDB_SCREENSHOT_FIRST_FRAME_TIMEOUT_MS = 8_000;
+const IDB_COMMAND_TIMEOUT_MS = 8_000;
+const IDB_UNLOCK_TIMEOUT_MS = 5_000;
+const PROCESS_STOP_TIMEOUT_MS = 2_000;
 const SIMCTL_PARALLEL_CAPTURES = 3;
 const SIMCTL_TARGET_FPS = 60;
 const SIMULATOR_SERVER_TARGET_FPS = 60;
 const SIMULATOR_SERVER_START_TIMEOUT_MS = 30_000;
+const SWITCHER_ORIENTATION_RE =
+  /outSwitcherOrientation:\s*(landscapeRight|landscapeLeft|portraitUpsideDown|portrait)\s*\((\d+)\)/i;
+const ORIENTATION_CYCLE: EmulatorDeviceOrientation[] = [
+  'portrait',
+  'landscapeLeft',
+  'portraitUpsideDown',
+  'landscapeRight',
+];
+const ORIENTATION_MENU_LABEL: Record<EmulatorDeviceOrientation, string> = {
+  portrait: 'Portrait',
+  landscapeLeft: 'Landscape Left',
+  portraitUpsideDown: 'Portrait Upside Down',
+  landscapeRight: 'Landscape Right',
+};
+const ORIENTATION_SERVER_LABEL: Record<EmulatorDeviceOrientation, string> = {
+  portrait: 'Portrait',
+  landscapeLeft: 'LandscapeLeft',
+  portraitUpsideDown: 'PortraitUpsideDown',
+  landscapeRight: 'LandscapeRight',
+};
 const JPEG_SOI = Buffer.from([0xff, 0xd8]);
 const JPEG_EOI = Buffer.from([0xff, 0xd9]);
+
+function isLandscapeOrientation(orientation: EmulatorDeviceOrientation): boolean {
+  return orientation === 'landscapeLeft' || orientation === 'landscapeRight';
+}
+
+function parseSwitcherOrientation(name: string): EmulatorDeviceOrientation | null {
+  switch (name.toLowerCase()) {
+    case 'portrait':
+      return 'portrait';
+    case 'portraitupsidedown':
+      return 'portraitUpsideDown';
+    case 'landscapeleft':
+      return 'landscapeLeft';
+    case 'landscaperight':
+      return 'landscapeRight';
+    default:
+      return null;
+  }
+}
+
+function nextOrientation(current: EmulatorDeviceOrientation): EmulatorDeviceOrientation {
+  const index = ORIENTATION_CYCLE.indexOf(current);
+  return ORIENTATION_CYCLE[(index + 1) % ORIENTATION_CYCLE.length] ?? 'portrait';
+}
 
 const CRC32_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -130,23 +189,46 @@ function findAvailablePort(): Promise<number> {
   });
 }
 
-function waitForProcessExit(process: ChildProcess): Promise<void> {
+function waitForProcessExit(child: ChildProcess): Promise<void> {
   return new Promise((resolve) => {
-    if (process.exitCode !== null || process.signalCode !== null) {
+    if (child.exitCode !== null || child.signalCode !== null) {
       resolve();
       return;
     }
 
-    process.once('close', () => resolve());
+    child.once('close', () => resolve());
+    child.once('error', () => resolve());
   });
 }
 
-function stopProcess(process: ChildProcess | null, signal: NodeJS.Signals = 'SIGTERM'): void {
-  if (!process || process.killed || process.exitCode !== null) {
+function stopProcess(child: ChildProcess | null, signal: NodeJS.Signals = 'SIGTERM'): void {
+  if (!child || child.exitCode !== null || child.signalCode !== null) {
     return;
   }
 
-  process.kill(signal);
+  try {
+    child.kill(signal);
+  } catch {
+    return;
+  }
+}
+
+async function stopAndWait(
+  child: ChildProcess | null,
+  signal: NodeJS.Signals = 'SIGTERM',
+  timeoutMs = PROCESS_STOP_TIMEOUT_MS,
+): Promise<void> {
+  if (!child) {
+    return;
+  }
+
+  stopProcess(child, signal);
+  await Promise.race([waitForProcessExit(child), delay(timeoutMs)]);
+
+  if (child.exitCode === null && child.signalCode === null) {
+    stopProcess(child, 'SIGKILL');
+    await Promise.race([waitForProcessExit(child), delay(timeoutMs)]);
+  }
 }
 
 function waitForCompanionPort(companion: ChildProcess, timeoutMs: number): Promise<number | null> {
@@ -238,12 +320,9 @@ async function createIdbVideoStreamController(
   let storedFirstFrame: Buffer | null = null;
 
   const stop = async (): Promise<void> => {
-    stopProcess(streamProcess, 'SIGINT');
-    stopProcess(companionProcess, 'SIGTERM');
-
     await Promise.all([
-      streamProcess ? waitForProcessExit(streamProcess) : Promise.resolve(),
-      companionProcess ? waitForProcessExit(companionProcess) : Promise.resolve(),
+      stopAndWait(streamProcess, 'SIGINT'),
+      stopAndWait(companionProcess, 'SIGTERM'),
     ]);
 
     streamProcess = null;
@@ -301,6 +380,12 @@ async function createIdbVideoStreamController(
       }
 
       streamBuffer = Buffer.concat([streamBuffer, chunk]);
+
+      if (streamBuffer.length > MAX_STREAM_BUFFER_BYTES) {
+        const lastSoi = streamBuffer.lastIndexOf(JPEG_SOI);
+        streamBuffer = lastSoi > 0 ? Buffer.from(streamBuffer.subarray(lastSoi)) : Buffer.alloc(0);
+      }
+
       const parsed = extractJpegFrames(streamBuffer);
       streamBuffer = parsed.remainder;
 
@@ -373,16 +458,14 @@ async function startIdbCompanion(companionPath: string, udid: string): Promise<I
   const readyPort = await waitForCompanionPort(companionProcess, IDB_COMPANION_START_TIMEOUT_MS);
 
   if (!readyPort) {
-    stopProcess(companionProcess, 'SIGTERM');
-    await waitForProcessExit(companionProcess);
+    await stopAndWait(companionProcess, 'SIGTERM');
     return null;
   }
 
   return {
     endpoint: `127.0.0.1:${readyPort}`,
     stop: async () => {
-      stopProcess(companionProcess, 'SIGTERM');
-      await waitForProcessExit(companionProcess);
+      await stopAndWait(companionProcess, 'SIGTERM');
     },
   };
 }
@@ -393,6 +476,7 @@ async function createIdbScreenshotStreamController(
   let companionHandle: IdbCompanionHandle | null = null;
   let intervalId: NodeJS.Timeout | null = null;
   let inFlight = false;
+  let captureProcess: ChildProcess | null = null;
   let firstFrameResolve: ((frame: Buffer | null) => void) | null = null;
   let storedFirstFrame: Buffer | null = null;
 
@@ -414,6 +498,8 @@ async function createIdbScreenshotStreamController(
       intervalId = null;
     }
 
+    await stopAndWait(captureProcess, 'SIGTERM');
+    captureProcess = null;
     await companionHandle?.stop();
     companionHandle = null;
   };
@@ -433,7 +519,13 @@ async function createIdbScreenshotStreamController(
         options.udid,
         '-',
       ];
-      const result = await runCommandBinary(options.idbPath, args);
+      const result = await runCommandBinary(options.idbPath, args, IDB_COMMAND_TIMEOUT_MS, (child) => {
+        captureProcess = child;
+      });
+
+      if (captureProcess && (captureProcess.exitCode !== null || captureProcess.signalCode !== null)) {
+        captureProcess = null;
+      }
 
       if (result.code !== 0 || !isValidPng(result.stdout)) {
         return null;
@@ -499,11 +591,37 @@ async function createIdbScreenshotStreamController(
 function runCommandBinary(
   command: string,
   args: string[],
+  timeoutMs = IDB_COMMAND_TIMEOUT_MS,
+  onSpawn?: (child: ChildProcess) => void,
 ): Promise<{ stdout: Buffer; stderr: string; code: number }> {
   return new Promise((resolve) => {
     const stdoutChunks: Buffer[] = [];
     let stderr = '';
+    let settled = false;
     const child = spawn(command, args, { env: process.env });
+    onSpawn?.(child);
+
+    const finish = (code: number) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+
+      if (timer) {
+        clearTimeout(timer);
+      }
+
+      resolve({ stdout: Buffer.concat(stdoutChunks), stderr, code });
+    };
+
+    const timer =
+      timeoutMs > 0
+        ? setTimeout(() => {
+            void stopAndWait(child, 'SIGTERM').then(() => finish(1));
+          }, timeoutMs)
+        : null;
+
     child.stdout.on('data', (chunk: Buffer) => {
       stdoutChunks.push(chunk);
     });
@@ -511,10 +629,10 @@ function runCommandBinary(
       stderr += chunk.toString();
     });
     child.on('close', (code) => {
-      resolve({ stdout: Buffer.concat(stdoutChunks), stderr, code: code ?? 1 });
+      finish(code ?? 1);
     });
     child.on('error', () => {
-      resolve({ stdout: Buffer.alloc(0), stderr, code: 1 });
+      finish(1);
     });
   });
 }
@@ -522,11 +640,35 @@ function runCommandBinary(
 function runCommand(
   command: string,
   args: string[],
+  timeoutMs?: number,
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
+    let settled = false;
     const child = spawn(command, args, { env: process.env });
+
+    const finish = (code: number) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+
+      if (timer) {
+        clearTimeout(timer);
+      }
+
+      resolve({ stdout, stderr, code });
+    };
+
+    const timer =
+      typeof timeoutMs === 'number' && timeoutMs > 0
+        ? setTimeout(() => {
+            void stopAndWait(child, 'SIGTERM').then(() => finish(1));
+          }, timeoutMs)
+        : null;
+
     child.stdout.on('data', (chunk: Buffer) => {
       stdout += chunk.toString();
     });
@@ -534,10 +676,10 @@ function runCommand(
       stderr += chunk.toString();
     });
     child.on('close', (code) => {
-      resolve({ stdout, stderr, code: code ?? 1 });
+      finish(code ?? 1);
     });
     child.on('error', () => {
-      resolve({ stdout, stderr, code: 1 });
+      finish(1);
     });
   });
 }
@@ -621,7 +763,11 @@ async function readSimulatorScreenInfo(
   xcrunPath: string,
 ): Promise<SimulatorScreenInfo> {
   if (idbPath) {
-    const describe = await runCommand(idbPath, ['describe', '--udid', udid, '--json']);
+    const describe = await runCommand(
+      idbPath,
+      ['describe', '--udid', udid, '--json'],
+      IDB_COMMAND_TIMEOUT_MS,
+    );
 
     if (describe.code === 0 && describe.stdout.trim()) {
       try {
@@ -667,18 +813,22 @@ async function unlockSimulator(
   const startY = Math.round(inputSize.inputHeight * 0.92);
   const endY = Math.round(inputSize.inputHeight * 0.35);
 
-  await runCommand(idbPath, [
-    'ui',
-    'swipe',
-    '--udid',
-    udid,
-    '--duration',
-    '0.45',
-    String(centerX),
-    String(startY),
-    String(centerX),
-    String(endY),
-  ]);
+  await runCommand(
+    idbPath,
+    [
+      'ui',
+      'swipe',
+      '--udid',
+      udid,
+      '--duration',
+      '0.45',
+      String(centerX),
+      String(startY),
+      String(centerX),
+      String(endY),
+    ],
+    IDB_UNLOCK_TIMEOUT_MS,
+  );
 }
 
 function isValidJpeg(buffer: Buffer): boolean {
@@ -766,6 +916,7 @@ export async function createIosSimulatorSession(
 
   let stopped = false;
   let bootStatusProcess: ChildProcess | null = null;
+  let orientationLogProcess: ChildProcess | null = null;
   let simulatorServerController: SimulatorServerStreamController | null = null;
   let idbVideoStream: IdbVideoStreamController | null = null;
   let idbScreenshotStream: IdbScreenshotStreamController | null = null;
@@ -780,6 +931,8 @@ export async function createIosSimulatorSession(
     stopped = true;
     stopProcess(bootStatusProcess);
     bootStatusProcess = null;
+    await stopAndWait(orientationLogProcess, 'SIGTERM');
+    orientationLogProcess = null;
     await simulatorServerController?.stop();
     simulatorServerController = null;
     await idbVideoStream?.stop();
@@ -866,13 +1019,38 @@ export async function createIosSimulatorSession(
   let processChain: Promise<void> = Promise.resolve();
   let latestPendingJpeg: string | null = null;
   let processDrainScheduled = false;
-  let isLandscape = false;
+  let deviceOrientation: EmulatorDeviceOrientation = 'portrait';
+  let orientationSyncing = false;
   let useIdbVideoStream = false;
   let useIdbScreenshotStream = false;
   let activeStreamCodec: EmulatorVideoCodec = STREAM_CODEC;
   let framesEmitted = 0;
+  let lastEmitAt = 0;
+  let pendingFrame: Buffer | null = null;
+  let pendingEmitTimer: NodeJS.Timeout | null = null;
   let statsTimer: NodeJS.Timeout | null = null;
   let statsBaseline = 0;
+
+  const getDisplaySize = () =>
+    isLandscapeOrientation(deviceOrientation)
+      ? { width: inputSize.inputHeight, height: inputSize.inputWidth }
+      : { width: inputSize.inputWidth, height: inputSize.inputHeight };
+
+  const notifyDisplaySize = () => {
+    const displaySize = getDisplaySize();
+    events.onFrameSize?.(displaySize.width, displaySize.height, deviceOrientation);
+  };
+
+  const sendFrame = (screenshot: Buffer) => {
+    lastEmitAt = Date.now();
+    framesEmitted += 1;
+    const displaySize = getDisplaySize();
+    events.onVideoChunk(screenshot, activeStreamCodec, {
+      width: displaySize.width,
+      height: displaySize.height,
+      orientation: deviceOrientation,
+    });
+  };
 
   const emitFrame = (screenshot: Buffer) => {
     if (stopped) {
@@ -890,11 +1068,35 @@ export async function createIosSimulatorSession(
     }
 
     lastFrameHash = frameHash;
-    framesEmitted += 1;
-    events.onVideoChunk(screenshot, activeStreamCodec, {
-      width: inputSize.inputWidth,
-      height: inputSize.inputHeight,
-    });
+
+    const elapsed = Date.now() - lastEmitAt;
+
+    if (elapsed < MIN_FRAME_INTERVAL_MS) {
+      pendingFrame = screenshot;
+
+      if (!pendingEmitTimer) {
+        pendingEmitTimer = setTimeout(() => {
+          pendingEmitTimer = null;
+          const nextFrame = pendingFrame;
+          pendingFrame = null;
+
+          if (nextFrame && !stopped) {
+            sendFrame(nextFrame);
+          }
+        }, MIN_FRAME_INTERVAL_MS - elapsed);
+      }
+
+      return;
+    }
+
+    pendingFrame = null;
+
+    if (pendingEmitTimer) {
+      clearTimeout(pendingEmitTimer);
+      pendingEmitTimer = null;
+    }
+
+    sendFrame(screenshot);
   };
 
   const idbCompanion = resolveIdbCompanionPath();
@@ -969,14 +1171,14 @@ export async function createIosSimulatorSession(
       if (!firstFrame) {
         firstFrame = await tryIdbScreenshotStream();
       }
-    }
 
-    if (!firstFrame && idb.found) {
-      if (sharedCompanion) {
-        await sharedCompanion.stop();
+      if (!firstFrame) {
+        await sharedCompanion.stop().catch(() => undefined);
         sharedCompanion = null;
       }
+    }
 
+    if (!firstFrame && idb.found && !sharedCompanion) {
       firstFrame = await tryIdbVideoStream(null);
 
       if (!firstFrame) {
@@ -1116,13 +1318,6 @@ export async function createIosSimulatorSession(
     }
   };
 
-  const swapInputOrientation = () => {
-    inputSize = {
-      inputWidth: inputSize.inputHeight,
-      inputHeight: inputSize.inputWidth,
-    };
-  };
-
   const sendHomeButtonPress = async () => {
     if (useSimulatorServer) {
       await sendSimulatorInput(formatSimulatorButtonInput('Down', 'home'));
@@ -1226,31 +1421,230 @@ export async function createIosSimulatorSession(
     await performAppSwitcherGesture();
   };
 
-  const rotateWithFallback = async () => {
-    isLandscape = !isLandscape;
-
-    if (idb.found) {
-      await runCommand(idb.path, [
-        'ui',
-        'rotate',
-        '--udid',
-        udid,
-        '--orientation',
-        isLandscape ? 'landscape_left' : 'portrait',
+  const setSimulatorOrientation = async (
+    orientation: EmulatorDeviceOrientation,
+  ): Promise<boolean> => {
+    const readWindowSize = async (): Promise<{ width: number; height: number } | null> => {
+      const result = await runCommand('osascript', [
+        '-e',
+        'tell application "System Events" to tell process "Simulator" to get size of window 1',
       ]);
-      swapInputOrientation();
-      lastFrameHash = 0;
-      return;
-    }
 
-    await runCommand('osascript', [
+      if (result.code !== 0 || !result.stdout.trim()) {
+        return null;
+      }
+
+      const parts = result.stdout
+        .split(',')
+        .map((part) => Number.parseInt(part.trim(), 10))
+        .filter((value) => Number.isFinite(value));
+
+      if (parts.length < 2) {
+        return null;
+      }
+
+      return { width: parts[0], height: parts[1] };
+    };
+
+    const matchesAspect = (size: { width: number; height: number } | null): boolean => {
+      if (!size) {
+        return false;
+      }
+
+      return isLandscapeOrientation(orientation)
+        ? size.width > size.height
+        : size.width < size.height;
+    };
+
+    const orientationLabel = ORIENTATION_MENU_LABEL[orientation];
+    const menuResult = await runCommand('osascript', [
       '-e',
       'tell application "Simulator" to activate',
       '-e',
-      'tell application "System Events" to keystroke "left" using command down',
+      'delay 0.15',
+      '-e',
+      `tell application "System Events" to tell process "Simulator" to click menu item "${orientationLabel}" of menu 1 of menu item "Orientation" of menu "Device" of menu bar 1`,
     ]);
-    swapInputOrientation();
-    lastFrameHash = 0;
+
+    if (menuResult.code === 0) {
+      await delay(450);
+      return matchesAspect(await readWindowSize()) || true;
+    }
+
+    const currentIndex = ORIENTATION_CYCLE.indexOf(deviceOrientation);
+    const targetIndex = ORIENTATION_CYCLE.indexOf(orientation);
+    const steps =
+      currentIndex >= 0 && targetIndex >= 0
+        ? (targetIndex - currentIndex + ORIENTATION_CYCLE.length) % ORIENTATION_CYCLE.length
+        : isLandscapeOrientation(orientation)
+          ? 1
+          : 0;
+
+    for (let step = 0; step < Math.max(steps, 1); step += 1) {
+      const rotateMenuResult = await runCommand('osascript', [
+        '-e',
+        'tell application "Simulator" to activate',
+        '-e',
+        'delay 0.12',
+        '-e',
+        'tell application "System Events" to tell process "Simulator" to click menu item "Rotate Left" of menu "Device" of menu bar 1',
+      ]);
+
+      if (rotateMenuResult.code !== 0) {
+        const shortcutResult = await runCommand('osascript', [
+          '-e',
+          'tell application "Simulator" to activate',
+          '-e',
+          'delay 0.12',
+          '-e',
+          'tell application "System Events" to keystroke "left" using command down',
+        ]);
+
+        if (shortcutResult.code !== 0) {
+          return false;
+        }
+      }
+
+      await delay(350);
+    }
+
+    return matchesAspect(await readWindowSize()) || steps > 0;
+  };
+
+  const rotateWithFallback = async (): Promise<boolean> => {
+    return applyOrientation(nextOrientation(deviceOrientation));
+  };
+
+  const applyOrientation = async (
+    nextOrientationValue: EmulatorDeviceOrientation,
+  ): Promise<boolean> => {
+    if (nextOrientationValue === deviceOrientation) {
+      notifyDisplaySize();
+      return true;
+    }
+
+    if (orientationSyncing) {
+      return false;
+    }
+
+    orientationSyncing = true;
+
+    try {
+      const rotated = await setSimulatorOrientation(nextOrientationValue);
+
+      if (!rotated) {
+        return false;
+      }
+
+      deviceOrientation = nextOrientationValue;
+
+      if (useSimulatorServer) {
+        await sendSimulatorInput(
+          `rotate ${ORIENTATION_SERVER_LABEL[deviceOrientation]}`,
+        );
+      }
+
+      lastFrameHash = 0;
+      notifyDisplaySize();
+      await delay(350);
+      return true;
+    } finally {
+      orientationSyncing = false;
+    }
+  };
+
+  const startOrientationWatcher = () => {
+    if (orientationLogProcess || stopped) {
+      return;
+    }
+
+    const syncFromOrientationName = (name: string) => {
+      const parsed = parseSwitcherOrientation(name);
+
+      if (!parsed || parsed === deviceOrientation || orientationSyncing || stopped) {
+        return;
+      }
+
+      void runInput(async () => {
+        await applyOrientation(parsed);
+        triggerBurstCapture();
+      });
+    };
+
+    void runCommand(
+      xcrun.path,
+      [
+        'simctl',
+        'spawn',
+        udid,
+        'log',
+        'show',
+        '--last',
+        '15s',
+        '--style',
+        'compact',
+        '--predicate',
+        'eventMessage CONTAINS "outSwitcherOrientation"',
+      ],
+      4_000,
+    ).then((result) => {
+      if (stopped || result.code !== 0) {
+        return;
+      }
+
+      const matches = [...result.stdout.matchAll(new RegExp(SWITCHER_ORIENTATION_RE.source, 'gi'))];
+      const last = matches.at(-1);
+
+      if (!last?.[1]) {
+        return;
+      }
+
+      syncFromOrientationName(last[1]);
+    });
+
+    const child = spawn(
+      xcrun.path,
+      [
+        'simctl',
+        'spawn',
+        udid,
+        'log',
+        'stream',
+        '--level=default',
+        '--predicate',
+        'eventMessage CONTAINS "outSwitcherOrientation"',
+      ],
+      { env: process.env },
+    );
+
+    orientationLogProcess = child;
+    let lineBuffer = '';
+
+    const handleLine = (line: string) => {
+      const match = SWITCHER_ORIENTATION_RE.exec(line);
+
+      if (!match?.[1]) {
+        return;
+      }
+
+      syncFromOrientationName(match[1]);
+    };
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      lineBuffer += chunk.toString('utf8');
+      const lines = lineBuffer.split('\n');
+      lineBuffer = lines.pop() ?? '';
+
+      for (const line of lines) {
+        handleLine(line);
+      }
+    });
+
+    child.on('exit', () => {
+      if (orientationLogProcess === child) {
+        orientationLogProcess = null;
+      }
+    });
   };
 
   const typeTextWithIdb = async (text: string) => {
@@ -1342,11 +1736,6 @@ export async function createIosSimulatorSession(
     emitFrame(firstFrame);
   }
 
-  if (useSimulatorServer && simulatorServerController) {
-    simulatorServerController.startFrameRelay((frame) => {
-      emitFrame(frame);
-    });
-  }
 
   events.onState('running', undefined, {
     captureBackend,
@@ -1354,6 +1743,8 @@ export async function createIosSimulatorSession(
     streamFps: 0,
     fallbackReason: idbFallbackReason ?? undefined,
   });
+
+  startOrientationWatcher();
 
   statsTimer = setInterval(publishStreamStats, 1000);
 
@@ -1366,12 +1757,20 @@ export async function createIosSimulatorSession(
       stopped = true;
       stopProcess(bootStatusProcess);
       bootStatusProcess = null;
+      await stopAndWait(orientationLogProcess, 'SIGTERM');
+      orientationLogProcess = null;
 
       if (statsTimer) {
         clearInterval(statsTimer);
         statsTimer = null;
       }
 
+      if (pendingEmitTimer) {
+        clearTimeout(pendingEmitTimer);
+        pendingEmitTimer = null;
+      }
+
+      pendingFrame = null;
       latestPendingJpeg = null;
       await simulatorServerController?.stop();
       simulatorServerController = null;
@@ -1461,10 +1860,20 @@ export async function createIosSimulatorSession(
     },
     async pressBack() {},
     async rotate() {
+      let ok = false;
+
       await runInput(async () => {
-        await rotateWithFallback();
+        ok = await rotateWithFallback();
         triggerBurstCapture();
       });
+
+      notifyDisplaySize();
+
+      return {
+        ok,
+        landscape: isLandscapeOrientation(deviceOrientation),
+        orientation: deviceOrientation,
+      };
     },
     async typeText(text: string) {
       if (!text) {

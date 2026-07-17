@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { buildFlatChanges, type GitFlatChange } from '@/utils/gitFlatChanges';
+import { subscribeGitRepoChange } from '@/utils/gitRepoChangeBus';
 import { GIT_REPO_REFRESH_EVENT } from '@/utils/gitRepoRefresh';
 
 function prefixGitChangePath(relativePath: string, changePath: string): string {
@@ -88,7 +89,7 @@ export function useProjectGitFlatChanges(projectPath: string | null): {
       });
     };
 
-    const unsubscribe = window.nexus.git.onRepoChange((changedPath) => {
+    const unsubscribe = subscribeGitRepoChange((changedPath) => {
       if (!repoPathsRef.current.includes(changedPath)) {
         return;
       }

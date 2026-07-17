@@ -104,6 +104,7 @@ interface AgentComposerPlusMenuProps {
   onAttachImage: () => void;
   onAttachFile: () => void;
   onRemoveAgent?: () => void;
+  onRequestComposerFocus?: () => void;
   removeAgentLabel?: string;
   triggerVariant?: 'plus' | 'more';
   triggerClassName?: string;
@@ -120,6 +121,7 @@ function AgentComposerPlusMenuComponent({
   onAttachImage,
   onAttachFile,
   onRemoveAgent,
+  onRequestComposerFocus,
   removeAgentLabel = 'Remover agent',
   triggerVariant = 'plus',
   triggerClassName,
@@ -186,7 +188,10 @@ function AgentComposerPlusMenuComponent({
     setOpen(false);
     setOpenSubmenu(null);
     setQuery('');
-  }, []);
+    window.requestAnimationFrame(() => {
+      onRequestComposerFocus?.();
+    });
+  }, [onRequestComposerFocus]);
 
   const handleSelect = useCallback(
     (command: string) => {
@@ -245,6 +250,7 @@ function AgentComposerPlusMenuComponent({
         aria-label={ariaLabel}
         aria-haspopup='menu'
         aria-expanded={open}
+        onMouseDown={(event) => event.preventDefault()}
         onClick={handleToggle}
       >
         {triggerIcon}
@@ -528,6 +534,7 @@ interface AgentComposerModelSelectProps {
   cwd: string;
   isVisible: boolean;
   onRunCommand: (command: string) => void;
+  onRequestComposerFocus?: () => void;
 }
 
 function AgentComposerModelSelectComponent({
@@ -535,6 +542,7 @@ function AgentComposerModelSelectComponent({
   cwd,
   isVisible,
   onRunCommand,
+  onRequestComposerFocus,
 }: AgentComposerModelSelectProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -573,7 +581,10 @@ function AgentComposerModelSelectComponent({
 
   const handleClose = useCallback(() => {
     setOpen(false);
-  }, []);
+    window.requestAnimationFrame(() => {
+      onRequestComposerFocus?.();
+    });
+  }, [onRequestComposerFocus]);
 
   const handleSelect = useCallback(
     (hint: TerminalCommandHint) => {
@@ -597,6 +608,7 @@ function AgentComposerModelSelectComponent({
         className='agent-view__composer-select app-button app-button--enter'
         aria-haspopup='menu'
         aria-expanded={open}
+        onMouseDown={(event) => event.preventDefault()}
         onClick={handleOpen}
       >
         {selectedHint ? <AgentHintLeading hint={selectedHint} /> : null}

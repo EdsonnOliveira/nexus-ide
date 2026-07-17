@@ -3,6 +3,7 @@ import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStor
 import type {
   EmulatorCaptureBackend,
   EmulatorDevice,
+  EmulatorDeviceOrientation,
   EmulatorPlatform,
   EmulatorSessionState,
   EmulatorSetupStatus,
@@ -12,6 +13,40 @@ import type {
 } from '@/types';
 import { isOverlayBlockingTerminalHints } from '@/utils/overlayBlocking';
 import { formatSimulatorTouchInput } from '@/utils/simulatorServerInput';
+
+function isLandscapeOrientation(orientation: EmulatorDeviceOrientation): boolean {
+  return orientation === 'landscapeLeft' || orientation === 'landscapeRight';
+}
+
+function mapPointerForOrientation(
+  x: number,
+  y: number,
+  orientation: EmulatorDeviceOrientation,
+): { x: number; y: number } {
+  switch (orientation) {
+    case 'landscapeRight':
+      return { x: y, y: 1 - x };
+    case 'landscapeLeft':
+      return { x: 1 - y, y: x };
+    case 'portraitUpsideDown':
+      return { x: 1 - x, y: 1 - y };
+    default:
+      return { x, y };
+  }
+}
+
+function frameSizeForOrientation(
+  width: number,
+  height: number,
+  orientation: EmulatorDeviceOrientation,
+): { width: number; height: number } {
+  const portraitWidth = Math.min(width, height);
+  const portraitHeight = Math.max(width, height);
+
+  return isLandscapeOrientation(orientation)
+    ? { width: portraitHeight, height: portraitWidth }
+    : { width: portraitWidth, height: portraitHeight };
+}
 
 interface UseEmulatorSessionOptions {
   tab: EmulatorTab;
@@ -36,6 +71,7 @@ interface UseEmulatorSessionResult {
   streamFallbackReason: string | null;
   isStarting: boolean;
   frameSize: { width: number; height: number };
+  iosDeviceOrientation: EmulatorDeviceOrientation;
   streamUrl: string | null;
   usesNativeStream: boolean;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
@@ -182,6 +218,37 @@ export function useEmulatorSession({
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [frameSize, setFrameSize] = useState({ width: 390, height: 844 });
+  const [iosDeviceOrientation, setIosDeviceOrientation] =
+    useState<EmulatorDeviceOrientation>('portrait');
+  const iosDeviceOrientationRef = useRef<EmulatorDeviceOrientation>('portrait');
+
+  useEffect(() => {
+    iosDeviceOrientationRef.current = iosDeviceOrientation;
+  }, [iosDeviceOrientation]);
+
+  const applyFrameSize = useCallback(
+    (width: number, height: number, orientation?: EmulatorDeviceOrientation) => {
+      if (tab.platform === 'ios') {
+        const resolvedOrientation =
+          orientation ??
+          (width > height
+            ? isLandscapeOrientation(iosDeviceOrientationRef.current)
+              ? iosDeviceOrientationRef.current
+              : 'landscapeRight'
+            : iosDeviceOrientationRef.current === 'portraitUpsideDown'
+              ? 'portraitUpsideDown'
+              : 'portrait');
+
+        iosDeviceOrientationRef.current = resolvedOrientation;
+        setIosDeviceOrientation(resolvedOrientation);
+        setFrameSize(frameSizeForOrientation(width, height, resolvedOrientation));
+        return;
+      }
+
+      setFrameSize({ width, height });
+    },
+    [tab.platform],
+  );
   const sessionIdRef = useRef<string | null>(tab.sessionId);
   const startGenerationRef = useRef(0);
   const intentionalStopRef = useRef(false);
@@ -280,9 +347,9 @@ export function useEmulatorSession({
     }
 
     if (result.frameWidth && result.frameHeight) {
-      setFrameSize({ width: result.frameWidth, height: result.frameHeight });
+      applyFrameSize(result.frameWidth, result.frameHeight);
     }
-  }, []);
+  }, [applyFrameSize]);
 
   useEffect(() => {
     if (!isRuntimeActive) {
@@ -434,10 +501,16 @@ export function useEmulatorSession({
     chunk: Uint8Array;
     width?: number;
     height?: number;
+    orientation?: EmulatorDeviceOrientation;
   }) => {
     const activeSessionId = sessionIdRef.current ?? tab.sessionId;
 
     if (activeSessionId && payload.sessionId !== activeSessionId) {
+      return;
+    }
+
+    if (captureBackendRef.current === 'simulator-server') {
+      pendingImageFrameRef.current = null;
       return;
     }
 
@@ -446,7 +519,7 @@ export function useEmulatorSession({
     }
 
     if (payload.width && payload.height) {
-      setFrameSize({ width: payload.width, height: payload.height });
+      applyFrameSize(payload.width, payload.height, payload.orientation);
     }
 
     const canvas = canvasRef.current;
@@ -489,7 +562,7 @@ export function useEmulatorSession({
       h264ConfiguredRef.current = false;
     }
   },
-  [configureH264Decoder, tab.sessionId],
+  [applyFrameSize, configureH264Decoder, tab.sessionId],
   );
 
   useEffect(() => {
@@ -681,7 +754,7 @@ export function useEmulatorSession({
         return;
       }
 
-      setFrameSize({ width: payload.width, height: payload.height });
+      applyFrameSize(payload.width, payload.height, payload.orientation);
     });
 
     return () => {
@@ -693,7 +766,7 @@ export function useEmulatorSession({
       h264DecoderRef.current = null;
       h264ConfiguredRef.current = false;
     };
-  }, [handleVideoChunk, tab.id]);
+  }, [applyFrameSize, handleVideoChunk, tab.id]);
 
   const setPlatform = useCallback(
     (platform: EmulatorPlatform) => {
@@ -813,6 +886,9 @@ export function useEmulatorSession({
     setTargetFps(0);
     setStreamFallbackReason(null);
     setStreamUrl(null);
+    setIosDeviceOrientation('portrait');
+    iosDeviceOrientationRef.current = 'portrait';
+    setFrameSize({ width: 390, height: 844 });
     sessionIdRef.current = null;
     imageDrawStateRef.current = {
       generation: 0,
@@ -824,13 +900,20 @@ export function useEmulatorSession({
     await window.nexus.emulator.stopByTabId(tab.id);
   }, [tab.id]);
 
-  const mapPointer = useCallback((event: React.PointerEvent<HTMLElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1);
-    const y = Math.min(Math.max((event.clientY - rect.top) / rect.height, 0), 1);
+  const mapPointer = useCallback(
+    (event: React.PointerEvent<HTMLElement>) => {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const x = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1);
+      const y = Math.min(Math.max((event.clientY - rect.top) / rect.height, 0), 1);
 
-    return { x, y };
-  }, []);
+      if (tab.platform === 'ios') {
+        return mapPointerForOrientation(x, y, iosDeviceOrientation);
+      }
+
+      return { x, y };
+    },
+    [iosDeviceOrientation, tab.platform],
+  );
 
   const handlePointerDown = useCallback(
     (event: React.PointerEvent<HTMLElement>) => {
@@ -943,8 +1026,12 @@ export function useEmulatorSession({
       return;
     }
 
-    setFrameSize({ width: image.naturalWidth, height: image.naturalHeight });
-  }, []);
+    if (iosDeviceOrientationRef.current !== 'portrait') {
+      return;
+    }
+
+    applyFrameSize(image.naturalWidth, image.naturalHeight);
+  }, [applyFrameSize]);
 
   const pressHome = useCallback(async () => {
     const sessionId = resolveSessionId();
@@ -983,8 +1070,20 @@ export function useEmulatorSession({
       return;
     }
 
-    await window.nexus.emulator.rotate(sessionId);
-  }, [resolveSessionId]);
+    const result = await window.nexus.emulator.rotate(sessionId);
+
+    if (!result.ok) {
+      return;
+    }
+
+    if (tab.platform === 'ios') {
+      iosDeviceOrientationRef.current = result.orientation;
+      setIosDeviceOrientation(result.orientation);
+      setFrameSize((size) =>
+        frameSizeForOrientation(size.width, size.height, result.orientation),
+      );
+    }
+  }, [resolveSessionId, tab.platform]);
 
   const typeText = useCallback(
     async (text: string) => {
@@ -1089,6 +1188,7 @@ export function useEmulatorSession({
     streamFallbackReason,
     isStarting,
     frameSize,
+    iosDeviceOrientation,
     streamUrl,
     usesNativeStream,
     canvasRef,

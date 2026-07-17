@@ -230,6 +230,12 @@ export interface AgentTab {
 
 export type EmulatorPlatform = 'android' | 'ios';
 
+export type EmulatorDeviceOrientation =
+  | 'portrait'
+  | 'landscapeLeft'
+  | 'portraitUpsideDown'
+  | 'landscapeRight';
+
 export type EmulatorSessionState = 'booting' | 'running' | 'stopped' | 'error';
 
 export type EmulatorCaptureBackend = 'simulator-server' | 'idb' | 'simctl' | 'adb';
@@ -821,6 +827,7 @@ export interface NexusAPI {
     create: (cwd: string, agent: TerminalAgent) => Promise<string>;
     has: (ptyId: string) => Promise<boolean>;
     getScrollback: (ptyId: string) => Promise<string>;
+    getScrollbackTail: (ptyId: string, maxBytes: number) => Promise<string>;
     write: (ptyId: string, data: string) => void;
     resize: (ptyId: string, cols: number, rows: number) => void;
     kill: (ptyId: string) => void;
@@ -1173,7 +1180,11 @@ export interface NexusAPI {
     pressHome: (sessionId: string) => Promise<void>;
     pressAppSwitcher: (sessionId: string) => Promise<void>;
     pressBack: (sessionId: string) => Promise<void>;
-    rotate: (sessionId: string) => Promise<void>;
+    rotate: (sessionId: string) => Promise<{
+      ok: boolean;
+      landscape: boolean;
+      orientation: EmulatorDeviceOrientation;
+    }>;
     typeText: (sessionId: string, text: string) => Promise<void>;
     sendInput: (sessionId: string, line: string) => Promise<boolean>;
     screenshot: (sessionId: string) => Promise<boolean>;
@@ -1184,6 +1195,7 @@ export interface NexusAPI {
         chunk: Uint8Array;
         width?: number;
         height?: number;
+        orientation?: EmulatorDeviceOrientation;
       }) => void,
     ) => () => void;
     onSessionState: (
@@ -1211,7 +1223,12 @@ export interface NexusAPI {
       }) => void,
     ) => () => void;
     onFrameSize: (
-      callback: (payload: { sessionId: string; width: number; height: number }) => void,
+      callback: (payload: {
+        sessionId: string;
+        width: number;
+        height: number;
+        orientation?: EmulatorDeviceOrientation;
+      }) => void,
     ) => () => void;
     onSessionCreated: (
       callback: (payload: { sessionId: string; tabId: string }) => void,

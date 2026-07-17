@@ -12,6 +12,7 @@ interface AgentCursorUsageIndicatorProps {
   isLoading: boolean;
   visible: boolean;
   onRefresh: () => void;
+  onRequestComposerFocus?: () => void;
 }
 
 function resolveUsageTone(percent: number): 'normal' | 'warning' | 'critical' {
@@ -199,6 +200,7 @@ function AgentCursorUsageIndicatorComponent({
   isLoading,
   visible,
   onRefresh,
+  onRequestComposerFocus,
 }: AgentCursorUsageIndicatorProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -222,7 +224,10 @@ function AgentCursorUsageIndicatorComponent({
 
   const handleClose = useCallback(() => {
     setOpen(false);
-  }, []);
+    window.requestAnimationFrame(() => {
+      onRequestComposerFocus?.();
+    });
+  }, [onRequestComposerFocus]);
 
   if (!visible || !usage?.available) {
     return null;
@@ -236,6 +241,7 @@ function AgentCursorUsageIndicatorComponent({
         className={`agent-cursor-usage app-button app-button--enter agent-cursor-usage--${tone}${open ? ' agent-cursor-usage--open' : ''}`}
         aria-label={`Uso do Cursor ${percentText}`}
         aria-expanded={open}
+        onMouseDown={(event) => event.preventDefault()}
         onClick={() => {
           if (open) {
             handleClose();

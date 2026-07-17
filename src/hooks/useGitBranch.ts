@@ -1,15 +1,32 @@
 import { useCallback, useEffect, useState } from 'react';
+import { subscribeGitRepoChange } from '@/utils/gitRepoChangeBus';
 import {
   buildGitBranchBarEntries,
   resolveActiveGitRepo,
   type GitBranchBarEntry,
 } from '@/utils/gitRepoSelection';
 
+const MAX_GIT_BRANCH_CACHE_ENTRIES = 100;
 const gitBranchCache = new Map<string, GitBranchBarEntry[]>();
 const inflightRequests = new Map<string, Promise<GitBranchBarEntry[]>>();
 
 function buildCacheKey(projectPath: string, terminalCwd: string | null): string {
   return `${projectPath}::${terminalCwd ?? ''}`;
+}
+
+function setGitBranchCache(key: string, entries: GitBranchBarEntry[]): void {
+  gitBranchCache.delete(key);
+  gitBranchCache.set(key, entries);
+
+  while (gitBranchCache.size > MAX_GIT_BRANCH_CACHE_ENTRIES) {
+    const oldest = gitBranchCache.keys().next().value;
+
+    if (oldest === undefined) {
+      break;
+    }
+
+    gitBranchCache.delete(oldest);
+  }
 }
 
 function invalidateProjectGitBranchCache(projectPath: string): void {
@@ -35,7 +52,7 @@ async function fetchGitBranchEntries(
     inflightRequests.delete(cacheKey);
     const activeRepo = resolveActiveGitRepo(repos, terminalCwd);
     const entries = buildGitBranchBarEntries(repos, activeRepo);
-    gitBranchCache.set(cacheKey, entries);
+    setGitBranchCache(cacheKey, entries);
     return entries;
   });
 
@@ -100,7 +117,7 @@ export function useGitBranch(
       return;
     }
 
-    const unsubscribe = window.nexus.git.onRepoChange((changedPath) => {
+    const unsubscribe = subscribeGitRepoChange((changedPath) => {
       if (changedPath === projectPath || changedPath.startsWith(`${projectPath}/`)) {
         invalidateProjectGitBranchCache(projectPath);
         setRefreshToken((current) => current + 1);

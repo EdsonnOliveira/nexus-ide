@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createDebouncedCallback } from '@/utils/createDebouncedCallback';
 import { countGitStatusChanges } from '@/utils/gitFlatChanges';
+import { subscribeGitRepoChange } from '@/utils/gitRepoChangeBus';
 import { GIT_REPO_REFRESH_EVENT } from '@/utils/gitRepoRefresh';
 import { requestGitStatus } from '@/utils/gitStatusRequest';
 
@@ -86,7 +87,7 @@ export function useGitChangeCounts(projectPath: string | null): GitChangeCounts 
       debounced.schedule();
     };
 
-    const unsubscribe = window.nexus.git.onRepoChange((changedPath) => {
+    const unsubscribe = subscribeGitRepoChange((changedPath) => {
       if (!repoPathsRef.current.includes(changedPath)) {
         return;
       }

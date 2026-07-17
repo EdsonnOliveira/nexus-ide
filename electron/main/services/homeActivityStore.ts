@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { app } from 'electron';
 
@@ -66,12 +67,35 @@ function pruneOldDays(store: HomeActivityFile): void {
   }
 }
 
+let persistTimer: NodeJS.Timeout | null = null;
+let persistInFlight: Promise<void> = Promise.resolve();
+
+async function flushStoreToDisk(store: HomeActivityFile): Promise<void> {
+  const filePath = getStorePath();
+
+  try {
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, JSON.stringify(store));
+  } catch {
+    // ignore persistence failures
+  }
+}
+
 function persistStore(store: HomeActivityFile): void {
   pruneOldDays(store);
   cache = store;
-  const filePath = getStorePath();
-  mkdirSync(path.dirname(filePath), { recursive: true });
-  writeFileSync(filePath, JSON.stringify(store));
+
+  if (persistTimer) {
+    return;
+  }
+
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+
+    if (cache) {
+      persistInFlight = persistInFlight.then(() => flushStoreToDisk(cache as HomeActivityFile));
+    }
+  }, 500);
 }
 
 export function recordHomeActivityMetric(

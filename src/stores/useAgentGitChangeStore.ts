@@ -39,6 +39,8 @@ interface AgentGitChangeState {
     repoPath: string,
   ) => Promise<void>;
   finalizeTurn: (paneId: string) => Promise<void>;
+  clearPendingTurn: (paneId: string) => PendingAgentGitTurn | null;
+  removeGroups: (projectId: string, groupIds: string[]) => void;
   clearProject: (projectId: string) => void;
   setFocusedGroupId: (groupId: string | null) => void;
   pruneGroupsForChanges: (projectId: string, activeChanges: GitFlatChange[]) => void;
@@ -350,6 +352,50 @@ export const useAgentGitChangeStore = create<AgentGitChangeState>((set, get) => 
 
       await refreshProjectGitCounts(pending.projectId, pending.repoPath);
     }
+  },
+  clearPendingTurn: (paneId) => {
+    const pending = get().pendingTurnByPane[paneId] ?? null;
+
+    if (!pending) {
+      return null;
+    }
+
+    set((state) => {
+      const nextPending = { ...state.pendingTurnByPane };
+      const nextPrompts = { ...state.lastPromptByPane };
+      delete nextPending[paneId];
+      delete nextPrompts[paneId];
+      return { pendingTurnByPane: nextPending, lastPromptByPane: nextPrompts };
+    });
+
+    return pending;
+  },
+  removeGroups: (projectId, groupIds) => {
+    if (groupIds.length === 0) {
+      return;
+    }
+
+    const removed = new Set(groupIds);
+
+    set((state) => {
+      const current = state.groupsByProject[projectId] ?? [];
+      const nextGroups = current.filter((group) => !removed.has(group.id));
+
+      if (nextGroups.length === current.length) {
+        return state;
+      }
+
+      return {
+        groupsByProject: {
+          ...state.groupsByProject,
+          [projectId]: nextGroups,
+        },
+        focusedGroupId:
+          state.focusedGroupId && removed.has(state.focusedGroupId) ? null : state.focusedGroupId,
+      };
+    });
+
+    schedulePersistAgentGitGroups(projectId);
   },
   clearProject: (projectId) => {
     set((state) => {

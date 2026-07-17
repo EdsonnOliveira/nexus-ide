@@ -16,6 +16,7 @@ interface AgentContextUsageIndicatorProps {
   isLoading: boolean;
   visible: boolean;
   onRequestReport: () => void;
+  onRequestComposerFocus?: () => void;
 }
 
 const RING_SIZE = 18;
@@ -214,6 +215,7 @@ function AgentContextUsageIndicatorComponent({
   isLoading,
   visible,
   onRequestReport,
+  onRequestComposerFocus,
 }: AgentContextUsageIndicatorProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -233,7 +235,10 @@ function AgentContextUsageIndicatorComponent({
 
   const handleClose = useCallback(() => {
     setOpen(false);
-  }, []);
+    window.requestAnimationFrame(() => {
+      onRequestComposerFocus?.();
+    });
+  }, [onRequestComposerFocus]);
 
   const percent = usage?.percent ?? 0;
   const percentText = `${Math.round(percent)}%`;
@@ -251,6 +256,7 @@ function AgentContextUsageIndicatorComponent({
         className={`agent-context-usage app-button app-button--enter${open ? ' agent-context-usage--open' : ''}`}
         aria-label={`Uso de contexto ${percentText}`}
         aria-expanded={open}
+        onMouseDown={(event) => event.preventDefault()}
         onClick={() => {
           if (open) {
             handleClose();

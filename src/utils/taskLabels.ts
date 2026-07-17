@@ -1,7 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 import { ChevronDown, ChevronUp, ChevronsDown, ChevronsUp, Minus } from 'lucide-react';
 import type { ProjectTask, TaskAttachment, TaskSource } from '@/types/task';
-import { stripMarkdownSyntax } from '@/utils/markdownPreview';
+import { stripMarkdownSyntax } from '@/utils/markdownText';
 
 const TASK_TAG_BORDER_COLORS = [
   '#94a3b8',

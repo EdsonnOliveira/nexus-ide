@@ -2407,7 +2407,7 @@ input {
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: auto;
 }
 
 .home-dashboard__daily-select {
@@ -3037,8 +3037,14 @@ input {
 }
 
 .home-dashboard__mail-section .home-dashboard__section-body {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
   max-height: 268px;
-  overflow: hidden;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: auto;
 }
 
 .home-dashboard__mail-section .home-dashboard__section-action {
@@ -3096,9 +3102,8 @@ input {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 268px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  width: 100%;
+  padding-right: 2px;
 }
 
 .home-dashboard__section-header {
@@ -3209,8 +3214,14 @@ input {
 }
 
 .home-dashboard__parakeet-section .home-dashboard__section-body {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
   max-height: 268px;
-  overflow: hidden;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: auto;
 }
 
 .home-dashboard__parakeet-list {
@@ -3220,9 +3231,8 @@ input {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 268px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  width: 100%;
+  padding-right: 2px;
 }
 
 .home-dashboard__parakeet-header-actions {
@@ -10185,64 +10195,6 @@ input {
   color: #f87171;
 }
 
-.agent-git-change-pill-slot {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 12px;
-  z-index: 4;
-  display: flex;
-  justify-content: center;
-  pointer-events: none;
-}
-
-.agent-git-change-pill {
-  position: relative;
-  pointer-events: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 12px;
-  border-radius: var(--radius-pill);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(28, 28, 36, 0.92);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 600;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-}
-
-.agent-git-change-pill.app-button:active:not(:disabled) {
-  transform: scale(0.98);
-}
-
-.agent-git-change-pill:hover:not(:disabled) {
-  background: rgba(40, 40, 50, 0.96);
-  border-color: rgba(255, 255, 255, 0.18);
-  color: var(--text-primary);
-}
-
-.agent-git-change-pill__label {
-  white-space: nowrap;
-}
-
-.agent-git-change-pill__stats {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font-mono);
-}
-
-.agent-git-change-pill__add {
-  color: #4ade80;
-}
-
-.agent-git-change-pill__del {
-  color: #f87171;
-}
-
 .git-scm__changes-body {
   display: flex;
   flex-direction: column;
@@ -14975,6 +14927,22 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   max-height: 100%;
 }
 
+.emulator-view__stream-shell--landscape,
+.emulator-view__stream-shell--rotated {
+  overflow: hidden;
+}
+
+.emulator-view__stream-shell--landscape .emulator-view__stream-img,
+.emulator-view__stream-shell--landscape .emulator-view__screen,
+.emulator-view__stream-shell--rotated .emulator-view__stream-img,
+.emulator-view__stream-shell--rotated .emulator-view__screen {
+  position: absolute;
+  max-width: none;
+  max-height: none;
+  object-fit: fill;
+  transform-origin: center center;
+}
+
 .emulator-view__body--locked .emulator-view__stream-shell {
   max-width: none;
   max-height: none;
@@ -15037,6 +15005,7 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 .emulator-view__gesture-layer {
   position: absolute;
   inset: 0;
+  z-index: 2;
   border-radius: 18px;
   touch-action: none;
   cursor: crosshair;
@@ -17843,10 +17812,6 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   .agent-view__send.app-button:hover:not(:disabled):not(.empty-state__action) {
     transform: none;
   }
-}
-
-.agent-view .agent-git-change-pill-slot {
-  padding: 8px 14px 0;
 }
 
 .agent-view__turns {

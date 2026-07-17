@@ -1,33 +1,60 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { rehighlightMarkdownCodeBlocks } from '@/utils/codeHighlight';
-import { normalizeMarkdownSource, renderMarkdownPreview } from '@/utils/markdownPreview';
+import { renderMarkdownPreview } from '@/utils/markdownPreview';
+import { normalizeMarkdownSource } from '@/utils/markdownText';
 
 export function useDeferredMarkdownHtml(source: string): string {
   const normalized = useMemo(() => normalizeMarkdownSource(source), [source]);
   const [html, setHtml] = useState('');
+  const lastRenderRef = useRef(0);
 
   useEffect(() => {
     const trimmed = normalized.trim();
 
     if (!trimmed) {
+      lastRenderRef.current = 0;
       setHtml('');
       return;
     }
 
     let cancelled = false;
-    const idleTimeout = trimmed.length > 6000 ? 1200 : 400;
-    const idleId = window.requestIdleCallback(
-      () => {
-        if (!cancelled) {
+    let idleId = 0;
+    let timeoutId = 0;
+
+    const runRender = () => {
+      const idleTimeout = trimmed.length > 6000 ? 1200 : 400;
+      idleId = window.requestIdleCallback(
+        () => {
+          if (cancelled) {
+            return;
+          }
+
+          lastRenderRef.current = Date.now();
           setHtml(renderMarkdownPreview(normalized));
-        }
-      },
-      { timeout: idleTimeout },
-    );
+        },
+        { timeout: idleTimeout },
+      );
+    };
+
+    const minInterval = trimmed.length > 4000 ? 600 : 250;
+    const elapsed = Date.now() - lastRenderRef.current;
+
+    if (elapsed >= minInterval) {
+      runRender();
+    } else {
+      timeoutId = window.setTimeout(runRender, minInterval - elapsed);
+    }
 
     return () => {
       cancelled = true;
-      window.cancelIdleCallback(idleId);
+
+      if (idleId) {
+        window.cancelIdleCallback(idleId);
+      }
+
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
     };
   }, [normalized]);
 

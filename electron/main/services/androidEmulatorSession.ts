@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { deflateSync } from 'node:zlib';
 import type {
   EmulatorCaptureBackend,
+  EmulatorDeviceOrientation,
   EmulatorSessionState,
   EmulatorStreamStats,
   EmulatorVideoCodec,
@@ -15,13 +16,13 @@ export interface EmulatorSessionEvents {
   onVideoChunk: (
     chunk: Buffer,
     codec: EmulatorVideoCodec,
-    size?: { width: number; height: number },
+    size?: { width: number; height: number; orientation?: EmulatorDeviceOrientation },
   ) => void;
-}
-
-export interface EmulatorSessionStartControls {
-  registerAbort: (abort: () => Promise<void>) => void;
-  isCancelled: () => boolean;
+  onFrameSize?: (
+    width: number,
+    height: number,
+    orientation?: EmulatorDeviceOrientation,
+  ) => void;
 }
 
 export interface EmulatorSessionHandle {
@@ -31,10 +32,19 @@ export interface EmulatorSessionHandle {
   pressHome(): Promise<void>;
   pressAppSwitcher(): Promise<void>;
   pressBack(): Promise<void>;
-  rotate(): Promise<void>;
+  rotate(): Promise<{
+    ok: boolean;
+    landscape: boolean;
+    orientation: EmulatorDeviceOrientation;
+  }>;
   takeScreenshot(outputPath: string): Promise<void>;
   typeText(text: string): Promise<void>;
   sendInput(line: string): Promise<boolean>;
+}
+
+export interface EmulatorSessionStartControls {
+  registerAbort: (abort: () => Promise<void>) => void;
+  isCancelled: () => boolean;
 }
 
 const STREAM_MAX_WIDTH = 540;
@@ -1214,7 +1224,11 @@ export async function createAndroidEmulatorSession(
     },
     async rotate() {
       if (!serial) {
-        return;
+        return {
+          ok: false,
+          landscape: isLandscape,
+          orientation: isLandscape ? 'landscapeLeft' : 'portrait',
+        };
       }
 
       await withInputGate(async () => {
@@ -1229,6 +1243,12 @@ export async function createAndroidEmulatorSession(
         displaySize = { width: displaySize.height, height: displaySize.width };
         lastFrameHash = 0;
       });
+
+      return {
+        ok: true,
+        landscape: isLandscape,
+        orientation: isLandscape ? 'landscapeLeft' : 'portrait',
+      };
     },
     async typeText(text: string) {
       if (!serial || !text) {

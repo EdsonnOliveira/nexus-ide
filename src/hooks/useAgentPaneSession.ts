@@ -13,7 +13,7 @@ import { registerAgentPaneHandlers } from '@/utils/agentPaneRegistry';
 import { registerAgentPrintPaneHandlers } from '@/utils/agentPrintBridge';
 import { recordHomeDashboardActivity } from '@/utils/recordHomeDashboardActivity';
 import { cliAgentToTerminalAgent, resolveAgentTabCli } from '@/utils/agentTabHelpers';
-import { trackAgentGitPrompt } from '@/utils/agentGitTurn';
+import { revertAgentGitChangesForTurn, trackAgentGitPrompt } from '@/utils/agentGitTurn';
 import {
   feedMobileReleaseOutput,
   finalizeMobileReleasesForPane,
@@ -430,7 +430,7 @@ export function useAgentPaneSession({
       return '';
     }
 
-    const scrollback = await window.nexus.terminal.getScrollback(ptyId);
+    const scrollback = await window.nexus.terminal.getScrollbackTail(ptyId, AGENT_OUTPUT_TAIL_SIZE);
     const tail = cleanAgentPtyChunk((scrollback ?? '').slice(-AGENT_OUTPUT_TAIL_SIZE)).replace(/\r/g, '\n');
     outputTailRef.current = tail;
     return tail;
@@ -1120,7 +1120,7 @@ export function useAgentPaneSession({
       if (streamUpdate.hasUpdate || clearedStall) {
         updateActiveTurn((turn) => ({
           ...turn,
-          activities: streamJsonStateRef.current.activities.map((entry) => ({ ...entry })),
+          activities: [...streamJsonStateRef.current.activities],
         }));
       }
 
@@ -1581,7 +1581,7 @@ export function useAgentPaneSession({
   ]);
 
   const rollbackAgentFromTurn = useCallback(
-    (turnId: string): boolean => {
+    async (turnId: string): Promise<boolean> => {
       const turns = turnsRef.current;
       const index = turns.findIndex((turn) => turn.id === turnId);
 
@@ -1589,9 +1589,20 @@ export function useAgentPaneSession({
         return false;
       }
 
+      const target = turns[index]!;
+
       if (turns.some((turn) => turn.running)) {
         stopAgent();
       }
+
+      const isLastTurn = index === turns.length - 1;
+
+      await revertAgentGitChangesForTurn({
+        paneId: paneIdRef.current,
+        projectPath,
+        turn: target,
+        isActiveOrPendingTurn: isLastTurn,
+      });
 
       const truncated = turns.slice(0, index);
       persistTurns(truncated, { flush: true });
@@ -1601,7 +1612,7 @@ export function useAgentPaneSession({
 
       return true;
     },
-    [persistTurns, stopAgent],
+    [persistTurns, projectPath, stopAgent],
   );
 
   const sendPromptToPty = useCallback(
@@ -1959,7 +1970,7 @@ export function useAgentPaneSession({
       if (editingTurnId) {
         editingTurnIdRef.current = null;
         setEditingTurnId(null);
-        rollbackAgentFromTurn(editingTurnId);
+        await rollbackAgentFromTurn(editingTurnId);
         setFollowUps([]);
       }
 
@@ -2369,8 +2380,9 @@ export function useAgentPaneSession({
       }
 
       const target = turns[index]!;
+      const rolledBack = await rollbackAgentFromTurn(turnId);
 
-      if (!rollbackAgentFromTurn(turnId)) {
+      if (!rolledBack) {
         return false;
       }
 
@@ -2566,7 +2578,10 @@ export function useAgentPaneSession({
         return;
       }
 
-      const scrollback = await window.nexus.terminal.getScrollback(activePtyId);
+      const scrollback = await window.nexus.terminal.getScrollbackTail(
+        activePtyId,
+        AGENT_OUTPUT_TAIL_SIZE,
+      );
 
       if (cancelled) {
         return;
@@ -2599,7 +2614,7 @@ export function useAgentPaneSession({
 
     let cancelled = false;
 
-    void window.nexus.terminal.getScrollback(ptyId).then((scrollback) => {
+    void window.nexus.terminal.getScrollbackTail(ptyId, AGENT_OUTPUT_TAIL_SIZE).then((scrollback) => {
       if (cancelled) {
         return;
       }

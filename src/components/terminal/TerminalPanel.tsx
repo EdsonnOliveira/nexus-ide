@@ -16,7 +16,6 @@ import {
   type WorkspacePaneContextValue,
 } from '@/components/workspace/WorkspacePaneContext';
 import { TerminalFooter } from '@/components/terminal/TerminalFooter';
-import { AgentGitChangePill } from '@/components/terminal/AgentGitChangePill';
 import { TerminalPasteImages } from '@/components/terminal/TerminalPasteImages';
 import { XTermView } from '@/components/terminal/XTermView';
 import type { XTermViewHandle } from '@/types';
@@ -488,11 +487,6 @@ const TabPane = memo(function TabPaneComponent({
           hintsKeyboardActive={hintsKeyboardActive && isFocused}
           restoreCommand={tab.restoreCommand}
         />
-        {isAgentSession ? (
-          <div className='agent-git-change-pill-slot'>
-            <AgentGitChangePill projectId={projectId} paneId={tab.id} />
-          </div>
-        ) : null}
       </div>
       <TerminalPasteImages
         paneId={tab.id}
@@ -973,6 +967,8 @@ function TerminalPanelComponent() {
     [agentBusyByPane, agentPrintRunTokenByPane, awaitingResponseByPane],
   );
   const completionTrackersRef = useRef(new Map<string, PaneCompletionTracker>());
+  const ptyToPaneRef = useRef(new Map<string, string>());
+  const paneByIdRef = useRef(new Map<string, Tab>());
   const { selectPane, updateBrowserUrl, updateEmulatorTab, updateApiTab, updateAgentTab, splitTab, openBrowserTab, addTab, addAgentTab, setSplitRatio } =
     useTabActions();
   const setTabPtyId = useProjectStore((state) => state.setTabPtyId);
@@ -1214,6 +1210,8 @@ function TerminalPanelComponent() {
 
     const ptyToPane = new Map<string, string>();
     const paneById = new Map<string, Tab>();
+    ptyToPaneRef.current = ptyToPane;
+    paneByIdRef.current = paneById;
     const trackedPaneIds = new Set<string>();
     const activeProjectPaneIds = activeProject
       ? new Set(collectProjectPanes(activeProject.tabs).map((pane) => pane.id))
@@ -1252,7 +1250,7 @@ function TerminalPanelComponent() {
               useTerminalSessionStore.getState().completeTaskIfAwaiting(paneId);
 
               const session = useTerminalSessionStore.getState();
-              const paneEntry = paneById.get(paneId);
+              const paneEntry = paneByIdRef.current.get(paneId);
 
               if (!paneEntry || (paneEntry.type !== 'terminal' && paneEntry.type !== 'agent')) {
                 return;
@@ -1317,8 +1315,15 @@ function TerminalPanelComponent() {
       }
     }
 
+  }, [activeProject, paneHostReady]);
+
+  useEffect(() => {
+    if (!paneHostReady) {
+      return;
+    }
+
     const unsubscribe = window.nexus.terminal.onData((ptyId, data) => {
-      const paneId = ptyToPane.get(ptyId);
+      const paneId = ptyToPaneRef.current.get(ptyId);
 
       if (!paneId) {
         return;
@@ -1336,7 +1341,6 @@ function TerminalPanelComponent() {
       tracker.busyBuffer = (tracker.busyBuffer + data).slice(-TURN_BUFFER_SIZE);
 
       const session = useTerminalSessionStore.getState();
-      const pane = paneById.get(paneId);
       const hasActiveAgent = Boolean(session.activeAgentByPane[paneId]);
 
       syncAgentBusyFromTail(
@@ -1354,7 +1358,7 @@ function TerminalPanelComponent() {
     });
 
     return unsubscribe;
-  }, [activeProject, paneHostReady]);
+  }, [paneHostReady]);
 
   useEffect(() => {
     if (!paneHostReady || !activeProject) {
@@ -1369,7 +1373,7 @@ function TerminalPanelComponent() {
       const paneId = pane.id;
       const tracker = completionTrackersRef.current.get(paneId);
 
-      void window.nexus.terminal.getScrollback(pane.ptyId).then((scrollback) => {
+      void window.nexus.terminal.getScrollbackTail(pane.ptyId, TURN_BUFFER_SIZE).then((scrollback) => {
         const tail = (scrollback ?? '').slice(-TURN_BUFFER_SIZE);
         const session = useTerminalSessionStore.getState();
 

@@ -1,5 +1,5 @@
 import { ClipboardPaste, ListFilter, Plus, Search, Settings2, ListTodo } from 'lucide-react';
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { TaskContextMenu } from '@/components/tasks/TaskContextMenu';
@@ -83,9 +83,10 @@ function TaskListViewComponent({
     setFilters(defaultFilters);
   }, [defaultFilters, filtersCustomized]);
 
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const filteredTasks = useMemo(
-    () => filterProjectTasks(tasks, searchQuery, filters),
-    [filters, searchQuery, tasks],
+    () => filterProjectTasks(tasks, deferredSearchQuery, filters),
+    [filters, deferredSearchQuery, tasks],
   );
 
   const activeFilterCount = useMemo(() => countActiveTaskFilters(filters), [filters]);

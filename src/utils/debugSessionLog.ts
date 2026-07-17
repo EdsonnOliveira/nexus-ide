@@ -6,6 +6,4 @@ type DebugSessionLogPayload = {
   runId?: string;
 };
 
-export function writeDebugSessionLog(payload: DebugSessionLogPayload): void {
-  window.nexus.debug.sessionLog(payload);
-}
+export function writeDebugSessionLog(_payload: DebugSessionLogPayload): void {}

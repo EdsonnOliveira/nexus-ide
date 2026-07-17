@@ -188,6 +188,12 @@ export type EmulatorCaptureBackend = 'simulator-server' | 'idb' | 'simctl' | 'ad
 
 export type EmulatorVideoCodec = 'h264' | 'jpeg' | 'png';
 
+export type EmulatorDeviceOrientation =
+  | 'portrait'
+  | 'landscapeLeft'
+  | 'portraitUpsideDown'
+  | 'landscapeRight';
+
 export interface EmulatorStreamStats {
   captureBackend: EmulatorCaptureBackend;
   targetFps: number;

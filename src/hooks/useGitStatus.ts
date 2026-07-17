@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GitBranchInfo, GitCommandResult, GitStatusResult, GitStashEntry } from '@/types/git';
 import { createDebouncedCallback } from '@/utils/createDebouncedCallback';
+import { subscribeGitRepoChange } from '@/utils/gitRepoChangeBus';
 import { GIT_REPO_REFRESH_EVENT } from '@/utils/gitRepoRefresh';
 import { requestGitStatus } from '@/utils/gitStatusRequest';
 
@@ -109,7 +110,7 @@ export function useGitStatus(repoPath: string | null, enabled: boolean): UseGitS
       void refresh();
     }, 250);
 
-    const unsubscribe = window.nexus.git.onRepoChange((changedPath) => {
+    const unsubscribe = subscribeGitRepoChange((changedPath) => {
       if (changedPath === repoPath) {
         debouncedRefresh.schedule();
       }

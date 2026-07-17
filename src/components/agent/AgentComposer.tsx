@@ -1268,6 +1268,7 @@ function AgentComposerComponent({
                 onRunCommand={onRunCommand}
                 onAttachImage={() => void handleAttachImage()}
                 onAttachFile={() => void handleAttachFile()}
+                onRequestComposerFocus={() => inputRef.current?.focus({ preventScroll: true })}
               />
               {activeMode !== 'agent' && activeModeOption ? (
                 <AgentComposerModeChip
@@ -1281,12 +1282,14 @@ function AgentComposerComponent({
                 cwd={projectPath}
                 isVisible={isVisible}
                 onRunCommand={onRunCommand}
+                onRequestComposerFocus={() => inputRef.current?.focus({ preventScroll: true })}
               />
               <AgentCursorUsageIndicator
                 usage={cursorUsage}
                 isLoading={cursorUsageLoading}
                 visible={isVisible}
                 onRefresh={() => void refreshCursorUsage(true)}
+                onRequestComposerFocus={() => inputRef.current?.focus({ preventScroll: true })}
               />
               {showWaitingStatus ? (
                 <AgentLiveStatus label={waitingLabel} />
@@ -1298,6 +1301,7 @@ function AgentComposerComponent({
                 className={`agent-view__composer-send app-button app-button--enter${canStop ? ' agent-view__composer-send--stop' : ''}${canSend || canStop ? ' agent-view__composer-send--ready' : ''}`}
                 aria-label={canStop ? 'Parar agent' : isEditing ? 'Salvar edição' : 'Enviar prompt'}
                 disabled={isActionDisabled}
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={handleSubmit}
               >
                 {canStop ? (
@@ -1312,6 +1316,7 @@ function AgentComposerComponent({
                   isLoading={contextUsageLoading}
                   visible={showContextUsage}
                   onRequestReport={onRequestContextUsageReport}
+                  onRequestComposerFocus={() => inputRef.current?.focus({ preventScroll: true })}
                 />
               ) : null}
             </div>

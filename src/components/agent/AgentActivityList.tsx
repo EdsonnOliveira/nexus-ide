@@ -18,7 +18,7 @@ import {
   sanitizeResponseText,
   isValidReadFileTarget,
 } from '@/utils/agentTranscriptParser';
-import { normalizeMarkdownSource } from '@/utils/markdownPreview';
+import { normalizeMarkdownSource } from '@/utils/markdownText';
 import { useTabActions } from '@/stores/useTabStore';
 
 interface AgentActivityListProps {

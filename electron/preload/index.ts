@@ -52,6 +52,8 @@ const nexusApi = {
     has: (ptyId: string): Promise<boolean> => ipcRenderer.invoke('terminal:has', ptyId),
     getScrollback: (ptyId: string): Promise<string> =>
       ipcRenderer.invoke('terminal:getScrollback', ptyId),
+    getScrollbackTail: (ptyId: string, maxBytes: number): Promise<string> =>
+      ipcRenderer.invoke('terminal:getScrollbackTail', ptyId, maxBytes),
     write: (ptyId: string, data: string): void => {
       ipcRenderer.send('terminal:write', ptyId, data);
     },
@@ -407,6 +409,11 @@ const nexusApi = {
           chunk: Uint8Array | ArrayBuffer | number[];
           width?: number;
           height?: number;
+          orientation?:
+            | 'portrait'
+            | 'landscapeLeft'
+            | 'portraitUpsideDown'
+            | 'landscapeRight';
         },
       ) => {
         const chunk =
@@ -424,6 +431,7 @@ const nexusApi = {
           chunk,
           width: payload.width,
           height: payload.height,
+          orientation: payload.orientation,
         });
       };
 
@@ -473,7 +481,16 @@ const nexusApi = {
     onFrameSize: (callback) => {
       const listener = (
         _: Electron.IpcRendererEvent,
-        payload: { sessionId: string; width: number; height: number },
+        payload: {
+          sessionId: string;
+          width: number;
+          height: number;
+          orientation?:
+            | 'portrait'
+            | 'landscapeLeft'
+            | 'portraitUpsideDown'
+            | 'landscapeRight';
+        },
       ) => {
         callback(payload);
       };

@@ -385,12 +385,14 @@ class ProjectStoreService {
   private writeState(state: AppState): AppState {
     const store = this.getStore();
     const normalized = normalizeState(state);
-    store.set('projects', normalized.projects);
-    store.set('workspaces', normalized.workspaces);
-    store.set('activeProjectId', normalized.activeProjectId);
-    store.set('activeWorkspaceId', normalized.activeWorkspaceId);
-    store.set('sidebarVideoSession', normalized.sidebarVideoSession ?? null);
-    store.set('sidebarVideoLastLink', normalized.sidebarVideoLastLink ?? null);
+    store.set({
+      projects: normalized.projects,
+      workspaces: normalized.workspaces,
+      activeProjectId: normalized.activeProjectId,
+      activeWorkspaceId: normalized.activeWorkspaceId,
+      sidebarVideoSession: normalized.sidebarVideoSession ?? null,
+      sidebarVideoLastLink: normalized.sidebarVideoLastLink ?? null,
+    });
     return normalized;
   }
 

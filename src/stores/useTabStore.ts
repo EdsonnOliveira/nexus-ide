@@ -101,6 +101,7 @@ function killTabBarItem(item: TabBarItem): void {
     if (pane.type === 'terminal' || pane.type === 'agent') {
       useProjectNotificationStore.getState().clearNotificationForPane(pane.id);
       useTerminalSessionStore.getState().disposePaneSession(pane.id);
+      useTerminalPasteImageStore.getState().clearPaneImages(pane.id);
 
       if (pane.type === 'agent') {
         useAgentComposerDraftStore.getState().clearDraft(pane.id);
@@ -1125,15 +1126,7 @@ export function useTabActions(): TabStoreActions {
         entry.type === 'agent' ? { ...entry, ...patchWithTrim } : entry,
       );
 
-      useProjectStore.setState((state) => ({
-        projects: state.projects.map((entry) =>
-          entry.id === project.id ? { ...entry, tabs: nextTabs } : entry,
-        ),
-      }));
-
-      await updateProject(project.id, {
-        tabs: nextTabs,
-      });
+      await updateProject(project.id, { tabs: nextTabs }, { persistOnly: true });
     },
     setSplitRatio: async (splitTabId, path, ratio) => {
       const project = getProjectSnapshot();

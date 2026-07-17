@@ -6,6 +6,7 @@ import { clipboard, nativeImage, type BrowserWindow } from 'electron';
 import type {
   EmulatorPlatform,
   EmulatorCaptureBackend,
+  EmulatorDeviceOrientation,
   EmulatorSessionState,
   EmulatorStreamStats,
   EmulatorVideoCodec,
@@ -129,7 +130,13 @@ class EmulatorSessionManager {
     });
   }
 
-  #emitFrameSize(sessionId: string, tabId: string, width: number, height: number): void {
+  #emitFrameSize(
+    sessionId: string,
+    tabId: string,
+    width: number,
+    height: number,
+    orientation?: EmulatorDeviceOrientation,
+  ): void {
     const window = this.#getWindow();
 
     if (!window || window.isDestroyed()) {
@@ -140,6 +147,7 @@ class EmulatorSessionManager {
       sessionId,
       width,
       height,
+      orientation,
     });
 
     const previous = this.#snapshots.get(sessionId);
@@ -156,7 +164,11 @@ class EmulatorSessionManager {
     sessionId: string,
     chunk: Buffer,
     codec: EmulatorVideoCodec,
-    size?: { width: number; height: number },
+    size?: {
+      width: number;
+      height: number;
+      orientation?: EmulatorDeviceOrientation;
+    },
   ): void {
     const window = this.#getWindow();
 
@@ -170,10 +182,17 @@ class EmulatorSessionManager {
       chunk,
       width: size?.width,
       height: size?.height,
+      orientation: size?.orientation,
     });
 
     if (size) {
-      this.#emitFrameSize(sessionId, this.#sessions.get(sessionId)?.tabId ?? '', size.width, size.height);
+      this.#emitFrameSize(
+        sessionId,
+        this.#sessions.get(sessionId)?.tabId ?? '',
+        size.width,
+        size.height,
+        size.orientation,
+      );
     }
   }
 
@@ -228,6 +247,9 @@ class EmulatorSessionManager {
         size?: { width: number; height: number },
       ) => {
         this.#emitVideoChunk(sessionId, chunk, codec, size);
+      },
+      onFrameSize: (width: number, height: number, orientation) => {
+        this.#emitFrameSize(sessionId, tabId, width, height, orientation);
       },
     };
 
@@ -393,9 +415,17 @@ class EmulatorSessionManager {
     await session?.handle.pressBack();
   }
 
-  async rotate(sessionId: string): Promise<void> {
+  async rotate(
+    sessionId: string,
+  ): Promise<{ ok: boolean; landscape: boolean; orientation: EmulatorDeviceOrientation }> {
     const session = this.#sessions.get(sessionId);
-    await session?.handle.rotate();
+    return (
+      (await session?.handle.rotate()) ?? {
+        ok: false,
+        landscape: false,
+        orientation: 'portrait',
+      }
+    );
   }
 
   async typeText(sessionId: string, text: string): Promise<void> {

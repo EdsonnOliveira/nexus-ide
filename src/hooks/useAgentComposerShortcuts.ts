@@ -102,9 +102,8 @@ export function useAgentComposerShortcuts({
         return;
       }
 
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && mentionMenuOpen) {
         event.preventDefault();
-        inputRef.current?.blur();
       }
     };
 

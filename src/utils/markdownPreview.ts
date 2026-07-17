@@ -1,22 +1,8 @@
 import { highlightMarkdownCodeBlock, highlightMermaidDiagram } from '@/utils/codeHighlight';
 import { wrapInlineCodeHtml } from '@/utils/inlineCodeBadge';
+import { escapeHtml, normalizeMarkdownSource, stripMarkdownSyntax } from '@/utils/markdownText';
 
-export function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-export function stripMarkdownSyntax(source: string): string {
-  return source
-    .replace(/\*\*(.+?)\*\*/g, '$1')
-    .replace(/\*(.+?)\*/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/^#{1,6}\s+/gm, '')
-    .replace(/^[\s]*[-*+•·]\s+/gm, '')
-    .replace(/^[\s]*\d+\.\s+/gm, '');
-}
+export { escapeHtml, normalizeMarkdownSource, stripMarkdownSyntax };
 
 function applyInlineMarkdown(value: string): string {
   let html = value;
@@ -34,10 +20,6 @@ function isTableSeparator(line: string): boolean {
   }
 
   return /^[\|\s:\-]+$/.test(trimmed);
-}
-
-export function normalizeMarkdownSource(source: string): string {
-  return source.replace(/\r/g, '\n').replace(/\uFF5C/g, '|');
 }
 
 function splitGluedTableRow(line: string): string[] {

@@ -27,6 +27,14 @@ export function useNotificationAppIcons(
   useEffect(() => {
     let cancelled = false;
 
+    setIcons((previous) => {
+      const nextEntries = Object.entries(previous).filter(([key]) => appsByKey.has(key));
+
+      return nextEntries.length === Object.keys(previous).length
+        ? previous
+        : Object.fromEntries(nextEntries);
+    });
+
     for (const [key, { appId, appLabel }] of appsByKey) {
       void window.nexus.systemNotifications.getAppIcon(appId, appLabel).then((iconUrl) => {
         if (!cancelled) {

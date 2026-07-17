@@ -18,7 +18,6 @@ import {
   type AgentTranscriptScrollControl,
 } from '@/components/agent/AgentTranscript';
 import { EmptyState } from '@/components/overlay/EmptyState';
-import { AgentGitChangePill } from '@/components/terminal/AgentGitChangePill';
 import { useAgentPaneSession } from '@/hooks/useAgentPaneSession';
 import { useAgentComposerDraftStore } from '@/stores/useAgentComposerDraftStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
@@ -265,32 +264,49 @@ function AgentViewSessionComponent({
     tab.id,
   ]);
 
-  useEffect(() => {
-    if (!isFocused || !isVisible) {
+  const focusComposer = useCallback(() => {
+    if (!isFocused || !isVisible || hasPendingQuestion || hasPendingPlan) {
       return;
     }
 
     inputRef.current?.focus({ preventScroll: true });
-  }, [isFocused, isVisible]);
+  }, [hasPendingPlan, hasPendingQuestion, isFocused, isVisible]);
 
-  const handleMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    const target = event.target;
+  useEffect(() => {
+    focusComposer();
+  }, [focusComposer]);
 
-    if (!(target instanceof Element)) {
+  const handleMouseDown = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const target = event.target;
+
+      if (!(target instanceof Element)) {
+        onFocusPane();
+        window.requestAnimationFrame(() => {
+          if (!hasPendingQuestion && !hasPendingPlan) {
+            inputRef.current?.focus({ preventScroll: true });
+          }
+        });
+        return;
+      }
+
+      if (
+        target.closest(
+          'button, a, input, textarea, label, [role="menu"], [role="menuitem"], .context-menu',
+        )
+      ) {
+        return;
+      }
+
       onFocusPane();
-      return;
-    }
-
-    if (
-      target.closest(
-        'button, a, input, textarea, label, [role="menu"], [role="menuitem"], .context-menu',
-      )
-    ) {
-      return;
-    }
-
-    onFocusPane();
-  }, [onFocusPane]);
+      window.requestAnimationFrame(() => {
+        if (!hasPendingQuestion && !hasPendingPlan) {
+          inputRef.current?.focus({ preventScroll: true });
+        }
+      });
+    },
+    [hasPendingPlan, hasPendingQuestion, onFocusPane],
+  );
 
   const handleSubmit = useCallback(
     (value: string) => {
@@ -369,10 +385,6 @@ function AgentViewSessionComponent({
       <div
         className={`agent-view__footer${turns.length === 0 ? ' agent-view__footer--idle' : ''}${hasPendingPlan ? ' agent-view__footer--plan-pending' : ''}${editingTurnId ? ' agent-view__footer--editing' : ''}`}
       >
-        <div className='agent-git-change-pill-slot'>
-          <AgentGitChangePill projectId={projectId} paneId={tab.id} />
-        </div>
-
         <AgentFollowUpQueue
           items={followUps}
           onEdit={editFollowUp}
@@ -399,7 +411,11 @@ function AgentViewSessionComponent({
           />
         ) : null}
 
-        <AgentShellTerminalDock agentPaneId={tab.id} projectPath={projectPath} />
+        <AgentShellTerminalDock
+          agentPaneId={tab.id}
+          projectPath={projectPath}
+          onComposerFocus={focusComposer}
+        />
 
         <AgentComposer
           paneId={tab.id}

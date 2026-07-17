@@ -65,7 +65,11 @@ interface ProjectStoreState {
   stopProject: (id: string) => Promise<void>;
   selectProject: (id: string, options?: { syncWorkspace?: boolean }) => Promise<void>;
   leaveActiveProject: () => Promise<void>;
-  updateProject: (id: string, data: ProjectUpdatePayload) => Promise<void>;
+  updateProject: (
+    id: string,
+    data: ProjectUpdatePayload,
+    options?: { persistOnly?: boolean },
+  ) => Promise<void>;
   createWorkspace: (name: string) => Promise<void>;
   updateWorkspace: (id: string, data: WorkspaceUpdatePayload) => Promise<void>;
   selectWorkspace: (id: string | null) => Promise<void>;
@@ -768,6 +772,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   },
   removeProject: async (id) => {
     const { useTerminalSessionStore } = await import('@/stores/useTerminalSessionStore');
+    const { useTerminalPasteImageStore } = await import('@/stores/useTerminalPasteImageStore');
     const project = get().projects.find((item) => item.id === id);
 
     if (project) {
@@ -777,6 +782,10 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
         const panes: Tab[] = item.type === 'split' ? item.panes : [item];
 
         for (const pane of panes) {
+          if (pane.type === 'terminal' || pane.type === 'agent') {
+            useTerminalPasteImageStore.getState().clearPaneImages(pane.id);
+          }
+
           if (pane.type === 'terminal') {
             useProjectNotificationStore.getState().clearNotificationForPane(pane.id);
             useTerminalSessionStore.getState().disposePaneSession(pane.id);
@@ -803,6 +812,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   },
   stopProject: async (id) => {
     const { useTerminalSessionStore } = await import('@/stores/useTerminalSessionStore');
+    const { useTerminalPasteImageStore } = await import('@/stores/useTerminalPasteImageStore');
     const project = get().projects.find((item) => item.id === id);
 
     if (!project || project.tabs.length === 0) {
@@ -816,6 +826,10 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
       const panes: Tab[] = item.type === 'split' ? item.panes : [item];
 
       for (const pane of panes) {
+        if (pane.type === 'terminal' || pane.type === 'agent') {
+          useTerminalPasteImageStore.getState().clearPaneImages(pane.id);
+        }
+
         if (pane.type === 'terminal') {
           useProjectNotificationStore.getState().clearNotificationForPane(pane.id);
           useTerminalSessionStore.getState().disposePaneSession(pane.id);
@@ -887,7 +901,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
       await endProjectSwitch();
     }
   },
-  updateProject: async (id, data) => {
+  updateProject: async (id, data, options) => {
     const prevState = get();
     const nextProjects = prevState.projects.map((project) => {
       if (project.id !== id) {
@@ -905,6 +919,11 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     set({ projects: nextProjects });
 
     await window.nexus.projects.update(id, data);
+
+    if (options?.persistOnly) {
+      return;
+    }
+
     const appState = migrateAppState(await window.nexus.projects.list());
     const reconciled = reconcileOptimisticProjectUpdate(appState, nextProjects, id);
     applyStatePreservingRuntime(set, get, reconciled, {

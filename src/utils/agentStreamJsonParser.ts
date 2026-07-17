@@ -18,6 +18,8 @@ import {
   parsePlanTodosFromMarkdown,
 } from '@/utils/agentPlanPrompt';
 
+const MAX_THOUGHT_LABEL_CHARS = 200_000;
+
 export interface AgentStreamJsonUsage {
   inputTokens: number;
   outputTokens: number;
@@ -256,7 +258,9 @@ function findStreamingThoughtActivity(state: AgentStreamJsonParserState): AgentA
 
 function appendThoughtDelta(currentLabel: string, delta: string): string {
   if (!currentLabel) {
-    return delta;
+    return delta.length > MAX_THOUGHT_LABEL_CHARS
+      ? delta.slice(delta.length - MAX_THOUGHT_LABEL_CHARS)
+      : delta;
   }
 
   if (!delta) {
@@ -269,7 +273,11 @@ function appendThoughtDelta(currentLabel: string, delta: string): string {
     !delta.startsWith(' ') &&
     !/^[,.;:!?)]/.test(delta);
 
-  return `${currentLabel}${needsSpace ? ' ' : ''}${delta}`;
+  const combined = `${currentLabel}${needsSpace ? ' ' : ''}${delta}`;
+
+  return combined.length > MAX_THOUGHT_LABEL_CHARS
+    ? combined.slice(combined.length - MAX_THOUGHT_LABEL_CHARS)
+    : combined;
 }
 
 function upsertThought(state: AgentStreamJsonParserState, delta: string): void {

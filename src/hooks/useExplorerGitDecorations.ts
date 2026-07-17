@@ -3,6 +3,7 @@ import type { GitStatusResult } from '@/types/git';
 import { createDebouncedCallback } from '@/utils/createDebouncedCallback';
 import { buildFlatChanges, getGitChangeDecoration, type GitFlatChange } from '@/utils/gitFlatChanges';
 import { findGitFlatChangeByPath, toGitRelativePath } from '@/utils/gitPaths';
+import { subscribeGitRepoChange } from '@/utils/gitRepoChangeBus';
 import { GIT_REPO_REFRESH_EVENT } from '@/utils/gitRepoRefresh';
 import { requestGitStatus } from '@/utils/gitStatusRequest';
 
@@ -96,7 +97,7 @@ export function useExplorerGitDecorations(
       void refreshStatus();
     }, 250);
 
-    const unsubscribe = window.nexus.git.onRepoChange((changedPath) => {
+    const unsubscribe = subscribeGitRepoChange((changedPath) => {
       const activeRepo = repoPathRef.current;
 
       if (!activeRepo || changedPath !== activeRepo) {

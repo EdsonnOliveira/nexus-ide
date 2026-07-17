@@ -254,6 +254,16 @@ class PtyManager {
     return this.sessions.get(ptyId)?.scrollback ?? '';
   }
 
+  getScrollbackTail(ptyId: string, maxBytes: number): string {
+    const scrollback = this.sessions.get(ptyId)?.scrollback ?? '';
+
+    if (maxBytes <= 0 || scrollback.length <= maxBytes) {
+      return scrollback;
+    }
+
+    return scrollback.slice(scrollback.length - maxBytes);
+  }
+
   private appendScrollback(session: PtySession, data: string): void {
     session.scrollback += data;
 

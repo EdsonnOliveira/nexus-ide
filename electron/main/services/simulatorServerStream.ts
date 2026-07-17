@@ -4,6 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 
 const MIN_FRAME_BYTES = 1_200;
+const MAX_RELAY_BUFFER_BYTES = 16 * 1024 * 1024;
 const JPEG_SOI = Buffer.from([0xff, 0xd8]);
 const JPEG_EOI = Buffer.from([0xff, 0xd9]);
 
@@ -171,6 +172,13 @@ export async function createSimulatorServerStream(
           }
 
           relayBuffer = Buffer.concat([relayBuffer, chunk]);
+
+          if (relayBuffer.length > MAX_RELAY_BUFFER_BYTES) {
+            const lastSoi = relayBuffer.lastIndexOf(JPEG_SOI);
+            relayBuffer =
+              lastSoi > 0 ? Buffer.from(relayBuffer.subarray(lastSoi)) : Buffer.alloc(0);
+          }
+
           const parsed = extractJpegFrames(relayBuffer);
           relayBuffer = parsed.remainder;
 

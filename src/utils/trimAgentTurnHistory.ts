@@ -2,6 +2,7 @@ import type { AgentTab, AgentTurn, Tab, TabBarItem } from '@/types';
 
 export const MAX_AGENT_TURN_HISTORY_COUNT = 30;
 export const MAX_AGENT_TURN_HISTORY_BYTES = 2 * 1024 * 1024;
+export const MAX_RUNNING_TURN_HISTORY_BYTES = 8 * 1024 * 1024;
 export const HEAVY_AGENT_TURN_THRESHOLD = 20;
 export const HEAVY_AGENT_ACTIVITY_THRESHOLD = 120;
 
@@ -24,8 +25,18 @@ export function isHeavyAgentTranscript(turns: AgentTurn[]): boolean {
   );
 }
 
+const historyBytesCache = new WeakMap<AgentTurn[], number>();
+
 export function measureAgentTurnHistoryBytes(turns: AgentTurn[]): number {
-  return JSON.stringify(turns).length;
+  const cached = historyBytesCache.get(turns);
+
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const bytes = JSON.stringify(turns).length;
+  historyBytesCache.set(turns, bytes);
+  return bytes;
 }
 
 export function rawAgentTurnHistoryNeedsTrim(items: TabBarItem[]): boolean {
@@ -118,43 +129,62 @@ function stripOlderAttachments(turns: AgentTurn[]): AgentTurn[] {
   return [...older, last];
 }
 
+const trimResultCache = new WeakMap<AgentTurn[], AgentTurn[]>();
+
 export function trimAgentTurnHistory(turns: AgentTurn[]): AgentTurn[] {
   if (turns.length === 0) {
     return turns;
   }
 
-  const hasRunningTurn = turns.some((turn) => turn.running);
+  const cached = trimResultCache.get(turns);
 
-  if (hasRunningTurn && turns.length <= MAX_AGENT_TURN_HISTORY_COUNT) {
-    return stripOlderAttachments(turns);
+  if (cached) {
+    return cached;
   }
 
-  let next =
-    turns.length > MAX_AGENT_TURN_HISTORY_COUNT
-      ? turns.slice(-MAX_AGENT_TURN_HISTORY_COUNT)
-      : [...turns];
+  const result = computeTrimmedAgentTurnHistory(turns);
+  trimResultCache.set(turns, result);
+  return result;
+}
 
-  next = stripOlderAttachments(next);
-
-  if (JSON.stringify(next).length <= MAX_AGENT_TURN_HISTORY_BYTES) {
-    return next;
+function enforceByteBudget(turns: AgentTurn[], maxBytes: number): AgentTurn[] {
+  if (measureAgentTurnHistoryBytes(turns) <= maxBytes) {
+    return turns;
   }
+
+  let next = turns;
 
   while (next.length > 1) {
     next = next.slice(1);
 
-    if (JSON.stringify(next).length <= MAX_AGENT_TURN_HISTORY_BYTES) {
+    if (measureAgentTurnHistoryBytes(next) <= maxBytes) {
       return next;
     }
   }
 
-  const trimmedTurn = trimTurnActivities(next[0]!, MAX_AGENT_TURN_HISTORY_BYTES);
+  const trimmedTurn = trimTurnActivities(next[0]!, maxBytes);
 
-  if (JSON.stringify([trimmedTurn]).length > MAX_AGENT_TURN_HISTORY_BYTES) {
+  if (measureAgentTurnHistoryBytes([trimmedTurn]) > maxBytes) {
     return [{ ...trimmedTurn, activities: [] }];
   }
 
   return [trimmedTurn];
+}
+
+function computeTrimmedAgentTurnHistory(turns: AgentTurn[]): AgentTurn[] {
+  const hasRunningTurn = turns.some((turn) => turn.running);
+
+  if (hasRunningTurn && turns.length <= MAX_AGENT_TURN_HISTORY_COUNT) {
+    return enforceByteBudget(stripOlderAttachments(turns), MAX_RUNNING_TURN_HISTORY_BYTES);
+  }
+
+  const next = stripOlderAttachments(
+    turns.length > MAX_AGENT_TURN_HISTORY_COUNT
+      ? turns.slice(-MAX_AGENT_TURN_HISTORY_COUNT)
+      : [...turns],
+  );
+
+  return enforceByteBudget(next, MAX_AGENT_TURN_HISTORY_BYTES);
 }
 
 export function sanitizeAgentTurnHistory(turns: AgentTurn[]): AgentTurn[] {

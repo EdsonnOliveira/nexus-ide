@@ -1,5 +1,5 @@
 import { splitAgentResponseForSummary } from '@/utils/agentTurnSummary';
-import { normalizeMarkdownSource } from '@/utils/markdownPreview';
+import { normalizeMarkdownSource } from '@/utils/markdownText';
 import { sanitizeResponseText } from '@/utils/agentTranscriptParser';
 import type { AgentActivity } from '@/types';
 import type { AgentStreamJsonParserState } from '@/utils/agentStreamJsonParser';

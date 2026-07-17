@@ -22,12 +22,21 @@ import { useEmulatorSession } from '@/hooks/useEmulatorSession';
 import { useMaestroHighlightForPlatform } from '@/stores/useMaestroHighlightStore';
 import { useTabActions } from '@/stores/useTabStore';
 import { EmulatorTestHighlightOverlay } from '@/components/emulator/EmulatorTestHighlightOverlay';
-import type { EmulatorDevice, EmulatorPlatform, EmulatorTab } from '@/types';
+import type {
+  EmulatorDevice,
+  EmulatorDeviceOrientation,
+  EmulatorPlatform,
+  EmulatorTab,
+} from '@/types';
 
 const EMULATOR_MIN_ZOOM = 0.5;
 const EMULATOR_MAX_ZOOM = 1.5;
 const EMULATOR_ZOOM_STEP = 0.1;
 const EMULATOR_DEFAULT_ZOOM = 1;
+
+function isLandscapeOrientation(orientation: EmulatorDeviceOrientation): boolean {
+  return orientation === 'landscapeLeft' || orientation === 'landscapeRight';
+}
 
 function resolveEmulatorDeviceName(title: string): string | null {
   const prefix = 'Emulador · ';
@@ -259,6 +268,7 @@ function EmulatorViewComponent({
     streamFallbackReason,
     isStarting,
     frameSize,
+    iosDeviceOrientation,
     streamUrl,
     usesNativeStream,
     canvasRef,
@@ -631,6 +641,15 @@ function EmulatorViewComponent({
   }, [frameSize.height, frameSize.width, isRunning]);
 
   useEffect(() => {
+    if (!isRunning) {
+      return;
+    }
+
+    displaySizeRef.current = null;
+    setDisplaySize(null);
+  }, [iosDeviceOrientation, isRunning]);
+
+  useEffect(() => {
     if (sessionState !== 'running') {
       return;
     }
@@ -744,6 +763,36 @@ function EmulatorViewComponent({
       maxHeight,
     } as const;
   }, [displaySize, frameSize.height, frameSize.width]);
+
+  const orientationMediaStyle = useMemo(() => {
+    if (iosDeviceOrientation === 'portrait' || !displaySize) {
+      return undefined;
+    }
+
+    const { width, height } = displaySize;
+
+    if (iosDeviceOrientation === 'portraitUpsideDown') {
+      return {
+        width,
+        height,
+        left: 0,
+        top: 0,
+        transform: 'rotate(180deg)',
+      } as const;
+    }
+
+    return {
+      width: height,
+      height: width,
+      left: (width - height) / 2,
+      top: (height - width) / 2,
+      transform:
+        iosDeviceOrientation === 'landscapeLeft' ? 'rotate(-90deg)' : 'rotate(90deg)',
+    } as const;
+  }, [displaySize, iosDeviceOrientation]);
+
+  const iosOrientationActive = iosDeviceOrientation !== 'portrait';
+  const iosLandscapeActive = isLandscapeOrientation(iosDeviceOrientation);
 
   return (
     <div className='emulator-view' onMouseDown={handleMouseDown}>
@@ -979,10 +1028,14 @@ function EmulatorViewComponent({
                   </div>
                 </div>
               ) : usesNativeStream && streamUrl ? (
-                <div className='emulator-view__stream-shell' style={screenStyle}>
+                <div
+                  className={`emulator-view__stream-shell${iosOrientationActive ? ' emulator-view__stream-shell--rotated' : ''}${iosLandscapeActive ? ' emulator-view__stream-shell--landscape' : ''}`}
+                  style={screenStyle}
+                >
                   <img
                     ref={streamImgRef}
                     className='emulator-view__stream-img'
+                    style={orientationMediaStyle}
                     src={streamUrl}
                     alt=''
                     draggable={false}
@@ -1003,20 +1056,44 @@ function EmulatorViewComponent({
                   ) : null}
                 </div>
               ) : (
-                <div className='emulator-view__stream-shell' style={screenStyle}>
+                <div
+                  className={`emulator-view__stream-shell${iosOrientationActive ? ' emulator-view__stream-shell--rotated' : ''}${iosLandscapeActive ? ' emulator-view__stream-shell--landscape' : ''}`}
+                  style={screenStyle}
+                >
                   <canvas
                     ref={canvasRef}
                     className='emulator-view__screen'
-                    width={frameSize.width}
-                    height={frameSize.height}
-                    tabIndex={0}
-                    role='application'
-                    aria-label='Tela do emulador'
-                    onPointerDown={handlePointerDown}
-                    onPointerMove={handlePointerMove}
-                    onPointerUp={handlePointerUp}
-                    onPaste={handleCanvasPaste}
+                    style={orientationMediaStyle}
+                    width={
+                      iosLandscapeActive
+                        ? Math.min(frameSize.width, frameSize.height)
+                        : frameSize.width
+                    }
+                    height={
+                      iosLandscapeActive
+                        ? Math.max(frameSize.width, frameSize.height)
+                        : frameSize.height
+                    }
+                    tabIndex={iosOrientationActive ? -1 : 0}
+                    role={iosOrientationActive ? undefined : 'application'}
+                    aria-label={iosOrientationActive ? undefined : 'Tela do emulador'}
+                    onPointerDown={iosOrientationActive ? undefined : handlePointerDown}
+                    onPointerMove={iosOrientationActive ? undefined : handlePointerMove}
+                    onPointerUp={iosOrientationActive ? undefined : handlePointerUp}
+                    onPaste={iosOrientationActive ? undefined : handleCanvasPaste}
                   />
+                  {iosOrientationActive ? (
+                    <div
+                      className='emulator-view__gesture-layer'
+                      tabIndex={0}
+                      role='application'
+                      aria-label='Tela do emulador'
+                      onPointerDown={handlePointerDown}
+                      onPointerMove={handlePointerMove}
+                      onPointerUp={handlePointerUp}
+                      onPaste={handleCanvasPaste}
+                    />
+                  ) : null}
                   {showMaestroHighlight ? (
                     <EmulatorTestHighlightOverlay highlight={maestroHighlight} />
                   ) : null}

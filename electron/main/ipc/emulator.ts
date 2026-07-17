@@ -74,7 +74,7 @@ export function registerEmulatorHandlers(getWindow: WindowGetter): void {
   });
 
   ipcMain.handle('emulator:rotate', async (_event, sessionId: string) => {
-    await emulatorSessionManager.rotate(sessionId);
+    return emulatorSessionManager.rotate(sessionId);
   });
 
   ipcMain.handle('emulator:typeText', async (_event, sessionId: string, text: string) => {

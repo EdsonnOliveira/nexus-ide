@@ -16,6 +16,10 @@ export function registerTerminalHandlers(): void {
 
   ipcMain.handle('terminal:getScrollback', (_, ptyId: string) => ptyManager.getScrollback(ptyId));
 
+  ipcMain.handle('terminal:getScrollbackTail', (_, ptyId: string, maxBytes: number) =>
+    ptyManager.getScrollbackTail(ptyId, maxBytes),
+  );
+
   ipcMain.on('terminal:write', (_, ptyId: string, data: string) => {
     ptyManager.write(ptyId, data);
   });

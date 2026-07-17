@@ -118,18 +118,21 @@ export function projectHasLiveAgentSession(
   return false;
 }
 
+const MAX_HOSTED_PROJECTS = 10;
+
 export function resolveHostedAgentProjects(
   projects: Project[],
   activeProjectId: string | null,
   session: PaneAgentSessionSnapshot,
 ): Project[] {
-  const hostedIds = new Set<string>();
+  const essentialIds = new Set<string>();
+  const homeOnlyIds = new Set<string>();
 
   if (activeProjectId) {
     const activeProject = projects.find((project) => project.id === activeProjectId);
 
     if (activeProject) {
-      hostedIds.add(activeProject.id);
+      essentialIds.add(activeProject.id);
     }
   }
 
@@ -141,7 +144,7 @@ export function resolveHostedAgentProjects(
     }
 
     if (projectHasLiveAgentSession(project, session)) {
-      hostedIds.add(project.id);
+      essentialIds.add(project.id);
       continue;
     }
 
@@ -154,7 +157,25 @@ export function resolveHostedAgentProjects(
     if (
       homePaneIds.some((homePaneId) => findPaneTab(project.tabs, homePaneId)?.type === 'agent')
     ) {
-      hostedIds.add(project.id);
+      homeOnlyIds.add(project.id);
+    }
+  }
+
+  const hostedIds = new Set(essentialIds);
+  const remainingSlots = Math.max(0, MAX_HOSTED_PROJECTS - essentialIds.size);
+
+  if (remainingSlots > 0 && homeOnlyIds.size > 0) {
+    let added = 0;
+
+    for (const project of projects) {
+      if (added >= remainingSlots) {
+        break;
+      }
+
+      if (homeOnlyIds.has(project.id)) {
+        hostedIds.add(project.id);
+        added += 1;
+      }
     }
   }
 

@@ -5,7 +5,7 @@ import type {
   AgentTurnSummaryFileRef,
 } from '@/types';
 import { sanitizeResponseText } from '@/utils/agentTranscriptParser';
-import { normalizeMarkdownSource } from '@/utils/markdownPreview';
+import { normalizeMarkdownSource } from '@/utils/markdownText';
 
 export function isAgentTurnSummaryVisible(summary: AgentTurnSummary | undefined): boolean {
   if (!summary) {

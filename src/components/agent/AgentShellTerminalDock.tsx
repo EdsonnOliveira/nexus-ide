@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Terminal, X } from 'lucide-react';
 import { XTermView } from '@/components/terminal/XTermView';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
@@ -14,6 +15,7 @@ import type { XTermViewHandle } from '@/types';
 interface AgentShellTerminalDockProps {
   agentPaneId: string;
   projectPath: string;
+  onComposerFocus?: () => void;
 }
 
 function formatElapsed(startedAt: number, now: number): string {
@@ -108,7 +110,7 @@ function AgentShellTerminalPanelComponent({
     };
   }, [isOpen, onClose]);
 
-  return (
+  return createPortal(
     <div
       className={`agent-shell-terminal-panel${isOpen ? ' agent-shell-terminal-panel--open' : ''}`}
     >
@@ -159,7 +161,8 @@ function AgentShellTerminalPanelComponent({
           />
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -205,7 +208,11 @@ function AgentShellTerminalDockItemComponent({
 
 const AgentShellTerminalDockItem = memo(AgentShellTerminalDockItemComponent);
 
-function AgentShellTerminalDockComponent({ agentPaneId, projectPath }: AgentShellTerminalDockProps) {
+function AgentShellTerminalDockComponent({
+  agentPaneId,
+  projectPath,
+  onComposerFocus,
+}: AgentShellTerminalDockProps) {
   const entries = useAgentShellTerminalEntries(agentPaneId);
   const removeEntry = useAgentShellTerminalStore((state) => state.removeEntry);
   const disposePaneSession = useTerminalSessionStore((state) => state.disposePaneSession);
@@ -216,6 +223,13 @@ function AgentShellTerminalDockComponent({ agentPaneId, projectPath }: AgentShel
     () => entries.filter((entry) => entry.status !== 'completed' && entry.status !== 'failed'),
     [entries],
   );
+
+  const closePanel = useCallback(() => {
+    setOpenPaneId(null);
+    window.requestAnimationFrame(() => {
+      onComposerFocus?.();
+    });
+  }, [onComposerFocus]);
 
   useEffect(() => {
     if (visibleEntries.length === 0) {
@@ -253,10 +267,10 @@ function AgentShellTerminalDockComponent({ agentPaneId, projectPath }: AgentShel
       removeEntry(agentPaneId, entry.paneId);
 
       if (openPaneId === entry.paneId) {
-        setOpenPaneId(null);
+        closePanel();
       }
     },
-    [agentPaneId, disposePaneSession, openPaneId, removeEntry],
+    [agentPaneId, closePanel, disposePaneSession, openPaneId, removeEntry],
   );
 
   if (visibleEntries.length === 0) {
@@ -291,7 +305,7 @@ function AgentShellTerminalDockComponent({ agentPaneId, projectPath }: AgentShel
           agentPaneId={agentPaneId}
           projectPath={projectPath}
           isOpen={openPaneId === entry.paneId}
-          onClose={() => setOpenPaneId(null)}
+          onClose={closePanel}
         />
       ))}
     </>

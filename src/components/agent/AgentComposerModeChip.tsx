@@ -43,6 +43,7 @@ function AgentComposerModeChipComponent({ mode, option, onClear }: AgentComposer
         type='button'
         className='agent-view__composer-mode-chip-clear app-button'
         aria-label={`Remover modo ${option.label}`}
+        onMouseDown={(event) => event.preventDefault()}
         onClick={onClear}
       >
         <X size={12} strokeWidth={2.25} aria-hidden='true' />
