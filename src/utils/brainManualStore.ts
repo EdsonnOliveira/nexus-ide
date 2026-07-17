@@ -263,20 +263,9 @@ function resolveManualDocumentKind(fileName: string): BrainDocument['kind'] {
   return 'wiki';
 }
 
-export async function addBrainManualDocumentFromPicker(
-  projectPath: string,
-): Promise<
-  | { ok: true; cancelled: true }
-  | { ok: true; cancelled: false; store: BrainManualStore }
-  | { ok: false; error: string }
-> {
-  const sourcePath = await window.nexus.dialog.openFile();
-  if (!sourcePath) {
-    return { ok: true, cancelled: true };
-  }
-
+function buildManualDocument(sourcePath: string): BrainDocument {
   const name = fileNameFromPath(sourcePath);
-  const item: BrainDocument = {
+  return {
     id: `manual:${crypto.randomUUID()}`,
     name,
     kind: resolveManualDocumentKind(name),
@@ -293,11 +282,32 @@ export async function addBrainManualDocumentFromPicker(
     agentsModified: [],
     lastChangeLabel: 'agora',
   };
+}
 
-  const saved = await appendBrainManualItem(projectPath, 'documents', item);
+export async function addBrainManualDocumentsFromPicker(
+  projectPath: string,
+): Promise<
+  | { ok: true; cancelled: true }
+  | { ok: true; cancelled: false; store: BrainManualStore }
+  | { ok: false; error: string }
+> {
+  const sourcePaths = await window.nexus.dialog.openFiles();
+  if (!sourcePaths || sourcePaths.length === 0) {
+    return { ok: true, cancelled: true };
+  }
+
+  const items = sourcePaths.map((sourcePath) => buildManualDocument(sourcePath));
+
+  const store = await loadBrainManual(projectPath);
+  const next: BrainManualStore = {
+    ...store,
+    documents: [...store.documents, ...items],
+  };
+
+  const saved = await saveBrainManual(projectPath, next);
   if (!saved.ok) {
     return saved;
   }
 
-  return { ok: true, cancelled: false, store: saved.store };
+  return { ok: true, cancelled: false, store: next };
 }

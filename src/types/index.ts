@@ -861,6 +861,7 @@ export interface NexusAPI {
     openDirectory: () => Promise<string | null>;
     openImage: () => Promise<string | null>;
     openFile: () => Promise<string | null>;
+    openFiles: () => Promise<string[] | null>;
   };
   tasks: {
     saveCredentials: (

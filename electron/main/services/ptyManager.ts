@@ -17,9 +17,28 @@ interface PtySession {
 
 const SCROLLBACK_LIMIT = 512 * 1024;
 
+const ASAR_SEGMENT = `app.asar${path.sep}`;
+const ASAR_UNPACKED_SEGMENT = `app.asar.unpacked${path.sep}`;
+
+function toUnpackedPath(value: string): string {
+  if (!value || value.includes(ASAR_UNPACKED_SEGMENT)) {
+    return value;
+  }
+
+  const index = value.indexOf(ASAR_SEGMENT);
+
+  if (index === -1) {
+    return value;
+  }
+
+  return value.slice(0, index) + ASAR_UNPACKED_SEGMENT + value.slice(index + ASAR_SEGMENT.length);
+}
+
 function getAppRoot(): string {
-  const fromEnv = process.env.APP_ROOT;
-  const fromModule = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..');
+  const fromEnv = process.env.APP_ROOT ? toUnpackedPath(process.env.APP_ROOT) : '';
+  const fromModule = toUnpackedPath(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '../..'),
+  );
 
   if (fromEnv && existsSync(path.join(fromEnv, 'resources/shell/zsh/nexus-shell'))) {
     return fromEnv;
@@ -46,21 +65,21 @@ function getShellResources(): string {
     path.join(getAppRoot(), 'resources/shell'),
     process.env.APP_ROOT ? path.join(process.env.APP_ROOT, 'resources/shell') : '',
     path.join(process.cwd(), 'resources/shell'),
-    path.join(app.getAppPath(), 'resources/shell'),
     path.join(process.resourcesPath, 'app.asar.unpacked/resources/shell'),
+    path.join(app.getAppPath(), 'resources/shell'),
     path.join(process.resourcesPath, 'resources/shell'),
     path.join(path.dirname(fileURLToPath(import.meta.url)), '../../resources/shell'),
   ].filter((value) => value.length > 0);
 
   for (const candidate of candidates) {
-    const resolved = path.resolve(candidate);
+    const resolved = toUnpackedPath(path.resolve(candidate));
 
     if (existsSync(path.join(resolved, 'zsh/nexus-shell'))) {
       return resolved;
     }
   }
 
-  return path.resolve(path.join(getAppRoot(), 'resources/shell'));
+  return toUnpackedPath(path.resolve(path.join(getAppRoot(), 'resources/shell')));
 }
 
 function getZshConfigDir(): string {

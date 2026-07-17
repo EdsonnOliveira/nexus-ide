@@ -1,6 +1,6 @@
 {
   "name": "nexus-ide",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "private": true,
   "description": "Nexus IDE — AI-powered desktop IDE",
   "engines": {

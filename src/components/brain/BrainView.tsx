@@ -36,7 +36,7 @@ import { useBrainDataset } from '@/hooks/useBrainDataset';
 import { useProjectStore } from '@/stores/useProjectStore';
 import {
   isBrainManualEditableTab,
-  addBrainManualDocumentFromPicker,
+  addBrainManualDocumentsFromPicker,
   type BrainManualEditableTabId,
 } from '@/utils/brainManualStore';
 
@@ -172,7 +172,7 @@ function BrainViewComponent() {
 
     if (activeTab === 'documents') {
       void (async () => {
-        const result = await addBrainManualDocumentFromPicker(project.path);
+        const result = await addBrainManualDocumentsFromPicker(project.path);
         if (result.ok && !result.cancelled) {
           reload();
         }

@@ -130,6 +130,7 @@ const nexusApi = {
     openDirectory: (): Promise<string | null> => ipcRenderer.invoke('dialog:openDirectory'),
     openImage: (): Promise<string | null> => ipcRenderer.invoke('dialog:openImage'),
     openFile: (): Promise<string | null> => ipcRenderer.invoke('dialog:openFile'),
+    openFiles: (): Promise<string[] | null> => ipcRenderer.invoke('dialog:openFiles'),
   },
   files: {
     toLocalUrl: (filePath: string): string => toLocalFileUrl(filePath),

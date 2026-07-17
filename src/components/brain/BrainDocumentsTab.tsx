@@ -57,7 +57,7 @@ function BrainDocumentsTabComponent({ documents, onAdd }: BrainDocumentsTabProps
             className='brain-empty__cta app-button app-button--enter'
             onClick={onAdd}
           >
-            Adicionar arquivo
+            Adicionar arquivos
           </button>
         ) : null}
       </EmptyState>

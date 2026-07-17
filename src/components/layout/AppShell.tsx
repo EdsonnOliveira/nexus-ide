@@ -14,7 +14,6 @@ import { NexusLogo } from '@/components/overlay/NexusLogo';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import { PaneErrorBoundary } from '@/components/overlay/PaneErrorBoundary';
 import { ProjectSidebar } from '@/components/sidebar/ProjectSidebar';
-import { StatusBar } from '@/components/layout/StatusBar';
 import { TitleBar } from '@/components/layout/TitleBar';
 import { GlobalSearchPalette } from '@/components/search/GlobalSearchPalette';
 import { DailyGenerationProvider } from '@/components/home/DailyGenerationProvider';
@@ -413,7 +412,6 @@ function AppShellComponent() {
         </div>
       ) : null}
 
-      <StatusBar />
       <GlobalSearchPalette />
       <CalendarEventAlertHost />
       <AppToastHost />
