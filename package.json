@@ -45,7 +45,7 @@
     "@xterm/xterm": "^5.5.0",
     "electron-store": "^10.0.1",
     "highlight.js": "^11.11.1",
-    "lucide-react": "^0.460.0",
+    "lucide-react": "^1.25.0",
     "macos-calendar": "file:native/macos-calendar",
     "material-icon-theme": "^5.35.0",
     "node-pty": "^1.0.0",
