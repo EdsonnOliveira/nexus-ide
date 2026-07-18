@@ -13,11 +13,8 @@ export function App() {
   const setWorkspaces = useWebStore((state) => state.setWorkspaces);
   const setProjects = useWebStore((state) => state.setProjects);
   const setApprovals = useWebStore((state) => state.setApprovals);
-  const selectedDeviceId = useWebStore((state) => state.selectedDeviceId);
   const setSelectedDeviceId = useWebStore((state) => state.setSelectedDeviceId);
-  const selectedProjectId = useWebStore((state) => state.selectedProjectId);
   const setSelectedProjectId = useWebStore((state) => state.setSelectedProjectId);
-  const activeWorkspaceId = useWebStore((state) => state.activeWorkspaceId);
   const setActiveWorkspaceId = useWebStore((state) => state.setActiveWorkspaceId);
 
   const refresh = async () => {
@@ -32,24 +29,43 @@ export function App() {
     setProjects(projectList);
     setApprovals(approvalList);
 
-    if (!selectedDeviceId) {
-      const online =
-        deviceList.find((device) => device.is_default && isDeviceOnline(device.last_seen_at)) ??
-        deviceList.find((device) => isDeviceOnline(device.last_seen_at)) ??
-        deviceList[0];
-      if (online) {
-        setSelectedDeviceId(online.id);
-      }
+    const {
+      selectedDeviceId: currentDeviceId,
+      selectedProjectId: currentProjectId,
+      activeWorkspaceId: currentWorkspaceId,
+    } = useWebStore.getState();
+
+    const resolvedDeviceId =
+      currentDeviceId && deviceList.some((item) => item.id === currentDeviceId)
+        ? currentDeviceId
+        : (
+            deviceList.find((device) => device.is_default && isDeviceOnline(device.last_seen_at)) ??
+            deviceList.find((device) => isDeviceOnline(device.last_seen_at)) ??
+            deviceList[0]
+          )?.id ??
+          null;
+
+    const resolvedProjectId =
+      currentProjectId && projectList.some((item) => item.id === currentProjectId)
+        ? currentProjectId
+        : (projectList[0]?.id ?? null);
+
+    if (resolvedDeviceId && resolvedDeviceId !== currentDeviceId) {
+      setSelectedDeviceId(resolvedDeviceId);
     }
 
-    if (activeWorkspaceId && !workspaceList.some((item) => item.id === activeWorkspaceId)) {
-      setActiveWorkspaceId(workspaceList[0]?.id ?? null);
-    } else if (!activeWorkspaceId && workspaceList.length === 1) {
-      setActiveWorkspaceId(workspaceList[0].id);
+    if (resolvedProjectId !== currentProjectId) {
+      setSelectedProjectId(resolvedProjectId);
     }
 
-    if (!selectedProjectId || !projectList.some((item) => item.id === selectedProjectId)) {
-      setSelectedProjectId(projectList[0]?.id ?? null);
+    const preferredWorkspaceId =
+      projectList.find((item) => item.id === resolvedProjectId)?.workspace_id ??
+      deviceList.find((item) => item.id === resolvedDeviceId)?.workspace_id ??
+      workspaceList[0]?.id ??
+      null;
+
+    if (preferredWorkspaceId && preferredWorkspaceId !== currentWorkspaceId) {
+      setActiveWorkspaceId(preferredWorkspaceId);
     }
   };
 

@@ -30,6 +30,44 @@ import {
   type WebStreamJsonState,
 } from './webStreamJson';
 
+function formatUnknownError(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message.trim()) {
+      return message;
+    }
+  }
+  return fallback;
+}
+
+function resolveStoreWorkspaceId(): string | null {
+  const state = useWebStore.getState();
+  return (
+    state.activeWorkspaceId ||
+    state.projects.find((item) => item.id === state.selectedProjectId)?.workspace_id ||
+    state.devices.find((item) => item.id === state.selectedDeviceId)?.workspace_id ||
+    null
+  );
+}
+
+async function resolveAgentWorkspaceId(projectId: string | null): Promise<string | null> {
+  const state = useWebStore.getState();
+  const project = projectId
+    ? state.projects.find((item) => item.id === projectId) ?? null
+    : null;
+  const device =
+    state.devices.find((item) => item.id === state.selectedDeviceId) ?? null;
+  return (
+    project?.workspace_id ||
+    device?.workspace_id ||
+    state.activeWorkspaceId ||
+    (await bridge.getWorkspaceId())
+  );
+}
+
 export function WebMaestroHome() {
   const projects = useWebStore((state) => state.projects);
   const devices = useWebStore((state) => state.devices);
@@ -37,6 +75,7 @@ export function WebMaestroHome() {
   const setSelectedProjectId = useWebStore((state) => state.setSelectedProjectId);
   const selectedDeviceId = useWebStore((state) => state.selectedDeviceId);
   const setSelectedDeviceId = useWebStore((state) => state.setSelectedDeviceId);
+  const activeWorkspaceId = useWebStore((state) => state.activeWorkspaceId);
   const agents = useWebStore((state) => state.agents);
   const setAgents = useWebStore((state) => state.setAgents);
   const addAgent = useWebStore((state) => state.addAgent);
@@ -192,14 +231,17 @@ export function WebMaestroHome() {
     if (hydratedRef.current) {
       return;
     }
+    const workspaceId = resolveStoreWorkspaceId();
+    if (!workspaceId) {
+      return;
+    }
     let cancelled = false;
     const hydrate = async () => {
       try {
-        const workspaceId = await bridge.getWorkspaceId();
         const {
           data: { user },
         } = await supabase.auth.getUser();
-        if (!workspaceId || !user || cancelled) {
+        if (!user || cancelled) {
           return;
         }
         const bundles = await listOpenAgentSessionBundles(supabase, workspaceId, user.id);
@@ -221,7 +263,7 @@ export function WebMaestroHome() {
     return () => {
       cancelled = true;
     };
-  }, [projects.length, setAgents, subscribeAgent]);
+  }, [activeWorkspaceId, selectedProjectId, selectedDeviceId, setAgents, subscribeAgent]);
 
   const handleSubmit = useCallback(
     async (prompt: string) => {
@@ -240,13 +282,22 @@ export function WebMaestroHome() {
         window.alert('Escolha um projeto para continuar.');
         return;
       }
+      const device = devices.find((item) => item.id === deviceId) ?? null;
+      const workspaceId = project.workspace_id || device?.workspace_id || null;
+      if (!workspaceId) {
+        window.alert('Workspace do projeto não encontrado. Faça login novamente.');
+        return;
+      }
+      if (device?.workspace_id && device.workspace_id !== workspaceId) {
+        window.alert(
+          'O Mac selecionado está em outro workspace do projeto. Selecione o Mac correto.',
+        );
+        return;
+      }
 
       setSubmitting(true);
+      let createdSessionId: string | null = null;
       try {
-        const workspaceId = await bridge.getWorkspaceId();
-        if (!workspaceId) {
-          throw new Error('Workspace não encontrado');
-        }
         const {
           data: { user },
         } = await supabase.auth.getUser();
@@ -263,6 +314,7 @@ export function WebMaestroHome() {
           created_by: user.id,
           model_id: 'auto',
         });
+        createdSessionId = agentId;
         const commandId = await bridge.executeCommand({
           workspace_id: workspaceId,
           project_id: selectedProjectId,
@@ -310,7 +362,13 @@ export function WebMaestroHome() {
 
         subscribeAgent(agentId, commandId);
       } catch (error) {
-        window.alert(error instanceof Error ? error.message : 'Falha ao enviar prompt');
+        if (createdSessionId) {
+          try {
+            await closeAgentSession(supabase, createdSessionId);
+          } catch {
+          }
+        }
+        window.alert(formatUnknownError(error, 'Falha ao enviar prompt'));
       } finally {
         setSubmitting(false);
       }
@@ -344,9 +402,15 @@ export function WebMaestroHome() {
       }
 
       try {
-        const workspaceId = await bridge.getWorkspaceId();
+        const device = devices.find((item) => item.id === deviceId) ?? null;
+        const workspaceId = await resolveAgentWorkspaceId(agent.projectId);
         if (!workspaceId) {
           throw new Error('Workspace não encontrado');
+        }
+        if (device?.workspace_id && device.workspace_id !== workspaceId) {
+          throw new Error(
+            'O Mac selecionado está em outro workspace do projeto. Selecione o Mac correto.',
+          );
         }
         const commandId = await bridge.executeCommand({
           workspace_id: workspaceId,
@@ -377,7 +441,7 @@ export function WebMaestroHome() {
         });
         subscribeAgent(agentId, commandId);
       } catch (error) {
-        window.alert(error instanceof Error ? error.message : 'Falha ao enviar follow-up');
+        window.alert(formatUnknownError(error, 'Falha ao enviar follow-up'));
       }
     },
     [addAgentTurn, devices, resolveDeviceId, subscribeAgent],
@@ -401,9 +465,15 @@ export function WebMaestroHome() {
       void updateAgentSessionMeta(supabase, agentId, { status: 'active' });
 
       try {
-        const workspaceId = await bridge.getWorkspaceId();
+        const device = devices.find((item) => item.id === deviceId) ?? null;
+        const workspaceId = await resolveAgentWorkspaceId(agent.projectId);
         if (!workspaceId) {
           throw new Error('Workspace não encontrado');
+        }
+        if (device?.workspace_id && device.workspace_id !== workspaceId) {
+          throw new Error(
+            'O Mac selecionado está em outro workspace do projeto. Selecione o Mac correto.',
+          );
         }
         await bridge.executeCommand({
           workspace_id: workspaceId,
@@ -418,10 +488,10 @@ export function WebMaestroHome() {
           idempotency_key: crypto.randomUUID(),
         });
       } catch (error) {
-        window.alert(error instanceof Error ? error.message : 'Falha ao parar o agent');
+        window.alert(formatUnknownError(error, 'Falha ao parar o agent'));
       }
     },
-    [resolveDeviceId, setAgentStatus],
+    [devices, resolveDeviceId, setAgentStatus],
   );
 
   const handleRemove = useCallback(
@@ -430,7 +500,7 @@ export function WebMaestroHome() {
       const deviceId = resolveDeviceId();
       if (agent?.terminals?.length && deviceId) {
         try {
-          const workspaceId = await bridge.getWorkspaceId();
+          const workspaceId = await resolveAgentWorkspaceId(agent.projectId);
           if (workspaceId) {
             await Promise.all(
               agent.terminals.map((terminal) =>

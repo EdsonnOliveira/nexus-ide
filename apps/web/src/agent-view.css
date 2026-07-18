@@ -819,6 +819,12 @@
   color: #fecaca;
 }
 
+@media (max-width: 960px) {
+  .agent-view__composer-input {
+    font-size: 16px;
+  }
+}
+
 .web-agent-view .agent-view__transcript {
   padding-top: 4px;
 }

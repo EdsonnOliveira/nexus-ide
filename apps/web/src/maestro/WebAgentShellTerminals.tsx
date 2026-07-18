@@ -33,6 +33,21 @@ function formatElapsed(startedAt: number, now: number): string {
   return `${seconds}s`;
 }
 
+async function resolveAgentWorkspaceId(projectId: string | null): Promise<string | null> {
+  const state = useWebStore.getState();
+  const project = projectId
+    ? state.projects.find((item) => item.id === projectId) ?? null
+    : null;
+  const device =
+    state.devices.find((item) => item.id === state.selectedDeviceId) ?? null;
+  return (
+    project?.workspace_id ||
+    device?.workspace_id ||
+    state.activeWorkspaceId ||
+    (await bridge.getWorkspaceId())
+  );
+}
+
 function WebAgentTerminalModal({
   terminal,
   agentId,
@@ -136,7 +151,7 @@ function WebAgentTerminalModal({
       setConnecting(true);
       setError(null);
       try {
-        const workspaceId = await bridge.getWorkspaceId();
+        const workspaceId = await resolveAgentWorkspaceId(projectId);
         if (!workspaceId || cancelled) {
           throw new Error('Workspace não encontrado');
         }
@@ -383,7 +398,7 @@ function WebAgentShellTerminalsComponent({ agent, deviceId }: WebAgentShellTermi
         null;
       if (deviceId) {
         try {
-          const workspaceId = await bridge.getWorkspaceId();
+          const workspaceId = await resolveAgentWorkspaceId(agent.projectId);
           if (workspaceId) {
             context = {
               deviceId,

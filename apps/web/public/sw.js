@@ -31,8 +31,8 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(payload.title, {
       body: payload.body,
-      icon: '/icon-192.png',
-      badge: '/icon-192.png',
+      icon: '/nexus-icon-192.png',
+      badge: '/nexus-icon-192.png',
       data: payload.data,
     }),
   );

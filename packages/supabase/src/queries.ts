@@ -135,6 +135,18 @@ export interface BrainDecisionRow {
 }
 
 export async function getPrimaryWorkspace(client: NexusClient): Promise<WorkspaceMemberRow | null> {
+  const devices = await listDevices(client);
+  const preferredDevice =
+    devices.find((device) => device.is_default && isDeviceOnline(device.last_seen_at)) ??
+    devices.find((device) => isDeviceOnline(device.last_seen_at)) ??
+    devices.find((device) => device.is_enabled) ??
+    devices[0] ??
+    null;
+
+  if (preferredDevice?.workspace_id) {
+    return { workspace_id: preferredDevice.workspace_id };
+  }
+
   const { data, error } = await client
     .from('workspace_members')
     .select('workspace_id')
@@ -347,7 +359,7 @@ export async function createCommand(client: NexusClient, input: CommandInsert): 
   const { data, error } = await client.from('commands').insert(input).select('*').single();
 
   if (error) {
-    throw error;
+    throw new Error(error.message || 'Falha ao criar comando');
   }
 
   return data as CommandRow;

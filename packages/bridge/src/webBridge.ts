@@ -36,19 +36,26 @@ function asCapabilities(value: unknown): DeviceCapabilities {
 
 export function createWebBridge(config: NexusSupabaseConfig): NexusBridge {
   const client = createNexusSupabaseClient(config);
-  let cachedWorkspaceId: string | null = null;
 
   async function resolveWorkspaceId(): Promise<string> {
-    if (cachedWorkspaceId) {
-      return cachedWorkspaceId;
-    }
     const membership = await getPrimaryWorkspace(client);
     const workspaceId = membership?.workspace_id;
     if (!workspaceId) {
       throw new Error('Workspace não encontrado. Faça login novamente.');
     }
-    cachedWorkspaceId = workspaceId;
     return workspaceId;
+  }
+
+  async function resolveCommandWorkspaceId(command: NexusCommand): Promise<string> {
+    if (command.workspace_id) {
+      return command.workspace_id;
+    }
+    const devices = await listDevices(client);
+    const target = devices.find((device) => device.id === command.target_device_id);
+    if (target?.workspace_id) {
+      return target.workspace_id;
+    }
+    return resolveWorkspaceId();
   }
 
   return {
@@ -60,7 +67,7 @@ export function createWebBridge(config: NexusSupabaseConfig): NexusBridge {
         throw new Error('Usuário não autenticado');
       }
 
-      const workspaceId = command.workspace_id || (await resolveWorkspaceId());
+      const workspaceId = await resolveCommandWorkspaceId(command);
 
       if (isDangerousPayload(command.payload)) {
         const inserted = await createCommand(client, {
@@ -83,7 +90,7 @@ export function createWebBridge(config: NexusSupabaseConfig): NexusBridge {
           status: 'pending',
         });
         if (error) {
-          throw error;
+          throw new Error(error.message || 'Falha ao criar aprovação');
         }
 
         return inserted.id;

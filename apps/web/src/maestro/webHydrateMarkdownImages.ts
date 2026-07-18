@@ -1,4 +1,5 @@
 import { bridge } from '../lib/supabase';
+import { useWebStore } from '../store';
 import { waitForCommandResult } from './webCommandResult';
 
 const remoteImageCache = new Map<string, string | null>();
@@ -43,7 +44,14 @@ export async function resolveWebMarkdownImage(
   }
 
   try {
-    const workspaceId = await bridge.getWorkspaceId();
+    const state = useWebStore.getState();
+    const project = state.projects.find((item) => item.id === projectId) ?? null;
+    const device = state.devices.find((item) => item.id === deviceId) ?? null;
+    const workspaceId =
+      project?.workspace_id ||
+      device?.workspace_id ||
+      state.activeWorkspaceId ||
+      (await bridge.getWorkspaceId());
 
     if (!workspaceId) {
       return null;
