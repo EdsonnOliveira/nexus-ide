@@ -563,6 +563,58 @@ export async function upsertVercelDeploySnapshot(
   return data as VercelDeploySnapshotRow;
 }
 
+export interface MobileReleaseSnapshotRow {
+  user_id: string;
+  device_id: string | null;
+  active_release: unknown;
+  releases: unknown[];
+  updated_at: string;
+}
+
+export async function getMobileReleaseSnapshot(
+  client: NexusClient,
+  userId: string,
+): Promise<MobileReleaseSnapshotRow | null> {
+  const { data, error } = await client
+    .from('mobile_release_snapshots')
+    .select('*')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error) {
+    throw error;
+  }
+  return (data as MobileReleaseSnapshotRow | null) ?? null;
+}
+
+export async function upsertMobileReleaseSnapshot(
+  client: NexusClient,
+  input: {
+    user_id: string;
+    device_id?: string | null;
+    active_release: unknown;
+    releases: unknown[];
+  },
+): Promise<MobileReleaseSnapshotRow> {
+  const { data, error } = await client
+    .from('mobile_release_snapshots')
+    .upsert(
+      {
+        user_id: input.user_id,
+        device_id: input.device_id ?? null,
+        active_release: input.active_release,
+        releases: input.releases,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id' },
+    )
+    .select('*')
+    .single();
+  if (error) {
+    throw error;
+  }
+  return data as MobileReleaseSnapshotRow;
+}
+
 export interface PushSubscriptionRow {
   id: string;
   user_id: string;

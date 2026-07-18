@@ -19,6 +19,8 @@ import { WebPushModal } from './WebPushModal';
 import { WebVercelDeployCard } from './WebVercelDeployCard';
 import { WebVercelTokenModal } from './WebVercelTokenModal';
 import { useWebVercelDeployments } from './useWebVercelDeployments';
+import { WebMobileReleaseCard } from './WebMobileReleaseCard';
+import { useWebMobileReleases } from './useWebMobileReleases';
 import {
   dismissWebAgentTerminal,
   handleWebAgentShellToolEvents,
@@ -46,8 +48,8 @@ function formatUnknownError(error: unknown, fallback: string): string {
 function resolveStoreWorkspaceId(): string | null {
   const state = useWebStore.getState();
   return (
-    state.activeWorkspaceId ||
     state.projects.find((item) => item.id === state.selectedProjectId)?.workspace_id ||
+    state.activeWorkspaceId ||
     state.devices.find((item) => item.id === state.selectedDeviceId)?.workspace_id ||
     null
   );
@@ -76,6 +78,7 @@ export function WebMaestroHome() {
   const selectedDeviceId = useWebStore((state) => state.selectedDeviceId);
   const setSelectedDeviceId = useWebStore((state) => state.setSelectedDeviceId);
   const activeWorkspaceId = useWebStore((state) => state.activeWorkspaceId);
+  const setActiveWorkspaceId = useWebStore((state) => state.setActiveWorkspaceId);
   const agents = useWebStore((state) => state.agents);
   const setAgents = useWebStore((state) => state.setAgents);
   const addAgent = useWebStore((state) => state.addAgent);
@@ -86,7 +89,7 @@ export function WebMaestroHome() {
   const setAgentModeId = useWebStore((state) => state.setAgentModeId);
   const setAgentStatus = useWebStore((state) => state.setAgentStatus);
   const removeAgent = useWebStore((state) => state.removeAgent);
-  const hydratedRef = useRef(false);
+  const hydratedWorkspaceRef = useRef<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [pairingOpen, setPairingOpen] = useState(false);
   const [vercelTokenOpen, setVercelTokenOpen] = useState(false);
@@ -120,6 +123,12 @@ export function WebMaestroHome() {
     saveToken: saveVercelToken,
     clearToken: clearVercelToken,
   } = useWebVercelDeployments(true);
+
+  const {
+    activeRelease: mobileActiveRelease,
+    deviceId: mobileReleaseDeviceId,
+    dismiss: dismissMobileReleaseCard,
+  } = useWebMobileReleases(true);
 
   const resolveDeviceId = useCallback(() => {
     return (
@@ -228,11 +237,8 @@ export function WebMaestroHome() {
   );
 
   useEffect(() => {
-    if (hydratedRef.current) {
-      return;
-    }
     const workspaceId = resolveStoreWorkspaceId();
-    if (!workspaceId) {
+    if (!workspaceId || hydratedWorkspaceRef.current === workspaceId) {
       return;
     }
     let cancelled = false;
@@ -250,7 +256,7 @@ export function WebMaestroHome() {
         }
         const hydrated = hydrateWebAgentsFromBundles(bundles);
         setAgents(hydrated);
-        hydratedRef.current = true;
+        hydratedWorkspaceRef.current = workspaceId;
         for (const agent of hydrated) {
           if (agent.status === 'running' && agent.commandId) {
             subscribeAgent(agent.id, agent.commandId);
@@ -264,6 +270,17 @@ export function WebMaestroHome() {
       cancelled = true;
     };
   }, [activeWorkspaceId, selectedProjectId, selectedDeviceId, setAgents, subscribeAgent]);
+
+  const handleProjectChange = useCallback(
+    (projectId: string | null) => {
+      setSelectedProjectId(projectId);
+      const project = projects.find((item) => item.id === projectId);
+      if (project?.workspace_id) {
+        setActiveWorkspaceId(project.workspace_id);
+      }
+    },
+    [projects, setActiveWorkspaceId, setSelectedProjectId],
+  );
 
   const handleSubmit = useCallback(
     async (prompt: string) => {
@@ -319,6 +336,7 @@ export function WebMaestroHome() {
           workspace_id: workspaceId,
           project_id: selectedProjectId,
           target_device_id: deviceId,
+          agent_id: agentId,
           type: 'agent_prompt',
           payload: {
             prompt,
@@ -416,6 +434,7 @@ export function WebMaestroHome() {
           workspace_id: workspaceId,
           project_id: agent.projectId,
           target_device_id: deviceId,
+          agent_id: agentId,
           type: 'agent_prompt',
           payload: {
             prompt,
@@ -584,7 +603,7 @@ export function WebMaestroHome() {
         <WebMaestroAskBar
           projects={projects}
           projectId={selectedProjectId}
-          onProjectChange={setSelectedProjectId}
+          onProjectChange={handleProjectChange}
           devices={devices}
           deviceId={selectedDeviceId}
           onDeviceChange={setSelectedDeviceId}
@@ -605,13 +624,22 @@ export function WebMaestroHome() {
         onModeChange={handleModeChange}
         onScrollChange={setHeroScrolled}
       />
-      {vercelActiveDeployment ? (
+      {mobileActiveRelease || vercelActiveDeployment ? (
         <div className='web-vercel-deploy-dock'>
-          <WebVercelDeployCard
-            deployment={vercelActiveDeployment}
-            deployments={vercelDeployments}
-            onDismiss={dismissVercelDeployCard}
-          />
+          {mobileActiveRelease ? (
+            <WebMobileReleaseCard
+              release={mobileActiveRelease}
+              deviceId={mobileReleaseDeviceId ?? resolveDeviceId()}
+              onDismiss={dismissMobileReleaseCard}
+            />
+          ) : null}
+          {vercelActiveDeployment ? (
+            <WebVercelDeployCard
+              deployment={vercelActiveDeployment}
+              deployments={vercelDeployments}
+              onDismiss={dismissVercelDeployCard}
+            />
+          ) : null}
         </div>
       ) : null}
       <WebMacPairingModal open={pairingOpen} onClose={() => setPairingOpen(false)} />

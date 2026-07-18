@@ -144,9 +144,7 @@ Deno.serve(async (req: Request) => {
       .from('push_subscriptions')
       .select('id', { count: 'exact', head: true })
       .eq('user_id', userId);
-    if (!count) {
-      continue;
-    }
+    const hasPush = Boolean(count);
 
     scanned += 1;
     try {
@@ -172,6 +170,7 @@ Deno.serve(async (req: Request) => {
       );
 
       if (
+        hasPush &&
         deployment &&
         (deployment.state === 'READY' || deployment.state === 'ERROR') &&
         (deployment.uid !== previousUid || deployment.state !== previousState)

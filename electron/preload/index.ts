@@ -375,6 +375,7 @@ const nexusApi = {
   },
   vercel: {
     getTokenConfigured: () => ipcRenderer.invoke('vercel:getTokenConfigured'),
+    getToken: (): Promise<string | null> => ipcRenderer.invoke('vercel:getToken'),
     saveToken: (token) => ipcRenderer.invoke('vercel:saveToken', token),
     clearToken: () => ipcRenderer.invoke('vercel:clearToken'),
     validateToken: (token) => ipcRenderer.invoke('vercel:validateToken', token),
@@ -631,6 +632,8 @@ const nexusApi = {
         messages: Array<Record<string, unknown>>;
       }>
     > => ipcRenderer.invoke('cloud:listOpenAgentSessions'),
+    writeMobileReleaseSnapshot: (payload: unknown): Promise<{ ok: boolean; path: string }> =>
+      ipcRenderer.invoke('cloud:writeMobileReleaseSnapshot', payload),
   },
 };
 

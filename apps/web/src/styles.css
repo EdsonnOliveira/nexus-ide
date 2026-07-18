@@ -941,10 +941,6 @@ svg {
     box-sizing: border-box;
   }
 
-  .home-dashboard__ask-bar .home-dashboard__ask {
-    padding-bottom: calc(8px + var(--safe-bottom));
-  }
-
   .home-dashboard__open-agent-projects {
     bottom: calc(
       var(--web-ask-bar-height, 128px) + var(--web-open-agent-projects-gap) + var(--web-ask-bar-inset)
@@ -964,10 +960,6 @@ html.nexus-standalone .home-dashboard__ask-bar {
   padding: 0 calc(var(--web-ask-bar-inset) + var(--safe-left)) var(--web-ask-bar-inset)
     calc(var(--web-ask-bar-inset) + var(--safe-right));
   box-sizing: border-box;
-}
-
-html.nexus-standalone .home-dashboard__ask-bar .home-dashboard__ask {
-  padding-bottom: calc(8px + var(--safe-bottom));
 }
 
 html.nexus-standalone .home-dashboard__open-agent-projects {
@@ -2489,10 +2481,6 @@ html.nexus-standalone .home-dashboard__open-agent-projects {
     box-sizing: border-box;
   }
 
-  .home-dashboard__ask-bar .home-dashboard__ask {
-    padding-bottom: calc(8px + var(--safe-bottom));
-  }
-
   .home-dashboard__open-agent-projects {
     bottom: calc(
       var(--web-ask-bar-height, 128px) + var(--web-open-agent-projects-gap) + var(--web-ask-bar-inset)
@@ -2601,6 +2589,9 @@ html.nexus-standalone .home-dashboard__open-agent-projects {
   max-width: 280px;
   margin-left: 0;
   pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 @media (max-width: 960px) {
@@ -2616,8 +2607,158 @@ html.nexus-standalone .home-dashboard__open-agent-projects {
   pointer-events: auto;
 }
 
-.web-vercel-deploy-card {
+.web-vercel-deploy-card,
+.web-mobile-release-card {
   margin-bottom: 0;
+}
+
+.sidebar-mobile-release-card {
+  width: 100%;
+  margin-bottom: 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  overflow: visible;
+}
+
+.sidebar-mobile-release-card--copyable {
+  cursor: pointer;
+}
+
+.sidebar-mobile-release-card--copyable:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.sidebar-mobile-release-card__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sidebar-mobile-release-card__project-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  color: var(--text-primary);
+}
+
+.sidebar-mobile-release-card__project-icon--ios {
+  background: rgba(37, 99, 235, 0.14);
+  color: #60a5fa;
+}
+
+.sidebar-mobile-release-card__project-icon--android {
+  background: rgba(5, 150, 105, 0.14);
+  color: #34d399;
+}
+
+.sidebar-mobile-release-card__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.sidebar-mobile-release-card__eyebrow {
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.sidebar-mobile-release-card__project {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-mobile-release-card__close,
+.sidebar-mobile-release-card__close.app-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.sidebar-mobile-release-card__close:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+.sidebar-mobile-release-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+}
+
+.sidebar-mobile-release-card__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sidebar-mobile-release-card__label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.sidebar-mobile-release-card__value {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+.sidebar-mobile-release-card__inline-link {
+  border: none;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-mobile-release-card__inline-link:hover:not(:disabled) {
+  color: #93c5fd;
+}
+
+.sidebar-mobile-release-card__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sidebar-mobile-release-card__status-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .web-vercel-empty {

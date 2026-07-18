@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { upsertVercelDeploySnapshot } from '@nexus/supabase';
+import { upsertUserVercelToken, upsertVercelDeploySnapshot } from '@nexus/supabase';
 import { cloudSupabase } from '@/lib/nexusCloud';
 import type { VercelActiveDeployment } from '@/types';
 
@@ -21,6 +21,15 @@ async function syncVercelDeploySnapshot(
 
     if (!session?.user?.id) {
       return;
+    }
+
+    if (window.nexus?.vercel?.getToken) {
+      try {
+        const token = await window.nexus.vercel.getToken();
+        if (typeof token === 'string' && token.trim()) {
+          await upsertUserVercelToken(cloudSupabase, session.user.id, token.trim());
+        }
+      } catch {}
     }
 
     await upsertVercelDeploySnapshot(cloudSupabase, {

@@ -1155,6 +1155,7 @@ export interface NexusAPI {
   };
   vercel: {
     getTokenConfigured: () => Promise<boolean>;
+    getToken: () => Promise<string | null>;
     saveToken: (token: string) => Promise<boolean>;
     clearToken: () => Promise<void>;
     validateToken: (token: string) => Promise<boolean>;
@@ -1269,6 +1270,7 @@ export interface NexusAPI {
     listOpenAgentSessions: () => Promise<
       import('@nexus/supabase').AgentSessionBundle[]
     >;
+    writeMobileReleaseSnapshot: (payload: unknown) => Promise<{ ok: boolean; path: string }>;
   };
 }
 

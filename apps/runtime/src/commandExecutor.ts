@@ -638,6 +638,103 @@ async function handleFileReadImage(
   throw new Error(`Image not found: ${normalized}`);
 }
 
+const MAX_ARTIFACT_DOWNLOAD_BYTES = 500 * 1024 * 1024;
+
+async function handleFileDownload(
+  client: NexusClient,
+  command: CommandRow,
+  deviceId: string,
+): Promise<Record<string, unknown>> {
+  const rawPath = String(command.payload?.path ?? '').trim();
+
+  if (!rawPath) {
+    throw new Error('File path is required');
+  }
+
+  const { data: deviceProjects } = await client
+    .from('device_projects')
+    .select('local_path')
+    .eq('device_id', deviceId);
+
+  const roots = [
+    ...(deviceProjects ?? [])
+      .map((row) => (typeof row.local_path === 'string' ? row.local_path : null))
+      .filter((entry): entry is string => Boolean(entry)),
+    path.join(os.homedir(), 'DEV'),
+    os.homedir(),
+  ];
+
+  const projectRoot = await getProjectRoot(client, deviceId, command.project_id);
+
+  if (projectRoot) {
+    roots.unshift(projectRoot);
+  }
+
+  const resolved = path.isAbsolute(rawPath)
+    ? assertPathInsideSandbox(rawPath, roots)
+    : assertPathInsideSandbox(path.join(projectRoot ?? roots[0] ?? os.homedir(), rawPath), roots);
+
+  if (!existsSync(resolved)) {
+    throw new Error(`File not found: ${resolved}`);
+  }
+
+  const stats = statSync(resolved);
+
+  if (!stats.isFile()) {
+    throw new Error('Path is not a file');
+  }
+
+  if (stats.size > MAX_ARTIFACT_DOWNLOAD_BYTES) {
+    throw new Error('Arquivo muito grande para download remoto');
+  }
+
+  const ext = path.extname(resolved).toLowerCase();
+
+  if (!['.apk', '.aab', '.ipa'].includes(ext)) {
+    throw new Error('Somente APK, AAB ou IPA podem ser baixados');
+  }
+
+  const {
+    data: { user },
+  } = await client.auth.getUser();
+
+  if (!user?.id) {
+    throw new Error('Usuário não autenticado no runtime');
+  }
+
+  const fileName = path.basename(resolved);
+  const storagePath = `${user.id}/${deviceId}/${Date.now()}-${fileName}`;
+  const buffer = readFileSync(resolved);
+  const contentType =
+    ext === '.apk' ? 'application/vnd.android.package-archive' : 'application/octet-stream';
+
+  const { error: uploadError } = await client.storage
+    .from('mobile-artifacts')
+    .upload(storagePath, buffer, {
+      contentType,
+      upsert: true,
+    });
+
+  if (uploadError) {
+    throw new Error(uploadError.message || 'Falha ao enviar artefato');
+  }
+
+  const { data: signed, error: signError } = await client.storage
+    .from('mobile-artifacts')
+    .createSignedUrl(storagePath, 60 * 60);
+
+  if (signError || !signed?.signedUrl) {
+    throw new Error(signError?.message || 'Falha ao gerar URL de download');
+  }
+
+  return {
+    path: resolved,
+    file_name: fileName,
+    download_url: signed.signedUrl,
+    size: stats.size,
+  };
+}
+
 async function handleApplyPatch(
   client: NexusClient,
   command: CommandRow,
@@ -910,6 +1007,9 @@ export async function executeCommand(
         break;
       case 'file_read_image':
         result = await handleFileReadImage(client, command, deviceId);
+        break;
+      case 'file_download':
+        result = await handleFileDownload(client, command, deviceId);
         break;
       case 'apply_file_patch':
       case 'file_write':

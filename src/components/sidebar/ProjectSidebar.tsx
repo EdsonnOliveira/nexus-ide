@@ -34,6 +34,7 @@ import { WorkspaceMenu } from '@/components/sidebar/WorkspaceMenu';
 import { WorkspaceContextMenu } from '@/components/sidebar/WorkspaceContextMenu';
 import { useVercelDeployments } from '@/hooks/useVercelDeployments';
 import { useMobileReleases } from '@/hooks/useMobileReleases';
+import { useMobileReleaseCloudSync } from '@/hooks/useMobileReleaseCloudSync';
 import {
   fetchSidebarVideoTitle,
   isYouTubeLiveUrl,
@@ -170,6 +171,7 @@ function ProjectSidebarComponent() {
   } = useVercelDeployments(true);
   const { visibleReleases: visibleMobileReleases, dismissRelease: dismissMobileRelease } =
     useMobileReleases();
+  useMobileReleaseCloudSync(true);
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [workspaceContextMenu, setWorkspaceContextMenu] = useState<WorkspaceContextMenuState | null>(

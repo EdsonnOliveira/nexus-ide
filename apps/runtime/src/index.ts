@@ -21,6 +21,7 @@ import { executeCommand } from './commandExecutor';
 import { listActiveTerminalIds } from './terminalSessions';
 import { createFileAuthStorage } from './sessionStorage';
 import { runPushMaintenance } from './pushMaintenance';
+import { syncMobileReleaseSnapshotFromDisk } from './syncMobileReleaseSnapshot';
 
 const HEARTBEAT_MS = 15_000;
 const POLL_MS = 2_000;
@@ -285,6 +286,19 @@ async function main(): Promise<void> {
       console.error('[nexus-runtime] push maintenance failed', error);
     });
   }, PUSH_MAINTENANCE_MS);
+
+  const syncMobileSnapshot = async () => {
+    try {
+      await syncMobileReleaseSnapshotFromDisk(client, session.user.id, deviceId);
+    } catch (error) {
+      console.error('[nexus-runtime] mobile snapshot sync failed', error);
+    }
+  };
+
+  void syncMobileSnapshot();
+  setInterval(() => {
+    void syncMobileSnapshot();
+  }, 5_000);
 
   client
     .channel(`device-commands:${deviceId}`)

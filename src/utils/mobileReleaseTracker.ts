@@ -3,6 +3,10 @@ import { useMobileReleaseStore } from '@/stores/useMobileReleaseStore';
 import type { MobileActiveRelease, MobileReleaseKind } from '@/types';
 import type { StreamJsonShellToolEvent } from '@/utils/agentStreamJsonParser';
 import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
+import {
+  resolveMobileArtifactAbsolutePath,
+  sanitizeMobileArtifactPath,
+} from '@/utils/mobileReleaseArtifact';
 import { collectProjectPanes } from '@/utils/tabGroups';
 import { stripAnsi } from '@/utils/stripAnsi';
 
@@ -324,6 +328,20 @@ export async function refreshMobileReleaseVersion(uid: string): Promise<void> {
   });
 }
 
+function resolveArtifactForRelease(
+  release: MobileActiveRelease,
+  artifactPath: string | null,
+): string | null {
+  if (!artifactPath) {
+    return null;
+  }
+
+  const project = useProjectStore.getState().projects.find((entry) => entry.id === release.projectId);
+  const projectPath = resolveProjectPathForPane(release.paneId) ?? project?.path ?? null;
+
+  return resolveMobileArtifactAbsolutePath(projectPath, artifactPath);
+}
+
 function extractArtifactPath(patterns: RegExp[], plain: string): string | null {
   for (const pattern of patterns) {
     const match = plain.match(pattern);
@@ -335,17 +353,27 @@ function extractArtifactPath(patterns: RegExp[], plain: string): string | null {
     const candidate = match[1]?.trim();
 
     if (candidate) {
-      return candidate;
+      const sanitized = sanitizeMobileArtifactPath(candidate);
+
+      if (sanitized) {
+        return sanitized;
+      }
     }
 
     const lineMatch = plain.match(new RegExp(`${pattern.source}.*`, 'i'));
 
     if (lineMatch?.[0]) {
-      return lineMatch[0].replace(/^[^:]+:\s*/i, '').trim() || null;
+      const fromLine = sanitizeMobileArtifactPath(
+        lineMatch[0].replace(/^[^:]+:\s*/i, '').trim(),
+      );
+
+      if (fromLine) {
+        return fromLine;
+      }
     }
   }
 
-  return null;
+  return sanitizeMobileArtifactPath(plain);
 }
 
 function createRelease(
@@ -542,7 +570,11 @@ function applyReleaseProgress(release: MobileActiveRelease, fullPlain: string): 
       syncReleaseVersionFromOutput(release.uid, fullPlain, completion.artifactPath);
     }
 
-    store.completeRelease(release.uid, 'READY', completion.artifactPath);
+    store.completeRelease(
+      release.uid,
+      'READY',
+      resolveArtifactForRelease(current, completion.artifactPath),
+    );
   }
 }
 
@@ -700,7 +732,11 @@ async function handleMobileReleaseShellToolCompletedEvent(
       syncReleaseVersionFromOutput(release.uid, fullPlain, completion.artifactPath);
     }
 
-    store.completeRelease(release.uid, 'READY', completion.artifactPath);
+    store.completeRelease(
+      release.uid,
+      'READY',
+      resolveArtifactForRelease(refreshed, completion.artifactPath),
+    );
   }
 }
 

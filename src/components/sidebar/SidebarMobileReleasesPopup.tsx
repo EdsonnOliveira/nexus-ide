@@ -10,6 +10,7 @@ import {
 import { useMobileReleaseLogsCopy } from '@/hooks/useMobileReleaseLogsCopy';
 import { useMobileReleaseStore } from '@/stores/useMobileReleaseStore';
 import type { MobileActiveRelease, MobileReleaseKind } from '@/types';
+import { canOpenMobileArtifact } from '@/utils/mobileReleaseArtifact';
 import {
   formatMobileReleaseElapsed,
   formatMobileReleaseFinishedAt,
@@ -23,6 +24,7 @@ import {
   getVercelProjectColor,
   getVercelProjectInitial,
 } from '@/utils/vercelDeployment';
+import { getRevealInFolderLabel } from '@/utils/explorerRelativePath';
 
 interface SidebarMobileReleasesPopupProps {
   anchorRect: DOMRect;
@@ -48,10 +50,11 @@ function SidebarMobileReleaseListItem({ release, now, onOpen }: SidebarMobileRel
     release.state === 'BUILDING'
       ? formatMobileReleaseElapsed(release.buildingAt, now)
       : formatMobileReleaseFinishedAt(release.readyAt ?? release.createdAt, now);
-  const canOpen = release.state === 'READY' && Boolean(release.artifactPath?.includes('/'));
+  const canOpen = release.state === 'READY' && canOpenMobileArtifact(release.artifactPath);
   const itemClassName = `sidebar-mobile-releases-popup__item app-button app-button--enter${canCopyLogs && logsCopied ? ' sidebar-mobile-releases-popup__item--copied app-button--enter' : ''}`;
   const projectInitial = getVercelProjectInitial(release.projectName);
   const projectColor = getVercelProjectColor(release.projectId, release.projectName);
+  const openTitle = canOpen ? getRevealInFolderLabel() : undefined;
 
   const handleItemClick = useCallback(() => {
     if (canCopyLogs) {
@@ -68,7 +71,7 @@ function SidebarMobileReleaseListItem({ release, now, onOpen }: SidebarMobileRel
         type='button'
         className={itemClassName}
         disabled={canCopyLogs ? logsLoading : !canOpen}
-        title={canCopyLogs ? 'Copiar logs do release' : undefined}
+        title={canCopyLogs ? 'Copiar logs do release' : openTitle}
         onClick={handleItemClick}
       >
         <span

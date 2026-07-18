@@ -17,6 +17,15 @@ export function registerVercelHandlers(): void {
     }
   });
 
+  ipcMain.handle('vercel:getToken', () => {
+    try {
+      return vercelCredentialStore.getToken();
+    } catch {
+      vercelCredentialStore.clearToken();
+      return null;
+    }
+  });
+
   ipcMain.handle('vercel:saveToken', async (_, token: string) => {
     const trimmed = token.trim();
 

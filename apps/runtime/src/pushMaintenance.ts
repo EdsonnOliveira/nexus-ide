@@ -140,9 +140,8 @@ async function pollVercelDeploys(): Promise<void> {
       .from('push_subscriptions')
       .select('id', { count: 'exact', head: true })
       .eq('user_id', userId);
-    if (!count) {
-      continue;
-    }
+    const hasPush = Boolean(count);
+
     try {
       const { data: previous } = await admin
         .from('vercel_deploy_snapshots')
@@ -163,6 +162,7 @@ async function pollVercelDeploys(): Promise<void> {
         { onConflict: 'user_id' },
       );
       if (
+        hasPush &&
         deployment &&
         (deployment.state === 'READY' || deployment.state === 'ERROR') &&
         (deployment.uid !== previousUid || deployment.state !== previousState)

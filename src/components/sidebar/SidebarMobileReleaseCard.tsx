@@ -3,7 +3,13 @@ import { X } from 'lucide-react';
 import { SidebarMobileReleasesPopup } from '@/components/sidebar/SidebarMobileReleasesPopup';
 import { SidebarMobileReleasePlatformIcon } from '@/components/sidebar/SidebarMobileReleasePlatformIcon';
 import { useMobileReleaseLogsCopy } from '@/hooks/useMobileReleaseLogsCopy';
+import { useProjectStore } from '@/stores/useProjectStore';
 import type { MobileActiveRelease, MobileReleaseState } from '@/types';
+import { getRevealInFolderLabel } from '@/utils/explorerRelativePath';
+import {
+  canOpenMobileArtifact,
+  resolveMobileArtifactAbsolutePath,
+} from '@/utils/mobileReleaseArtifact';
 import {
   formatMobileReleaseElapsed,
   formatMobileReleaseFinishedAt,
@@ -43,11 +49,19 @@ function SidebarMobileReleaseCardComponent({ release, onDismiss }: SidebarMobile
   const [releasesPopupOpen, setReleasesPopupOpen] = useState(false);
   const [releasesPopupAnchor, setReleasesPopupAnchor] = useState<DOMRect | null>(null);
   const previousStateRef = useRef<MobileReleaseState | null>(null);
+  const projects = useProjectStore((state) => state.projects);
   const soundKind = useMemo(() => mapReleaseStateToSound(release.state), [release.state]);
   const statusPingClassName = useMemo(
     () => getMobileReleaseStatusPingClassName(release.state),
     [release.state],
   );
+  const artifactAbsolutePath = useMemo(() => {
+    const project = projects.find((entry) => entry.id === release.projectId);
+    return resolveMobileArtifactAbsolutePath(project?.path, release.artifactPath);
+  }, [projects, release.artifactPath, release.projectId]);
+  const canOpenArtifact =
+    release.state === 'READY' &&
+    canOpenMobileArtifact(artifactAbsolutePath ?? release.artifactPath);
 
   useEffect(() => {
     if (release.state !== 'BUILDING') {
@@ -108,6 +122,7 @@ function SidebarMobileReleaseCardComponent({ release, onDismiss }: SidebarMobile
   const { copyLogs, loading: logsLoading, copied: logsCopied } = useMobileReleaseLogsCopy(release.uid);
   const statusDisplayLabel = logsCopied ? 'Copiado' : logsLoading ? 'Copiando...' : statusLabel;
   const versionLabel = formatMobileReleaseVersion(release.version, release.versionCode);
+  const revealLabel = getRevealInFolderLabel();
   const eyebrowLabel = useMemo(() => {
     if (release.state === 'BUILDING') {
       return formatMobileReleaseElapsed(release.buildingAt, now);
@@ -139,29 +154,48 @@ function SidebarMobileReleaseCardComponent({ release, onDismiss }: SidebarMobile
   );
 
   const handleOpenArtifact = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>) => {
-      event.stopPropagation();
+    (event?: React.MouseEvent) => {
+      event?.stopPropagation();
 
-      if (!release.artifactPath || !window.nexus?.files) {
+      const pathToReveal = artifactAbsolutePath ?? release.artifactPath;
+
+      if (!pathToReveal || !window.nexus?.files) {
         return;
       }
 
-      void window.nexus.files.revealInFolder(release.artifactPath);
+      void window.nexus.files.revealInFolder(pathToReveal);
     },
-    [release.artifactPath],
+    [artifactAbsolutePath, release.artifactPath],
   );
 
-  const cardClassName = `sidebar-mobile-release-card app-button--enter${canCopyLogs ? ` sidebar-mobile-release-card--copyable app-button${logsCopied ? ' sidebar-mobile-release-card--copied app-button--enter' : ''}` : ''}`;
+  const handleCardClick = useCallback(() => {
+    if (canCopyLogs) {
+      void copyLogs();
+      return;
+    }
+
+    if (canOpenArtifact) {
+      handleOpenArtifact();
+    }
+  }, [canCopyLogs, canOpenArtifact, copyLogs, handleOpenArtifact]);
+
+  const cardClassName = `sidebar-mobile-release-card app-button--enter${
+    canCopyLogs || canOpenArtifact
+      ? ` sidebar-mobile-release-card--copyable app-button${logsCopied ? ' sidebar-mobile-release-card--copied app-button--enter' : ''}`
+      : ''
+  }`;
   const cardTitle = canCopyLogs
     ? 'Copiar logs do release'
-    : `${release.projectName} · ${kindLabel}`;
+    : canOpenArtifact
+      ? revealLabel
+      : `${release.projectName} · ${kindLabel}`;
 
   return (
     <>
       <section
         className={cardClassName}
         title={cardTitle}
-        onClick={canCopyLogs ? copyLogs : undefined}
+        onClick={canCopyLogs || canOpenArtifact ? handleCardClick : undefined}
       >
         <div className='sidebar-mobile-release-card__header'>
           <span
@@ -217,16 +251,16 @@ function SidebarMobileReleaseCardComponent({ release, onDismiss }: SidebarMobile
               </span>
             </span>
           </div>
-          {release.state === 'READY' && release.artifactPath && release.artifactPath.includes('/') ? (
+          {canOpenArtifact ? (
             <div className='sidebar-mobile-release-card__row'>
               <span className='sidebar-mobile-release-card__label'>Artefato</span>
               <button
                 type='button'
                 className='sidebar-mobile-release-card__value sidebar-mobile-release-card__inline-link app-button'
-                title={release.artifactPath}
+                title={artifactAbsolutePath ?? release.artifactPath ?? undefined}
                 onClick={handleOpenArtifact}
               >
-                Abrir no Finder
+                {revealLabel}
               </button>
             </div>
           ) : null}

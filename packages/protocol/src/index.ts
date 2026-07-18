@@ -22,6 +22,7 @@ export type CommandType =
   | 'terminal_close'
   | 'file_read'
   | 'file_read_image'
+  | 'file_download'
   | 'file_write'
   | 'apply_file_patch'
   | 'git_status'
