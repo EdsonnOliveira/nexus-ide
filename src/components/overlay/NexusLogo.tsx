@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import nexusLogo from '@/assets/nexus-logo.png';
+import nexusLogo from '@/assets/nexus-logo-icon.png';
 
 interface NexusLogoProps {
   size?: number;

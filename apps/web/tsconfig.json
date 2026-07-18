@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "useDefineForClassFields": true,
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "@nexus/protocol": ["../../packages/protocol/src/index.ts"],
+      "@nexus/supabase": ["../../packages/supabase/src/index.ts"],
+      "@nexus/bridge": ["../../packages/bridge/src/index.ts"]
+    }
+  },
+  "include": ["src"]
+}

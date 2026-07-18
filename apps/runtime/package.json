@@ -1,0 +1,23 @@
+{
+  "name": "@nexus/runtime",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@nexus/protocol": "*",
+    "@nexus/supabase": "*",
+    "@supabase/supabase-js": "^2.50.0",
+    "node-pty": "^1.0.0",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/web-push": "^3.6.4",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.3"
+  }
+}

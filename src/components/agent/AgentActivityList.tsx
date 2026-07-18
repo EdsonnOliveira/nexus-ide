@@ -109,7 +109,7 @@ const AgentResponseBody = memo(function AgentResponseBody({
   content: string;
   projectPath: string;
 }) {
-  const html = useDeferredMarkdownHtml(content);
+  const html = useDeferredMarkdownHtml(content, projectPath);
   const bodyRef = useMarkdownCodeHighlight<HTMLDivElement>(html);
   const copiedTimeoutRef = useRef<number | null>(null);
   const { openFileTab } = useTabActions();

@@ -9,7 +9,7 @@ import { getAgentFooterHints } from '../services/agentFooterHints';
 import { listCursorAgentHistory, loadCursorAgentSessionTranscript } from '../services/agentHistory';
 import { getTerminalHints } from '../services/terminalHints';
 import { detectProjectKinds } from '../services/projectKind';
-import { readImageAsDataUrl } from '../services/imageLoader';
+import { readImageAsDataUrl, resolveProjectImageAsDataUrl } from '../services/imageLoader';
 import { saveTerminalPasteImage } from '../services/terminalPasteImages';
 import { searchProjectTree, type ExplorerSearchOptions } from '../services/explorerSearch';
 import { createDirectory, createEmptyFile, deleteEntry, importEntries, moveEntry, renameEntry } from '../services/explorerFs';
@@ -25,6 +25,12 @@ export function registerFileHandlers(getWindow: () => Electron.BrowserWindow | n
   setProjectFileWatchWindow(getWindow);
   ipcMain.handle('files:readImageAsDataUrl', async (_, filePath: string) =>
     readImageAsDataUrl(filePath),
+  );
+
+  ipcMain.handle(
+    'files:resolveProjectImageAsDataUrl',
+    async (_, projectPath: string | null, imageRef: string) =>
+      resolveProjectImageAsDataUrl(projectPath, imageRef),
   );
 
   ipcMain.handle('files:listChildDirectories', async (_, dirPath: string) =>

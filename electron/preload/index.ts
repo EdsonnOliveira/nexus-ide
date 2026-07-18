@@ -136,6 +136,11 @@ const nexusApi = {
     toLocalUrl: (filePath: string): string => toLocalFileUrl(filePath),
     readImageAsDataUrl: (filePath: string): Promise<string | null> =>
       ipcRenderer.invoke('files:readImageAsDataUrl', filePath),
+    resolveProjectImageAsDataUrl: (
+      projectPath: string | null,
+      imageRef: string,
+    ): Promise<string | null> =>
+      ipcRenderer.invoke('files:resolveProjectImageAsDataUrl', projectPath, imageRef),
     saveTerminalPasteImage: (
       projectPath: string,
       paneId: string,
@@ -604,6 +609,28 @@ const nexusApi = {
     }): void => {
       ipcRenderer.send('debug:sessionLog', payload);
     },
+  },
+  cloud: {
+    getLocalRuntimeStatus: (): Promise<{
+      online: boolean;
+      deviceId: string | null;
+      workspaceId: string | null;
+      hostname: string | null;
+      name: string | null;
+      lastSeenAt: string | null;
+      capabilities: Record<string, boolean>;
+      activeAgents: number;
+      activeTerminals: number;
+    }> => ipcRenderer.invoke('cloud:getLocalRuntimeStatus'),
+    pingRuntime: (): Promise<boolean> => ipcRenderer.invoke('cloud:pingRuntime'),
+    listOpenAgentSessions: (): Promise<
+      Array<{
+        session: Record<string, unknown>;
+        project: Record<string, unknown> | null;
+        executions: Array<Record<string, unknown>>;
+        messages: Array<Record<string, unknown>>;
+      }>
+    > => ipcRenderer.invoke('cloud:listOpenAgentSessions'),
   },
 };
 

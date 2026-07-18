@@ -950,6 +950,10 @@ export interface NexusAPI {
   files: {
     toLocalUrl: (filePath: string) => string;
     readImageAsDataUrl: (filePath: string) => Promise<string | null>;
+    resolveProjectImageAsDataUrl: (
+      projectPath: string | null,
+      imageRef: string,
+    ) => Promise<string | null>;
     saveTerminalPasteImage: (
       projectPath: string,
       paneId: string,
@@ -1248,6 +1252,23 @@ export interface NexusAPI {
       hypothesisId?: string;
       runId?: string;
     }) => void;
+  };
+  cloud: {
+    getLocalRuntimeStatus: () => Promise<{
+      online: boolean;
+      deviceId: string | null;
+      workspaceId: string | null;
+      hostname: string | null;
+      name: string | null;
+      lastSeenAt: string | null;
+      capabilities: Record<string, boolean>;
+      activeAgents: number;
+      activeTerminals: number;
+    }>;
+    pingRuntime: () => Promise<boolean>;
+    listOpenAgentSessions: () => Promise<
+      import('@nexus/supabase').AgentSessionBundle[]
+    >;
   };
 }
 

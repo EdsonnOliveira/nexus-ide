@@ -15,6 +15,11 @@ release
 build
 build/liquid-glass-out
 *.local
+.env
+.env.*
+!.env.example
+apps/web/dist
+apps/runtime/dist
 
 # Editor directories and files
 .vscode/.debug.env

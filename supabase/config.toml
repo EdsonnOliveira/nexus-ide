@@ -1,0 +1,13 @@
+project_id = "ktmngnpwmgvciutrgqbq"
+
+[functions.send-push]
+verify_jwt = false
+
+[functions.poll-vercel-deploys]
+verify_jwt = false
+
+[functions.check-devices-offline]
+verify_jwt = false
+
+[functions.vercel-proxy]
+verify_jwt = true

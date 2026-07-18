@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { rehighlightMarkdownCodeBlocks } from '@/utils/codeHighlight';
+import {
+  hydrateMarkdownImageHtml,
+  resolveDesktopMarkdownImage,
+} from '@/utils/hydrateMarkdownImages';
 import { renderMarkdownPreview } from '@/utils/markdownPreview';
 import { normalizeMarkdownSource } from '@/utils/markdownText';
 
-export function useDeferredMarkdownHtml(source: string): string {
+export function useDeferredMarkdownHtml(source: string, imageBaseDir?: string): string {
   const normalized = useMemo(() => normalizeMarkdownSource(source), [source]);
   const [html, setHtml] = useState('');
   const lastRenderRef = useRef(0);
@@ -30,7 +34,16 @@ export function useDeferredMarkdownHtml(source: string): string {
           }
 
           lastRenderRef.current = Date.now();
-          setHtml(renderMarkdownPreview(normalized));
+          const rendered = renderMarkdownPreview(normalized, imageBaseDir);
+          setHtml(rendered);
+
+          void hydrateMarkdownImageHtml(rendered, imageBaseDir ?? null, resolveDesktopMarkdownImage).then(
+            (hydrated) => {
+              if (!cancelled && hydrated !== rendered) {
+                setHtml(hydrated);
+              }
+            },
+          );
         },
         { timeout: idleTimeout },
       );
@@ -56,7 +69,7 @@ export function useDeferredMarkdownHtml(source: string): string {
         window.clearTimeout(timeoutId);
       }
     };
-  }, [normalized]);
+  }, [normalized, imageBaseDir]);
 
   return html;
 }

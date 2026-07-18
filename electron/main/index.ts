@@ -27,6 +27,7 @@ import { registerAgentPrintHandlers } from './ipc/agentPrint';
 import { registerDebugSessionHandlers } from './ipc/debugSession';
 import { registerSystemStatusHandlers } from './ipc/systemStatus';
 import { registerSystemNotificationsHandlers } from './ipc/systemNotifications';
+import { registerCloudHandlers } from './ipc/cloud';
 import {
   registerLocalFileProtocol,
   registerLocalFileScheme,
@@ -398,6 +399,7 @@ function registerShortcuts() {
 app.whenReady().then(() => {
   registerLocalFileProtocol();
   registerProjectHandlers();
+  registerCloudHandlers();
   registerFileHandlers(() => win);
   registerTerminalHandlers();
   registerAgentPrintHandlers();

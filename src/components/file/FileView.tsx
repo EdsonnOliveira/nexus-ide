@@ -168,9 +168,13 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
   }, [fileExternalRevision, loadFile, tab.viewMode]);
 
   const isReadOnly = tab.viewMode === 'preview';
+  const fileDirPath = useMemo(
+    () => tab.filePath.replace(/\\/g, '/').replace(/\/[^/]*$/, ''),
+    [tab.filePath],
+  );
   const previewHtml = useMemo(
-    () => (tab.viewMode === 'preview' && content ? renderMarkdownPreview(content) : ''),
-    [content, tab.viewMode],
+    () => (tab.viewMode === 'preview' && content ? renderMarkdownPreview(content, fileDirPath) : ''),
+    [content, fileDirPath, tab.viewMode],
   );
 
   const handleContentChange = useCallback((value: string) => {

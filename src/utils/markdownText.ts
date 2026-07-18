@@ -7,6 +7,7 @@ export function escapeHtml(value: string): string {
 
 export function stripMarkdownSyntax(source: string): string {
   return source
+    .replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, '$1')
     .replace(/\*\*(.+?)\*\*/g, '$1')
     .replace(/\*(.+?)\*/g, '$1')
     .replace(/`([^`]+)`/g, '$1')

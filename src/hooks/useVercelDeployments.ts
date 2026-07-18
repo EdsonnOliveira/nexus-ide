@@ -1,8 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { upsertVercelDeploySnapshot } from '@nexus/supabase';
+import { cloudSupabase } from '@/lib/nexusCloud';
 import type { VercelActiveDeployment } from '@/types';
 
 const POLL_INTERVAL_MS = 5_000;
 const DISMISSED_DEPLOY_UID_STORAGE_KEY = 'nexus-vercel-dismissed-deploy-uid';
+
+async function syncVercelDeploySnapshot(
+  activeDeployment: VercelActiveDeployment | null,
+  deployments: VercelActiveDeployment[],
+): Promise<void> {
+  if (!cloudSupabase) {
+    return;
+  }
+
+  try {
+    const {
+      data: { session },
+    } = await cloudSupabase.auth.getSession();
+
+    if (!session?.user?.id) {
+      return;
+    }
+
+    await upsertVercelDeploySnapshot(cloudSupabase, {
+      user_id: session.user.id,
+      active_deployment: activeDeployment,
+      deployments,
+    });
+  } catch {
+    return;
+  }
+}
 
 function readDismissedDeployUid(): string | null {
   try {
@@ -77,12 +106,15 @@ export function useVercelDeployments(enabled: boolean) {
     setLoading(true);
 
     try {
-      const deployment = await window.nexus.vercel.getActiveDeployment();
+      const deployments = await window.nexus.vercel.listDeployments();
+      const deployment = deployments[0] ?? null;
 
       if (requestIdRef.current === requestId) {
         setActiveDeployment(deployment);
         setError(null);
       }
+
+      void syncVercelDeploySnapshot(deployment, deployments);
 
       return deployment;
     } catch {

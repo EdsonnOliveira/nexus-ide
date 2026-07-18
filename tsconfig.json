@@ -21,9 +21,18 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "@nexus/protocol": [
+        "./packages/protocol/src/index.ts"
+      ],
+      "@nexus/supabase": [
+        "./packages/supabase/src/index.ts"
+      ],
+      "@nexus/bridge": [
+        "./packages/bridge/src/index.ts"
       ]
     }
   },
-  "include": ["src"],
+  "include": ["src", "packages/protocol/src", "packages/supabase/src", "packages/bridge/src"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

@@ -39,8 +39,12 @@ export default defineConfig(({ command }) => {
     resolve: {
       alias: {
         '@': path.join(__dirname, 'src'),
+        '@nexus/protocol': path.join(__dirname, 'packages/protocol/src/index.ts'),
+        '@nexus/supabase': path.join(__dirname, 'packages/supabase/src/index.ts'),
+        '@nexus/bridge': path.join(__dirname, 'packages/bridge/src/index.ts'),
       },
     },
+    envDir: __dirname,
     css: {
       transformer: 'postcss',
     },

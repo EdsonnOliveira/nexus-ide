@@ -450,6 +450,19 @@ function HomeDashboardAskBarComponent({
     focusPromptInput();
   }, [focusPromptInput, viewMode]);
 
+  useEffect(() => {
+    if (projects.length === 0) {
+      if (projectId) {
+        setProjectId('');
+      }
+      return;
+    }
+
+    if (!projectId || !projects.some((project) => project.id === projectId)) {
+      setProjectId(projects[0]?.id ?? '');
+    }
+  }, [projectId, projects]);
+
   const handleProjectChange = useCallback(
     (value: string) => {
       setProjectId(value);
@@ -741,7 +754,6 @@ function HomeDashboardAskBarComponent({
     setCaretIndex(0);
     setPendingImages([]);
     setWebSearchEnabled(false);
-    setProjectId('');
     setSubmitting(true);
     onAgentOpened?.();
 
@@ -1115,8 +1127,7 @@ function HomeDashboardAskBarComponent({
       <AnchoredSelect
         value={projectId}
         options={projectOptions}
-        allowEmpty
-        emptyLabel='Todos os Projetos'
+        placeholder='Escolha um projeto'
         onChange={handleProjectChange}
         leadingIcon={triggerLeadingIcon}
         className='home-dashboard__ask-project-wrap'

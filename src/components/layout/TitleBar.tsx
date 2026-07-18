@@ -5,11 +5,13 @@ import {
   BatteryFull,
   BatteryLow,
   BatteryMedium,
+  Cloud,
   Volume2,
   VolumeX,
   Wifi,
   WifiOff,
 } from 'lucide-react';
+import { useCloudStore } from '@/stores/useCloudStore';
 import { TitleBarBatteryCriticalAlert } from '@/components/layout/titlebar/TitleBarBatteryCriticalAlert';
 import { TitleBarBatteryPopup } from '@/components/layout/titlebar/TitleBarBatteryPopup';
 import { TitleBarNotificationsPopup } from '@/components/layout/titlebar/TitleBarNotificationsPopup';
@@ -29,6 +31,9 @@ type TitleBarPopupId = 'volume' | 'battery' | 'wifi' | 'notifications';
 function TitleBarComponent() {
   const { snapshot: systemStatus, refresh } = useSystemStatus(true);
   const clockLabel = useTitleBarClock(true);
+  const setCloudDrawerOpen = useCloudStore((state) => state.setDrawerOpen);
+  const cloudApprovals = useCloudStore((state) => state.approvals);
+  const runtimeOnline = useCloudStore((state) => state.runtimeOnline);
   const notifiedAgentPaneByProject = useProjectNotificationStore(
     (state) => state.notifiedAgentPaneByProject,
   );
@@ -175,6 +180,22 @@ function TitleBarComponent() {
   return (
     <header className='titlebar' aria-label='Barra de status'>
       <div className='titlebar__tray'>
+        <button
+          type='button'
+          className={`titlebar__item app-button app-button--enter${runtimeOnline ? '' : ' titlebar__item--muted'}`}
+          title='Nexus Cloud'
+          aria-label='Nexus Cloud'
+          onClick={() => {
+            closeAllAnchoredDropdowns();
+            setCloudDrawerOpen(true);
+          }}
+        >
+          <Cloud size={13} strokeWidth={1.75} aria-hidden='true' />
+          {cloudApprovals.length > 0 ? (
+            <span className='titlebar__notify-dot' aria-hidden='true' />
+          ) : null}
+        </button>
+
         <button
           ref={volumeButtonRef}
           type='button'

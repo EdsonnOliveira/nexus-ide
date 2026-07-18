@@ -199,6 +199,110 @@ function shortenPath(filePath: string): string {
   return home.length > 72 ? `…${home.slice(-68)}` : home;
 }
 
+function isSafeAssistantImageSrc(src: string): boolean {
+  const trimmed = src.trim();
+
+  if (!trimmed || /[\s<>"']/.test(trimmed)) {
+    return false;
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return true;
+  }
+
+  if (/^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+$/i.test(trimmed)) {
+    return true;
+  }
+
+  if (/^file:\/\/.+\.(png|jpe?g|gif|webp|bmp|svg)(?:\?.*)?$/i.test(trimmed)) {
+    return true;
+  }
+
+  return /(?:\/|\.\.?\/|[A-Za-z]:[\\/]|^)[^\s]+\.(png|jpe?g|gif|webp|bmp|svg)(?:\?.*)?$/i.test(
+    trimmed,
+  );
+}
+
+function extractAssistantImageMarkdown(part: Record<string, unknown>): string {
+  const type = typeof part.type === 'string' ? part.type.toLowerCase() : '';
+
+  if (type === 'image_url') {
+    const imageUrl = part.image_url;
+
+    if (typeof imageUrl === 'string' && isSafeAssistantImageSrc(imageUrl)) {
+      return `\n\n![](${imageUrl})\n\n`;
+    }
+
+    if (imageUrl && typeof imageUrl === 'object') {
+      const url = (imageUrl as { url?: unknown }).url;
+
+      if (typeof url === 'string' && isSafeAssistantImageSrc(url)) {
+        return `\n\n![](${url})\n\n`;
+      }
+    }
+  }
+
+  if (type === 'image' || type === 'input_image' || type === 'media_image') {
+    if (typeof part.url === 'string' && isSafeAssistantImageSrc(part.url)) {
+      return `\n\n![](${part.url})\n\n`;
+    }
+
+    if (typeof part.image === 'string' && isSafeAssistantImageSrc(part.image)) {
+      return `\n\n![](${part.image})\n\n`;
+    }
+
+    const source = part.source;
+
+    if (source && typeof source === 'object') {
+      const record = source as Record<string, unknown>;
+
+      if (typeof record.url === 'string' && isSafeAssistantImageSrc(record.url)) {
+        return `\n\n![](${record.url})\n\n`;
+      }
+
+      if (typeof record.data === 'string' && record.data.length > 0) {
+        const mediaType =
+          typeof record.media_type === 'string'
+            ? record.media_type
+            : typeof record.mediaType === 'string'
+              ? record.mediaType
+              : 'image/png';
+
+        if (mediaType.startsWith('image/')) {
+          const dataUrl = record.data.startsWith('data:')
+            ? record.data
+            : `data:${mediaType};base64,${record.data}`;
+
+          if (isSafeAssistantImageSrc(dataUrl)) {
+            return `\n\n![](${dataUrl})\n\n`;
+          }
+        }
+      }
+    }
+
+    if (typeof part.data === 'string' && part.data.length > 0) {
+      const mediaType =
+        typeof part.media_type === 'string'
+          ? part.media_type
+          : typeof part.mimeType === 'string'
+            ? part.mimeType
+            : 'image/png';
+
+      if (mediaType.startsWith('image/')) {
+        const dataUrl = part.data.startsWith('data:')
+          ? part.data
+          : `data:${mediaType};base64,${part.data}`;
+
+        if (isSafeAssistantImageSrc(dataUrl)) {
+          return `\n\n![](${dataUrl})\n\n`;
+        }
+      }
+    }
+  }
+
+  return '';
+}
+
 function extractAssistantText(message: unknown): string {
   if (!message || typeof message !== 'object') {
     return '';
@@ -216,8 +320,14 @@ function extractAssistantText(message: unknown): string {
         return '';
       }
 
-      const text = (part as { text?: unknown }).text;
-      return typeof text === 'string' ? text : '';
+      const record = part as Record<string, unknown>;
+      const text = record.text;
+
+      if (typeof text === 'string' && text) {
+        return text;
+      }
+
+      return extractAssistantImageMarkdown(record);
     })
     .filter(Boolean)
     .join('');

@@ -13,8 +13,10 @@ import {
 import { Bot, X } from 'lucide-react';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { EmptyState } from '@/components/overlay/EmptyState';
+import { HomeDashboardCloudAgentCard } from '@/components/home/HomeDashboardCloudAgentCard';
 import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { useCloudAgentSessionsStore } from '@/stores/useCloudAgentSessionsStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useTabActions } from '@/stores/useTabStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
@@ -302,15 +304,14 @@ interface HomeDashboardAgentModeProps {
   spawningPaneId?: string | null;
 }
 
-function HomeDashboardAgentModeComponent({
-  spawningPaneId = null,
-}: HomeDashboardAgentModeProps) {
+function HomeDashboardAgentModeComponent({ spawningPaneId = null }: HomeDashboardAgentModeProps) {
   const projects = useProjectStore((state) => state.projects);
   const agentBusyByPane = useTerminalSessionStore((state) => state.agentBusyByPane);
   const awaitingResponseByPane = useTerminalSessionStore((state) => state.awaitingResponseByPane);
   const { closeTabForProject } = useTabActions();
   const [homeAgentQueue, setHomeAgentQueue] = useState(readHomeAgentQueue);
   const [focusedPaneId, setFocusedPaneId] = useState<string | null>(null);
+  const cloudSessions = useCloudAgentSessionsStore((state) => state.sessions);
 
   useEffect(() => {
     const refresh = () => {
@@ -389,7 +390,7 @@ function HomeDashboardAgentModeComponent({
 
   return (
     <section className='home-dashboard__agent-mode app-button--enter'>
-      {slots.length === 0 ? (
+      {slots.length === 0 && cloudSessions.length === 0 ? (
         <EmptyState
           icon={Bot}
           title='Nenhum agent na área'
@@ -407,6 +408,13 @@ function HomeDashboardAgentModeComponent({
               isSpawning={spawningPaneId === slot.pane.id}
               onFocus={handleFocus}
               onRemove={handleRemove}
+            />
+          ))}
+          {cloudSessions.map((session, index) => (
+            <HomeDashboardCloudAgentCard
+              key={session.id}
+              session={session}
+              enterDelayMs={40 + (slots.length + index) * 35}
             />
           ))}
         </div>

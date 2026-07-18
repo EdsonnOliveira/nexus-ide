@@ -14,13 +14,18 @@ import { NexusLogo } from '@/components/overlay/NexusLogo';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import { PaneErrorBoundary } from '@/components/overlay/PaneErrorBoundary';
 import { ProjectSidebar } from '@/components/sidebar/ProjectSidebar';
+import { StatusBar } from '@/components/layout/StatusBar';
 import { TitleBar } from '@/components/layout/TitleBar';
 import { GlobalSearchPalette } from '@/components/search/GlobalSearchPalette';
 import { DailyGenerationProvider } from '@/components/home/DailyGenerationProvider';
 import { CalendarEventAlertHost } from '@/components/sidebar/CalendarEventAlertHost';
 import { AppToastHost } from '@/components/overlay/AppToastHost';
+import { CloudDevicesDrawer } from '@/components/cloud/CloudDevicesDrawer';
+import { CloudDeviceSelect } from '@/components/cloud/CloudDeviceSelect';
 import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
+import { useCloudAgentSessionsSync } from '@/hooks/useCloudAgentSessionsSync';
+import { useCloudStore } from '@/stores/useCloudStore';
 import { projectHasLiveAgentSession } from '@/utils/paneAgentSession';
 import { isAnyModalOpen, subscribeOverlayBlockingChange } from '@/utils/overlayBlocking';
 
@@ -191,6 +196,16 @@ function AppShellComponent() {
   const isCollapsed = sidebarCollapsed;
 
   useAutomationScheduler();
+  const refreshCloud = useCloudStore((state) => state.refresh);
+  useCloudAgentSessionsSync(true);
+
+  useEffect(() => {
+    void refreshCloud();
+    const timer = window.setInterval(() => {
+      void refreshCloud();
+    }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [refreshCloud]);
 
   const isMac = useMemo(
     () => typeof navigator !== 'undefined' && /Mac|iPhone|iPod|iPad/i.test(navigator.platform),
@@ -412,6 +427,12 @@ function AppShellComponent() {
         </div>
       ) : null}
 
+      <StatusBar />
+
+      <div className='cloud-device-select-host'>
+        <CloudDeviceSelect />
+      </div>
+      <CloudDevicesDrawer />
       <GlobalSearchPalette />
       <CalendarEventAlertHost />
       <AppToastHost />

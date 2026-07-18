@@ -4,12 +4,119 @@ import { escapeHtml, normalizeMarkdownSource, stripMarkdownSyntax } from '@/util
 
 export { escapeHtml, normalizeMarkdownSource, stripMarkdownSyntax };
 
+function escapeAttr(value: string): string {
+  return value.replace(/"/g, '&quot;');
+}
+
+let activeImageBaseDir: string | null = null;
+
+function toNexusFileUrl(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, '/');
+  const segments = normalized
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment));
+  return `nexus-file:///${segments.join('/')}`;
+}
+
+function resolveRelativeImagePath(baseDir: string, relativePath: string): string {
+  const normalizedBase = baseDir.replace(/\\/g, '/');
+  const isAbsoluteBase = normalizedBase.startsWith('/');
+  const segments = normalizedBase.split('/').filter(Boolean);
+
+  for (const segment of relativePath.replace(/\\/g, '/').split('/').filter(Boolean)) {
+    if (segment === '.') {
+      continue;
+    }
+
+    if (segment === '..') {
+      segments.pop();
+      continue;
+    }
+
+    segments.push(segment);
+  }
+
+  return `${isAbsoluteBase ? '/' : ''}${segments.join('/')}`;
+}
+
+function isLikelyImagePath(value: string): boolean {
+  return /\.(png|jpe?g|gif|webp|bmp|svg)(?:\?.*)?$/i.test(value);
+}
+
+function resolveMarkdownImageSrc(src: string): string | null {
+  const trimmed = src.trim().replace(/&amp;/g, '&');
+
+  if (!trimmed || /[\s<>"']/.test(trimmed)) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (/^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+$/i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (/^nexus-file:\/\/.+\.(png|jpe?g|gif|webp|bmp|svg)(?:\?.*)?$/i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (/^file:\/\/.+\.(png|jpe?g|gif|webp|bmp|svg)(?:\?.*)?$/i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (/^[A-Za-z]:[\\/].+\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(trimmed)) {
+    return `file://${trimmed.replace(/\\/g, '/')}`;
+  }
+
+  if (isLikelyImagePath(trimmed) && trimmed.startsWith('/')) {
+    return toNexusFileUrl(trimmed);
+  }
+
+  if (isLikelyImagePath(trimmed) && !/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && activeImageBaseDir) {
+    return toNexusFileUrl(resolveRelativeImagePath(activeImageBaseDir, trimmed));
+  }
+
+  return null;
+}
+
+function renderMarkdownImage(alt: string, src: string): string {
+  const resolved = resolveMarkdownImageSrc(src);
+  const safeAlt = escapeAttr(alt);
+  const safeRef = escapeAttr(src.trim());
+
+  if (resolved) {
+    return `<img class="markdown-preview__img" src="${escapeAttr(resolved)}" alt="${safeAlt}" data-image-ref="${safeRef}" loading="lazy" />`;
+  }
+
+  const trimmed = src.trim();
+
+  if (
+    isLikelyImagePath(trimmed) ||
+    (trimmed.length > 0 && !/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !/[\s<>"']/.test(trimmed))
+  ) {
+    return `<img class="markdown-preview__img markdown-preview__img--pending" alt="${safeAlt}" data-image-path="${safeRef}" loading="lazy" />`;
+  }
+
+  const label = safeAlt || safeRef;
+  return `<span class="markdown-preview__img-missing" title="${safeRef}">${label}</span>`;
+}
+
 function applyInlineMarkdown(value: string): string {
   let html = value;
+  html = html.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_, alt: string, src: string) =>
+    renderMarkdownImage(alt, src),
+  );
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
   html = html.replace(/`([^`]+)`/g, (_, code: string) => wrapInlineCodeHtml(code));
   return html;
+}
+
+function isMarkdownImageOnlyLine(line: string): boolean {
+  return /^!\[[^\]]*\]\([^)\s]+\)\s*$/.test(line.trim());
 }
 
 function isTableSeparator(line: string): boolean {
@@ -227,6 +334,10 @@ function renderMarkdownTable(tableLines: string[]): string {
 
 function isAgentSectionTitle(line: string, nextLine: string | null): boolean {
   if (line.length < 4 || line.length > 96) {
+    return false;
+  }
+
+  if (isMarkdownImageOnlyLine(line)) {
     return false;
   }
 
@@ -554,7 +665,12 @@ function normalizeSectionTitle(line: string): string {
   return line.replace(/^\*\*(.+)\*\*$/, '$1').trim();
 }
 
-export function renderMarkdownPreview(source: string): string {
+export function renderMarkdownPreview(source: string, imageBaseDir?: string): string {
+  activeImageBaseDir = imageBaseDir?.trim() || null;
+  return renderMarkdownBlocks(source);
+}
+
+function renderMarkdownBlocks(source: string): string {
   const lines = expandMarkdownLines(source);
   const blocks: string[] = [];
   let index = 0;
@@ -596,7 +712,7 @@ export function renderMarkdownPreview(source: string): string {
       const resolvedLanguage = safeLanguage || inferMarkdownCodeLanguage(rawCode);
 
       if (isMarkdownFence) {
-        blocks.push(renderMarkdownPreview(rawCode));
+        blocks.push(renderMarkdownBlocks(rawCode));
         continue;
       }
 
