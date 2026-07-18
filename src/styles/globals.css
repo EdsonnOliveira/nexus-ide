@@ -6294,9 +6294,11 @@ input {
   width: 100%;
   margin-bottom: 8px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border-subtle);
-  background: rgba(0, 0, 0, 0.35);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(10, 10, 14, 0.96);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
   overflow: visible;
 }
 
@@ -6305,8 +6307,8 @@ input {
 }
 
 .sidebar-vercel-deploy-card--copyable:hover {
-  border-color: rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.42);
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(14, 14, 18, 0.98);
 }
 
 .sidebar-vercel-deploy-card--copied .sidebar-vercel-deploy-card__status-label {
@@ -6925,9 +6927,11 @@ input {
   width: 100%;
   margin-bottom: 8px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border-subtle);
-  background: rgba(0, 0, 0, 0.35);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(10, 10, 14, 0.96);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
   overflow: visible;
 }
 
@@ -6936,8 +6940,8 @@ input {
 }
 
 .sidebar-mobile-release-card--copyable:hover {
-  border-color: rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.42);
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(14, 14, 18, 0.98);
 }
 
 .sidebar-mobile-release-card--copied .sidebar-mobile-release-card__status-label {
