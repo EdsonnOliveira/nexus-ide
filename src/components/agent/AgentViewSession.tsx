@@ -105,11 +105,11 @@ function AgentViewSessionComponent({
   }, [clearPaneDraft, sessionTab.turns, tab.id, turns]);
 
   useEffect(() => {
-    setIsTranscriptAtBottom(true);
-
     if (!isVisible || turns.length === 0) {
       return;
     }
+
+    setIsTranscriptAtBottom(true);
 
     const pin = () => {
       transcriptScrollRef.current?.scrollToBottom({ smooth: false });
@@ -120,14 +120,14 @@ function AgentViewSessionComponent({
       window.requestAnimationFrame(pin);
     });
 
-    const timeoutIds = [0, 50, 150, 400].map((delay) => window.setTimeout(pin, delay));
+    const timeoutIds = [0, 80].map((delay) => window.setTimeout(pin, delay));
 
     return () => {
       for (const timeoutId of timeoutIds) {
         window.clearTimeout(timeoutId);
       }
     };
-  }, [isVisible, projectId, tab.id, turns.length]);
+  }, [isVisible, projectId, tab.id]);
 
   const handleTranscriptAtBottomChange = useCallback((atBottom: boolean) => {
     setIsTranscriptAtBottom(atBottom);

@@ -11612,6 +11612,60 @@ body.workspace-split--resizing * {
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
 }
 
+.markdown-image-lightbox__frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: min(92vw, 1200px);
+}
+
+.markdown-image-lightbox__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+
+.markdown-image-lightbox__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(12, 12, 16, 0.92);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.markdown-image-lightbox__action:hover:not(:disabled) {
+  background: rgba(24, 24, 30, 0.96);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.markdown-image-lightbox__action--icon {
+  width: 32px;
+  padding: 0;
+  justify-content: center;
+}
+
+.markdown-image-lightbox__image {
+  display: block;
+  max-width: min(92vw, 1200px);
+  max-height: min(80vh, 860px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
 .terminal-footer {
   position: relative;
   z-index: 3;
@@ -12259,6 +12313,13 @@ body.workspace-split--resizing * {
   border: 1px solid var(--border-subtle);
   background: color-mix(in srgb, var(--surface-2) 70%, transparent);
   object-fit: contain;
+  cursor: zoom-in;
+}
+
+.markdown-preview img:hover,
+.markdown-preview .markdown-preview__img:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  filter: brightness(1.04);
 }
 
 .markdown-preview p > img:only-child,
@@ -16425,6 +16486,7 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  overflow-anchor: none;
   scrollbar-gutter: stable;
   padding: 0 18px 8px;
   display: flex;
@@ -16463,12 +16525,6 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   border-color: color-mix(in srgb, var(--agent-accent, var(--accent)) 35%, var(--border-strong));
   color: var(--text-primary);
   transform: translateX(-50%) translateY(-1px);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .agent-view__transcript {
-    scroll-behavior: smooth;
-  }
 }
 
 .agent-view__empty {

@@ -146,6 +146,15 @@ function AgentTranscriptComponent({
     onAtBottomChangeRef.current?.(atBottom);
   }, []);
 
+  const releaseStickToBottom = useCallback(() => {
+    if (!stickToBottomRef.current) {
+      return;
+    }
+
+    stickToBottomRef.current = false;
+    notifyAtBottomChange(false);
+  }, [notifyAtBottomChange]);
+
   const pinScrollToBottom = useCallback(() => {
     const container = scrollContainerRef.current;
 
@@ -161,9 +170,9 @@ function AgentTranscriptComponent({
   }, [notifyAtBottomChange, scrollContainerRef]);
 
   const schedulePinScrollToBottom = useCallback(() => {
-    stickToBottomRef.current = true;
-    atBottomRef.current = true;
-    onAtBottomChangeRef.current?.(true);
+    if (!stickToBottomRef.current) {
+      return;
+    }
 
     window.requestAnimationFrame(() => {
       pinScrollToBottom();
@@ -181,20 +190,19 @@ function AgentTranscriptComponent({
     }, 120);
   }, [pinScrollToBottom]);
 
+  const forceStickAndPin = useCallback(() => {
+    stickToBottomRef.current = true;
+    atBottomRef.current = true;
+    onAtBottomChangeRef.current?.(true);
+    schedulePinScrollToBottom();
+  }, [schedulePinScrollToBottom]);
+
   useEffect(() => {
     lastScrollKeyRef.current = scrollKey ?? '';
     lastTurnIdRef.current = turns[turns.length - 1]?.id ?? null;
     contentHeightRef.current = 0;
-    schedulePinScrollToBottom();
-  }, [schedulePinScrollToBottom, scrollKey]);
-
-  useEffect(() => {
-    if (turns.length === 0) {
-      return;
-    }
-
-    schedulePinScrollToBottom();
-  }, [schedulePinScrollToBottom, turns.length]);
+    forceStickAndPin();
+  }, [forceStickAndPin, scrollKey]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -213,12 +221,43 @@ function AgentTranscriptComponent({
       notifyAtBottomChange(atBottom);
     };
 
+    const handleWheel = (event: WheelEvent) => {
+      if (event.deltaY >= 0) {
+        return;
+      }
+
+      if (isScrollContainerAtBottom(container)) {
+        const distance =
+          container.scrollHeight - container.scrollTop - container.clientHeight;
+        if (distance <= SCROLL_BOTTOM_THRESHOLD_PX) {
+          window.requestAnimationFrame(() => {
+            if (!isScrollContainerAtBottom(container)) {
+              releaseStickToBottom();
+            }
+          });
+          return;
+        }
+      }
+
+      releaseStickToBottom();
+    };
+
+    const handleTouchMove = () => {
+      if (!isScrollContainerAtBottom(container)) {
+        releaseStickToBottom();
+      }
+    };
+
     container.addEventListener('scroll', handleScroll, { passive: true });
+    container.addEventListener('wheel', handleWheel, { passive: true });
+    container.addEventListener('touchmove', handleTouchMove, { passive: true });
 
     return () => {
       container.removeEventListener('scroll', handleScroll);
+      container.removeEventListener('wheel', handleWheel);
+      container.removeEventListener('touchmove', handleTouchMove);
     };
-  }, [notifyAtBottomChange, scrollContainerRef, scrollKey]);
+  }, [notifyAtBottomChange, releaseStickToBottom, scrollContainerRef, scrollKey]);
 
   useEffect(() => {
     if (!scrollControlRef) {
@@ -271,17 +310,8 @@ function AgentTranscriptComponent({
       return;
     }
 
-    stickToBottomRef.current = true;
-    programmaticScrollRef.current = true;
-    scrollContainerToBottom(container, {
-      smooth: true,
-      onComplete: () => {
-        programmaticScrollRef.current = false;
-        contentHeightRef.current = container.scrollHeight;
-        notifyAtBottomChange(isScrollContainerAtBottom(container));
-      },
-    });
-  }, [lastTurnId, notifyAtBottomChange, scrollContainerRef]);
+    forceStickAndPin();
+  }, [forceStickAndPin, lastTurnId]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;

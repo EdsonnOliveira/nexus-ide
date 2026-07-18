@@ -1,17 +1,28 @@
 import {
+  useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
-  type FormEvent,
-  type KeyboardEvent,
-  useCallback,
   useRef,
   useState,
+  type ClipboardEvent as ReactClipboardEvent,
+  type DragEvent as ReactDragEvent,
+  type FormEvent,
+  type KeyboardEvent,
 } from 'react';
 import { ArrowUp, AtSign, Bot, FolderKanban, Globe, Layers, Paperclip } from 'lucide-react';
 import type { CloudProject, DeviceRecord } from '@nexus/protocol';
 import type { WebAgentSession } from '../store';
 import { WebAskMenuSelect } from './WebAskMenuSelect';
 import { WebMacSelect } from './WebMacSelect';
+import { WebAgentPromptImageMentionText } from './WebAgentPromptImageMentionText';
+import {
+  buildWebAgentPromptImageMentionInsertion,
+  MAX_WEB_PROMPT_IMAGES,
+  readImageFilesAsDataUrls,
+  renumberWebAgentPromptImages,
+  type WebPendingAskImage,
+} from './webAgentPromptImages';
 
 interface WebMaestroAskBarProps {
   projects: CloudProject[];
@@ -24,7 +35,7 @@ interface WebMaestroAskBarProps {
   agentFilterProjectId: string | null;
   onAgentFilterChange: (projectId: string | null) => void;
   submitting: boolean;
-  onSubmit: (prompt: string) => void;
+  onSubmit: (prompt: string, imageDataUrls?: string[]) => void;
 }
 
 interface OpenAgentProjectEntry {
@@ -111,18 +122,94 @@ export function WebMaestroAskBar({
   onSubmit,
 }: WebMaestroAskBarProps) {
   const [prompt, setPrompt] = useState('');
+  const [pendingImages, setPendingImages] = useState<WebPendingAskImage[]>([]);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const askFormRef = useRef<HTMLFormElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const promptRef = useRef(prompt);
+  const pendingImagesRef = useRef(pendingImages);
+
+  promptRef.current = prompt;
+  pendingImagesRef.current = pendingImages;
 
   const selectedProject = projects.find((project) => project.id === projectId) ?? null;
   const canSubmit =
-    prompt.trim().length > 0 && !submitting && Boolean(selectedProject);
+    (prompt.trim().length > 0 || pendingImages.length > 0) &&
+    !submitting &&
+    Boolean(selectedProject);
+  const imageActionsDisabled = submitting;
+
+  const imagePreviewByNumber = useMemo(() => {
+    const map = new Map<number, string>();
+    pendingImages.forEach((image, index) => {
+      map.set(index + 1, image.dataUrl);
+    });
+    return map;
+  }, [pendingImages]);
 
   const resizeAskInput = useCallback((element: HTMLTextAreaElement) => {
     element.style.height = 'auto';
     element.style.height = `${Math.min(element.scrollHeight, 96)}px`;
   }, []);
+
+  const setPromptWithCaret = useCallback(
+    (nextPrompt: string, nextCaret: number) => {
+      setPrompt(nextPrompt);
+      promptRef.current = nextPrompt;
+      window.requestAnimationFrame(() => {
+        const input = inputRef.current;
+        if (!input) {
+          return;
+        }
+        input.focus();
+        input.setSelectionRange(nextCaret, nextCaret);
+        resizeAskInput(input);
+      });
+    },
+    [resizeAskInput],
+  );
+
+  const attachImagesWithMentions = useCallback(
+    (dataUrls: string[]) => {
+      if (dataUrls.length === 0) {
+        return;
+      }
+
+      const remainingSlots = MAX_WEB_PROMPT_IMAGES - pendingImagesRef.current.length;
+      if (remainingSlots <= 0) {
+        return;
+      }
+
+      const limited = dataUrls.slice(0, remainingSlots);
+      const selectionStart = inputRef.current?.selectionStart ?? promptRef.current.length;
+      let nextPrompt = promptRef.current;
+      let nextCaret = selectionStart;
+      const merged = [...pendingImagesRef.current];
+
+      for (const dataUrl of limited) {
+        const imageNumber = merged.length + 1;
+        const insertion = buildWebAgentPromptImageMentionInsertion(
+          nextPrompt,
+          nextCaret,
+          nextCaret,
+          imageNumber,
+        );
+        nextPrompt = insertion.nextDraft;
+        nextCaret = insertion.nextCaret;
+        merged.push({
+          id: `${Date.now()}-${imageNumber}-${Math.random().toString(36).slice(2, 7)}`,
+          dataUrl,
+        });
+      }
+
+      pendingImagesRef.current = merged;
+      setPendingImages(merged);
+      setPromptWithCaret(nextPrompt, nextCaret);
+    },
+    [setPromptWithCaret],
+  );
 
   const syncAskBarHeight = useCallback(() => {
     const form = askFormRef.current;
@@ -178,6 +265,23 @@ export function WebMaestroAskBar({
 
   const showOpenAgentProjects = openAgentProjects.length >= 2;
 
+  useEffect(() => {
+    const { prompt: nextPrompt, pendingImages: nextImages } = renumberWebAgentPromptImages(
+      prompt,
+      pendingImagesRef.current,
+    );
+
+    if (nextImages !== pendingImagesRef.current) {
+      pendingImagesRef.current = nextImages;
+      setPendingImages(nextImages);
+    }
+
+    if (nextPrompt !== prompt) {
+      promptRef.current = nextPrompt;
+      setPrompt(nextPrompt);
+    }
+  }, [prompt]);
+
   useLayoutEffect(() => {
     syncAskBarHeight();
 
@@ -199,34 +303,155 @@ export function WebMaestroAskBar({
       resizeObserver?.disconnect();
       window.removeEventListener('resize', syncAskBarHeight);
     };
-  }, [syncAskBarHeight, prompt]);
+  }, [syncAskBarHeight, prompt, pendingImages.length]);
 
-  const handleSubmit = (event: FormEvent) => {
-    event.preventDefault();
+  const submitPrompt = useCallback(() => {
     if (!canSubmit) {
       return;
     }
-    const text = prompt.trim();
+
+    const trimmed = prompt.trim();
+    const imageDataUrls = pendingImages.map((image) => image.dataUrl);
+    let nextPrompt = trimmed;
+
+    if (webSearchEnabled) {
+      nextPrompt = nextPrompt
+        ? `Pesquise na web quando necessário.\n\n${nextPrompt}`
+        : 'Pesquise na web quando necessário.';
+    }
+
+    if (!nextPrompt && imageDataUrls.length > 0) {
+      nextPrompt = pendingImages
+        .map((_, index) => `(img ${index + 1})`)
+        .join(' ');
+    }
+
     setPrompt('');
+    setPendingImages([]);
+    setWebSearchEnabled(false);
+    promptRef.current = '';
+    pendingImagesRef.current = [];
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
     }
-    onSubmit(text);
+    onSubmit(nextPrompt, imageDataUrls);
+  }, [canSubmit, onSubmit, pendingImages, prompt, webSearchEnabled]);
+
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    submitPrompt();
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      if (canSubmit) {
-        const text = prompt.trim();
-        setPrompt('');
-        if (inputRef.current) {
-          inputRef.current.style.height = 'auto';
-        }
-        onSubmit(text);
-      }
+      submitPrompt();
     }
   };
+
+  const handlePaste = useCallback(
+    (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
+      if (imageActionsDisabled) {
+        return;
+      }
+
+      const clipboard = event.clipboardData;
+      if (!clipboard) {
+        return;
+      }
+
+      let imageFile: File | null = null;
+
+      for (const item of clipboard.items) {
+        if (!item.type.startsWith('image/')) {
+          continue;
+        }
+        const file = item.getAsFile();
+        if (file) {
+          imageFile = file;
+          break;
+        }
+      }
+
+      if (!imageFile) {
+        for (const file of clipboard.files) {
+          if (file.type.startsWith('image/')) {
+            imageFile = file;
+            break;
+          }
+        }
+      }
+
+      if (!imageFile) {
+        return;
+      }
+
+      event.preventDefault();
+      void readImageFilesAsDataUrls([imageFile]).then((dataUrls) => {
+        attachImagesWithMentions(dataUrls);
+      });
+    },
+    [attachImagesWithMentions, imageActionsDisabled],
+  );
+
+  const handleDragOver = useCallback(
+    (event: ReactDragEvent<HTMLFormElement>) => {
+      if (imageActionsDisabled) {
+        return;
+      }
+      if (![...event.dataTransfer.types].includes('Files')) {
+        return;
+      }
+      event.preventDefault();
+      setDropActive(true);
+    },
+    [imageActionsDisabled],
+  );
+
+  const handleDragLeave = useCallback((event: ReactDragEvent<HTMLFormElement>) => {
+    const related = event.relatedTarget as Node | null;
+    if (!askFormRef.current?.contains(related)) {
+      setDropActive(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(
+    (event: ReactDragEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setDropActive(false);
+
+      if (imageActionsDisabled) {
+        return;
+      }
+
+      void readImageFilesAsDataUrls(event.dataTransfer.files).then((dataUrls) => {
+        attachImagesWithMentions(dataUrls);
+        inputRef.current?.focus();
+      });
+    },
+    [attachImagesWithMentions, imageActionsDisabled],
+  );
+
+  const handleAttachImageClick = useCallback(() => {
+    if (imageActionsDisabled) {
+      return;
+    }
+    imageInputRef.current?.click();
+  }, [imageActionsDisabled]);
+
+  const handleImageInputChange = useCallback(() => {
+    const input = imageInputRef.current;
+    if (!input?.files || input.files.length === 0) {
+      return;
+    }
+
+    void readImageFilesAsDataUrls(input.files).then((dataUrls) => {
+      attachImagesWithMentions(dataUrls);
+      input.value = '';
+      inputRef.current?.focus();
+    });
+  }, [attachImagesWithMentions]);
 
   return (
     <div className='home-dashboard__ask-bar'>
@@ -288,9 +513,22 @@ export function WebMaestroAskBar({
       ) : null}
       <form
         ref={askFormRef}
-        className='home-dashboard__ask app-button--enter'
+        className={`home-dashboard__ask app-button--enter${
+          dropActive ? ' home-dashboard__ask--drop-target' : ''
+        }`}
         onSubmit={handleSubmit}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
       >
+        <input
+          ref={imageInputRef}
+          type='file'
+          accept='image/*'
+          multiple
+          hidden
+          onChange={handleImageInputChange}
+        />
         <div className='home-dashboard__ask-selects'>
           <WebAskMenuSelect
             value={projectId ?? ''}
@@ -321,9 +559,21 @@ export function WebMaestroAskBar({
         </div>
         <div className='home-dashboard__ask-main'>
           <div className='home-dashboard__ask-input-wrap'>
+            <div className='home-dashboard__ask-input-mirror' aria-hidden='true'>
+              {prompt ? (
+                <WebAgentPromptImageMentionText
+                  text={prompt}
+                  imagePreviewByNumber={imagePreviewByNumber}
+                />
+              ) : (
+                <span className='home-dashboard__ask-input-mirror-placeholder'>
+                  Pergunte algo ao Nexus...
+                </span>
+              )}
+            </div>
             <textarea
               ref={inputRef}
-              className='home-dashboard__ask-input'
+              className='home-dashboard__ask-input home-dashboard__ask-input--mirrored'
               value={prompt}
               rows={1}
               placeholder='Pergunte algo ao Nexus...'
@@ -335,6 +585,7 @@ export function WebMaestroAskBar({
                 resizeAskInput(event.target);
               }}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
             />
           </div>
         </div>
@@ -342,9 +593,10 @@ export function WebMaestroAskBar({
           <button
             type='button'
             className='home-dashboard__ask-action app-button'
-            aria-label='Anexar'
-            disabled
-            title='Em breve'
+            aria-label='Anexar imagem'
+            disabled={imageActionsDisabled}
+            title='Anexar imagem'
+            onClick={handleAttachImageClick}
           >
             <Paperclip size={16} strokeWidth={2} aria-hidden='true' />
           </button>

@@ -13,6 +13,8 @@ import type { WebAgentSession, WebAgentTurn } from '../store';
 import logoCursor from '../assets/logo-cursor.svg';
 import { renderWebMarkdown } from './webMarkdown';
 import { hydrateWebMarkdownImages } from './webHydrateMarkdownImages';
+import { findMarkdownPreviewImage } from './downloadImageSrc';
+import { WebMarkdownImageLightbox } from './WebMarkdownImageLightbox';
 import { WebAskMenuSelect } from './WebAskMenuSelect';
 import { WebAgentPlusMenu, type WebAgentMode } from './WebAgentPlusMenu';
 
@@ -135,6 +137,7 @@ function ResponseBody({
   const rendered = useMemo(() => renderWebMarkdown(text), [text]);
   const [html, setHtml] = useState(rendered);
   const copiedTimeoutRef = useRef<number | null>(null);
+  const [preview, setPreview] = useState<{ src: string; fileName: string | null } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -152,6 +155,22 @@ function ResponseBody({
   }, [rendered, deviceId, projectId]);
 
   const handleClick = useCallback(async (event: ReactMouseEvent<HTMLDivElement>) => {
+    const image = findMarkdownPreviewImage(event.target);
+
+    if (image) {
+      event.preventDefault();
+      event.stopPropagation();
+      setPreview({
+        src: image.currentSrc || image.src,
+        fileName:
+          image.getAttribute('data-image-ref') ||
+          image.getAttribute('data-image-path') ||
+          image.getAttribute('alt') ||
+          null,
+      });
+      return;
+    }
+
     const code = findWebResponseInlineCode(event.target);
 
     if (!code) {
@@ -199,6 +218,13 @@ function ResponseBody({
         onClick={(event) => void handleClick(event)}
         dangerouslySetInnerHTML={{ __html: html }}
       />
+      {preview ? (
+        <WebMarkdownImageLightbox
+          src={preview.src}
+          fileName={preview.fileName}
+          onClose={() => setPreview(null)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -298,14 +324,78 @@ export function WebAgentChat({
   );
 
   const turns = useMemo(() => (agent.turns.length > 0 ? agent.turns : []), [agent.turns]);
+  const stickToBottomRef = useRef(true);
+  const lastTurnIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const node = transcriptRef.current;
     if (!node) {
       return;
     }
+
+    const atBottom = () =>
+      node.scrollHeight - node.scrollTop - node.clientHeight <= 48;
+
+    const handleScroll = () => {
+      stickToBottomRef.current = atBottom();
+    };
+
+    const handleWheel = (event: WheelEvent) => {
+      if (event.deltaY >= 0) {
+        return;
+      }
+
+      window.requestAnimationFrame(() => {
+        if (!atBottom()) {
+          stickToBottomRef.current = false;
+        }
+      });
+    };
+
+    node.addEventListener('scroll', handleScroll, { passive: true });
+    node.addEventListener('wheel', handleWheel, { passive: true });
+
+    const content = node.firstElementChild;
+    const observer =
+      content instanceof HTMLElement
+        ? new ResizeObserver(() => {
+            if (!stickToBottomRef.current) {
+              return;
+            }
+            node.scrollTop = node.scrollHeight;
+          })
+        : null;
+    if (content instanceof HTMLElement && observer) {
+      observer.observe(content);
+    }
+
+    return () => {
+      node.removeEventListener('scroll', handleScroll);
+      node.removeEventListener('wheel', handleWheel);
+      observer?.disconnect();
+    };
+  }, [agent.id]);
+
+  useEffect(() => {
+    const node = transcriptRef.current;
+    if (!node) {
+      return;
+    }
+
+    const lastTurnId = turns[turns.length - 1]?.id ?? null;
+    const previousTurnId = lastTurnIdRef.current;
+    lastTurnIdRef.current = lastTurnId;
+
+    if (lastTurnId && previousTurnId !== lastTurnId) {
+      stickToBottomRef.current = true;
+    }
+
+    if (!stickToBottomRef.current) {
+      return;
+    }
+
     node.scrollTop = node.scrollHeight;
-  }, [agent.turns]);
+  }, [agent.turns, turns]);
 
   const submit = (event?: FormEvent) => {
     event?.preventDefault();

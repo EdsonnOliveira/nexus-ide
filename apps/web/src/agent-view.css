@@ -18,17 +18,12 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  overflow-anchor: none;
   scrollbar-gutter: stable;
   padding: 0 18px 8px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .agent-view__transcript {
-    scroll-behavior: smooth;
-  }
 }
 
 .agent-view__footer {
@@ -767,6 +762,13 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.04);
   object-fit: contain;
+  cursor: zoom-in;
+}
+
+.agent-view__response-body.markdown-preview img:hover,
+.agent-view__response-body.markdown-preview .markdown-preview__img:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  filter: brightness(1.04);
 }
 
 .agent-view__response-body.markdown-preview p > img:only-child,

@@ -1738,6 +1738,87 @@ html.nexus-standalone .home-dashboard__open-agent-projects {
   cursor: default;
 }
 
+.agent-view__prompt-image-mention-text {
+  font: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  word-spacing: inherit;
+  font-kerning: inherit;
+  font-variant-ligatures: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.agent-view__prompt-image-mention-wrap {
+  position: relative;
+  display: inline-block;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+.agent-view__prompt-image-mention-wrap--composer {
+  position: relative;
+  display: inline;
+  vertical-align: baseline;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  word-spacing: inherit;
+  font-kerning: inherit;
+  font-variant-ligatures: inherit;
+}
+
+.agent-view__prompt-image-mention-sizer--composer {
+  visibility: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  pointer-events: none;
+  font: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  word-spacing: inherit;
+  font-kerning: inherit;
+  font-variant-ligatures: inherit;
+}
+
+.agent-view__prompt-image-mention-pill {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.agent-view__prompt-image-mention-pill__bg {
+  position: absolute;
+  inset: -1px -3px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--prompt-image-badge-color) 24%, rgba(255, 255, 255, 0.04));
+  border: 1px solid color-mix(in srgb, var(--prompt-image-badge-color) 34%, transparent);
+  box-shadow: 0 1px 8px color-mix(in srgb, var(--prompt-image-badge-color) 18%, transparent);
+}
+
+.agent-view__prompt-image-mention-pill__label {
+  position: relative;
+  display: inline;
+  padding: 0;
+  border: 0;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: inherit;
+  letter-spacing: inherit;
+  white-space: pre-wrap;
+  color: color-mix(in srgb, var(--prompt-image-badge-color) 18%, #f8fafc);
+}
+
 .home-dashboard__ask-input-mirror-placeholder {
   color: rgba(148, 163, 184, 0.78);
 }
@@ -2203,6 +2284,67 @@ html.nexus-standalone .home-dashboard__open-agent-projects {
   padding: calc(1rem + var(--safe-top, 0px)) calc(1rem + var(--safe-right, 0px))
     calc(1rem + var(--safe-bottom, 0px)) calc(1rem + var(--safe-left, 0px));
   box-sizing: border-box;
+}
+
+.markdown-image-lightbox-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.markdown-image-lightbox__frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: min(92vw, 1200px);
+}
+
+.markdown-image-lightbox__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+
+.markdown-image-lightbox__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(12, 12, 16, 0.92);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.markdown-image-lightbox__action:hover:not(:disabled) {
+  background: rgba(24, 24, 30, 0.96);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.markdown-image-lightbox__action--icon {
+  width: 32px;
+  padding: 0;
+  justify-content: center;
+}
+
+.markdown-image-lightbox__image {
+  display: block;
+  max-width: min(92vw, 1200px);
+  max-height: min(80vh, 860px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 12px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
 }
 
 .app-checkbox {

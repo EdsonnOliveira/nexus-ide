@@ -283,7 +283,7 @@ export function WebMaestroHome() {
   );
 
   const handleSubmit = useCallback(
-    async (prompt: string) => {
+    async (prompt: string, imageDataUrls: string[] = []) => {
       const deviceId = resolveDeviceId();
       if (!deviceId) {
         window.alert('Nenhum Mac cadastrado. Clique no logo e escolha Cadastrar Mac.');
@@ -312,6 +312,11 @@ export function WebMaestroHome() {
         return;
       }
 
+      const trimmedPrompt = prompt.trim();
+      if (!trimmedPrompt && imageDataUrls.length === 0) {
+        return;
+      }
+
       setSubmitting(true);
       let createdSessionId: string | null = null;
       try {
@@ -322,12 +327,13 @@ export function WebMaestroHome() {
           throw new Error('Usuário não autenticado');
         }
         const agentId = crypto.randomUUID();
+        const titleSource = trimmedPrompt || 'Imagem anexada';
         await createAgentSession(supabase, {
           id: agentId,
           workspace_id: workspaceId,
           project_id: selectedProjectId,
           device_id: deviceId,
-          title: prompt.slice(0, 80),
+          title: titleSource.slice(0, 80),
           created_by: user.id,
           model_id: 'auto',
         });
@@ -339,7 +345,8 @@ export function WebMaestroHome() {
           agent_id: agentId,
           type: 'agent_prompt',
           payload: {
-            prompt,
+            prompt: trimmedPrompt,
+            ...(imageDataUrls.length > 0 ? { image_data_urls: imageDataUrls } : {}),
             agent_command: 'cursor-agent',
             model: 'auto',
             session_id: agentId,
@@ -351,7 +358,7 @@ export function WebMaestroHome() {
         addAgent({
           id: agentId,
           commandId,
-          prompt,
+          prompt: titleSource,
           projectId: selectedProjectId,
           deviceId,
           projectName: project.name,
@@ -367,7 +374,7 @@ export function WebMaestroHome() {
           turns: [
             {
               id: crypto.randomUUID(),
-              prompt,
+              prompt: titleSource,
               thought: '',
               thoughtStreaming: true,
               response: '',
@@ -611,7 +618,7 @@ export function WebMaestroHome() {
           agentFilterProjectId={agentFilterProjectId}
           onAgentFilterChange={setAgentFilterProjectId}
           submitting={submitting}
-          onSubmit={(prompt) => void handleSubmit(prompt)}
+          onSubmit={(prompt, imageDataUrls) => void handleSubmit(prompt, imageDataUrls)}
         />
       </div>
       <WebMaestroAgents

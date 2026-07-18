@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useMemo, useRef, type MouseEvent, type ReactNode } from 'react';
+import { Fragment, memo, useCallback, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import type { AgentActivity, AgentQuestionAnswers, AgentTurnSummary } from '@/types';
 import { useMarkdownCodeHighlight, useDeferredMarkdownHtml } from '@/hooks/useMarkdownCodeHighlight';
 import { AgentToolActivityScrollList } from '@/components/agent/AgentFileActivityRow';
@@ -7,6 +7,7 @@ import { AgentQuestionCard } from '@/components/agent/AgentQuestionCard';
 import { AgentPlanReviewDock } from '@/components/agent/AgentPlanReviewDock';
 import { AgentResponseActions } from '@/components/agent/AgentResponseActions';
 import { AgentTurnSummaryLine } from '@/components/agent/AgentTurnSummaryLine';
+import { MarkdownImageLightbox } from '@/components/overlay/MarkdownImageLightbox';
 import {
   buildAgentActivityRenderChunks,
   extractAgentFinalResponseText,
@@ -18,6 +19,7 @@ import {
   sanitizeResponseText,
   isValidReadFileTarget,
 } from '@/utils/agentTranscriptParser';
+import { findMarkdownPreviewImage } from '@/utils/downloadImageSrc';
 import { normalizeMarkdownSource } from '@/utils/markdownText';
 import { useTabActions } from '@/stores/useTabStore';
 
@@ -113,8 +115,25 @@ const AgentResponseBody = memo(function AgentResponseBody({
   const bodyRef = useMarkdownCodeHighlight<HTMLDivElement>(html);
   const copiedTimeoutRef = useRef<number | null>(null);
   const { openFileTab } = useTabActions();
+  const [preview, setPreview] = useState<{ src: string; fileName: string | null } | null>(null);
 
   const handleClick = useCallback(async (event: MouseEvent<HTMLDivElement>) => {
+    const image = findMarkdownPreviewImage(event.target);
+
+    if (image) {
+      event.preventDefault();
+      event.stopPropagation();
+      setPreview({
+        src: image.currentSrc || image.src,
+        fileName:
+          image.getAttribute('data-image-ref') ||
+          image.getAttribute('data-image-path') ||
+          image.getAttribute('alt') ||
+          null,
+      });
+      return;
+    }
+
     const code = findAgentResponseInlineCode(event.target);
 
     if (!code) {
@@ -161,12 +180,21 @@ const AgentResponseBody = memo(function AgentResponseBody({
   }, [openFileTab, projectPath]);
 
   return (
-    <div
-      ref={bodyRef}
-      className='agent-view__response-body markdown-preview markdown-preview--monokai'
-      onClick={(event) => void handleClick(event)}
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <>
+      <div
+        ref={bodyRef}
+        className='agent-view__response-body markdown-preview markdown-preview--monokai'
+        onClick={(event) => void handleClick(event)}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+      {preview ? (
+        <MarkdownImageLightbox
+          src={preview.src}
+          fileName={preview.fileName}
+          onClose={() => setPreview(null)}
+        />
+      ) : null}
+    </>
   );
 });
 

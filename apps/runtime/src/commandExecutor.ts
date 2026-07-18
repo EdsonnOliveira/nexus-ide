@@ -3,6 +3,7 @@ import {
   readFileSync,
   writeFileSync,
   existsSync,
+  mkdirSync,
   readdirSync,
   statSync,
 } from 'node:fs';
@@ -152,21 +153,133 @@ async function getProjectRoot(
   return data?.local_path ?? null;
 }
 
+const MAX_PROMPT_IMAGE_DATA_URL_BYTES = 4 * 1024 * 1024;
+const MAX_PROMPT_IMAGES = 6;
+const ALLOWED_PROMPT_IMAGE_MIME = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/webp',
+  'image/gif',
+]);
+
+function resolvePromptImageExtension(mimeType: string): string {
+  if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') {
+    return 'jpg';
+  }
+  if (mimeType === 'image/webp') {
+    return 'webp';
+  }
+  if (mimeType === 'image/gif') {
+    return 'gif';
+  }
+  return 'png';
+}
+
+function sanitizePromptImagePaneSegment(paneId: string): string {
+  return paneId.replace(/[^\w.-]+/g, '_').slice(0, 64) || 'pane';
+}
+
+function estimateDataUrlBytes(dataUrl: string): number {
+  const comma = dataUrl.indexOf(',');
+  if (comma < 0) {
+    return dataUrl.length;
+  }
+  const base64 = dataUrl.slice(comma + 1);
+  return Math.floor((base64.length * 3) / 4);
+}
+
+function saveAgentPromptImageDataUrls(
+  projectRoot: string,
+  sessionId: string,
+  dataUrls: string[],
+): string[] {
+  if (dataUrls.length === 0) {
+    return [];
+  }
+
+  if (dataUrls.length > MAX_PROMPT_IMAGES) {
+    throw new Error(`Too many images (max ${MAX_PROMPT_IMAGES})`);
+  }
+
+  const resolvedRoot = path.resolve(projectRoot);
+  const paneSegment = sanitizePromptImagePaneSegment(sessionId || 'prompt');
+  const targetDir = path.join(resolvedRoot, '.nexus', 'terminal-paste', paneSegment);
+  mkdirSync(targetDir, { recursive: true });
+
+  const refs: string[] = [];
+  const stamp = Date.now();
+
+  for (let index = 0; index < dataUrls.length; index += 1) {
+    const dataUrl = dataUrls[index];
+    const match = String(dataUrl).match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+    if (!match) {
+      throw new Error('Invalid image data URL');
+    }
+
+    const mimeType = match[1].toLowerCase();
+    if (!ALLOWED_PROMPT_IMAGE_MIME.has(mimeType)) {
+      throw new Error(`Unsupported image type: ${mimeType}`);
+    }
+
+    if (estimateDataUrlBytes(dataUrl) > MAX_PROMPT_IMAGE_DATA_URL_BYTES) {
+      throw new Error('Image exceeds 4MB limit');
+    }
+
+    const extension = resolvePromptImageExtension(mimeType);
+    const fileName = `paste-${stamp}-${index + 1}.${extension}`;
+    const absolutePath = path.join(targetDir, fileName);
+    const safePath = assertPathInsideSandbox(absolutePath, [resolvedRoot]);
+    writeFileSync(safePath, Buffer.from(match[2], 'base64'));
+    const relativePath = path.relative(resolvedRoot, safePath).replace(/\\/g, '/');
+    refs.push(`@${relativePath}`);
+  }
+
+  return refs;
+}
+
+function collectAgentPromptImageDataUrls(payload: Record<string, unknown> | null | undefined): string[] {
+  if (!payload || typeof payload !== 'object') {
+    return [];
+  }
+
+  const raw = payload.image_data_urls;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  if (raw.length > MAX_PROMPT_IMAGES) {
+    throw new Error(`Too many images (max ${MAX_PROMPT_IMAGES})`);
+  }
+
+  const urls = raw.filter((item): item is string => typeof item === 'string' && item.startsWith('data:image/'));
+  if (urls.length !== raw.length) {
+    throw new Error('Invalid image_data_urls payload');
+  }
+
+  return urls;
+}
+
 async function runAgentPrompt(
   client: NexusClient,
   command: CommandRow,
   deviceId: string,
 ): Promise<Record<string, unknown>> {
   const prompt = String(command.payload?.prompt ?? '');
+  const imageDataUrls = collectAgentPromptImageDataUrls(command.payload);
   const agentCommand = String(command.payload?.agent_command ?? 'cursor-agent');
   const resumeChatId = String(command.payload?.resume_chat_id ?? '').trim();
   const continueSession = Boolean(command.payload?.continue_session);
   const model = String(command.payload?.model ?? '').trim();
   const mode = String(command.payload?.mode ?? '').trim().toLowerCase();
   const sessionId = String(command.payload?.session_id ?? '').trim();
-  const cwd =
-    (await getProjectRoot(client, deviceId, command.project_id)) ??
-    String(command.payload?.cwd ?? process.cwd());
+  const projectRoot = await getProjectRoot(client, deviceId, command.project_id);
+
+  if (imageDataUrls.length > 0 && !projectRoot) {
+    throw new Error('Project path not found on device');
+  }
+
+  const cwd = projectRoot ?? String(command.payload?.cwd ?? process.cwd());
 
   let session: { id: string } | null = null;
   if (sessionId) {
@@ -257,8 +370,13 @@ async function runAgentPrompt(
     args.push('--mode', mode);
   }
 
-  if (prompt.trim()) {
-    args.push(prompt);
+  const imageRefs = projectRoot
+    ? saveAgentPromptImageDataUrls(projectRoot, session!.id, imageDataUrls)
+    : [];
+  const fullPrompt = [prompt, ...imageRefs].filter(Boolean).join(' ').trim();
+
+  if (fullPrompt) {
+    args.push(fullPrompt);
   }
 
   let projectName = 'Projeto';
