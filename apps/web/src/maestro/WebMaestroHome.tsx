@@ -283,38 +283,38 @@ export function WebMaestroHome() {
   );
 
   const handleSubmit = useCallback(
-    async (prompt: string, imageDataUrls: string[] = []) => {
+    async (prompt: string, imageDataUrls: string[] = []): Promise<boolean> => {
       const deviceId = resolveDeviceId();
       if (!deviceId) {
         window.alert('Nenhum Mac cadastrado. Clique no logo e escolha Cadastrar Mac.');
         setPairingOpen(true);
-        return;
+        return false;
       }
       if (!isDeviceOnline(devices.find((device) => device.id === deviceId)?.last_seen_at ?? null)) {
         window.alert('Nenhum Mac online. Inicie o Runtime no Mac e tente de novo.');
-        return;
+        return false;
       }
       const project = projects.find((item) => item.id === selectedProjectId) ?? null;
       if (!project || !selectedProjectId) {
         window.alert('Escolha um projeto para continuar.');
-        return;
+        return false;
       }
       const device = devices.find((item) => item.id === deviceId) ?? null;
       const workspaceId = project.workspace_id || device?.workspace_id || null;
       if (!workspaceId) {
         window.alert('Workspace do projeto não encontrado. Faça login novamente.');
-        return;
+        return false;
       }
       if (device?.workspace_id && device.workspace_id !== workspaceId) {
         window.alert(
           'O Mac selecionado está em outro workspace do projeto. Selecione o Mac correto.',
         );
-        return;
+        return false;
       }
 
       const trimmedPrompt = prompt.trim();
       if (!trimmedPrompt && imageDataUrls.length === 0) {
-        return;
+        return false;
       }
 
       setSubmitting(true);
@@ -386,6 +386,7 @@ export function WebMaestroHome() {
         });
 
         subscribeAgent(agentId, commandId);
+        return true;
       } catch (error) {
         if (createdSessionId) {
           try {
@@ -394,6 +395,7 @@ export function WebMaestroHome() {
           }
         }
         window.alert(formatUnknownError(error, 'Falha ao enviar prompt'));
+        return false;
       } finally {
         setSubmitting(false);
       }
@@ -409,21 +411,21 @@ export function WebMaestroHome() {
   );
 
   const handleFollowUp = useCallback(
-    async (agentId: string, prompt: string) => {
+    async (agentId: string, prompt: string): Promise<boolean> => {
       const agent = useWebStore.getState().agents.find((item) => item.id === agentId);
       if (!agent) {
-        return;
+        return false;
       }
 
       const deviceId = resolveDeviceId();
       if (!deviceId) {
         window.alert('Nenhum Mac cadastrado. Clique no logo e escolha Cadastrar Mac.');
         setPairingOpen(true);
-        return;
+        return false;
       }
       if (!isDeviceOnline(devices.find((device) => device.id === deviceId)?.last_seen_at ?? null)) {
         window.alert('Nenhum Mac online. Inicie o Runtime no Mac e tente de novo.');
-        return;
+        return false;
       }
 
       try {
@@ -466,8 +468,10 @@ export function WebMaestroHome() {
           commandId,
         });
         subscribeAgent(agentId, commandId);
+        return true;
       } catch (error) {
         window.alert(formatUnknownError(error, 'Falha ao enviar follow-up'));
+        return false;
       }
     },
     [addAgentTurn, devices, resolveDeviceId, subscribeAgent],
@@ -618,14 +622,14 @@ export function WebMaestroHome() {
           agentFilterProjectId={agentFilterProjectId}
           onAgentFilterChange={setAgentFilterProjectId}
           submitting={submitting}
-          onSubmit={(prompt, imageDataUrls) => void handleSubmit(prompt, imageDataUrls)}
+          onSubmit={(prompt, imageDataUrls) => handleSubmit(prompt, imageDataUrls)}
         />
       </div>
       <WebMaestroAgents
         agents={filteredAgents}
         deviceId={resolveDeviceId()}
         onRemove={(agentId) => void handleRemove(agentId)}
-        onFollowUp={(agentId, prompt) => void handleFollowUp(agentId, prompt)}
+        onFollowUp={(agentId, prompt) => handleFollowUp(agentId, prompt)}
         onStop={(agentId) => void handleStop(agentId)}
         onModelChange={handleModelChange}
         onModeChange={handleModeChange}

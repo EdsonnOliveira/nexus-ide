@@ -10,7 +10,7 @@ interface WebMaestroAgentsProps {
   agents: WebAgentSession[];
   deviceId: string | null;
   onRemove: (id: string) => void;
-  onFollowUp: (agentId: string, prompt: string) => void;
+  onFollowUp: (agentId: string, prompt: string) => boolean | Promise<boolean>;
   onStop: (agentId: string) => void;
   onModelChange: (agentId: string, modelId: string) => void;
   onModeChange: (agentId: string, modeId: WebAgentMode) => void;
@@ -105,7 +105,7 @@ function AgentCard({
   agent: WebAgentSession;
   deviceId: string | null;
   onRemove: (id: string) => void;
-  onFollowUp: (agentId: string, prompt: string) => void;
+  onFollowUp: (agentId: string, prompt: string) => boolean | Promise<boolean>;
   onStop: (agentId: string) => void;
   onModelChange: (agentId: string, modelId: string) => void;
   onModeChange: (agentId: string, modeId: WebAgentMode) => void;

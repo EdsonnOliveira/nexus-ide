@@ -20,7 +20,7 @@ import { WebAgentPlusMenu, type WebAgentMode } from './WebAgentPlusMenu';
 
 interface WebAgentChatProps {
   agent: WebAgentSession;
-  onFollowUp: (agentId: string, prompt: string) => void;
+  onFollowUp: (agentId: string, prompt: string) => boolean | Promise<boolean>;
   onStop: (agentId: string) => void;
   onModelChange: (agentId: string, modelId: string) => void;
   onModeChange: (agentId: string, modeId: WebAgentMode) => void;
@@ -291,10 +291,13 @@ export function WebAgentChat({
   onModeChange,
 }: WebAgentChatProps) {
   const [draft, setDraft] = useState('');
+  const [sendingFollowUp, setSendingFollowUp] = useState(false);
+  const followUpInFlightRef = useRef(false);
+  const draftRef = useRef(draft);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const accent = agent.projectColor || '#8b5cf6';
-  const canStop = agent.status === 'running' && !draft.trim();
-  const canSend = Boolean(draft.trim()) && !canStop;
+  const canStop = agent.status === 'running' && !draft.trim() && !sendingFollowUp;
+  const canSend = Boolean(draft.trim()) && !canStop && !sendingFollowUp;
   const modelId = agent.modelId || 'auto';
   const modeId = agent.modeId || 'agent';
   const modelLabel = WEB_AGENT_MODELS.find((item) => item.value === modelId)?.label ?? 'Auto';
@@ -302,6 +305,8 @@ export function WebAgentChat({
     () => WEB_AGENT_MODELS.map((item) => ({ value: item.value, label: item.label })),
     [],
   );
+
+  draftRef.current = draft;
 
   const modelOptions = useMemo(
     () =>
@@ -403,12 +408,32 @@ export function WebAgentChat({
       onStop(agent.id);
       return;
     }
+    if (followUpInFlightRef.current || sendingFollowUp) {
+      return;
+    }
     const text = draft.trim();
     if (!text) {
       return;
     }
+    const snapshot = draft;
+    followUpInFlightRef.current = true;
+    setSendingFollowUp(true);
     setDraft('');
-    onFollowUp(agent.id, text);
+    void Promise.resolve(onFollowUp(agent.id, text))
+      .then((ok) => {
+        if (!ok && draftRef.current === '') {
+          setDraft(snapshot);
+        }
+      })
+      .catch(() => {
+        if (draftRef.current === '') {
+          setDraft(snapshot);
+        }
+      })
+      .finally(() => {
+        followUpInFlightRef.current = false;
+        setSendingFollowUp(false);
+      });
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -441,6 +466,7 @@ export function WebAgentChat({
               rows={1}
               placeholder='Adicionar follow-up'
               spellCheck={false}
+              disabled={sendingFollowUp}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={onKeyDown}
             />

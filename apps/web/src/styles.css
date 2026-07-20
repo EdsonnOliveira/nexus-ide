@@ -1130,6 +1130,7 @@ html.nexus-standalone .home-dashboard__open-agent-projects {
 
 .home-dashboard__ask {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 8px;
   width: 100%;
@@ -1734,8 +1735,102 @@ html.nexus-standalone .home-dashboard__open-agent-projects {
 }
 
 .home-dashboard__ask-input-mirror .agent-view__prompt-image-mention-wrap--preview {
-  pointer-events: auto;
+  pointer-events: none;
   cursor: default;
+}
+
+.home-dashboard__ask-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  flex: 1 1 100%;
+  order: 0;
+  padding: 2px 2px 4px;
+}
+
+.home-dashboard__ask-attachment {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  flex-shrink: 0;
+}
+
+.home-dashboard__ask-attachment-index {
+  position: absolute;
+  top: -5px;
+  left: -5px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  color: #f8fafc;
+  background: var(--prompt-image-badge-color);
+  border: 1px solid color-mix(in srgb, var(--prompt-image-badge-color) 72%, #ffffff 28%);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--prompt-image-badge-color) 42%, transparent);
+}
+
+.home-dashboard__ask-attachment-thumb-btn {
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  padding: 0;
+  display: block;
+  background: rgba(255, 255, 255, 0.04);
+  transition:
+    border-color var(--motion-out) var(--motion-ease-out),
+    transform var(--motion-out) var(--motion-ease-out),
+    filter var(--motion-out) var(--motion-ease-out);
+}
+
+.home-dashboard__ask-attachment-thumb-btn:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.28);
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.home-dashboard__ask-attachment-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.home-dashboard__ask-attachment-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  z-index: 2;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: #1c1c20;
+  color: #fff;
+  transition:
+    background var(--motion-out) var(--motion-ease-out),
+    border-color var(--motion-out) var(--motion-ease-out),
+    color var(--motion-out) var(--motion-ease-out);
+}
+
+.home-dashboard__ask-attachment-remove:hover:not(:disabled) {
+  background: #0a0a0c;
+  border-color: rgba(255, 255, 255, 0.28);
+  color: #fff;
 }
 
 .agent-view__prompt-image-mention-text {
@@ -2634,6 +2729,11 @@ html.nexus-standalone .home-dashboard__open-agent-projects {
     flex-wrap: wrap;
     align-items: center;
     row-gap: 8px;
+  }
+
+  .home-dashboard__ask-attachments {
+    order: 0;
+    padding-bottom: 2px;
   }
 
   .home-dashboard__ask-main {
