@@ -367,18 +367,28 @@ class PtyManager {
       return;
     }
 
-    session.pty.kill();
     this.sessions.delete(ptyId);
     this.pendingData.delete(ptyId);
+
+    try {
+      session.pty.kill();
+    } catch {
+      return;
+    }
   }
 
   killAll(): void {
-    for (const session of this.sessions.values()) {
-      session.pty.kill();
-    }
-
+    const sessions = [...this.sessions.values()];
     this.sessions.clear();
     this.pendingData.clear();
+
+    for (const session of sessions) {
+      try {
+        session.pty.kill();
+      } catch {
+        continue;
+      }
+    }
   }
 }
 

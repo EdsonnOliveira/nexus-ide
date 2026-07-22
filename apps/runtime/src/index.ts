@@ -6,6 +6,7 @@ import {
   claimCommand,
   claimDevicePairing,
   createNexusSupabaseClient,
+  getPrimaryWorkspace,
   listOpenAgentSessionBundles,
   touchHeartbeat,
   type AgentSessionBundle,
@@ -57,6 +58,22 @@ async function ensureAuth(
 }
 
 async function ensureWorkspace(client: ReturnType<typeof createNexusSupabaseClient>) {
+  const identity = loadOrCreateDeviceIdentity();
+  const { data: existingDevice } = await client
+    .from('devices')
+    .select('workspace_id')
+    .eq('id', identity.deviceId)
+    .maybeSingle();
+
+  if (existingDevice?.workspace_id) {
+    return existingDevice.workspace_id as string;
+  }
+
+  const preferred = await getPrimaryWorkspace(client);
+  if (preferred?.workspace_id) {
+    return preferred.workspace_id;
+  }
+
   const { data, error } = await client
     .from('workspace_members')
     .select('workspace_id')
@@ -243,7 +260,7 @@ async function main(): Promise<void> {
       activeAgents: 0,
       activeTerminals: listActiveTerminalIds().length,
     }),
-    () => listOpenAgentSessionBundles(client, workspaceId),
+    () => listOpenAgentSessionBundles(client, null, null, deviceId),
   );
 
   const heartbeat = async () => {

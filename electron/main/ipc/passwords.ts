@@ -1,10 +1,12 @@
 import { ipcMain } from 'electron';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { passwordCredentialStore } from '../services/passwordCredentialStore';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const browserGuestPreload = path.join(__dirname, '../preload/browser-guest.cjs');
+const browserGuestPreload = pathToFileURL(
+  path.join(__dirname, '../preload/browser-guest.cjs'),
+).toString();
 
 export function registerPasswordHandlers(): void {
   ipcMain.handle(

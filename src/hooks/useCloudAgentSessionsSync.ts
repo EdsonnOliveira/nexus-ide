@@ -17,12 +17,8 @@ const POLL_INTERVAL_MS = 4000;
 async function fetchOpenAgentSessionBundles(
   authenticated: boolean,
 ): Promise<AgentSessionBundle[]> {
-  if (authenticated && cloudBridge && cloudSupabase) {
-    const workspaceId = await cloudBridge.getWorkspaceId();
-
-    if (workspaceId) {
-      return listOpenAgentSessionBundles(cloudSupabase, workspaceId);
-    }
+  if (authenticated && cloudSupabase) {
+    return listOpenAgentSessionBundles(cloudSupabase);
   }
 
   if (window.nexus?.cloud?.listOpenAgentSessions) {
@@ -49,7 +45,7 @@ export function useCloudAgentSessionsSync(active: boolean): void {
     }
 
     const canSync =
-      (authenticated && Boolean(cloudBridge && cloudSupabase)) ||
+      (authenticated && Boolean(cloudSupabase)) ||
       runtimeOnline ||
       Boolean(window.nexus?.cloud?.listOpenAgentSessions);
 

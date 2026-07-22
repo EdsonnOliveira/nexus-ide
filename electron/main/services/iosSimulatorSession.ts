@@ -1729,6 +1729,7 @@ export async function createIosSimulatorSession(
       targetFps,
       streamFps,
       fallbackReason: idbFallbackReason ?? undefined,
+      streamUrl: activeStreamUrl ?? undefined,
     });
   };
 
@@ -1742,6 +1743,7 @@ export async function createIosSimulatorSession(
     targetFps,
     streamFps: 0,
     fallbackReason: idbFallbackReason ?? undefined,
+    streamUrl: activeStreamUrl ?? undefined,
   });
 
   startOrientationWatcher();

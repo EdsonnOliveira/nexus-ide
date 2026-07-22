@@ -880,18 +880,26 @@ export async function updateAgentSessionMeta(
 
 export async function listOpenAgentSessionBundles(
   client: NexusClient,
-  workspaceId: string,
+  workspaceId?: string | null,
   createdBy?: string | null,
+  deviceId?: string | null,
 ): Promise<AgentSessionBundle[]> {
   let query = client
     .from('agent_sessions')
     .select('*')
-    .eq('workspace_id', workspaceId)
     .neq('status', 'closed')
     .order('updated_at', { ascending: false });
 
+  if (workspaceId) {
+    query = query.eq('workspace_id', workspaceId);
+  }
+
   if (createdBy) {
     query = query.eq('created_by', createdBy);
+  }
+
+  if (deviceId) {
+    query = query.eq('device_id', deviceId);
   }
 
   const { data: sessions, error } = await query;
