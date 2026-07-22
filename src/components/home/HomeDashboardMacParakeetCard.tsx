@@ -16,6 +16,10 @@ import { useToastStore } from '@/stores/useToastStore';
 import type { MacParakeetTranscriptionDetail, MacParakeetTranscriptionItem } from '@/types';
 import type { ProjectTask } from '@/types/task';
 import {
+  findLinkedProjectIdForTranscription,
+  setTranscriptionLinkedProject,
+} from '@/utils/brainTranscriptionLinks';
+import {
   buildTaskDraftFromTranscription,
   formatMacParakeetDate,
   formatMacParakeetDuration,
@@ -61,6 +65,8 @@ function HomeDashboardMacParakeetCardComponent() {
   const [activeDetail, setActiveDetail] = useState<MacParakeetTranscriptionDetail | null>(null);
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
   const [translating, setTranslating] = useState(false);
+  const [linkedProjectId, setLinkedProjectId] = useState('');
+  const [linkingProject, setLinkingProject] = useState(false);
   const detailRequestRef = useRef(0);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [taskFormState, setTaskFormState] = useState<MacParakeetTaskFormState | null>(null);
@@ -139,9 +145,13 @@ function HomeDashboardMacParakeetCardComponent() {
       const requestId = ++detailRequestRef.current;
       setActiveDetail(buildPreviewDetail(item));
       setDetailLoadingId(item.id);
+      setLinkedProjectId('');
 
       try {
-        const detail = await loadDetail(item.id);
+        const [detail, linkedId] = await Promise.all([
+          loadDetail(item.id),
+          findLinkedProjectIdForTranscription(item.id, visibleProjects),
+        ]);
         if (requestId !== detailRequestRef.current) {
           return;
         }
@@ -149,13 +159,14 @@ function HomeDashboardMacParakeetCardComponent() {
         if (detail) {
           setActiveDetail(detail);
         }
+        setLinkedProjectId(linkedId ?? '');
       } finally {
         if (requestId === detailRequestRef.current) {
           setDetailLoadingId(null);
         }
       }
     },
-    [loadDetail],
+    [loadDetail, visibleProjects],
   );
 
   const handleCloseDetail = useCallback(() => {
@@ -163,7 +174,56 @@ function HomeDashboardMacParakeetCardComponent() {
     setActiveDetail(null);
     setDetailLoadingId(null);
     setTranslating(false);
+    setLinkedProjectId('');
+    setLinkingProject(false);
   }, []);
+
+  const handleLinkedProjectChange = useCallback(
+    async (projectId: string) => {
+      if (!activeDetail || linkingProject) {
+        return;
+      }
+
+      const previousProjectId = linkedProjectId;
+      const nextProject =
+        projectId === ''
+          ? null
+          : visibleProjects.find((project) => project.id === projectId) ?? null;
+
+      if (projectId !== '' && !nextProject) {
+        return;
+      }
+
+      setLinkedProjectId(projectId);
+      setLinkingProject(true);
+
+      try {
+        const result = await setTranscriptionLinkedProject(
+          activeDetail.id,
+          nextProject?.path ?? null,
+          visibleProjects,
+        );
+
+        if (!result.ok) {
+          setLinkedProjectId(previousProjectId);
+          showToast(result.error);
+          return;
+        }
+
+        showToast(
+          nextProject
+            ? `Transcrição vinculada a ${nextProject.name}`
+            : 'Vínculo com projeto removido',
+        );
+      } catch {
+        setLinkedProjectId(previousProjectId);
+        showToast('Não foi possível vincular a transcrição');
+      } finally {
+        setLinkingProject(false);
+      }
+    },
+    [activeDetail, linkedProjectId, linkingProject, showToast, visibleProjects],
+  );
 
   const handleRenameTitle = useCallback(
     async (id: string, title: string) => {
@@ -225,13 +285,18 @@ function HomeDashboardMacParakeetCardComponent() {
       return;
     }
 
+    if (linkedProjectId && visibleProjects.some((project) => project.id === linkedProjectId)) {
+      openTaskFormForProject(linkedProjectId);
+      return;
+    }
+
     if (visibleProjects.length === 1) {
       openTaskFormForProject(visibleProjects[0].id);
       return;
     }
 
     setProjectPickerOpen(true);
-  }, [activeDetail, openTaskFormForProject, visibleProjects]);
+  }, [activeDetail, linkedProjectId, openTaskFormForProject, visibleProjects]);
 
   const handleCloseProjectPicker = useCallback(() => {
     setProjectPickerOpen(false);
@@ -415,6 +480,12 @@ function HomeDashboardMacParakeetCardComponent() {
           detail={activeDetail}
           detailLoading={detailLoadingId === activeDetail.id}
           translating={translating}
+          projects={visibleProjects}
+          linkedProjectId={linkedProjectId}
+          linkingProject={linkingProject}
+          onLinkedProjectChange={(projectId) => {
+            void handleLinkedProjectChange(projectId);
+          }}
           onClose={handleCloseDetail}
           onRenameTitle={handleRenameTitle}
           onTranslateConclusion={() => void handleTranslateConclusion()}

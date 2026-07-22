@@ -13,6 +13,7 @@ import {
 import { useHomeDashboardDailyProjects } from '@/hooks/useHomeDashboardDailyProjects';
 import type { Project } from '@/types';
 import type { AgentGitChangeGroup } from '@/types/agentGit';
+import type { LinkedTranscriptionSummary } from '@/utils/brainTranscriptionLinks';
 import type { GitFlatChange } from '@/utils/gitFlatChanges';
 
 interface HomeDashboardDailyCardProps {
@@ -112,13 +113,14 @@ function HomeDashboardDailyCardComponent({
       project: Project,
       groups: AgentGitChangeGroup[],
       gitChanges: GitFlatChange[],
+      transcriptions: LinkedTranscriptionSummary[],
       targetDate: Date,
     ) => {
       if (!selectedSkill) {
         return;
       }
 
-      generateForProject(project, groups, gitChanges, targetDate);
+      generateForProject(project, groups, gitChanges, transcriptions, targetDate);
     },
     [generateForProject, selectedSkill],
   );

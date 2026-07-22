@@ -19,6 +19,7 @@ import {
 } from '@/utils/agentStreamJsonParser';
 import { resolveDailyAgentFinalResponse } from '@/utils/dailyAgentResponse';
 import { buildDailyProjectMetaLabel } from '@/utils/buildDailyProjectMetaLabel';
+import { isTranscriptionOnLocalDay } from '@/utils/brainTranscriptionLinks';
 import {
   DAILY_RESPONSE_TONES,
   type DailyResponseTone,
@@ -185,6 +186,7 @@ export function useDailyAgentGeneration(projects: Project[]) {
       skill,
       groups,
       gitChanges,
+      transcriptions,
       targetDate,
       tone,
       batchToken,
@@ -197,6 +199,7 @@ export function useDailyAgentGeneration(projects: Project[]) {
         projectName: project.name,
         groups,
         gitChanges,
+        transcriptions,
         targetDate,
         responseTone: tone,
       });
@@ -336,6 +339,9 @@ export function useDailyAgentGeneration(projects: Project[]) {
       const projectMeta = buildDailyProjectMetaLabel({
         groups: options.groups,
         gitChanges: options.gitChanges,
+        transcriptionCount: options.transcriptions.filter((item) =>
+          isTranscriptionOnLocalDay(item.createdAt, options.targetDate),
+        ).length,
       });
       const batchToken = crypto.randomUUID();
 

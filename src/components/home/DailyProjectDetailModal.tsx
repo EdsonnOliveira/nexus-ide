@@ -1,4 +1,4 @@
-import { FolderOpen, Sparkles } from 'lucide-react';
+import { FolderOpen, Mic, Sparkles } from 'lucide-react';
 import { memo, useEffect, useState } from 'react';
 import { ExplorerFileIcon } from '@/components/explorer/ExplorerTreeIcon';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
@@ -6,7 +6,13 @@ import { EmptyState } from '@/components/overlay/EmptyState';
 import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
 import type { Project } from '@/types';
 import type { AgentGitChangeGroup } from '@/types/agentGit';
+import type { LinkedTranscriptionSummary } from '@/utils/brainTranscriptionLinks';
 import type { GitFlatChange } from '@/utils/gitFlatChanges';
+import {
+  formatMacParakeetDate,
+  formatMacParakeetDuration,
+  resolveMacParakeetSourceLabel,
+} from '@/utils/macParakeetLabels';
 import { sanitizeAgentPrompt } from '@/utils/terminalShellPrompt';
 
 interface DailyProjectDetailModalProps {
@@ -17,6 +23,9 @@ interface DailyProjectDetailModalProps {
   gitLoading: boolean;
   hasPromptGroups: boolean;
   hasGitChanges: boolean;
+  transcriptions: LinkedTranscriptionSummary[];
+  transcriptionsLoading: boolean;
+  hasTranscriptions: boolean;
   onClose: () => void;
 }
 
@@ -34,6 +43,9 @@ function DailyProjectDetailModalComponent({
   gitLoading,
   hasPromptGroups,
   hasGitChanges,
+  transcriptions,
+  transcriptionsLoading,
+  hasTranscriptions,
   onClose,
 }: DailyProjectDetailModalProps) {
   const [logoSrc, setLogoSrc] = useState<string | null>(null);
@@ -68,6 +80,12 @@ function DailyProjectDetailModalComponent({
   }, [project.logo]);
 
   const showLogo = Boolean(logoSrc) && !logoFailed;
+  const showEmpty =
+    !gitLoading &&
+    !transcriptionsLoading &&
+    !hasPromptGroups &&
+    !hasGitChanges &&
+    !hasTranscriptions;
 
   return (
     <AnimatedModal
@@ -105,13 +123,18 @@ function DailyProjectDetailModalComponent({
           <div className='home-dashboard__daily-detail-modal-body'>
             {gitLoading && !hasPromptGroups ? (
               <p className='home-dashboard__daily-empty-inline'>Carregando alterações git...</p>
-            ) : !hasPromptGroups && !hasGitChanges ? (
+            ) : null}
+            {transcriptionsLoading && !hasTranscriptions ? (
+              <p className='home-dashboard__daily-empty-inline'>Carregando transcrições...</p>
+            ) : null}
+            {showEmpty ? (
               <EmptyState
                 icon={FolderOpen}
                 message='Sem alterações locais. O Gerar usa o histórico git do projeto.'
                 compact
               />
-            ) : hasPromptGroups ? (
+            ) : null}
+            {hasPromptGroups ? (
               <div className='home-dashboard__daily-prompt-list'>
                 {visibleGroups.map((group) => (
                   <section key={group.id} className='home-dashboard__daily-prompt-group'>
@@ -137,7 +160,8 @@ function DailyProjectDetailModalComponent({
                   </section>
                 ))}
               </div>
-            ) : (
+            ) : null}
+            {!hasPromptGroups && hasGitChanges ? (
               <section className='home-dashboard__daily-prompt-group'>
                 <p className='home-dashboard__daily-prompt-label home-dashboard__daily-prompt-label--git'>
                   Alterações git
@@ -162,7 +186,36 @@ function DailyProjectDetailModalComponent({
                   ))}
                 </ul>
               </section>
-            )}
+            ) : null}
+            {hasTranscriptions ? (
+              <section className='home-dashboard__daily-prompt-group'>
+                <p className='home-dashboard__daily-prompt-label home-dashboard__daily-prompt-label--transcriptions'>
+                  Transcrições vinculadas
+                </p>
+                <ul className='home-dashboard__daily-transcription-list'>
+                  {transcriptions.map((item) => (
+                    <li key={item.id} className='home-dashboard__daily-transcription-row'>
+                      <span className='home-dashboard__daily-transcription-leading' aria-hidden='true'>
+                        <Mic size={13} strokeWidth={2} />
+                      </span>
+                      <span className='home-dashboard__daily-transcription-copy'>
+                        <span className='home-dashboard__daily-transcription-title'>{item.title}</span>
+                        <span className='home-dashboard__daily-transcription-meta'>
+                          {resolveMacParakeetSourceLabel(item.sourceType)} ·{' '}
+                          {formatMacParakeetDuration(item.durationMs)} ·{' '}
+                          {formatMacParakeetDate(item.createdAt)}
+                        </span>
+                        {item.snippet ? (
+                          <span className='home-dashboard__daily-transcription-snippet'>
+                            {item.snippet}
+                          </span>
+                        ) : null}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
           </div>
           <div className='project-dialog__actions home-dashboard__daily-modal-actions'>
             <button

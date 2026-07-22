@@ -23,6 +23,10 @@ import { useAgentGitChangeStore } from '@/stores/useAgentGitChangeStore';
 import { useProjectStore } from '@/stores/useProjectStore';
 import type { Project } from '@/types';
 import type { AgentGitChangeGroup } from '@/types/agentGit';
+import {
+  loadProjectLinkedTranscriptions,
+  type LinkedTranscriptionSummary,
+} from '@/utils/brainTranscriptionLinks';
 import type { GitFlatChange } from '@/utils/gitFlatChanges';
 
 interface ExternalDailyDateMenuState {
@@ -43,6 +47,7 @@ interface DailyGenerationContextValue {
     project: Project,
     groups: AgentGitChangeGroup[],
     gitChanges: GitFlatChange[],
+    transcriptions: LinkedTranscriptionSummary[],
     targetDate: Date,
   ) => void;
   viewCached: (projectId: string) => void;
@@ -59,6 +64,7 @@ async function resolveDailyProjectContext(projectId: string): Promise<{
   project: Project;
   visibleGroups: AgentGitChangeGroup[];
   gitChanges: GitFlatChange[];
+  transcriptions: LinkedTranscriptionSummary[];
 } | null> {
   const project = useProjectStore.getState().projects.find((entry) => entry.id === projectId);
 
@@ -68,12 +74,16 @@ async function resolveDailyProjectContext(projectId: string): Promise<{
 
   const groups = useAgentGitChangeStore.getState().groupsByProject[projectId] ?? [];
   const visibleGroups = groups.filter((group) => group.files.length > 0);
-  const gitChanges = visibleGroups.length > 0 ? [] : await fetchProjectGitFlatChanges(project.path);
+  const [gitChanges, transcriptions] = await Promise.all([
+    visibleGroups.length > 0 ? Promise.resolve([]) : fetchProjectGitFlatChanges(project.path),
+    loadProjectLinkedTranscriptions(project.path),
+  ]);
 
   return {
     project,
     visibleGroups,
     gitChanges,
+    transcriptions,
   };
 }
 
@@ -103,6 +113,7 @@ function DailyGenerationProviderComponent({ children }: { children: ReactNode })
       project: Project,
       groups: AgentGitChangeGroup[],
       gitChanges: GitFlatChange[],
+      transcriptions: LinkedTranscriptionSummary[],
       targetDate: Date,
     ) => {
       if (!selectedSkill || !isSkillAvailableForProject(project.path)) {
@@ -114,6 +125,7 @@ function DailyGenerationProviderComponent({ children }: { children: ReactNode })
         skill: selectedSkill,
         groups,
         gitChanges,
+        transcriptions,
         targetDate,
       });
     },
@@ -146,6 +158,7 @@ function DailyGenerationProviderComponent({ children }: { children: ReactNode })
           context.project,
           context.visibleGroups,
           context.gitChanges,
+          context.transcriptions,
           targetDate,
         );
       });

@@ -1,5 +1,6 @@
 import type { Project, TerminalCommandHint } from '@/types';
 import type { AgentGitChangeGroup } from '@/types/agentGit';
+import type { LinkedTranscriptionSummary } from '@/utils/brainTranscriptionLinks';
 import { DAILY_RESPONSE_TONES, type DailyResponseTone } from '@/utils/dailyResponseTone';
 import type { GitFlatChange } from '@/utils/gitFlatChanges';
 
@@ -22,6 +23,7 @@ export interface DailyGenerationContext {
   skill: TerminalCommandHint;
   groups: AgentGitChangeGroup[];
   gitChanges: GitFlatChange[];
+  transcriptions: LinkedTranscriptionSummary[];
   targetDate: Date;
 }
 
@@ -46,6 +48,7 @@ interface PersistedDailyResultEntry {
     skill: TerminalCommandHint;
     groups: AgentGitChangeGroup[];
     gitChanges: GitFlatChange[];
+    transcriptions?: LinkedTranscriptionSummary[];
     targetDate: string;
   };
 }
@@ -102,6 +105,7 @@ function isPersistedEntry(value: unknown): value is PersistedDailyResultEntry {
     isTerminalCommandHint(context.skill) &&
     Array.isArray(context.groups) &&
     Array.isArray(context.gitChanges) &&
+    (context.transcriptions === undefined || Array.isArray(context.transcriptions)) &&
     typeof context.targetDate === 'string'
   );
 }
@@ -119,6 +123,7 @@ function serializeCacheEntry(entry: CachedDailyResult): PersistedDailyResultEntr
       skill: entry.context.skill,
       groups: entry.context.groups,
       gitChanges: entry.context.gitChanges,
+      transcriptions: entry.context.transcriptions,
       targetDate: entry.context.targetDate.toISOString(),
     },
   };
@@ -151,6 +156,7 @@ function deserializeCacheEntry(
       skill: entry.context.skill,
       groups: entry.context.groups,
       gitChanges: entry.context.gitChanges,
+      transcriptions: entry.context.transcriptions ?? [],
       targetDate,
     },
   };

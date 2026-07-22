@@ -1,9 +1,11 @@
-import { CalendarDays, Check, Clock, Copy, Languages, ListTodo, Loader2, MessageSquareText, Mic, Pencil, Sparkles, Timer, X } from 'lucide-react';
+import { CalendarDays, Check, Clock, Copy, FolderKanban, Languages, ListTodo, Loader2, MessageSquareText, Mic, Pencil, Sparkles, Timer, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgentResponseCopyPill } from '@/components/agent/AgentResponseCopyPill';
+import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { EmptyState } from '@/components/overlay/EmptyState';
-import type { MacParakeetTranscriptionDetail, MacParakeetTranscriptSegment } from '@/types';
+import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
+import type { MacParakeetTranscriptionDetail, MacParakeetTranscriptSegment, Project } from '@/types';
 import {
   formatMacParakeetDate,
   formatMacParakeetDuration,
@@ -24,6 +26,10 @@ interface MacParakeetTranscriptionModalProps {
   detail: MacParakeetTranscriptionDetail;
   detailLoading?: boolean;
   translating?: boolean;
+  projects: Project[];
+  linkedProjectId: string;
+  linkingProject?: boolean;
+  onLinkedProjectChange: (projectId: string) => void;
   onClose: () => void;
   onRenameTitle: (id: string, title: string) => Promise<string | null>;
   onTranslateConclusion: () => void;
@@ -34,6 +40,62 @@ interface MacParakeetTranscriptionModalProps {
 interface MacParakeetSpeechSegmentProps {
   segment: MacParakeetTranscriptSegment;
 }
+
+interface TranscriptionProjectThumbProps {
+  project: Project | null;
+}
+
+function TranscriptionProjectThumbComponent({ project }: TranscriptionProjectThumbProps) {
+  const [logoSrc, setLogoSrc] = useState<string | null>(null);
+  const [logoFailed, setLogoFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    setLogoSrc(null);
+    setLogoFailed(false);
+
+    if (!project?.logo || !window.nexus) {
+      return;
+    }
+
+    void window.nexus.files.readImageAsDataUrl(project.logo).then((dataUrl) => {
+      if (cancelled) {
+        return;
+      }
+
+      if (dataUrl) {
+        setLogoSrc(dataUrl);
+        return;
+      }
+
+      setLogoFailed(true);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [project?.logo]);
+
+  if (!project) {
+    return <FolderKanban size={14} strokeWidth={2} />;
+  }
+
+  if (logoSrc && !logoFailed) {
+    return <img src={logoSrc} alt='' className='macparakeet-transcription-modal__project-logo' />;
+  }
+
+  return (
+    <span
+      className='macparakeet-transcription-modal__project-icon'
+      style={{ backgroundColor: project.color }}
+    >
+      <ProjectIconMark icon={project.icon} size={11} />
+    </span>
+  );
+}
+
+const TranscriptionProjectThumb = memo(TranscriptionProjectThumbComponent);
 
 function MacParakeetSpeechSegmentComponent({ segment }: MacParakeetSpeechSegmentProps) {
   const [copied, setCopied] = useState(false);
@@ -227,6 +289,10 @@ function MacParakeetTranscriptionModalComponent({
   detail,
   detailLoading = false,
   translating = false,
+  projects,
+  linkedProjectId,
+  linkingProject = false,
+  onLinkedProjectChange,
   onClose,
   onRenameTitle,
   onTranslateConclusion,
@@ -271,6 +337,26 @@ function MacParakeetTranscriptionModalComponent({
   const handleRenameTitle = useCallback(
     (nextTitle: string) => onRenameTitle(detail.id, nextTitle),
     [detail.id, onRenameTitle],
+  );
+
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.id === linkedProjectId) ?? null,
+    [linkedProjectId, projects],
+  );
+
+  const projectOptions = useMemo(
+    () =>
+      projects.map((project) => ({
+        value: project.id,
+        label: project.name,
+        icon: <TranscriptionProjectThumb project={project} />,
+      })),
+    [projects],
+  );
+
+  const projectLeadingIcon = useMemo(
+    () => <TranscriptionProjectThumb project={selectedProject} />,
+    [selectedProject],
   );
 
   return (
@@ -318,6 +404,21 @@ function MacParakeetTranscriptionModalComponent({
             {detail.channelName ? (
               <span className='macparakeet-transcription-modal__meta-item'>{detail.channelName}</span>
             ) : null}
+          </div>
+
+          <div className='macparakeet-transcription-modal__project'>
+            <AnchoredSelect
+              value={linkedProjectId}
+              options={projectOptions}
+              allowEmpty
+              emptyLabel='Sem projeto'
+              placeholder='Selecionar projeto'
+              leadingIcon={projectLeadingIcon}
+              disabled={projects.length === 0 || linkingProject || detailLoading}
+              onChange={onLinkedProjectChange}
+              className='macparakeet-transcription-modal__project-select-wrap'
+              triggerClassName='macparakeet-transcription-modal__project-select'
+            />
           </div>
 
           <div className='macparakeet-transcription-modal__tabs' role='tablist'>

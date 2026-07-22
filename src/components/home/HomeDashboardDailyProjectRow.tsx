@@ -7,6 +7,10 @@ import { useProjectGitFlatChanges } from '@/hooks/useProjectGitFlatChanges';
 import { useAgentGitGroupsForProject } from '@/stores/useAgentGitChangeStore';
 import type { Project, TerminalCommandHint } from '@/types';
 import type { AgentGitChangeGroup } from '@/types/agentGit';
+import {
+  loadProjectLinkedTranscriptions,
+  type LinkedTranscriptionSummary,
+} from '@/utils/brainTranscriptionLinks';
 import type { GitFlatChange } from '@/utils/gitFlatChanges';
 import { buildDailyProjectMetaLabel } from '@/utils/buildDailyProjectMetaLabel';
 
@@ -23,6 +27,7 @@ interface HomeDashboardDailyProjectRowProps {
     project: Project,
     groups: AgentGitChangeGroup[],
     gitChanges: GitFlatChange[],
+    transcriptions: LinkedTranscriptionSummary[],
     targetDate: Date,
   ) => void;
 }
@@ -43,6 +48,8 @@ function HomeDashboardDailyProjectRowComponent({
   const [logoFailed, setLogoFailed] = useState(false);
   const [generateMenuOpen, setGenerateMenuOpen] = useState(false);
   const [generateMenuAnchor, setGenerateMenuAnchor] = useState<DOMRect | null>(null);
+  const [transcriptions, setTranscriptions] = useState<LinkedTranscriptionSummary[]>([]);
+  const [transcriptionsLoading, setTranscriptionsLoading] = useState(true);
   const generateButtonRef = useRef<HTMLButtonElement>(null);
   const groups = useAgentGitGroupsForProject(project.id);
   const { changes: gitChanges, loading: gitLoading } = useProjectGitFlatChanges(project.path);
@@ -58,6 +65,7 @@ function HomeDashboardDailyProjectRowComponent({
     [gitChanges, hasPromptGroups],
   );
   const hasGitChanges = fallbackGitChanges.length > 0;
+  const hasTranscriptions = transcriptions.length > 0;
 
   const metaLabel = useMemo(
     () =>
@@ -65,9 +73,35 @@ function HomeDashboardDailyProjectRowComponent({
         groups: visibleGroups,
         gitChanges: fallbackGitChanges,
         gitLoading,
+        transcriptionCount: transcriptions.length,
+        transcriptionsLoading,
       }),
-    [fallbackGitChanges, gitLoading, visibleGroups],
+    [fallbackGitChanges, gitLoading, transcriptions.length, transcriptionsLoading, visibleGroups],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    setTranscriptionsLoading(true);
+
+    void loadProjectLinkedTranscriptions(project.path)
+      .then((items) => {
+        if (cancelled) {
+          return;
+        }
+
+        setTranscriptions(items);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setTranscriptionsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [project.path]);
 
   useEffect(() => {
     let cancelled = false;
@@ -133,10 +167,17 @@ function HomeDashboardDailyProjectRowComponent({
 
   const handleGenerateDateSelect = useCallback(
     (targetDate: Date) => {
-      onGenerate(project, visibleGroups, fallbackGitChanges, targetDate);
+      onGenerate(project, visibleGroups, fallbackGitChanges, transcriptions, targetDate);
       handleGenerateMenuClose();
     },
-    [fallbackGitChanges, handleGenerateMenuClose, onGenerate, project, visibleGroups],
+    [
+      fallbackGitChanges,
+      handleGenerateMenuClose,
+      onGenerate,
+      project,
+      transcriptions,
+      visibleGroups,
+    ],
   );
 
   const showLogo = Boolean(logoSrc) && !logoFailed;
@@ -222,6 +263,9 @@ function HomeDashboardDailyProjectRowComponent({
           gitLoading={gitLoading}
           hasPromptGroups={hasPromptGroups}
           hasGitChanges={hasGitChanges}
+          transcriptions={transcriptions}
+          transcriptionsLoading={transcriptionsLoading}
+          hasTranscriptions={hasTranscriptions}
           onClose={handleCloseDetail}
         />
       ) : null}

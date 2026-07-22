@@ -2848,6 +2848,68 @@ input {
   color: #93c5fd;
 }
 
+.home-dashboard__daily-prompt-label--transcriptions {
+  color: #34d399;
+}
+
+.home-dashboard__daily-transcription-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.home-dashboard__daily-transcription-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.home-dashboard__daily-transcription-leading {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #34d399;
+  background: color-mix(in srgb, #34d399 16%, transparent);
+}
+
+.home-dashboard__daily-transcription-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.home-dashboard__daily-transcription-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-dashboard__daily-transcription-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.home-dashboard__daily-transcription-snippet {
+  font-size: 11px;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .home-dashboard__daily-file-list {
   list-style: none;
   margin: 0;
@@ -3533,6 +3595,39 @@ input {
   gap: 10px;
   flex-wrap: wrap;
   padding: 0 2px;
+}
+
+.macparakeet-transcription-modal__project {
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+}
+
+.macparakeet-transcription-modal__project-select-wrap {
+  width: min(100%, 280px);
+}
+
+.macparakeet-transcription-modal__project-select {
+  width: 100%;
+}
+
+.macparakeet-transcription-modal__project-logo {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.macparakeet-transcription-modal__project-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  flex-shrink: 0;
 }
 
 .macparakeet-transcription-modal__meta-item {
