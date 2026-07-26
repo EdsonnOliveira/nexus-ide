@@ -222,17 +222,24 @@ function AutomationStepBlockComponent({
           <div className='automation-step-block__segmented'>
             <button
               type='button'
-              className={`automation-step-block__segment${(step.openMode ?? 'separate') === 'separate' ? ' automation-step-block__segment--active' : ''}`}
+              className={`automation-step-block__segment app-button${(step.openMode ?? 'separate') === 'separate' ? ' automation-step-block__segment--active' : ''}`}
               onClick={() => onChange({ ...step, openMode: 'separate' })}
             >
               Aba separada
             </button>
             <button
               type='button'
-              className={`automation-step-block__segment${step.openMode === 'split-with-previous' ? ' automation-step-block__segment--active' : ''}`}
+              className={`automation-step-block__segment app-button${step.openMode === 'split-with-previous' ? ' automation-step-block__segment--active' : ''}`}
               onClick={() => onChange({ ...step, openMode: 'split-with-previous' })}
             >
               Split com anterior
+            </button>
+            <button
+              type='button'
+              className={`automation-step-block__segment app-button${step.openMode === 'grid-with-previous' ? ' automation-step-block__segment--active' : ''}`}
+              onClick={() => onChange({ ...step, openMode: 'grid-with-previous' })}
+            >
+              Grid
             </button>
           </div>
         </div>

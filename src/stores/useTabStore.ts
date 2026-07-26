@@ -4,7 +4,19 @@ import { useAgentComposerDraftStore } from '@/stores/useAgentComposerDraftStore'
 import { useTerminalPasteImageStore } from '@/stores/useTerminalPasteImageStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { bumpFileExternalRevision } from '@/utils/fileExternalRevision';
-import type { AgentTab, ApiTab, BrowserTab, EmulatorPlatform, EmulatorTab, FileTab, Tab, TabBarItem, TabType, TerminalAgent } from '@/types';
+import type {
+  AgentTab,
+  ApiTab,
+  BrowserTab,
+  EmulatorPlatform,
+  EmulatorTab,
+  FileTab,
+  SplitSide,
+  Tab,
+  TabBarItem,
+  TabType,
+  TerminalAgent,
+} from '@/types';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import { isAgentPaneTab, isLegacyAgentTerminalTab, resolveAgentPaneRootPath, resolveAgentTabCli, terminalAgentToCli } from '@/utils/agentTabHelpers';
 import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
@@ -32,7 +44,7 @@ import { resolveGitDiffContext } from '@/utils/gitPaths';
 import { resolveAgentGitPromptForFile } from '@/utils/resolveAgentGitPromptForFile';
 import { resolveFileViewMode } from '@/utils/fileViewMode';
 import { isTabPinned, reorderTabBarItems, toggleTabPinned } from '@/utils/tabOrder';
-import { updateSplitRatioAtPath } from '@/utils/splitLayout';
+import { rebalanceMonoChainsToGrid, updateSplitRatioAtPath } from '@/utils/splitLayout';
 
 export interface TabStoreActions {
   addTab: (type: TabType) => Promise<void>;
@@ -53,7 +65,12 @@ export interface TabStoreActions {
   closeAllTabs: () => Promise<void>;
   selectTab: (tabId: string) => Promise<void>;
   selectPane: (paneId: string) => Promise<void>;
-  splitTab: (sourceTabId: string, targetTabId: string, side: 'left' | 'right') => Promise<void>;
+  splitTab: (
+    sourceTabId: string,
+    targetTabId: string,
+    side: SplitSide,
+    targetPaneId?: string | null,
+  ) => Promise<void>;
   unsplitTab: (tabId: string) => Promise<void>;
   splitWithNeighbor: () => Promise<void>;
   renameTab: (tabId: string, title: string) => Promise<void>;
@@ -899,7 +916,18 @@ export function useTabActions(): TabStoreActions {
           ? (selectedTab.activePaneId ?? selectedTab.panes[0]?.id ?? null)
           : null;
 
+      let nextTabs = project.tabs;
+
+      if (selectedTab?.type === 'split') {
+        const rebalanced = rebalanceMonoChainsToGrid(selectedTab.layout);
+
+        if (rebalanced !== selectedTab.layout) {
+          nextTabs = updateSplitTabLayout(project.tabs, selectedTab.id, rebalanced);
+        }
+      }
+
       await updateProject(project.id, {
+        tabs: nextTabs,
         activeTabId: tabId,
         activePaneId,
       });
@@ -918,14 +946,27 @@ export function useTabActions(): TabStoreActions {
     selectPane: async (paneId) => {
       await focusPane(paneId);
     },
-    splitTab: async (sourceTabId, targetTabId, side) => {
+    splitTab: async (sourceTabId, targetTabId, side, targetPaneId) => {
       const project = getProjectSnapshot();
 
       if (!project || sourceTabId === targetTabId) {
         return;
       }
 
-      const merged = mergeTabItems(project.tabs, sourceTabId, targetTabId, side);
+      const targetItem = resolveActiveTabBarItem(project.tabs, targetTabId);
+      const resolvedTargetPaneId =
+        targetPaneId ??
+        project.activePaneId ??
+        (targetItem?.type === 'split' ? targetItem.activePaneId : targetItem?.id) ??
+        null;
+
+      const merged = mergeTabItems(
+        project.tabs,
+        sourceTabId,
+        targetTabId,
+        side,
+        resolvedTargetPaneId,
+      );
 
       await updateProject(project.id, {
         tabs: merged.nextTabs,

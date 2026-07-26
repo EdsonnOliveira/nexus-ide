@@ -89,7 +89,10 @@ function BrowserViewComponent({
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
   const [devToolsOpen, setDevToolsOpen] = useState(false);
+  const [devtoolsMounted, setDevtoolsMounted] = useState(false);
   const [devtoolsHostReady, setDevtoolsHostReady] = useState(false);
+  const [hasMountedGuest, setHasMountedGuest] = useState(isVisible);
+  const pendingOpenDevToolsRef = useRef(false);
   const [devicePresetId, setDevicePresetId] = useState(DEFAULT_BROWSER_DEVICE_ID);
   const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
   const [deviceMenuAnchorRect, setDeviceMenuAnchorRect] = useState<DOMRect | null>(null);
@@ -162,6 +165,12 @@ function BrowserViewComponent({
       setGuestPreloadPath(path);
     });
   }, []);
+
+  useEffect(() => {
+    if (isVisible) {
+      setHasMountedGuest(true);
+    }
+  }, [isVisible]);
 
   const runCollectionAutofill = useCallback(
     async (collectionId: string) => {
@@ -719,7 +728,9 @@ function BrowserViewComponent({
   }, [
     applyLocalProbeResult,
     applyZoomFactor,
+    guestPreloadPath,
     handlePasswordInputFocus,
+    hasMountedGuest,
     markOnlineIfSameTarget,
     syncNavigationState,
     tryRunPendingBrowserAutofill,
@@ -727,6 +738,11 @@ function BrowserViewComponent({
   ]);
 
   useEffect(() => {
+    if (!devtoolsMounted) {
+      setDevtoolsHostReady(false);
+      return;
+    }
+
     const devtoolsWebview = devtoolsWebviewRef.current;
 
     if (!devtoolsWebview) {
@@ -742,7 +758,31 @@ function BrowserViewComponent({
     return () => {
       devtoolsWebview.removeEventListener('dom-ready', handleDomReady);
     };
-  }, []);
+  }, [devtoolsMounted]);
+
+  useEffect(() => {
+    if (!pendingOpenDevToolsRef.current || !devtoolsHostReady) {
+      return;
+    }
+
+    const webview = webviewRef.current;
+    const devtoolsWebview = devtoolsWebviewRef.current;
+
+    if (!webview || !devtoolsWebview) {
+      return;
+    }
+
+    pendingOpenDevToolsRef.current = false;
+
+    void window.nexus.browser
+      .openDevTools(webview.getWebContentsId(), devtoolsWebview.getWebContentsId())
+      .then(() => {
+        setDevToolsOpen(true);
+      })
+      .catch(() => {
+        setDevToolsOpen(false);
+      });
+  }, [devtoolsHostReady]);
 
   useEffect(() => {
     if (!isFocused) {
@@ -918,15 +958,22 @@ function BrowserViewComponent({
 
   const handleToggleDevTools = useCallback(() => {
     const webview = webviewRef.current;
-    const devtoolsWebview = devtoolsWebviewRef.current;
 
-    if (!webview || !devtoolsWebview || !devtoolsHostReady) {
+    if (!webview) {
       return;
     }
 
     if (devToolsOpen) {
       void window.nexus.browser.closeDevTools(webview.getWebContentsId());
       setDevToolsOpen(false);
+      return;
+    }
+
+    const devtoolsWebview = devtoolsWebviewRef.current;
+
+    if (!devtoolsWebview || !devtoolsHostReady) {
+      pendingOpenDevToolsRef.current = true;
+      setDevtoolsMounted(true);
       return;
     }
 
@@ -1184,7 +1231,7 @@ function BrowserViewComponent({
                 className={`browser-panel__device-frame${activeDevicePreset.width && activeDevicePreset.height ? ' browser-panel__device-frame--preset' : ''}${siteStatus !== 'online' ? ' browser-panel__device-frame--hidden' : ''}`}
                 style={deviceFrameStyle}
               >
-                {guestPreloadPath ? (
+                {guestPreloadPath && hasMountedGuest ? (
                   <webview
                     key={`${sessionPartition}:${guestPreloadPath}`}
                     ref={webviewRef}
@@ -1192,7 +1239,7 @@ function BrowserViewComponent({
                     src={normalizedUrl || undefined}
                     partition={sessionPartition}
                     preload={guestPreloadPath}
-                    allowpopups
+                    allowpopups={'true' as unknown as boolean}
                     webpreferences='contextIsolation=yes,javascript=yes,sandbox=no,devTools=yes'
                   />
                 ) : null}
@@ -1202,12 +1249,14 @@ function BrowserViewComponent({
           <div
             className={`browser-panel__split-devtools${devToolsOpen ? ' browser-panel__split-devtools--open' : ''}`}
           >
-            <webview
-              ref={devtoolsWebviewRef}
-              className='browser-panel__devtools'
-              src='about:blank'
-              webpreferences='contextIsolation=yes,javascript=yes,sandbox=no'
-            />
+            {devtoolsMounted ? (
+              <webview
+                ref={devtoolsWebviewRef}
+                className='browser-panel__devtools'
+                src='about:blank'
+                webpreferences='contextIsolation=yes,javascript=yes,sandbox=no'
+              />
+            ) : null}
           </div>
         </div>
       </div>

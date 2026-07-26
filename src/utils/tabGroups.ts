@@ -1,5 +1,12 @@
-import type { SplitLayoutNode, SplitTab, Tab, TabBarItem } from '@/types';
-import { createTabLayout, getVisibleTabIds } from '@/utils/splitLayout';
+import type { SplitLayoutNode, SplitSide, SplitTab, Tab, TabBarItem } from '@/types';
+import {
+  createTabLayout,
+  getVisibleTabIds,
+  insertIntoPaneQuadrant,
+  rebalanceMonoChainsToGrid,
+  removeTabFromLayout,
+  type SplitQuadrant,
+} from '@/utils/splitLayout';
 
 export function isSplitTab(item: TabBarItem): item is SplitTab {
   return item.type === 'split';
@@ -45,11 +52,31 @@ function dedupePanes(panes: Tab[]): Tab[] {
   });
 }
 
+function isSplitQuadrant(side: SplitSide): side is SplitQuadrant {
+  return (
+    side === 'top-left' ||
+    side === 'top-right' ||
+    side === 'bottom-left' ||
+    side === 'bottom-right'
+  );
+}
+
 function mergeLayouts(
   targetLayout: SplitLayoutNode,
   sourceLayout: SplitLayoutNode,
-  side: 'left' | 'right',
+  side: SplitSide,
+  targetPaneId?: string | null,
 ): SplitLayoutNode {
+  if (isSplitQuadrant(side)) {
+    const paneId = targetPaneId ?? getVisibleTabIds(targetLayout)[0] ?? null;
+
+    if (!paneId) {
+      return targetLayout;
+    }
+
+    return insertIntoPaneQuadrant(targetLayout, paneId, sourceLayout, side);
+  }
+
   if (side === 'left') {
     return {
       type: 'split',
@@ -87,7 +114,7 @@ export function reconcileSplitLayout(panes: Tab[], layout: SplitLayoutNode): Spl
     layoutIds.length > 0 &&
     layoutIds.every((paneId) => paneIds.has(paneId))
   ) {
-    return layout;
+    return rebalanceMonoChainsToGrid(layout);
   }
 
   if (panes.length === 0) {
@@ -98,15 +125,17 @@ export function reconcileSplitLayout(panes: Tab[], layout: SplitLayoutNode): Spl
     return createTabLayout(panes[0].id);
   }
 
-  return panes.slice(1).reduce<SplitLayoutNode>(
-    (left, pane) => ({
-      type: 'split',
-      orientation: 'horizontal',
-      left,
-      right: createTabLayout(pane.id),
-      ratio: 0.5,
-    }),
-    createTabLayout(panes[0].id),
+  return rebalanceMonoChainsToGrid(
+    panes.slice(1).reduce<SplitLayoutNode>(
+      (left, pane) => ({
+        type: 'split',
+        orientation: 'horizontal',
+        left,
+        right: createTabLayout(pane.id),
+        ratio: 0.5,
+      }),
+      createTabLayout(panes[0].id),
+    ),
   );
 }
 
@@ -114,7 +143,8 @@ export function mergeTabItems(
   tabs: TabBarItem[],
   sourceId: string,
   targetId: string,
-  side: 'left' | 'right',
+  side: SplitSide,
+  targetPaneId?: string | null,
 ): { nextTabs: TabBarItem[]; activeTabId: string; activePaneId: string | null } {
   const sourceItem = tabs.find((item) => item.id === sourceId);
   const targetItem = tabs.find((item) => item.id === targetId);
@@ -130,11 +160,21 @@ export function mergeTabItems(
   const sourcePanes = getPanesFromItem(sourceItem);
   const targetPanes = getPanesFromItem(targetItem);
   const mergedPanes = dedupePanes([...targetPanes, ...sourcePanes]);
+  const resolvedTargetPaneId =
+    targetPaneId ??
+    (isSplitTab(targetItem) ? targetItem.activePaneId : targetItem.id) ??
+    targetPanes[0]?.id ??
+    null;
   const mergedLayout = reconcileSplitLayout(
     mergedPanes,
-    mergeLayouts(getLayoutFromItem(targetItem), getLayoutFromItem(sourceItem), side),
+    mergeLayouts(
+      getLayoutFromItem(targetItem),
+      getLayoutFromItem(sourceItem),
+      side,
+      resolvedTargetPaneId,
+    ),
   );
-  const activePaneId = sourcePanes[0]?.id ?? targetPanes[0]?.id ?? null;
+  const activePaneId = sourcePanes[0]?.id ?? resolvedTargetPaneId ?? targetPanes[0]?.id ?? null;
 
   const splitTab: SplitTab = {
     id: isSplitTab(targetItem) ? targetItem.id : crypto.randomUUID(),
@@ -318,6 +358,10 @@ export function removePaneFromSplit(
     return remaining;
   }
 
+  const nextLayout =
+    removeTabFromLayout(splitTab.layout, paneId) ?? createTabLayout(remainingPanes[0].id);
+  const reconciledLayout = reconcileSplitLayout(remainingPanes, nextLayout);
+
   return tabs.map((item) => {
     if (item.id !== splitTabId || !isSplitTab(item)) {
       return item;
@@ -326,6 +370,8 @@ export function removePaneFromSplit(
     return {
       ...item,
       panes: remainingPanes,
+      layout: reconciledLayout,
+      title: buildSplitTabTitle(remainingPanes, reconciledLayout),
       activePaneId:
         item.activePaneId === paneId ? (remainingPanes[0]?.id ?? null) : item.activePaneId,
     };

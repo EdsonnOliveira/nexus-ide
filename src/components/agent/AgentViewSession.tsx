@@ -56,6 +56,7 @@ function AgentViewSessionComponent({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const transcriptScrollRef = useRef<AgentTranscriptScrollControl | null>(null);
+  const skipComposerFocusRef = useRef(false);
   const previousTurnCountRef = useRef(sessionTab.turns?.length ?? 0);
   const terminalAgent = cliAgentToTerminalAgent(tab.cliAgent);
   const agentConfig = TERMINAL_AGENTS[terminalAgent];
@@ -265,7 +266,13 @@ function AgentViewSessionComponent({
   ]);
 
   const focusComposer = useCallback(() => {
-    if (!isFocused || !isVisible || hasPendingQuestion || hasPendingPlan) {
+    if (
+      !isFocused ||
+      !isVisible ||
+      hasPendingQuestion ||
+      hasPendingPlan ||
+      skipComposerFocusRef.current
+    ) {
       return;
     }
 
@@ -295,6 +302,21 @@ function AgentViewSessionComponent({
           'button, a, input, textarea, label, [role="menu"], [role="menuitem"], .context-menu',
         )
       ) {
+        return;
+      }
+
+      const isSelectableTranscriptContent = Boolean(
+        target.closest(
+          '.agent-view__transcript, .agent-view__user-bubble, .agent-view__response-body, .agent-view__thought-prose, .agent-view__thought-block, .agent-view__plan-review-body, .agent-view__question-card',
+        ),
+      );
+
+      if (isSelectableTranscriptContent) {
+        skipComposerFocusRef.current = true;
+        onFocusPane();
+        window.requestAnimationFrame(() => {
+          skipComposerFocusRef.current = false;
+        });
         return;
       }
 

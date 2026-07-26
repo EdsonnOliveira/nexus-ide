@@ -1,8 +1,14 @@
+export type SplitOrientation = 'horizontal' | 'vertical';
+
+export type SplitQuadrant = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+
+export type SplitInsertSide = 'left' | 'right' | 'top' | 'bottom';
+
 export type SplitLayoutNode =
   | { type: 'tab'; tabId: string }
   | {
       type: 'split';
-      orientation: 'horizontal';
+      orientation: SplitOrientation;
       left: SplitLayoutNode;
       right: SplitLayoutNode;
       ratio: number;
@@ -50,37 +56,48 @@ export function removeTabFromLayout(
   return { ...node, left, right };
 }
 
+function orientationForSide(side: SplitInsertSide): SplitOrientation {
+  return side === 'left' || side === 'right' ? 'horizontal' : 'vertical';
+}
+
+function createSplitBeside(
+  targetNode: SplitLayoutNode,
+  sourceNode: SplitLayoutNode,
+  side: SplitInsertSide,
+): SplitLayoutNode {
+  const orientation = orientationForSide(side);
+
+  if (side === 'left' || side === 'top') {
+    return {
+      type: 'split',
+      orientation,
+      left: sourceNode,
+      right: targetNode,
+      ratio: 0.5,
+    };
+  }
+
+  return {
+    type: 'split',
+    orientation,
+    left: targetNode,
+    right: sourceNode,
+    ratio: 0.5,
+  };
+}
+
 function insertTabBeside(
   node: SplitLayoutNode,
   sourceTabId: string,
   targetTabId: string,
-  side: 'left' | 'right',
+  side: SplitInsertSide,
 ): SplitLayoutNode {
   if (node.type === 'tab') {
     if (node.tabId !== targetTabId) {
       return node;
     }
 
-    const sourceNode = createTabLayout(sourceTabId);
-    const targetNode = node;
-
-    if (side === 'left') {
-      return {
-        type: 'split',
-        orientation: 'horizontal',
-        left: sourceNode,
-        right: targetNode,
-        ratio: 0.5,
-      };
-    }
-
-    return {
-      type: 'split',
-      orientation: 'horizontal',
-      left: targetNode,
-      right: sourceNode,
-      ratio: 0.5,
-    };
+    return createSplitBeside(node, createTabLayout(sourceTabId), side);
   }
 
   return {
@@ -94,7 +111,7 @@ export function moveTabInLayout(
   layout: SplitLayoutNode,
   sourceTabId: string,
   targetTabId: string,
-  side: 'left' | 'right',
+  side: SplitInsertSide,
 ): SplitLayoutNode {
   if (sourceTabId === targetTabId) {
     return layout;
@@ -103,6 +120,192 @@ export function moveTabInLayout(
   const withoutSource = removeTabFromLayout(layout, sourceTabId) ?? createTabLayout(targetTabId);
 
   return insertTabBeside(withoutSource, sourceTabId, targetTabId, side);
+}
+
+export function buildGridSplitLayout(ids: string[]): SplitLayoutNode {
+  if (ids.length === 0) {
+    return createTabLayout('');
+  }
+
+  if (ids.length === 1) {
+    return createTabLayout(ids[0]);
+  }
+
+  if (ids.length === 2) {
+    return {
+      type: 'split',
+      orientation: 'horizontal',
+      left: createTabLayout(ids[0]),
+      right: createTabLayout(ids[1]),
+      ratio: 0.5,
+    };
+  }
+
+  if (ids.length === 3) {
+    return {
+      type: 'split',
+      orientation: 'horizontal',
+      left: createTabLayout(ids[0]),
+      right: {
+        type: 'split',
+        orientation: 'vertical',
+        left: createTabLayout(ids[1]),
+        right: createTabLayout(ids[2]),
+        ratio: 0.5,
+      },
+      ratio: 0.5,
+    };
+  }
+
+  if (ids.length === 4) {
+    return {
+      type: 'split',
+      orientation: 'vertical',
+      left: {
+        type: 'split',
+        orientation: 'horizontal',
+        left: createTabLayout(ids[0]),
+        right: createTabLayout(ids[1]),
+        ratio: 0.5,
+      },
+      right: {
+        type: 'split',
+        orientation: 'horizontal',
+        left: createTabLayout(ids[2]),
+        right: createTabLayout(ids[3]),
+        ratio: 0.5,
+      },
+      ratio: 0.5,
+    };
+  }
+
+  const mid = Math.ceil(ids.length / 2);
+
+  return {
+    type: 'split',
+    orientation: 'horizontal',
+    left: buildGridSplitLayout(ids.slice(0, mid)),
+    right: buildGridSplitLayout(ids.slice(mid)),
+    ratio: 0.5,
+  };
+}
+
+function buildGridFromIds(ids: string[]): SplitLayoutNode {
+  return buildGridSplitLayout(ids);
+}
+
+function isMonoOrientationChain(
+  node: SplitLayoutNode,
+  orientation: SplitOrientation,
+): boolean {
+  if (node.type === 'tab') {
+    return true;
+  }
+
+  if (node.orientation !== orientation) {
+    return false;
+  }
+
+  return (
+    isMonoOrientationChain(node.left, orientation) &&
+    isMonoOrientationChain(node.right, orientation)
+  );
+}
+
+export function rebalanceMonoChainsToGrid(node: SplitLayoutNode): SplitLayoutNode {
+  if (node.type === 'tab') {
+    return node;
+  }
+
+  const ids = getVisibleTabIds(node);
+
+  if (ids.length >= 3 && isMonoOrientationChain(node, node.orientation)) {
+    return buildGridFromIds(ids);
+  }
+
+  const left = rebalanceMonoChainsToGrid(node.left);
+  const right = rebalanceMonoChainsToGrid(node.right);
+
+  if (left === node.left && right === node.right) {
+    return node;
+  }
+
+  return {
+    ...node,
+    left,
+    right,
+  };
+}
+
+function splitLeafByQuadrant(
+  leaf: { type: 'tab'; tabId: string },
+  sourceLayout: SplitLayoutNode,
+  quadrant: SplitQuadrant,
+  parentOrientation: SplitOrientation | null,
+): SplitLayoutNode {
+  const isLeft = quadrant === 'top-left' || quadrant === 'bottom-left';
+  const isTop = quadrant === 'top-left' || quadrant === 'top-right';
+
+  if (parentOrientation === 'horizontal') {
+    return createSplitBeside(leaf, sourceLayout, isTop ? 'top' : 'bottom');
+  }
+
+  if (parentOrientation === 'vertical') {
+    return createSplitBeside(leaf, sourceLayout, isLeft ? 'left' : 'right');
+  }
+
+  return createSplitBeside(leaf, sourceLayout, isLeft ? 'left' : 'right');
+}
+
+function insertIntoPaneQuadrantWithParent(
+  layout: SplitLayoutNode,
+  targetPaneId: string,
+  sourceLayout: SplitLayoutNode,
+  quadrant: SplitQuadrant,
+  parentOrientation: SplitOrientation | null,
+): SplitLayoutNode {
+  if (layout.type === 'tab') {
+    if (layout.tabId !== targetPaneId) {
+      return layout;
+    }
+
+    return splitLeafByQuadrant(layout, sourceLayout, quadrant, parentOrientation);
+  }
+
+  return {
+    ...layout,
+    left: insertIntoPaneQuadrantWithParent(
+      layout.left,
+      targetPaneId,
+      sourceLayout,
+      quadrant,
+      layout.orientation,
+    ),
+    right: insertIntoPaneQuadrantWithParent(
+      layout.right,
+      targetPaneId,
+      sourceLayout,
+      quadrant,
+      layout.orientation,
+    ),
+  };
+}
+
+export function insertIntoPaneQuadrant(
+  layout: SplitLayoutNode,
+  targetPaneId: string,
+  sourceLayout: SplitLayoutNode,
+  quadrant: SplitQuadrant,
+): SplitLayoutNode {
+  const inserted = insertIntoPaneQuadrantWithParent(
+    layout,
+    targetPaneId,
+    sourceLayout,
+    quadrant,
+    null,
+  );
+
+  return rebalanceMonoChainsToGrid(inserted);
 }
 
 export function resolveProjectLayout(

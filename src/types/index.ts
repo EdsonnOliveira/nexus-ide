@@ -359,11 +359,15 @@ export interface SplitTab {
 
 export type TabBarItem = Tab | SplitTab;
 
+export type SplitOrientation = 'horizontal' | 'vertical';
+
+export type SplitSide = 'left' | 'right' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+
 export type SplitLayoutNode =
   | { type: 'tab'; tabId: string }
   | {
       type: 'split';
-      orientation: 'horizontal';
+      orientation: SplitOrientation;
       left: SplitLayoutNode;
       right: SplitLayoutNode;
       ratio: number;

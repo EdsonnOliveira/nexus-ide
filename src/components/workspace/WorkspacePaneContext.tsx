@@ -1,6 +1,12 @@
 import { createContext, memo, useContext, type ReactNode, type RefObject } from 'react';
-import type { AgentTab, ApiTab, EmulatorTab, Project } from '@/types';
+import type { AgentTab, ApiTab, EmulatorTab, Project, SplitSide } from '@/types';
 import type { XTermViewHandle } from '@/types';
+
+export interface TabDropOverlayState {
+  mode: 'sides' | 'quadrants';
+  targetPaneIds: string[];
+  onDrop: (sourceTabId: string, side: SplitSide, targetPaneId: string) => void;
+}
 
 export interface WorkspacePaneContextValue {
   project: Project;
@@ -26,6 +32,7 @@ export interface WorkspacePaneContextValue {
   isPaneVisible: (paneId: string) => boolean;
   isPaneFocused: (paneId: string) => boolean;
   isPaneRuntimeActive: (paneId: string) => boolean;
+  tabDropOverlay: TabDropOverlayState | null;
 }
 
 const WorkspacePaneContext = createContext<WorkspacePaneContextValue | null>(null);

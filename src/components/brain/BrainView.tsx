@@ -13,6 +13,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { BrainAddButton } from '@/components/brain/BrainAddButton';
+import { BrainAddDocumentsModal } from '@/components/brain/BrainAddDocumentsModal';
 import { BrainAddModal } from '@/components/brain/BrainAddModal';
 import { BrainAgentsTab } from '@/components/brain/BrainAgentsTab';
 import { BrainConceptsTab } from '@/components/brain/BrainConceptsTab';
@@ -36,7 +37,6 @@ import { useBrainDataset } from '@/hooks/useBrainDataset';
 import { useProjectStore } from '@/stores/useProjectStore';
 import {
   isBrainManualEditableTab,
-  addBrainManualDocumentsFromPicker,
   type BrainManualEditableTabId,
 } from '@/utils/brainManualStore';
 
@@ -139,6 +139,7 @@ function BrainViewComponent() {
   const [activeTab, setActiveTab] = useState<BrainKnowledgeTabId>('summary');
   const [searchQuery, setSearchQuery] = useState('');
   const [addModalOpen, setAddModalOpen] = useState(false);
+  const [addDocumentsOpen, setAddDocumentsOpen] = useState(false);
   const [linkTranscriptionsOpen, setLinkTranscriptionsOpen] = useState(false);
 
   const searchHits = useMemo(() => searchBrainDataset(searchQuery, dataset), [dataset, searchQuery]);
@@ -153,6 +154,7 @@ function BrainViewComponent() {
     setActiveTab(tabId);
     setSearchQuery('');
     setAddModalOpen(false);
+    setAddDocumentsOpen(false);
     setLinkTranscriptionsOpen(false);
   }, []);
 
@@ -171,12 +173,7 @@ function BrainViewComponent() {
     }
 
     if (activeTab === 'documents') {
-      void (async () => {
-        const result = await addBrainManualDocumentsFromPicker(project.path);
-        if (result.ok && !result.cancelled) {
-          reload();
-        }
-      })();
+      setAddDocumentsOpen(true);
       return;
     }
 
@@ -186,10 +183,14 @@ function BrainViewComponent() {
     }
 
     setAddModalOpen(true);
-  }, [activeTab, canAdd, project, reload]);
+  }, [activeTab, canAdd, project]);
 
   const handleCloseAdd = useCallback(() => {
     setAddModalOpen(false);
+  }, []);
+
+  const handleCloseAddDocuments = useCallback(() => {
+    setAddDocumentsOpen(false);
   }, []);
 
   const handleCloseLinkTranscriptions = useCallback(() => {
@@ -198,6 +199,7 @@ function BrainViewComponent() {
 
   const handleSaved = useCallback(() => {
     setAddModalOpen(false);
+    setAddDocumentsOpen(false);
     setLinkTranscriptionsOpen(false);
     reload();
   }, [reload]);
@@ -280,6 +282,14 @@ function BrainViewComponent() {
           projectPath={project.path}
           tabId={addTabId}
           onClose={handleCloseAdd}
+          onSaved={handleSaved}
+        />
+      ) : null}
+
+      {addDocumentsOpen && project ? (
+        <BrainAddDocumentsModal
+          projectPath={project.path}
+          onClose={handleCloseAddDocuments}
           onSaved={handleSaved}
         />
       ) : null}
