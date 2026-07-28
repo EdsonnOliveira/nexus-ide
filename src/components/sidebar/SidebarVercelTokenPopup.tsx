@@ -1,10 +1,13 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Check, Copy } from 'lucide-react';
 import { SidebarVercelIcon } from '@/components/sidebar/SidebarVercelIcon';
 import {
   positionDropdownAboveAnchor,
   useAnchoredDropdownMenu,
 } from '@/hooks/useAnchoredDropdownMenu';
+
+const COPY_FEEDBACK_MS = 1500;
 
 interface SidebarVercelTokenPopupProps {
   anchorRect: DOMRect;
@@ -22,10 +25,13 @@ function SidebarVercelTokenPopupComponent({
   onCleared,
 }: SidebarVercelTokenPopupProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const copyFeedbackTimeoutRef = useRef<number | null>(null);
   const [tokenValue, setTokenValue] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [loadingToken, setLoadingToken] = useState(tokenConfigured);
+  const [copied, setCopied] = useState(false);
   const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
     onClose,
     (menu) => positionDropdownAboveAnchor(menu, anchorRect, 'start'),
@@ -34,7 +40,46 @@ function SidebarVercelTokenPopupComponent({
   );
 
   useEffect(() => {
+    let cancelled = false;
+
+    if (!tokenConfigured || !window.nexus?.vercel?.getToken) {
+      setLoadingToken(false);
+      return;
+    }
+
+    setLoadingToken(true);
+
+    void window.nexus.vercel.getToken().then((token) => {
+      if (cancelled) {
+        return;
+      }
+
+      if (token) {
+        setTokenValue(token);
+      }
+
+      setLoadingToken(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tokenConfigured]);
+
+  useEffect(() => {
+    if (loadingToken) {
+      return;
+    }
+
     inputRef.current?.focus();
+  }, [loadingToken]);
+
+  useEffect(() => {
+    return () => {
+      if (copyFeedbackTimeoutRef.current !== null) {
+        window.clearTimeout(copyFeedbackTimeoutRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -125,6 +170,32 @@ function SidebarVercelTokenPopupComponent({
     }
   }, [onCleared, requestClose]);
 
+  const handleCopy = useCallback(async () => {
+    const trimmed = tokenValue.trim();
+
+    if (!trimmed) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(trimmed);
+      setCopied(true);
+
+      if (copyFeedbackTimeoutRef.current !== null) {
+        window.clearTimeout(copyFeedbackTimeoutRef.current);
+      }
+
+      copyFeedbackTimeoutRef.current = window.setTimeout(() => {
+        setCopied(false);
+        copyFeedbackTimeoutRef.current = null;
+      }, COPY_FEEDBACK_MS);
+    } catch {
+      setError('Não foi possível copiar o token.');
+    }
+  }, [tokenValue]);
+
+  const canCopy = tokenValue.trim().length > 0;
+
   return createPortal(
     <div
       ref={menuRef}
@@ -145,21 +216,45 @@ function SidebarVercelTokenPopupComponent({
 
         <label className='sidebar-vercel-popup__field'>
           <span className='sidebar-vercel-popup__label'>Access Token</span>
-          <input
-            ref={inputRef}
-            type='password'
-            className='sidebar-vercel-popup__input'
-            value={tokenValue}
-            placeholder='vercel_...'
-            autoComplete='off'
-            onChange={(event) => {
-              setTokenValue(event.target.value);
+          <div className='sidebar-vercel-popup__input-row'>
+            <input
+              ref={inputRef}
+              type='text'
+              className='sidebar-vercel-popup__input'
+              value={tokenValue}
+              placeholder={loadingToken ? 'Carregando...' : 'vercel_...'}
+              autoComplete='off'
+              spellCheck={false}
+              disabled={loadingToken}
+              onChange={(event) => {
+                setTokenValue(event.target.value);
 
-              if (error) {
-                setError(null);
-              }
-            }}
-          />
+                if (error) {
+                  setError(null);
+                }
+              }}
+            />
+            <button
+              type='button'
+              className={`sidebar-vercel-popup__copy app-button app-button--enter${copied ? ' sidebar-vercel-popup__copy--copied' : ''}`}
+              aria-label={copied ? 'Token copiado' : 'Copiar token'}
+              title={copied ? 'Copiado' : 'Copiar'}
+              disabled={!canCopy || loadingToken || saving || clearing}
+              onClick={() => void handleCopy()}
+            >
+              <span
+                className={`sidebar-vercel-popup__copy-icon${copied ? ' sidebar-vercel-popup__copy-icon--copied' : ''}`}
+                aria-hidden='true'
+              >
+                <Copy size={13} strokeWidth={2.25} className='sidebar-vercel-popup__copy-icon-copy' />
+                <Check
+                  size={13}
+                  strokeWidth={2.25}
+                  className='sidebar-vercel-popup__copy-icon-check'
+                />
+              </span>
+            </button>
+          </div>
         </label>
 
         {error ? <span className='sidebar-vercel-popup__error'>{error}</span> : null}
@@ -167,7 +262,7 @@ function SidebarVercelTokenPopupComponent({
         <button
           type='submit'
           className='sidebar-vercel-popup__submit app-button app-button--enter'
-          disabled={saving || clearing}
+          disabled={saving || clearing || loadingToken}
         >
           {saving ? 'Salvando...' : 'Salvar'}
         </button>
@@ -176,7 +271,7 @@ function SidebarVercelTokenPopupComponent({
           <button
             type='button'
             className='sidebar-vercel-popup__clear app-button app-button--enter'
-            disabled={saving || clearing}
+            disabled={saving || clearing || loadingToken}
             onClick={() => void handleClear()}
           >
             {clearing ? 'Removendo...' : 'Remover token'}

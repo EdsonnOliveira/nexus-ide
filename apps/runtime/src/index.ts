@@ -23,6 +23,7 @@ import { listActiveTerminalIds } from './terminalSessions';
 import { createFileAuthStorage } from './sessionStorage';
 import { runPushMaintenance } from './pushMaintenance';
 import { syncMobileReleaseSnapshotFromDisk } from './syncMobileReleaseSnapshot';
+import { publishDesktopAgentPanes } from './publishDesktopAgentPanes';
 
 const HEARTBEAT_MS = 15_000;
 const POLL_MS = 2_000;
@@ -164,6 +165,7 @@ function startLocalSocket(
   socketPath: string,
   getStatus: () => Record<string, unknown>,
   listOpenSessions: () => Promise<AgentSessionBundle[]>,
+  publishBeforeList: () => Promise<unknown>,
 ): void {
   if (existsSync(socketPath)) {
     unlinkSync(socketPath);
@@ -196,14 +198,16 @@ function startLocalSocket(
       }
 
       if (text === 'open_agent_sessions' || text.includes('"type":"open_agent_sessions"')) {
-        void listOpenSessions()
-          .then((bundles) => {
+        void (async () => {
+          try {
+            await publishBeforeList();
+            const bundles = await listOpenSessions();
             writeSafe({ type: 'open_agent_sessions', bundles });
-          })
-          .catch((error) => {
+          } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             writeSafe({ type: 'error', message });
-          });
+          }
+        })();
         return;
       }
 
@@ -247,6 +251,8 @@ async function main(): Promise<void> {
 
   console.log(`[nexus-runtime] device=${deviceId} workspace=${workspaceId}`);
 
+  let heartbeatTicks = 0;
+
   startLocalSocket(
     env.socketPath,
     () => ({
@@ -261,10 +267,15 @@ async function main(): Promise<void> {
       activeTerminals: listActiveTerminalIds().length,
     }),
     () => listOpenAgentSessionBundles(client, null, null, deviceId),
+    () => publishDesktopAgentPanes(client, deviceId, session.user.id),
   );
 
   const heartbeat = async () => {
     try {
+      heartbeatTicks += 1;
+      if (heartbeatTicks === 1 || heartbeatTicks % 4 === 0) {
+        await publishDesktopAgentPanes(client, deviceId, session.user.id);
+      }
       await touchHeartbeat(client, deviceId, {
         capabilities: detectCapabilities(),
         active_terminals: listActiveTerminalIds().length,

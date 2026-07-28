@@ -1061,33 +1061,43 @@ function AgentComposerComponent({
   );
 
   const handleAttachImage = useCallback(async () => {
-    const sourcePath = await window.nexus.dialog.openImage();
+    const sourcePaths = await window.nexus.dialog.openImages();
 
-    if (!sourcePath) {
+    if (!sourcePaths || sourcePaths.length === 0) {
       return;
     }
 
-    const dataUrl = await readImagePathAsDataUrl(sourcePath);
+    const dataUrls: string[] = [];
 
-    if (!dataUrl) {
-      return;
+    for (const sourcePath of sourcePaths) {
+      const dataUrl = await readImagePathAsDataUrl(sourcePath);
+
+      if (dataUrl) {
+        dataUrls.push(dataUrl);
+      }
     }
 
-    await attachImageWithMention(dataUrl);
-  }, [attachImageWithMention]);
+    await attachMultipleImagesWithMentions(dataUrls);
+  }, [attachMultipleImagesWithMentions]);
 
   const handleAttachFile = useCallback(async () => {
-    const sourcePath = await window.nexus.dialog.openFile();
+    const sourcePaths = await window.nexus.dialog.openFiles();
 
-    if (!sourcePath) {
+    if (!sourcePaths || sourcePaths.length === 0) {
       return;
     }
 
-    const mention = await resolveAgentComposerPathMention(projectPath, sourcePath);
+    const mentions: string[] = [];
 
-    if (mention) {
-      insertPathMentions([mention]);
+    for (const sourcePath of sourcePaths) {
+      const mention = await resolveAgentComposerPathMention(projectPath, sourcePath);
+
+      if (mention) {
+        mentions.push(mention);
+      }
     }
+
+    insertPathMentions(mentions);
   }, [insertPathMentions, projectPath]);
 
   useEffect(() => {

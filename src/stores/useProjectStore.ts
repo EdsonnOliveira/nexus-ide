@@ -5,6 +5,7 @@ import {
   migrateProjectTestEntry,
 } from '@/utils/testLabels';
 import { migrateLegacyProjectTabs } from '@/utils/migrateTabs';
+import { normalizeAutomation } from '@/utils/normalizeAutomation';
 import { rawAgentTurnHistoryNeedsTrim, trimAgentTurnsInTabBarItems } from '@/utils/trimAgentTurnHistory';
 import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
@@ -133,7 +134,9 @@ function migrateProject(project: Project, fallbackWorkspaceId: string): Project 
     tabs,
     activeTabId,
     activePaneId: migrated.activePaneId,
-    automations: projectWithoutLegacyLayout.automations ?? [],
+    automations: (projectWithoutLegacyLayout.automations ?? []).map((automation) =>
+      normalizeAutomation(automation),
+    ),
     whatsappLink: projectWithoutLegacyLayout.whatsappLink ?? null,
     mailInbox: projectWithoutLegacyLayout.mailInbox ?? null,
     testEntries: (projectWithoutLegacyLayout.testEntries ?? []).map(migrateProjectTestEntry),
@@ -279,6 +282,11 @@ function scheduleProjectMigration(
       const shouldPersistTrimmedAgentHistory = rawState.projects.some((project) =>
         rawAgentTurnHistoryNeedsTrim(project.tabs),
       );
+      const shouldPersistAppOpenAutomations = rawState.projects.some((project) =>
+        (project.automations ?? []).some(
+          (automation) => (automation.trigger as string) === 'app_open',
+        ),
+      );
       const appState = await migrateAppStateChunked(rawState);
       const preservedActiveProjectId = get().activeProjectId;
       const activeProject = preservedActiveProjectId
@@ -303,7 +311,7 @@ function scheduleProjectMigration(
         });
       }, 0);
 
-      if (shouldPersistBadgeColors || shouldPersistTrimmedAgentHistory) {
+      if (shouldPersistBadgeColors || shouldPersistTrimmedAgentHistory || shouldPersistAppOpenAutomations) {
         for (const project of appState.projects) {
           const currentProject = get().projects.find((entry) => entry.id === project.id);
           const rawProject = rawState.projects.find((entry) => entry.id === project.id);
@@ -312,14 +320,22 @@ function scheduleProjectMigration(
             continue;
           }
 
+          const rawHadAppOpen = (rawProject?.automations ?? []).some(
+            (automation) => (automation.trigger as string) === 'app_open',
+          );
+
           if (
             !shouldPersistBadgeColors &&
-            (!rawProject || !rawAgentTurnHistoryNeedsTrim(rawProject.tabs))
+            (!rawProject || !rawAgentTurnHistoryNeedsTrim(rawProject.tabs)) &&
+            !rawHadAppOpen
           ) {
             continue;
           }
 
-          await window.nexus.projects.update(currentProject.id, { tabs: currentProject.tabs });
+          await window.nexus.projects.update(currentProject.id, {
+            tabs: currentProject.tabs,
+            automations: currentProject.automations,
+          });
         }
       }
     } catch (error) {

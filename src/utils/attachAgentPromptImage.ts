@@ -129,3 +129,53 @@ export async function attachAgentPromptImagesToPane(
 
   return references;
 }
+
+function joinProjectRelativePath(projectPath: string, relativePath: string): string {
+  const root = projectPath.replace(/\\/g, '/').replace(/\/+$/, '');
+  const relative = relativePath.replace(/\\/g, '/').replace(/^\/+/, '');
+
+  return `${root}/${relative}`;
+}
+
+export async function resolveAgentPromptAttachmentDataUrl(
+  projectPath: string,
+  attachment: { dataUrl?: string; relativePath?: string },
+): Promise<string | null> {
+  const dataUrl = attachment.dataUrl?.trim() ?? '';
+
+  if (dataUrl.startsWith('data:image/')) {
+    return dataUrl;
+  }
+
+  const relativePath = attachment.relativePath?.trim();
+
+  if (!relativePath) {
+    return null;
+  }
+
+  return readImagePathAsDataUrl(joinProjectRelativePath(projectPath, relativePath));
+}
+
+export async function restoreAgentPromptAttachmentsToPane(
+  projectPath: string,
+  paneId: string,
+  attachments: Array<{ dataUrl?: string; relativePath?: string }>,
+): Promise<AttachedAgentPromptImage[]> {
+  useTerminalPasteImageStore.getState().clearPaneImages(paneId);
+
+  const dataUrls: string[] = [];
+
+  for (const attachment of attachments) {
+    const dataUrl = await resolveAgentPromptAttachmentDataUrl(projectPath, attachment);
+
+    if (dataUrl) {
+      dataUrls.push(dataUrl);
+    }
+  }
+
+  if (dataUrls.length === 0) {
+    return [];
+  }
+
+  return attachAgentPromptImagesToPane(projectPath, paneId, dataUrls, false);
+}

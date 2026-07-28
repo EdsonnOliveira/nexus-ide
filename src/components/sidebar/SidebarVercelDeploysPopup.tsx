@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { GitBranch, GitCommit, Rocket } from 'lucide-react';
+import { GitBranch, GitCommit, Rocket, Settings2 } from 'lucide-react';
 import { SidebarVercelIcon } from '@/components/sidebar/SidebarVercelIcon';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import {
@@ -24,6 +24,7 @@ import {
 interface SidebarVercelDeploysPopupProps {
   anchorRect: DOMRect;
   onClose: () => void;
+  onConfigure?: () => void;
 }
 
 function DeployListSkeleton() {
@@ -152,7 +153,11 @@ function SidebarVercelDeployListItem({ deployment, now, onOpen }: SidebarVercelD
 
 const SidebarVercelDeployListItemMemo = memo(SidebarVercelDeployListItem);
 
-function SidebarVercelDeploysPopupComponent({ anchorRect, onClose }: SidebarVercelDeploysPopupProps) {
+function SidebarVercelDeploysPopupComponent({
+  anchorRect,
+  onClose,
+  onConfigure,
+}: SidebarVercelDeploysPopupProps) {
   const [deployments, setDeployments] = useState<VercelActiveDeployment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -308,6 +313,17 @@ function SidebarVercelDeploysPopupComponent({ anchorRect, onClose }: SidebarVerc
           <span className='sidebar-vercel-deploys-popup__title'>Deploys Vercel</span>
           <span className='sidebar-vercel-deploys-popup__subtitle'>Últimos deploys da sua conta</span>
         </div>
+        {onConfigure ? (
+          <button
+            type='button'
+            className='sidebar-vercel-deploys-popup__settings app-button app-button--enter'
+            aria-label='Configurar token da Vercel'
+            title='Configurar token'
+            onClick={onConfigure}
+          >
+            <Settings2 size={14} strokeWidth={2} />
+          </button>
+        ) : null}
       </div>
       <div className='sidebar-vercel-deploys-popup__list-wrap'>{listContent}</div>
     </div>,

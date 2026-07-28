@@ -332,6 +332,16 @@ function isBrowserReloadShortcut(input: Electron.Input): boolean {
   return primaryModifier && !input.alt && !input.shift;
 }
 
+function isBrowserFocusUrlShortcut(input: Electron.Input): boolean {
+  if (input.type !== 'keyDown' || input.key.toLowerCase() !== 'l') {
+    return false;
+  }
+
+  const primaryModifier = process.platform === 'darwin' ? input.meta : input.control;
+
+  return primaryModifier && !input.alt && !input.shift;
+}
+
 function isAppReloadShortcut(input: Electron.Input): boolean {
   if (input.type !== 'keyDown' || input.key.toLowerCase() !== 'r') {
     return false;
@@ -348,6 +358,10 @@ function requestAppReloadFromShortcut(): void {
 
 function requestBrowserReloadFromShortcut(): void {
   win?.webContents.send('app:browser-reload');
+}
+
+function requestBrowserFocusUrlFromShortcut(): void {
+  win?.webContents.send('app:browser-focus-url');
 }
 
 function openGlobalSearchFromShortcut(): void {
@@ -454,6 +468,12 @@ function registerWebviewHandlers(): void {
       if (isBrowserReloadShortcut(input)) {
         event.preventDefault();
         requestBrowserReloadFromShortcut();
+        return;
+      }
+
+      if (isBrowserFocusUrlShortcut(input)) {
+        event.preventDefault();
+        requestBrowserFocusUrlFromShortcut();
         return;
       }
 

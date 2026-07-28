@@ -1,8 +1,13 @@
 import { highlightMarkdownCodeBlock, highlightMermaidDiagram } from '@/utils/codeHighlight';
 import { wrapInlineCodeHtml } from '@/utils/inlineCodeBadge';
+import { normalizeBrowserUrl } from '@/utils/browserUrl';
 import { escapeHtml, normalizeMarkdownSource, stripMarkdownSyntax } from '@/utils/markdownText';
+import { stripTrailingUrlChars } from '@/utils/terminalUrlExtract';
 
 export { escapeHtml, normalizeMarkdownSource, stripMarkdownSyntax };
+
+const MARKDOWN_BARE_URL_REGEX =
+  /https?:\/\/[^\s<>"']+|localhost(?::\d+)?(?:\/[^\s<>"']*)?|127\.0\.0\.1(?::\d+)?(?:\/[^\s<>"']*)?/gi;
 
 function escapeAttr(value: string): string {
   return value.replace(/"/g, '&quot;');
@@ -104,14 +109,45 @@ function renderMarkdownImage(alt: string, src: string): string {
   return `<span class="markdown-preview__img-missing" title="${safeRef}">${label}</span>`;
 }
 
+function renderMarkdownPreviewLink(href: string, label: string): string {
+  const normalized = normalizeBrowserUrl(href);
+
+  if (!normalized || !/^https?:\/\//i.test(normalized)) {
+    return label;
+  }
+
+  return `<a class="markdown-preview__link" href="${escapeAttr(normalized)}" rel="noopener noreferrer">${label}</a>`;
+}
+
+function autolinkMarkdownUrls(value: string): string {
+  return value.replace(/(^|>)([^<]+)/g, (_, prefix: string, text: string) => {
+    const linked = text.replace(MARKDOWN_BARE_URL_REGEX, (match: string) => {
+      const cleaned = stripTrailingUrlChars(match);
+      const trailing = match.slice(cleaned.length);
+
+      if (!cleaned) {
+        return match;
+      }
+
+      return `${renderMarkdownPreviewLink(cleaned, cleaned)}${trailing}`;
+    });
+
+    return `${prefix}${linked}`;
+  });
+}
+
 function applyInlineMarkdown(value: string): string {
   let html = value;
   html = html.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_, alt: string, src: string) =>
     renderMarkdownImage(alt, src),
   );
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)(?:\s+"[^"]*")?\)/gi, (_, label: string, href: string) =>
+    renderMarkdownPreviewLink(href, label),
+  );
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
   html = html.replace(/`([^`]+)`/g, (_, code: string) => wrapInlineCodeHtml(code));
+  html = autolinkMarkdownUrls(html);
   return html;
 }
 

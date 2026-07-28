@@ -557,7 +557,7 @@ svg {
 
 .home-dashboard.nexus-hero > .web-vercel-deploy-dock {
   position: fixed;
-  z-index: 45;
+  z-index: 60;
 }
 
 .home-dashboard.nexus-hero > .home-dashboard__agent-mode {
@@ -2134,6 +2134,150 @@ html.nexus-standalone .home-dashboard__open-agent-projects {
   min-width: 0;
 }
 
+.home-dashboard__ask-desktop-agents {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(148, 163, 184, 0.95);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.home-dashboard__ask-desktop-agents.app-button {
+  padding: 0;
+}
+
+.home-dashboard__ask-desktop-agents:hover:not(:disabled) {
+  color: #f8fafc;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.home-dashboard__ask-desktop-agents:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.home-dashboard__ask-desktop-agents--open {
+  color: #c4b5fd;
+  background: color-mix(in srgb, #8b5cf6 24%, rgba(255, 255, 255, 0.04));
+  border-color: color-mix(in srgb, #8b5cf6 40%, rgba(255, 255, 255, 0.12));
+}
+
+.web-desktop-agents-popup {
+  position: fixed;
+  z-index: 10000;
+  width: min(300px, calc(100vw - 16px));
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.web-desktop-agents-popup--up {
+  transform-origin: bottom left;
+}
+
+.web-desktop-agents-popup--down {
+  transform-origin: top left;
+}
+
+.web-desktop-agents-popup__header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 2px 4px;
+}
+
+.web-desktop-agents-popup__empty {
+  padding: 12px 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.web-desktop-agents-popup__empty-state {
+  padding: 12px 8px 8px;
+}
+
+.web-desktop-agents-popup__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.web-desktop-agents-popup__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.web-desktop-agents-popup__item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.web-desktop-agents-popup__item-icon {
+  flex-shrink: 0;
+  color: #c4b5fd;
+}
+
+.web-desktop-agents-popup__item-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.web-desktop-agents-popup__item-status {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.web-desktop-agents-popup__item-status--running {
+  color: #86efac;
+}
+
+.web-desktop-agents-popup__item-status--error {
+  color: #fca5a5;
+}
+
+.home-dashboard__agent-card--focused {
+  border-color: color-mix(in srgb, #8b5cf6 55%, rgba(255, 255, 255, 0.18));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, #8b5cf6 40%, transparent),
+    0 12px 28px rgba(76, 29, 149, 0.28);
+}
+
 .web-ask-mac-select .home-dashboard__ask-project {
   max-width: 170px;
 }
@@ -2826,7 +2970,7 @@ html.nexus-standalone .home-dashboard__open-agent-projects {
   right: calc(16px + var(--safe-right));
   left: auto;
   bottom: auto;
-  z-index: 45;
+  z-index: 60;
   width: min(280px, calc(100vw - 32px));
   max-width: 280px;
   margin-left: 0;
@@ -2870,9 +3014,11 @@ html.nexus-standalone .home-dashboard__open-agent-projects {
   cursor: pointer;
 }
 
+.sidebar-mobile-release-card--copyable.app-button:hover:not(:disabled),
 .sidebar-mobile-release-card--copyable:hover {
-  border-color: rgba(255, 255, 255, 0.16);
-  background: rgba(14, 14, 18, 0.98);
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(10, 10, 14, 0.96);
+  filter: none;
 }
 
 .sidebar-mobile-release-card__header {
@@ -2930,11 +3076,13 @@ html.nexus-standalone .home-dashboard__open-agent-projects {
 
 .sidebar-mobile-release-card__close,
 .sidebar-mobile-release-card__close.app-button {
+  position: relative;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   margin: 0;
   padding: 0;
   border: none;
@@ -2942,6 +3090,8 @@ html.nexus-standalone .home-dashboard__open-agent-projects {
   background: transparent;
   color: var(--text-muted);
   flex-shrink: 0;
+  pointer-events: auto;
+  cursor: pointer;
 }
 
 .sidebar-mobile-release-card__close:hover:not(:disabled) {
@@ -3209,17 +3359,21 @@ html.nexus-standalone .home-dashboard__open-agent-projects {
 
 .sidebar-vercel-deploy-card__close,
 .sidebar-vercel-deploy-card__close.app-button {
+  position: relative;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: none;
   border-radius: var(--radius-sm);
   color: rgba(226, 232, 240, 0.92);
   background: rgba(255, 255, 255, 0.06);
   flex-shrink: 0;
+  pointer-events: auto;
+  cursor: pointer;
 }
 
 .sidebar-vercel-deploy-card__close:hover:not(:disabled) {

@@ -121,7 +121,9 @@ export function useCloudAgentSessionsSync(active: boolean): void {
           return;
         }
 
-        const hydrated = hydrateCloudAgentSessions(bundles);
+        const hydrated = hydrateCloudAgentSessions(bundles).filter(
+          (session) => session.source !== 'desktop_pane',
+        );
         const hydratedIds = new Set(hydrated.map((session) => session.id));
 
         for (const sessionId of Array.from(subscriptionsRef.current.keys())) {

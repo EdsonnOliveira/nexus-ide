@@ -262,13 +262,6 @@ function AutomationEditorViewComponent({
           >
             Por tempo
           </button>
-          <button
-            type='button'
-            className={`automation-editor__segment${draft.trigger === 'app_open' ? ' automation-editor__segment--active' : ''}`}
-            onClick={() => onChange({ ...draft, trigger: 'app_open', intervalMinutes: undefined })}
-          >
-            Ao abrir a IDE
-          </button>
         </div>
         {draft.trigger === 'interval' ? (
           <label className='automation-editor__interval'>

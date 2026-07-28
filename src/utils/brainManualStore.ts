@@ -243,6 +243,26 @@ function fileNameFromPath(filePath: string): string {
   return parts[parts.length - 1] || filePath;
 }
 
+function normalizeProjectRoot(projectPath: string): string {
+  return projectPath.replace(/[\\/]+$/, '');
+}
+
+function isPathInsideProject(filePath: string, projectPath: string): boolean {
+  const root = normalizeProjectRoot(projectPath);
+  if (filePath === root) {
+    return true;
+  }
+  return filePath.startsWith(`${root}/`) || filePath.startsWith(`${root}\\`);
+}
+
+function toProjectRelativePath(filePath: string, projectPath: string): string {
+  const root = normalizeProjectRoot(projectPath);
+  if (filePath.startsWith(root)) {
+    return filePath.slice(root.length).replace(/^[\\/]+/, '') || filePath;
+  }
+  return filePath;
+}
+
 function resolveManualDocumentKind(fileName: string): BrainDocument['kind'] {
   const lower = fileName.toLowerCase();
   if (lower.includes('openapi') || lower.includes('swagger')) {
@@ -263,25 +283,133 @@ function resolveManualDocumentKind(fileName: string): BrainDocument['kind'] {
   return 'wiki';
 }
 
-function buildManualDocument(sourcePath: string): BrainDocument {
+export interface BrainManualDocumentEntry {
+  path: string;
+  type: 'file' | 'directory';
+}
+
+function buildManualDocument(
+  sourcePath: string,
+  options?: {
+    projectPath?: string;
+    type?: 'file' | 'directory';
+  },
+): BrainDocument {
+  const entryType = options?.type ?? 'file';
+  const projectPath = options?.projectPath;
   const name = fileNameFromPath(sourcePath);
+  const referencePath =
+    projectPath && isPathInsideProject(sourcePath, projectPath)
+      ? toProjectRelativePath(sourcePath, projectPath)
+      : sourcePath;
+
   return {
     id: `manual:${crypto.randomUUID()}`,
     name,
-    kind: resolveManualDocumentKind(name),
-    origin: sourcePath,
+    kind: entryType === 'directory' ? 'wiki' : resolveManualDocumentKind(name),
+    origin: referencePath,
     status: 'indexed',
-    tags: [],
-    aiSummary: '',
+    tags: entryType === 'directory' ? ['pasta'] : [],
+    aiSummary:
+      entryType === 'directory'
+        ? `Referência à pasta do projeto · ${referencePath}`
+        : projectPath && isPathInsideProject(sourcePath, projectPath)
+          ? `Referência no projeto · ${referencePath}`
+          : '',
     related: [],
     updatedAtLabel: 'agora',
-    relatedFiles: [sourcePath],
+    relatedFiles: [referencePath],
     relatedDecisions: [],
     relatedMeetings: [],
     relatedIssues: [],
     agentsModified: [],
     lastChangeLabel: 'agora',
   };
+}
+
+function collectExistingDocumentRefs(documents: BrainDocument[]): Set<string> {
+  const refs = new Set<string>();
+  for (const document of documents) {
+    if (document.origin) {
+      refs.add(document.origin);
+    }
+    for (const relatedFile of document.relatedFiles) {
+      refs.add(relatedFile);
+    }
+  }
+  return refs;
+}
+
+export async function addBrainManualDocumentsFromEntries(
+  projectPath: string,
+  entries: BrainManualDocumentEntry[],
+): Promise<
+  | { ok: true; cancelled: true }
+  | { ok: true; cancelled: false; store: BrainManualStore }
+  | { ok: false; error: string }
+> {
+  const uniqueEntries: BrainManualDocumentEntry[] = [];
+  const seenPaths = new Set<string>();
+
+  for (const entry of entries) {
+    const trimmedPath = entry.path.trim();
+    if (!trimmedPath || seenPaths.has(trimmedPath)) {
+      continue;
+    }
+    seenPaths.add(trimmedPath);
+    uniqueEntries.push({
+      path: trimmedPath,
+      type: entry.type,
+    });
+  }
+
+  if (uniqueEntries.length === 0) {
+    return { ok: true, cancelled: true };
+  }
+
+  const store = await loadBrainManual(projectPath);
+  const existingRefs = collectExistingDocumentRefs(store.documents);
+  const items = uniqueEntries
+    .map((entry) =>
+      buildManualDocument(entry.path, {
+        projectPath,
+        type: entry.type,
+      }),
+    )
+    .filter((item) => {
+      const refs = [item.origin, ...item.relatedFiles];
+      return !refs.some((ref) => existingRefs.has(ref));
+    });
+
+  if (items.length === 0) {
+    return { ok: true, cancelled: false, store };
+  }
+
+  const next: BrainManualStore = {
+    ...store,
+    documents: [...store.documents, ...items],
+  };
+
+  const saved = await saveBrainManual(projectPath, next);
+  if (!saved.ok) {
+    return saved;
+  }
+
+  return { ok: true, cancelled: false, store: next };
+}
+
+export async function addBrainManualDocumentsFromPaths(
+  projectPath: string,
+  sourcePaths: string[],
+): Promise<
+  | { ok: true; cancelled: true }
+  | { ok: true; cancelled: false; store: BrainManualStore }
+  | { ok: false; error: string }
+> {
+  return addBrainManualDocumentsFromEntries(
+    projectPath,
+    sourcePaths.map((path) => ({ path, type: 'file' as const })),
+  );
 }
 
 export async function addBrainManualDocumentsFromPicker(
@@ -296,18 +424,5 @@ export async function addBrainManualDocumentsFromPicker(
     return { ok: true, cancelled: true };
   }
 
-  const items = sourcePaths.map((sourcePath) => buildManualDocument(sourcePath));
-
-  const store = await loadBrainManual(projectPath);
-  const next: BrainManualStore = {
-    ...store,
-    documents: [...store.documents, ...items],
-  };
-
-  const saved = await saveBrainManual(projectPath, next);
-  if (!saved.ok) {
-    return saved;
-  }
-
-  return { ok: true, cancelled: false, store: next };
+  return addBrainManualDocumentsFromPaths(projectPath, sourcePaths);
 }

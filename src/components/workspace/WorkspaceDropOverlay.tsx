@@ -1,22 +1,62 @@
 import { memo, useCallback, useMemo, useState } from 'react';
 import { TAB_DRAG_MIME } from '@/constants/tabDrag';
+import type { SplitSide } from '@/types';
 
 interface WorkspaceDropOverlayProps {
-  onDrop: (sourceTabId: string, side: 'left' | 'right') => void;
+  mode: 'sides' | 'quadrants';
+  variant?: 'workspace' | 'pane';
+  onDrop: (sourceTabId: string, side: SplitSide) => void;
 }
 
-function WorkspaceDropOverlayComponent({ onDrop }: WorkspaceDropOverlayProps) {
-  const [activeSide, setActiveSide] = useState<'left' | 'right' | null>(null);
+function resolveSide(
+  mode: 'sides' | 'quadrants',
+  offsetX: number,
+  offsetY: number,
+  width: number,
+  height: number,
+): SplitSide {
+  if (mode === 'sides') {
+    return offsetX < width / 2 ? 'left' : 'right';
+  }
 
-  const handleDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
+  const isLeft = offsetX < width / 2;
+  const isTop = offsetY < height / 2;
 
-    const rect = event.currentTarget.getBoundingClientRect();
-    const offsetX = event.clientX - rect.left;
+  if (isTop && isLeft) {
+    return 'top-left';
+  }
 
-    setActiveSide(offsetX < rect.width / 2 ? 'left' : 'right');
-  }, []);
+  if (isTop) {
+    return 'top-right';
+  }
+
+  if (isLeft) {
+    return 'bottom-left';
+  }
+
+  return 'bottom-right';
+}
+
+function WorkspaceDropOverlayComponent({
+  mode,
+  variant = 'workspace',
+  onDrop,
+}: WorkspaceDropOverlayProps) {
+  const [activeSide, setActiveSide] = useState<SplitSide | null>(null);
+
+  const handleDragOver = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+
+      const rect = event.currentTarget.getBoundingClientRect();
+      const offsetX = event.clientX - rect.left;
+      const offsetY = event.clientY - rect.top;
+
+      setActiveSide(resolveSide(mode, offsetX, offsetY, rect.width, rect.height));
+    },
+    [mode],
+  );
 
   const handleDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     const related = event.relatedTarget as Node | null;
@@ -33,7 +73,8 @@ function WorkspaceDropOverlayComponent({ onDrop }: WorkspaceDropOverlayProps) {
       const sourceTabId = event.dataTransfer.getData(TAB_DRAG_MIME);
       const rect = event.currentTarget.getBoundingClientRect();
       const offsetX = event.clientX - rect.left;
-      const side = offsetX < rect.width / 2 ? 'left' : 'right';
+      const offsetY = event.clientY - rect.top;
+      const side = resolveSide(mode, offsetX, offsetY, rect.width, rect.height);
 
       setActiveSide(null);
 
@@ -43,22 +84,26 @@ function WorkspaceDropOverlayComponent({ onDrop }: WorkspaceDropOverlayProps) {
 
       onDrop(sourceTabId, side);
     },
-    [onDrop],
+    [mode, onDrop],
   );
 
   const className = useMemo(() => {
     const classes = ['workspace-drop-overlay'];
 
-    if (activeSide === 'left') {
-      classes.push('workspace-drop-overlay--left');
+    if (variant === 'pane') {
+      classes.push('workspace-drop-overlay--pane');
     }
 
-    if (activeSide === 'right') {
-      classes.push('workspace-drop-overlay--right');
+    if (mode === 'quadrants') {
+      classes.push('workspace-drop-overlay--quadrants');
+    }
+
+    if (activeSide) {
+      classes.push(`workspace-drop-overlay--${activeSide}`);
     }
 
     return classes.join(' ');
-  }, [activeSide]);
+  }, [activeSide, mode, variant]);
 
   return (
     <div

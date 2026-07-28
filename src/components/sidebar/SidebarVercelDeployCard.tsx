@@ -23,9 +23,14 @@ const DEPLOY_SOUND_INTERVAL_MS = 5_000;
 interface SidebarVercelDeployCardProps {
   deployment: VercelActiveDeployment;
   onDismiss: () => void;
+  onConfigure?: () => void;
 }
 
-function SidebarVercelDeployCardComponent({ deployment, onDismiss }: SidebarVercelDeployCardProps) {
+function SidebarVercelDeployCardComponent({
+  deployment,
+  onDismiss,
+  onConfigure,
+}: SidebarVercelDeployCardProps) {
   const [now, setNow] = useState(() => Date.now());
   const [deploysPopupOpen, setDeploysPopupOpen] = useState(false);
   const [deploysPopupAnchor, setDeploysPopupAnchor] = useState<DOMRect | null>(null);
@@ -131,6 +136,12 @@ function SidebarVercelDeployCardComponent({ deployment, onDismiss }: SidebarVerc
     setDeploysPopupAnchor(null);
   }, []);
 
+  const handleConfigure = useCallback(() => {
+    setDeploysPopupOpen(false);
+    setDeploysPopupAnchor(null);
+    onConfigure?.();
+  }, [onConfigure]);
+
   const handleDismiss = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.stopPropagation();
@@ -220,7 +231,11 @@ function SidebarVercelDeployCardComponent({ deployment, onDismiss }: SidebarVerc
       </section>
 
       {deploysPopupOpen && deploysPopupAnchor ? (
-        <SidebarVercelDeploysPopup anchorRect={deploysPopupAnchor} onClose={handleCloseDeploysPopup} />
+        <SidebarVercelDeploysPopup
+          anchorRect={deploysPopupAnchor}
+          onClose={handleCloseDeploysPopup}
+          onConfigure={onConfigure ? handleConfigure : undefined}
+        />
       ) : null}
     </>
   );

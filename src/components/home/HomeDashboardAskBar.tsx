@@ -1043,19 +1043,23 @@ function HomeDashboardAskBarComponent({
       return;
     }
 
-    const sourcePath = await window.nexus.dialog.openFile();
+    const sourcePaths = await window.nexus.dialog.openFiles();
 
-    if (!sourcePath) {
+    if (!sourcePaths || sourcePaths.length === 0) {
       return;
     }
 
-    const mentionText = await resolveAgentComposerPathMention(selectedProject.path, sourcePath);
+    const mentions: string[] = [];
 
-    if (!mentionText) {
-      return;
+    for (const sourcePath of sourcePaths) {
+      const mentionText = await resolveAgentComposerPathMention(selectedProject.path, sourcePath);
+
+      if (mentionText) {
+        mentions.push(mentionText);
+      }
     }
 
-    insertPathMentions([mentionText]);
+    insertPathMentions(mentions);
   }, [insertPathMentions, selectedProject]);
 
   const handleAttachImage = useCallback(async () => {
@@ -1063,19 +1067,23 @@ function HomeDashboardAskBarComponent({
       return;
     }
 
-    const sourcePath = await window.nexus.dialog.openImage();
+    const sourcePaths = await window.nexus.dialog.openImages();
 
-    if (!sourcePath) {
+    if (!sourcePaths || sourcePaths.length === 0) {
       return;
     }
 
-    const dataUrl = await readImagePathAsDataUrl(sourcePath);
+    const dataUrls: string[] = [];
 
-    if (!dataUrl) {
-      return;
+    for (const sourcePath of sourcePaths) {
+      const dataUrl = await readImagePathAsDataUrl(sourcePath);
+
+      if (dataUrl) {
+        dataUrls.push(dataUrl);
+      }
     }
 
-    attachImagesWithMentions([dataUrl]);
+    attachImagesWithMentions(dataUrls);
   }, [attachImagesWithMentions, imageActionsDisabled]);
 
   const handleAttachImageClick = useCallback(() => {

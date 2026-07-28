@@ -1,8 +1,8 @@
 export type AutomationStepType = 'terminal' | 'agent' | 'browser' | 'emulator' | 'api';
 
-export type AutomationTrigger = 'manual' | 'interval' | 'app_open';
+export type AutomationTrigger = 'manual' | 'interval';
 
-export type AutomationStepOpenMode = 'separate' | 'split-with-previous';
+export type AutomationStepOpenMode = 'separate' | 'split-with-previous' | 'grid-with-previous';
 
 export type AutomationAgentMode = 'agent' | 'plan' | 'debug' | 'multitask' | 'ask';
 

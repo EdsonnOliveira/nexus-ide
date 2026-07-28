@@ -294,7 +294,7 @@ function AgentToolActivityScrollListComponent({
     }
 
     return (
-      <div className='agent-view__tool-batch app-button--enter'>
+      <div className='agent-view__tool-batch'>
         {summary ? (
           <div className='agent-view__status-line agent-view__status-line--batch'>{summary}</div>
         ) : null}

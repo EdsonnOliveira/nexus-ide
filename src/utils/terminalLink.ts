@@ -128,6 +128,7 @@ export function registerNexusTerminalLinks(
 ): IDisposable {
   const mousePosition = { x: 0, y: 0 };
   const linksByLine = new Map<number, ILink[]>();
+  let metaKeyHeld = false;
 
   const syncHoveredLinkDecorations = (metaKey: boolean) => {
     const element = terminal.element;
@@ -143,9 +144,21 @@ export function registerNexusTerminalLinks(
       metaKey,
     });
 
+    const hoveredUrls = new Set<string>();
+
+    if (metaKey) {
+      for (const links of linksByLine.values()) {
+        for (const link of links) {
+          if (isMouseOverLink(terminal, link, mouseEvent)) {
+            hoveredUrls.add(link.text);
+          }
+        }
+      }
+    }
+
     for (const links of linksByLine.values()) {
       for (const link of links) {
-        scheduleLinkDecorations(link, metaKey && isMouseOverLink(terminal, link, mouseEvent));
+        scheduleLinkDecorations(link, hoveredUrls.has(link.text));
       }
     }
   };
@@ -172,6 +185,11 @@ export function registerNexusTerminalLinks(
   const handleMouseMove = (event: MouseEvent) => {
     mousePosition.x = event.clientX;
     mousePosition.y = event.clientY;
+    metaKeyHeld = event.metaKey;
+
+    if (event.metaKey) {
+      syncHoveredLinkDecorations(true);
+    }
   };
 
   const handleMetaKey = (event: KeyboardEvent) => {
@@ -179,7 +197,43 @@ export function registerNexusTerminalLinks(
       return;
     }
 
-    refreshLinkHover(event.type === 'keydown');
+    metaKeyHeld = event.type === 'keydown';
+    refreshLinkHover(metaKeyHeld);
+  };
+
+  const createLink = (
+    url: string,
+    startX: number,
+    endX: number,
+    bufferLineNumber: number,
+  ): ILink => {
+    const link: ILink = {
+      text: url,
+      range: {
+        start: { x: startX, y: bufferLineNumber },
+        end: { x: endX, y: bufferLineNumber },
+      },
+      decorations: {
+        underline: false,
+        pointerCursor: false,
+      },
+      activate(event, linkText) {
+        if (!event.metaKey) {
+          return;
+        }
+
+        onOpenLink(normalizeBrowserUrl(linkText));
+      },
+      hover(event) {
+        metaKeyHeld = event.metaKey;
+        syncHoveredLinkDecorations(event.metaKey);
+      },
+      leave() {
+        syncHoveredLinkDecorations(metaKeyHeld);
+      },
+    };
+
+    return link;
   };
 
   const provider: ILinkProvider = {
@@ -212,37 +266,17 @@ export function registerNexusTerminalLinks(
           const seed = stripTrailingUrlChars(originMatch[0]);
           const extended = extendTerminalUrlAcrossLines(getLineText, originRow, start, seed);
 
-          if (extended.endRow === bufferRow) {
+          if (bufferRow > originRow && bufferRow <= extended.endRow) {
             const leadingSpaces = text.length - text.trimStart().length;
             const continuation = text.trimStart().match(TERMINAL_URL_CONTINUE_REGEX)?.[0] ?? '';
 
             if (continuation) {
-              const link: ILink = {
-                text: extended.url,
-                range: {
-                  start: { x: leadingSpaces + 1, y: bufferLineNumber },
-                  end: { x: leadingSpaces + continuation.length, y: bufferLineNumber },
-                },
-                decorations: {
-                  underline: false,
-                  pointerCursor: false,
-                },
-                activate(event, linkText) {
-                  if (!event.metaKey) {
-                    return;
-                  }
+              const endX =
+                bufferRow === extended.endRow
+                  ? extended.endCol
+                  : leadingSpaces + continuation.length;
 
-                  onOpenLink(normalizeBrowserUrl(linkText));
-                },
-                hover(event) {
-                  scheduleLinkDecorations(link, event.metaKey);
-                },
-                leave() {
-                  scheduleLinkDecorations(link, false);
-                },
-              };
-
-              links.push(link);
+              links.push(createLink(extended.url, leadingSpaces + 1, endX, bufferLineNumber));
             }
           }
         }
@@ -254,35 +288,14 @@ export function registerNexusTerminalLinks(
           const seed = stripTrailingUrlChars(match[0]);
           const extended = extendTerminalUrlAcrossLines(getLineText, bufferRow, start, seed);
 
-          const link: ILink = {
-            text: extended.url,
-            range: {
-              start: { x: start + 1, y: bufferLineNumber },
-              end: {
-                x: extended.endRow === bufferRow ? extended.endCol : text.length,
-                y: bufferLineNumber,
-              },
-            },
-            decorations: {
-              underline: false,
-              pointerCursor: false,
-            },
-            activate(event, linkText) {
-              if (!event.metaKey) {
-                return;
-              }
-
-              onOpenLink(normalizeBrowserUrl(linkText));
-            },
-            hover(event) {
-              scheduleLinkDecorations(link, event.metaKey);
-            },
-            leave() {
-              scheduleLinkDecorations(link, false);
-            },
-          };
-
-          links.push(link);
+          links.push(
+            createLink(
+              extended.url,
+              start + 1,
+              extended.endRow === bufferRow ? extended.endCol : text.length,
+              bufferLineNumber,
+            ),
+          );
         }
       }
 

@@ -348,7 +348,7 @@ export function buildAgentActivityRenderChunks(
   return chunks;
 }
 
-export function buildLiveToolBatchSummary(
+function buildLiveToolBatchAggregateSummary(
   activities: AgentActivity[],
   running: boolean,
 ): string | null {
@@ -359,40 +359,6 @@ export function buildLiveToolBatchSummary(
       (activity.kind === 'tool_run' || activity.kind === 'live_status') &&
       /^(?:Glob|Grep)/i.test(activity.label.trim()),
   ).length;
-
-  if (running) {
-    const liveStatus = [...activities]
-      .reverse()
-      .find((activity) => activity.kind === 'live_status' && activity.label.trim());
-
-    if (liveStatus?.label.trim()) {
-      return liveStatus.label.trim();
-    }
-
-    const streamingShell = [...activities]
-      .reverse()
-      .find(
-        (activity) =>
-          activity.kind === 'tool_run' &&
-          activity.streaming &&
-          activity.toolCommand?.trim(),
-      );
-
-    if (streamingShell?.toolCommand?.trim()) {
-      const command = streamingShell.toolCommand.trim();
-      const preview = command.length > 56 ? `${command.slice(0, 53)}…` : command;
-
-      return `Executando ${preview}`;
-    }
-
-    const streamingTool = [...activities]
-      .reverse()
-      .find((activity) => activity.kind === 'tool_run' && activity.streaming && activity.label.trim());
-
-    if (streamingTool?.label.trim()) {
-      return streamingTool.label.trim();
-    }
-  }
 
   if (fileEdits.length > 0) {
     const additions = fileEdits.reduce((sum, entry) => sum + (entry.additions ?? 0), 0);
@@ -428,6 +394,77 @@ export function buildLiveToolBatchSummary(
   }
 
   return null;
+}
+
+function getLiveToolBatchDetailLabel(activity: AgentActivity): string {
+  if (activity.kind === 'live_status') {
+    return activity.label.trim();
+  }
+
+  if (activity.kind === 'tool_run') {
+    if (activity.toolCommand?.trim()) {
+      const command = activity.toolCommand.trim();
+      const preview = command.length > 56 ? `${command.slice(0, 53)}…` : command;
+      return activity.streaming ? `Executando ${preview}` : command;
+    }
+
+    return activity.label.trim();
+  }
+
+  if (activity.kind === 'file_read' || activity.kind === 'file_edit') {
+    const verb = activity.kind === 'file_read' ? 'Read' : 'Edited';
+    const fileName = activity.filePath?.trim().split(/[/\\]/).pop() ?? activity.filePath?.trim() ?? '';
+    return fileName ? `${verb} ${fileName}` : verb;
+  }
+
+  return activity.label.trim();
+}
+
+export function buildLiveToolBatchSummary(
+  activities: AgentActivity[],
+  running: boolean,
+): string | null {
+  if (running) {
+    const liveStatus = [...activities]
+      .reverse()
+      .find((activity) => activity.kind === 'live_status' && activity.label.trim());
+
+    if (liveStatus?.label.trim()) {
+      return liveStatus.label.trim();
+    }
+
+    const streamingShell = [...activities]
+      .reverse()
+      .find(
+        (activity) =>
+          activity.kind === 'tool_run' &&
+          activity.streaming &&
+          activity.toolCommand?.trim(),
+      );
+
+    if (streamingShell?.toolCommand?.trim()) {
+      const command = streamingShell.toolCommand.trim();
+      const preview = command.length > 56 ? `${command.slice(0, 53)}…` : command;
+
+      return `Executando ${preview}`;
+    }
+
+    const aggregateSummary = buildLiveToolBatchAggregateSummary(activities, true);
+
+    if (aggregateSummary) {
+      return aggregateSummary;
+    }
+
+    const streamingTool = [...activities]
+      .reverse()
+      .find((activity) => activity.kind === 'tool_run' && activity.streaming && activity.label.trim());
+
+    if (streamingTool?.label.trim()) {
+      return streamingTool.label.trim();
+    }
+  }
+
+  return buildLiveToolBatchAggregateSummary(activities, running);
 }
 
 export function findLiveToolBatchDetailActivity(
@@ -473,13 +510,15 @@ export function shouldShowLiveToolBatchDetail(
     return false;
   }
 
-  if (detail.kind === 'live_status') {
-    const detailLabel = detail.label.trim();
-    const summaryLabel = summary?.trim() ?? '';
+  const detailLabel = getLiveToolBatchDetailLabel(detail);
+  const summaryLabel = summary?.trim() ?? '';
 
-    if (!detailLabel || detailLabel === summaryLabel) {
-      return false;
-    }
+  if (!detailLabel) {
+    return false;
+  }
+
+  if (summaryLabel && detailLabel === summaryLabel) {
+    return false;
   }
 
   if (detail.streaming || detail.kind === 'live_status') {
@@ -490,7 +529,7 @@ export function shouldShowLiveToolBatchDetail(
     return true;
   }
 
-  return !summary;
+  return !summaryLabel;
 }
 
 export function partitionAgentToolActivitiesForResponse(activities: AgentActivity[]): {

@@ -223,13 +223,13 @@ export function useWebVercelDeployments(enabled: boolean) {
     };
   }, [applySnapshot, enabled]);
 
-  const dismiss = useCallback(() => {
-    const uid = activeDeployment?.uid;
-    if (!uid) {
+  const dismiss = useCallback((uid?: string) => {
+    const nextUid = uid ?? activeDeployment?.uid;
+    if (!nextUid) {
       return;
     }
-    setDismissedUid(uid);
-    writeDismissedDeployUid(uid);
+    setDismissedUid(nextUid);
+    writeDismissedDeployUid(nextUid);
   }, [activeDeployment?.uid]);
 
   const saveToken = useCallback(

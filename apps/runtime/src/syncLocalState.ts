@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import type { NexusClient } from '@nexus/supabase';
+import { publishDesktopAgentPanes } from './publishDesktopAgentPanes';
 
 interface LocalWorkspace {
   id: string;
@@ -463,6 +464,8 @@ export async function syncLocalState(
     syncedProjects.push({ name: project.name, id: projectId, path: project.path });
   }
 
+  const desktopAgents = await publishDesktopAgentPanes(client, deviceId, userId);
+
   if (syncRunId) {
     await client
       .from('local_sync_runs')
@@ -472,6 +475,11 @@ export async function syncLocalState(
         workspaces_count: localWorkspaces.length,
         brain_count: brainCount,
         completed_at: new Date().toISOString(),
+        metadata: {
+          source: 'projects.json',
+          desktopAgentsPublished: desktopAgents.published,
+          desktopAgentsClosed: desktopAgents.closed,
+        },
       })
       .eq('id', syncRunId);
   }

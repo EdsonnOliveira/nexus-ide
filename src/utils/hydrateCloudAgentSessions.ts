@@ -81,6 +81,7 @@ export function hydrateCloudAgentSessions(bundles: AgentSessionBundle[]): CloudA
       projectColor: project?.color || '#8b5cf6',
       logoUrl: project?.logo_url ?? null,
       deviceId: session.device_id,
+      source: session.source === 'desktop_pane' ? 'desktop_pane' : 'cloud',
       status: mapCloudSessionStatus(session.status, hasRunningExecution),
       createdAt: new Date(session.created_at).getTime(),
       turns,

@@ -1,7 +1,8 @@
-import type { Automation, AutomationStep, AutomationStepOpenMode } from '@/types/automation';
+import type { Automation, AutomationStep, AutomationStepOpenMode, AutomationTrigger } from '@/types/automation';
 import { resolveAutomationStepTabOptionLabel } from '@/utils/automationLabels';
 
-type LegacyAutomation = Omit<Automation, 'defaultActiveStepId'> & {
+type LegacyAutomation = Omit<Automation, 'defaultActiveStepId' | 'trigger'> & {
+  trigger: AutomationTrigger | 'app_open';
   tabLayout?: 'separate' | 'split';
   defaultActiveStepId?: string | null;
 };
@@ -15,13 +16,19 @@ export interface AutomationStepGroup {
   steps: AutomationStepGroupItem[];
 }
 
+export function isJoinWithPreviousOpenMode(
+  openMode: AutomationStepOpenMode | undefined,
+): boolean {
+  return openMode === 'split-with-previous' || openMode === 'grid-with-previous';
+}
+
 export function groupAutomationSteps(steps: AutomationStep[]): AutomationStepGroup[] {
   const groups: AutomationStepGroup[] = [];
 
   for (let index = 0; index < steps.length; index += 1) {
     const step = steps[index];
 
-    if (index === 0 || step.openMode !== 'split-with-previous') {
+    if (index === 0 || !isJoinWithPreviousOpenMode(step.openMode)) {
       groups.push({ steps: [{ step, index }] });
       continue;
     }
@@ -37,7 +44,7 @@ export function isAutomationStepDefaultActiveOption(
   index: number,
   steps: AutomationStep[],
 ): boolean {
-  if (step.openMode === 'split-with-previous') {
+  if (isJoinWithPreviousOpenMode(step.openMode)) {
     return false;
   }
 
@@ -77,16 +84,26 @@ export function normalizeAutomationDefaultActiveStepId(
   return listableIds.has(defaultActiveStepId) ? defaultActiveStepId : null;
 }
 
+function resolveOpenMode(
+  step: AutomationStep,
+  index: number,
+): AutomationStepOpenMode {
+  if (index === 0) {
+    return 'separate';
+  }
+
+  if (step.openMode === 'split-with-previous' || step.openMode === 'grid-with-previous') {
+    return step.openMode;
+  }
+
+  return 'separate';
+}
+
 export function normalizeAutomationSteps(steps: AutomationStep[]): AutomationStep[] {
   return steps.map((step, index): AutomationStep => {
-    const openMode: AutomationStepOpenMode =
-      index === 0
-        ? 'separate'
-        : step.openMode === 'split-with-previous'
-          ? 'split-with-previous'
-          : 'separate';
+    const openMode = resolveOpenMode(step, index);
 
-    if (openMode === 'split-with-previous') {
+    if (isJoinWithPreviousOpenMode(openMode)) {
       const { tabTitle, pinned, ...rest } = step;
       return { ...rest, openMode };
     }
@@ -117,12 +134,14 @@ export function normalizeAutomation(automation: LegacyAutomation): Automation {
     normalizedSteps,
     automation.defaultActiveStepId,
   );
+  const trigger: AutomationTrigger =
+    automation.trigger === 'interval' ? 'interval' : 'manual';
 
   return {
     id: automation.id,
     name: automation.name,
-    trigger: automation.trigger,
-    intervalMinutes: automation.intervalMinutes,
+    trigger,
+    intervalMinutes: trigger === 'interval' ? automation.intervalMinutes : undefined,
     closeOpenTabsBeforeRun: automation.closeOpenTabsBeforeRun,
     defaultActiveStepId,
     steps: normalizedSteps,

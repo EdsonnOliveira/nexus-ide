@@ -3,6 +3,7 @@ import { FolderPlus } from 'lucide-react';
 import { useNexusReady } from '@/hooks/useNexusReady';
 import { useGitChangeCount } from '@/hooks/useGitChangeCount';
 import { useAutomationScheduler } from '@/hooks/useAutomationScheduler';
+import { useMarkdownPreviewCmdLinks } from '@/hooks/useMarkdownPreviewCmdLinks';
 import { useTestRunnerEvents } from '@/hooks/useTestRunnerEvents';
 import { flushTerminalSessionsNow } from '@/utils/persistTerminalSession';
 import { flushAgentGitGroupsNow } from '@/utils/persistAgentGitGroups';
@@ -110,6 +111,7 @@ function EmptyWorkspace() {
 function AppShellComponent() {
   const nexusReady = useNexusReady();
   useTestRunnerEvents();
+  useMarkdownPreviewCmdLinks();
   const initialize = useProjectStore((state) => state.initialize);
   const toggleExplorerEntry = useProjectStore((state) => state.toggleExplorerEntry);
   const toggleGlobalSearch = useGlobalSearchStore((state) => state.toggle);

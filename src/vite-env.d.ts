@@ -14,9 +14,10 @@ declare global {
         src?: string;
         partition?: string;
         useragent?: string;
-        allowpopups?: string | boolean;
+        allowpopups?: boolean;
         httpreferrer?: string;
         webpreferences?: string;
+        preload?: string;
       };
     }
   }

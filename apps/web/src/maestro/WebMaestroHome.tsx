@@ -7,7 +7,7 @@ import {
   updateAgentSessionMeta,
 } from '@nexus/supabase';
 import { bridge, supabase } from '../lib/supabase';
-import { useWebStore } from '../store';
+import { useWebStore, type WebAgentSession } from '../store';
 import nexusLogo from '../assets/nexus-logo-icon.png';
 import { hydrateWebAgentsFromBundles } from './hydrateWebAgents';
 import { WebLogoMenu } from './WebLogoMenu';
@@ -90,20 +90,27 @@ export function WebMaestroHome() {
   const setAgentStatus = useWebStore((state) => state.setAgentStatus);
   const removeAgent = useWebStore((state) => state.removeAgent);
   const hydratedWorkspaceRef = useRef<string | null>(null);
+  const pinnedDesktopAgentIdsRef = useRef(new Set<string>());
   const [submitting, setSubmitting] = useState(false);
   const [pairingOpen, setPairingOpen] = useState(false);
   const [vercelTokenOpen, setVercelTokenOpen] = useState(false);
   const [pushOpen, setPushOpen] = useState(false);
   const [agentFilterProjectId, setAgentFilterProjectId] = useState<string | null>(null);
+  const [focusedAgentId, setFocusedAgentId] = useState<string | null>(null);
+  const [desktopAgentsCatalog, setDesktopAgentsCatalog] = useState<WebAgentSession[]>([]);
   const [heroScrolled, setHeroScrolled] = useState(false);
   const parsersRef = useRef(new Map<string, WebStreamJsonState>());
   const heroRef = useRef<HTMLElement>(null);
   const compact = agents.length >= 5;
   const filteredAgents = useMemo(() => {
+    const visible = agents.filter(
+      (agent) =>
+        agent.source !== 'desktop_pane' || pinnedDesktopAgentIdsRef.current.has(agent.id),
+    );
     if (!agentFilterProjectId) {
-      return agents;
+      return visible;
     }
-    return agents.filter((agent) => agent.projectId === agentFilterProjectId);
+    return visible.filter((agent) => agent.projectId === agentFilterProjectId);
   }, [agentFilterProjectId, agents]);
 
   useEffect(() => {
@@ -237,6 +244,17 @@ export function WebMaestroHome() {
   );
 
   useEffect(() => {
+    setAgents(
+      useWebStore
+        .getState()
+        .agents.filter(
+          (agent) =>
+            agent.source !== 'desktop_pane' || pinnedDesktopAgentIdsRef.current.has(agent.id),
+        ),
+    );
+  }, [setAgents]);
+
+  useEffect(() => {
     const workspaceId = resolveStoreWorkspaceId();
     if (!workspaceId || hydratedWorkspaceRef.current === workspaceId) {
       return;
@@ -255,9 +273,15 @@ export function WebMaestroHome() {
           return;
         }
         const hydrated = hydrateWebAgentsFromBundles(bundles);
-        setAgents(hydrated);
+        const desktopCatalog = hydrated.filter((agent) => agent.source === 'desktop_pane');
+        const cloudAgents = hydrated.filter((agent) => agent.source !== 'desktop_pane');
+        const pinnedDesktop = desktopCatalog.filter((agent) =>
+          pinnedDesktopAgentIdsRef.current.has(agent.id),
+        );
+        setDesktopAgentsCatalog(desktopCatalog);
+        setAgents([...cloudAgents, ...pinnedDesktop]);
         hydratedWorkspaceRef.current = workspaceId;
-        for (const agent of hydrated) {
+        for (const agent of [...cloudAgents, ...pinnedDesktop]) {
           if (agent.status === 'running' && agent.commandId) {
             subscribeAgent(agent.id, agent.commandId);
           }
@@ -367,6 +391,7 @@ export function WebMaestroHome() {
           cursorSessionId: null,
           modelId: 'auto',
           modeId: 'agent',
+          source: 'cloud',
           stream: '',
           status: 'running',
           createdAt,
@@ -527,6 +552,11 @@ export function WebMaestroHome() {
   const handleRemove = useCallback(
     async (agentId: string) => {
       const agent = useWebStore.getState().agents.find((entry) => entry.id === agentId);
+      if (agent?.source === 'desktop_pane') {
+        pinnedDesktopAgentIdsRef.current.delete(agentId);
+        removeAgent(agentId);
+        return;
+      }
       const deviceId = resolveDeviceId();
       if (agent?.terminals?.length && deviceId) {
         try {
@@ -553,6 +583,51 @@ export function WebMaestroHome() {
     },
     [removeAgent, resolveDeviceId],
   );
+
+  const handleSelectAgent = useCallback(
+    (agentId: string) => {
+      const fromCatalog = desktopAgentsCatalog.find((item) => item.id === agentId);
+      const fromStore = useWebStore.getState().agents.find((item) => item.id === agentId);
+      const agent = fromCatalog ?? fromStore;
+      if (!agent) {
+        return;
+      }
+      if (agent.source === 'desktop_pane') {
+        pinnedDesktopAgentIdsRef.current.add(agent.id);
+      }
+      addAgent(agent);
+      if (agent.projectId) {
+        setSelectedProjectId(agent.projectId);
+        setAgentFilterProjectId(agent.projectId);
+        const project = projects.find((item) => item.id === agent.projectId);
+        if (project?.workspace_id) {
+          setActiveWorkspaceId(project.workspace_id);
+        }
+      }
+      setFocusedAgentId(agentId);
+    },
+    [addAgent, desktopAgentsCatalog, projects, setActiveWorkspaceId, setSelectedProjectId],
+  );
+
+  const handleRequestDesktopAgents = useCallback(async () => {
+    const workspaceId = resolveStoreWorkspaceId();
+    if (!workspaceId) {
+      return;
+    }
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        return;
+      }
+      const bundles = await listOpenAgentSessionBundles(supabase, workspaceId, user.id);
+      const hydrated = hydrateWebAgentsFromBundles(bundles);
+      setDesktopAgentsCatalog(hydrated.filter((agent) => agent.source === 'desktop_pane'));
+    } catch {
+    }
+  }, []);
 
   const handleModelChange = useCallback(
     (agentId: string, modelId: string) => {
@@ -623,11 +698,16 @@ export function WebMaestroHome() {
           onAgentFilterChange={setAgentFilterProjectId}
           submitting={submitting}
           onSubmit={(prompt, imageDataUrls) => handleSubmit(prompt, imageDataUrls)}
+          desktopAgents={desktopAgentsCatalog}
+          onSelectAgent={handleSelectAgent}
+          onRequestDesktopAgents={handleRequestDesktopAgents}
         />
       </div>
       <WebMaestroAgents
         agents={filteredAgents}
         deviceId={resolveDeviceId()}
+        focusedAgentId={focusedAgentId}
+        onFocusedAgentHandled={() => setFocusedAgentId(null)}
         onRemove={(agentId) => void handleRemove(agentId)}
         onFollowUp={(agentId, prompt) => handleFollowUp(agentId, prompt)}
         onStop={(agentId) => void handleStop(agentId)}
@@ -641,14 +721,14 @@ export function WebMaestroHome() {
             <WebMobileReleaseCard
               release={mobileActiveRelease}
               deviceId={mobileReleaseDeviceId ?? resolveDeviceId()}
-              onDismiss={dismissMobileReleaseCard}
+              onDismiss={() => dismissMobileReleaseCard(mobileActiveRelease.uid)}
             />
           ) : null}
           {vercelActiveDeployment ? (
             <WebVercelDeployCard
               deployment={vercelActiveDeployment}
               deployments={vercelDeployments}
-              onDismiss={dismissVercelDeployCard}
+              onDismiss={() => dismissVercelDeployCard(vercelActiveDeployment.uid)}
             />
           ) : null}
         </div>

@@ -40,6 +40,9 @@ function getSanitizedResponseLabel(label: string): string {
   return sanitized || normalized.trim();
 }
 
+const INCOMPLETE_THOUGHT_CLOSING_MESSAGE =
+  'O agente parou durante o raciocínio sem concluir a resposta. Envie novamente para continuar.';
+
 function isRenderableActivity(activity: AgentActivity, running: boolean): boolean {
   if (activity.kind === 'section') {
     return false;
@@ -248,6 +251,49 @@ function AgentActivityListComponent({
     [visibleActivities],
   );
 
+  const endedDuringThought = useMemo(() => {
+    if (running) {
+      return false;
+    }
+
+    let lastResponseIndex = -1;
+    let lastThoughtIndex = -1;
+    let lastProgressIndex = -1;
+
+    for (let index = 0; index < visibleActivities.length; index += 1) {
+      const entry = visibleActivities[index];
+
+      if (!entry) {
+        continue;
+      }
+
+      if (entry.kind === 'response' && getSanitizedResponseLabel(entry.label)) {
+        lastResponseIndex = index;
+        lastProgressIndex = index;
+        continue;
+      }
+
+      if (entry.kind === 'question' || entry.kind === 'plan') {
+        lastResponseIndex = index;
+        lastProgressIndex = index;
+        continue;
+      }
+
+      if (entry.kind === 'tool_run' || entry.kind === 'file_edit' || entry.kind === 'file_read') {
+        lastProgressIndex = index;
+        continue;
+      }
+
+      if (entry.kind === 'thought') {
+        lastThoughtIndex = index;
+      }
+    }
+
+    return lastThoughtIndex > lastResponseIndex && lastThoughtIndex >= lastProgressIndex;
+  }, [running, visibleActivities]);
+
+  const incompleteClosingMessage = INCOMPLETE_THOUGHT_CLOSING_MESSAGE;
+
   const finalResponseText = useMemo(
     () => extractAgentFinalResponseText(activities),
     [activities],
@@ -261,51 +307,28 @@ function AgentActivityListComponent({
     [visibleActivities, running],
   );
 
-  const hasResponseAfterThought = useMemo(() => {
-    const thoughtIndex = visibleActivities.findIndex((entry) => entry.kind === 'thought');
-
-    if (thoughtIndex === -1) {
-      return false;
-    }
-
-    return visibleActivities
-      .slice(thoughtIndex + 1)
-      .some((entry) => entry.kind === 'response');
-  }, [visibleActivities]);
-
-  const hasProgressAfterThought = useMemo(() => {
-    const thoughtIndex = visibleActivities.findIndex((entry) => entry.kind === 'thought');
-
-    if (thoughtIndex === -1) {
-      return false;
-    }
-
-    return visibleActivities.slice(thoughtIndex + 1).some((entry) => {
-      if (entry.kind === 'response') {
-        return true;
-      }
-
-      if (entry.kind === 'file_read' || entry.kind === 'file_edit') {
-        return Boolean(entry.filePath?.trim());
-      }
-
-      if (entry.kind === 'tool_run') {
-        return Boolean(entry.label.trim() || entry.toolCommand?.trim());
-      }
-
-      if (entry.kind === 'live_status') {
-        return Boolean(entry.label.trim());
-      }
-
-      return false;
-    });
-  }, [visibleActivities]);
-
   const renderSingleActivity = (activity: AgentActivity): ReactNode => {
         if (activity.kind === 'thought') {
+          const thoughtIndex = visibleActivities.findIndex((entry) => entry.id === activity.id);
+          const following = thoughtIndex >= 0 ? visibleActivities.slice(thoughtIndex + 1) : [];
+          const hasResponseAfter = following.some((entry) => entry.kind === 'response');
+          const hasProgressAfter = following.some((entry) => {
+            if (entry.kind === 'response') {
+              return true;
+            }
+
+            if (entry.kind === 'file_read' || entry.kind === 'file_edit') {
+              return Boolean(entry.filePath?.trim());
+            }
+
+            if (entry.kind === 'tool_run') {
+              return Boolean(entry.label.trim() || entry.toolCommand?.trim());
+            }
+
+            return false;
+          });
           const collapseThought =
-            hasResponseAfterThought ||
-            (hasProgressAfterThought && !activity.label.trim());
+            hasResponseAfter || (hasProgressAfter && !activity.label.trim());
 
           return (
             <AgentThoughtBlock
@@ -395,6 +418,10 @@ function AgentActivityListComponent({
   };
 
   const emptyResponseFallback = useMemo(() => {
+    if (endedDuringThought) {
+      return incompleteClosingMessage;
+    }
+
     if (!summary) {
       return 'O agente encerrou sem uma resposta em texto.';
     }
@@ -404,7 +431,13 @@ function AgentActivityListComponent({
     }
 
     return 'O agente encerrou sem uma resposta em texto.';
-  }, [summary]);
+  }, [endedDuringThought, incompleteClosingMessage, summary]);
+
+  const showIncompleteClosing =
+    !running &&
+    endedDuringThought &&
+    [...visibleActivities].reverse().find((entry) => entry.kind === 'response')?.label.trim() !==
+      incompleteClosingMessage;
 
   return (
     <div className='agent-view__activities'>
@@ -428,6 +461,11 @@ function AgentActivityListComponent({
 
         return <Fragment key={activity.id}>{renderSingleActivity(activity)}</Fragment>;
       })}
+      {showIncompleteClosing ? (
+        <div className='agent-view__response agent-view__response--settled app-button--enter'>
+          {incompleteClosingMessage}
+        </div>
+      ) : null}
       {showSummary && summary && !hasVisibleResponse ? (
         <>
           <div className='agent-view__response agent-view__response--settled app-button--enter'>
@@ -437,7 +475,7 @@ function AgentActivityListComponent({
         </>
       ) : null}
       {running && visibleActivities.length === 0 ? (
-        <div className='agent-view__status-line agent-view__status-line--live app-button--enter'>
+        <div className='agent-view__status-line agent-view__status-line--pending'>
           Executando agent…
         </div>
       ) : null}

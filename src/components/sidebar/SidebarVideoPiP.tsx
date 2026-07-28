@@ -947,7 +947,7 @@ function SidebarVideoPiPComponent({ session, onClose }: SidebarVideoPiPProps) {
                   httpreferrer: 'https://www.youtube.com/',
                 }
               : {})}
-            allowpopups
+            allowpopups={'true' as unknown as boolean}
             webpreferences='contextIsolation=yes,javascript=yes,sandbox=no,backgroundThrottling=no'
           />
           {renderLoadingOverlay()}

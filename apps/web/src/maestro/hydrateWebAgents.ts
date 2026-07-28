@@ -82,6 +82,7 @@ export function hydrateWebAgentsFromBundles(bundles: AgentSessionBundle[]): WebA
       cursorSessionId,
       modelId: session.model_id || 'auto',
       modeId: 'agent',
+      source: session.source === 'desktop_pane' ? 'desktop_pane' : 'cloud',
       stream: '',
       status: mapSessionStatus(session.status, hasRunningExecution),
       createdAt: new Date(session.created_at).getTime(),

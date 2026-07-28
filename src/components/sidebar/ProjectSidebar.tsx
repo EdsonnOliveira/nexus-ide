@@ -28,6 +28,7 @@ import { SidebarMailPanel } from '@/components/sidebar/SidebarMailPanel';
 import { SidebarCalendarEvents } from '@/components/sidebar/SidebarCalendarEvents';
 import { SidebarVercelDeployCard } from '@/components/sidebar/SidebarVercelDeployCard';
 import { SidebarMobileReleaseCard } from '@/components/sidebar/SidebarMobileReleaseCard';
+import { SidebarVercelDeploysPopup } from '@/components/sidebar/SidebarVercelDeploysPopup';
 import { SidebarVercelIcon } from '@/components/sidebar/SidebarVercelIcon';
 import { SidebarVercelTokenPopup } from '@/components/sidebar/SidebarVercelTokenPopup';
 import { WorkspaceMenu } from '@/components/sidebar/WorkspaceMenu';
@@ -157,8 +158,9 @@ function ProjectSidebarComponent() {
   const [mailPopupOpen, setMailPopupOpen] = useState(false);
   const [mailPopupAnchor, setMailPopupAnchor] = useState<DOMRect | null>(null);
   const [mailPopupOpensOnSave, setMailPopupOpensOnSave] = useState(true);
-  const [vercelPopupOpen, setVercelPopupOpen] = useState(false);
+  const [vercelPopupMode, setVercelPopupMode] = useState<'deploys' | 'token' | null>(null);
   const [vercelPopupAnchor, setVercelPopupAnchor] = useState<DOMRect | null>(null);
+  const vercelReopenDeploysAfterTokenRef = useRef(false);
   const [musicPlayerOpen, setMusicPlayerOpen] = useState(false);
   const musicPlayerOpenTick = useGlobalSearchStore((state) => state.musicPlayerOpenTick);
   const [projectListAnimationKey, setProjectListAnimationKey] = useState(0);
@@ -541,7 +543,7 @@ function ProjectSidebarComponent() {
     [mailPopupOpensOnSave, setActiveProjectMailInbox],
   );
 
-  const openVercelPopup = useCallback(() => {
+  const openVercelPopup = useCallback((mode: 'deploys' | 'token') => {
     const rect = vercelButtonRef.current?.getBoundingClientRect();
 
     if (!rect) {
@@ -549,17 +551,30 @@ function ProjectSidebarComponent() {
     }
 
     setVercelPopupAnchor(rect);
-    setVercelPopupOpen(true);
+    setVercelPopupMode(mode);
   }, []);
 
   const handleCloseVercelPopup = useCallback(() => {
-    setVercelPopupOpen(false);
+    if (vercelReopenDeploysAfterTokenRef.current) {
+      vercelReopenDeploysAfterTokenRef.current = false;
+      openVercelPopup('deploys');
+      return;
+    }
+
+    setVercelPopupMode(null);
     setVercelPopupAnchor(null);
-  }, []);
+  }, [openVercelPopup]);
 
   const handleVercelClick = useCallback(() => {
-    openVercelPopup();
-  }, [openVercelPopup]);
+    if (vercelPopupMode) {
+      vercelReopenDeploysAfterTokenRef.current = false;
+      setVercelPopupMode(null);
+      setVercelPopupAnchor(null);
+      return;
+    }
+
+    openVercelPopup(vercelTokenConfigured ? 'deploys' : 'token');
+  }, [openVercelPopup, vercelPopupMode, vercelTokenConfigured]);
 
   const handleVercelContextMenu = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -568,17 +583,24 @@ function ProjectSidebarComponent() {
       }
 
       event.preventDefault();
-      openVercelPopup();
+      openVercelPopup('token');
     },
     [openVercelPopup, vercelTokenConfigured],
   );
 
+  const handleVercelConfigure = useCallback(() => {
+    vercelReopenDeploysAfterTokenRef.current = true;
+    openVercelPopup('token');
+  }, [openVercelPopup]);
+
   const handleVercelTokenSaved = useCallback(() => {
     void refreshVercelTokenConfigured();
     void refreshVercelDeployments();
+    vercelReopenDeploysAfterTokenRef.current = true;
   }, [refreshVercelDeployments, refreshVercelTokenConfigured]);
 
   const handleVercelTokenCleared = useCallback(() => {
+    vercelReopenDeploysAfterTokenRef.current = false;
     void refreshVercelTokenConfigured();
     void refreshVercelDeployments();
   }, [refreshVercelDeployments, refreshVercelTokenConfigured]);
@@ -1110,7 +1132,11 @@ function ProjectSidebarComponent() {
         ))}
 
         {vercelActiveDeployment ? (
-          <SidebarVercelDeployCard deployment={vercelActiveDeployment} onDismiss={dismissVercelDeployCard} />
+          <SidebarVercelDeployCard
+            deployment={vercelActiveDeployment}
+            onDismiss={dismissVercelDeployCard}
+            onConfigure={handleVercelConfigure}
+          />
         ) : null}
 
         <SidebarCalendarEvents />
@@ -1165,7 +1191,7 @@ function ProjectSidebarComponent() {
           <button
             ref={vercelButtonRef}
             type='button'
-            className={`sidebar__action-btn app-button app-button--enter${vercelPopupOpen || vercelTokenConfigured ? ' sidebar__action-btn--active' : ''}`}
+            className={`sidebar__action-btn app-button app-button--enter${vercelPopupMode ? ' sidebar__action-btn--active' : ''}`}
             aria-label='Vercel'
             title='Vercel'
             onClick={handleVercelClick}
@@ -1208,7 +1234,15 @@ function ProjectSidebarComponent() {
         />
       ) : null}
 
-      {vercelPopupOpen && vercelPopupAnchor ? (
+      {vercelPopupMode === 'deploys' && vercelPopupAnchor ? (
+        <SidebarVercelDeploysPopup
+          anchorRect={vercelPopupAnchor}
+          onClose={handleCloseVercelPopup}
+          onConfigure={handleVercelConfigure}
+        />
+      ) : null}
+
+      {vercelPopupMode === 'token' && vercelPopupAnchor ? (
         <SidebarVercelTokenPopup
           anchorRect={vercelPopupAnchor}
           tokenConfigured={vercelTokenConfigured}

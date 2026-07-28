@@ -444,10 +444,149 @@ function upsertThought(state: AgentStreamJsonParserState, delta: string): void {
   state.activities = [...state.activities, thought];
 }
 
+function hasVisibleStreamJsonProgress(state: AgentStreamJsonParserState): boolean {
+  return state.activities.some((entry) => {
+    if (entry.kind === 'thought') {
+      return true;
+    }
+
+    if (entry.kind === 'file_read' || entry.kind === 'file_edit') {
+      return Boolean(entry.filePath?.trim());
+    }
+
+    if (entry.kind === 'tool_run' || entry.kind === 'live_status' || entry.kind === 'status') {
+      return Boolean(entry.label.trim() || entry.toolCommand?.trim());
+    }
+
+    if (entry.kind === 'response') {
+      return Boolean(entry.label.trim());
+    }
+
+    if (entry.kind === 'question' || entry.kind === 'plan') {
+      return true;
+    }
+
+    return false;
+  });
+}
+
+function pruneEmptyThoughtPlaceholders(state: AgentStreamJsonParserState): boolean {
+  const hasOtherProgress = state.activities.some((entry) => {
+    if (entry.kind === 'thought') {
+      return Boolean(entry.label.trim());
+    }
+
+    if (entry.kind === 'file_read' || entry.kind === 'file_edit') {
+      return Boolean(entry.filePath?.trim());
+    }
+
+    if (entry.kind === 'tool_run' || entry.kind === 'live_status' || entry.kind === 'status') {
+      return Boolean(entry.label.trim() || entry.toolCommand?.trim());
+    }
+
+    if (entry.kind === 'response') {
+      return Boolean(entry.label.trim());
+    }
+
+    return entry.kind === 'question' || entry.kind === 'plan';
+  });
+
+  if (!hasOtherProgress) {
+    return false;
+  }
+
+  const next = state.activities.filter(
+    (entry) => !(entry.kind === 'thought' && !entry.label.trim()),
+  );
+
+  if (next.length === state.activities.length) {
+    return false;
+  }
+
+  state.activities = next;
+
+  if (state.thoughtId && !next.some((entry) => entry.id === state.thoughtId)) {
+    state.thoughtId = null;
+    state.thoughtStartedAt = null;
+    state.thoughtSessionStartedAt = null;
+  }
+
+  return true;
+}
+
+function ensureRunningProgressPlaceholder(state: AgentStreamJsonParserState): boolean {
+  if (hasVisibleStreamJsonProgress(state)) {
+    return false;
+  }
+
+  if (findStreamingThoughtActivity(state)?.streaming) {
+    return false;
+  }
+
+  const thought = createActivity('thought', '', {
+    streaming: true,
+    collapsed: false,
+  });
+
+  state.thoughtId = thought.id;
+  state.thoughtStartedAt = thought.createdAt;
+  state.thoughtSessionStartedAt = thought.createdAt;
+  state.activities = [...state.activities, thought];
+  return true;
+}
+
 function settleThought(state: AgentStreamJsonParserState): void {
   const thought = findStreamingThoughtActivity(state) ?? findLatestThoughtActivity(state);
 
   if (!thought) {
+    return;
+  }
+
+  if (!thought.label.trim()) {
+    const hasOtherProgress = state.activities.some((entry) => {
+      if (entry.id === thought.id) {
+        return false;
+      }
+
+      if (entry.kind === 'thought') {
+        return Boolean(entry.label.trim());
+      }
+
+      if (entry.kind === 'file_read' || entry.kind === 'file_edit') {
+        return Boolean(entry.filePath?.trim());
+      }
+
+      if (entry.kind === 'tool_run' || entry.kind === 'live_status' || entry.kind === 'status') {
+        return Boolean(entry.label.trim() || entry.toolCommand?.trim());
+      }
+
+      if (entry.kind === 'response') {
+        return Boolean(entry.label.trim());
+      }
+
+      return entry.kind === 'question' || entry.kind === 'plan';
+    });
+
+    if (!hasOtherProgress) {
+      state.thoughtId = thought.id;
+      state.thoughtStartedAt = state.thoughtStartedAt ?? thought.createdAt;
+      state.thoughtSessionStartedAt = state.thoughtSessionStartedAt ?? thought.createdAt;
+      state.activities = state.activities.map((entry) =>
+        entry.id === thought.id
+          ? {
+              ...entry,
+              streaming: true,
+              collapsed: false,
+            }
+          : entry,
+      );
+      return;
+    }
+
+    state.activities = state.activities.filter((entry) => entry.id !== thought.id);
+    state.thoughtId = null;
+    state.thoughtStartedAt = null;
+    state.thoughtSessionStartedAt = null;
     return;
   }
 
@@ -467,6 +606,8 @@ function settleThought(state: AgentStreamJsonParserState): void {
   );
 
   state.thoughtId = null;
+  state.thoughtStartedAt = null;
+  state.thoughtSessionStartedAt = null;
 }
 
 function sealActiveResponseSegment(state: AgentStreamJsonParserState): void {
@@ -1315,7 +1456,10 @@ function handleStreamJsonEvent(state: AgentStreamJsonParserState, event: Record<
 
       if (
         !hasPendingStreamJsonInteraction(state) &&
-        hasMeaningfulStreamJsonTurnOutput(state)
+        hasMeaningfulStreamJsonTurnOutput(state) &&
+        !hasIncompleteStreamJsonEnding(state) &&
+        !findStreamingThoughtActivity(state)?.streaming &&
+        state.runningToolRunStack.length === 0
       ) {
         state.shouldFinalize = true;
         // #region agent log
@@ -1339,7 +1483,12 @@ function handleStreamJsonEvent(state: AgentStreamJsonParserState, event: Record<
       upsertResponse(state, resultText, false);
     }
 
-    if (!hasPendingStreamJsonInteraction(state)) {
+    if (
+      !hasPendingStreamJsonInteraction(state) &&
+      !hasIncompleteStreamJsonEnding(state) &&
+      !findStreamingThoughtActivity(state)?.streaming &&
+      state.runningToolRunStack.length === 0
+    ) {
       state.shouldFinalize = true;
       // #region agent log
       writeDebugSessionLog({
@@ -1467,13 +1616,50 @@ export function clearStreamJsonLiveStatus(state: AgentStreamJsonParserState): bo
   return true;
 }
 
+function hasStableStreamJsonProgressUi(state: AgentStreamJsonParserState): boolean {
+  return hasVisibleStreamJsonProgress(state);
+}
+
+export function ensureStreamJsonStallProgressUi(state: AgentStreamJsonParserState): boolean {
+  if (state.runningToolRunStack.length > 0) {
+    return false;
+  }
+
+  if (state.activities.some((entry) => entry.kind === 'tool_run' && entry.streaming)) {
+    return false;
+  }
+
+  let changed = false;
+
+  if (state.responseId) {
+    sealActiveResponseSegment(state);
+    changed = true;
+  }
+
+  if (findStreamingThoughtActivity(state)?.streaming) {
+    if (clearStreamJsonLiveStatus(state)) {
+      changed = true;
+    }
+
+    return changed;
+  }
+
+  if (ensureRunningProgressPlaceholder(state)) {
+    changed = true;
+  }
+
+  if (clearStreamJsonLiveStatus(state)) {
+    changed = true;
+  }
+
+  return changed;
+}
+
 export function resolveStreamJsonStallLiveStatus(
   state: AgentStreamJsonParserState,
   idleMs: number,
 ): string | null {
-  const streamingThought = findStreamingThoughtActivity(state);
-
-  if (streamingThought?.streaming && streamingThought.label.trim()) {
+  if (findStreamingThoughtActivity(state)?.streaming) {
     return null;
   }
 
@@ -1485,14 +1671,14 @@ export function resolveStreamJsonStallLiveStatus(
     return null;
   }
 
+  if (hasStableStreamJsonProgressUi(state)) {
+    return null;
+  }
+
   const idleSeconds = Math.max(1, Math.round(idleMs / 1000));
 
   if (state.pendingResponseText.trim() || state.responseId) {
     return `Agent executando… (${idleSeconds}s)`;
-  }
-
-  if (streamingThought?.streaming && !streamingThought.label.trim()) {
-    return `Agent trabalhando… (${idleSeconds}s)`;
   }
 
   return `Aguardando resposta do agent… (${idleSeconds}s)`;
@@ -1519,6 +1705,11 @@ export function feedAgentStreamJsonChunk(
 
   state.jsonBuffer += chunk;
   consumeJsonObjects(state);
+  pruneEmptyThoughtPlaceholders(state);
+
+  if (!state.shouldFinalize) {
+    ensureRunningProgressPlaceholder(state);
+  }
 
   const nextActivitySignature = getStreamActivitySignature(state.activities);
   const hasUpdate =
@@ -1562,6 +1753,10 @@ export function isAgentStreamJsonStateAwaitingCompletion(
     return true;
   }
 
+  if (hasIncompleteStreamJsonEnding(state)) {
+    return true;
+  }
+
   if (
     !hasMeaningfulStreamJsonTurnOutput(state) &&
     state.activities.some((entry) => entry.kind === 'thought')
@@ -1594,6 +1789,10 @@ export function tryMarkStreamJsonReadyToFinalize(state: AgentStreamJsonParserSta
   }
 
   if (findStreamingThoughtActivity(state)?.streaming) {
+    return false;
+  }
+
+  if (hasIncompleteStreamJsonEnding(state)) {
     return false;
   }
 
@@ -1631,10 +1830,76 @@ export function tryMarkStreamJsonReadyToFinalize(state: AgentStreamJsonParserSta
   return true;
 }
 
+function hasIncompleteStreamJsonEnding(
+  state: AgentStreamJsonParserState,
+  activities: AgentActivity[] = state.activities,
+): boolean {
+  if (hasPendingStreamJsonInteraction(state, activities)) {
+    return false;
+  }
+
+  let lastResponseIndex = -1;
+  let lastThoughtIndex = -1;
+  let lastProgressIndex = -1;
+
+  for (let index = 0; index < activities.length; index += 1) {
+    const entry = activities[index];
+
+    if (!entry) {
+      continue;
+    }
+
+    if (entry.kind === 'response' && entry.label.trim()) {
+      lastResponseIndex = index;
+      lastProgressIndex = index;
+      continue;
+    }
+
+    if (entry.kind === 'question' || entry.kind === 'plan') {
+      lastResponseIndex = index;
+      lastProgressIndex = index;
+      continue;
+    }
+
+    if (
+      entry.kind === 'tool_run' ||
+      entry.kind === 'file_edit' ||
+      entry.kind === 'file_read'
+    ) {
+      lastProgressIndex = index;
+      continue;
+    }
+
+    if (entry.kind !== 'thought' || !entry.label.trim()) {
+      continue;
+    }
+
+    lastThoughtIndex = index;
+  }
+
+  if (lastThoughtIndex <= lastResponseIndex || lastThoughtIndex < lastProgressIndex) {
+    return false;
+  }
+
+  return true;
+}
+
+export function hasIncompleteStreamJsonTurnEnding(
+  state: AgentStreamJsonParserState,
+  activities: AgentActivity[] = state.activities,
+): boolean {
+  return hasIncompleteStreamJsonEnding(state, activities);
+}
+
 function resolveIncompleteStreamJsonResponseFallback(
   state: AgentStreamJsonParserState,
   activities: AgentActivity[],
+  options?: { trailingThought?: boolean },
 ): string {
+  if (options?.trailingThought || hasIncompleteStreamJsonEnding(state, activities)) {
+    return 'O agente parou durante o raciocínio sem concluir a resposta. Envie novamente para continuar.';
+  }
+
   if (state.responseLead?.trim() || state.pendingResponseText.trim()) {
     return 'Alterações aplicadas.';
   }
@@ -1687,16 +1952,23 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
   state.jsonBuffer = '';
 
   const sourceActivities = state.activities.length > 0 ? state.activities : turn.activities;
+  const endedDuringThought = hasIncompleteStreamJsonEnding(state, sourceActivities);
 
   let activities = sourceActivities
-    .filter((entry) => entry.kind !== 'live_status' && entry.kind !== 'tool_run')
+    .filter(
+      (entry) =>
+        entry.kind !== 'live_status' &&
+        entry.kind !== 'tool_run' &&
+        !(entry.kind === 'thought' && !entry.label.trim()),
+    )
     .map((entry) => {
       if (entry.kind === 'thought' && entry.streaming) {
         return {
           ...entry,
           streaming: undefined,
           collapsed: true,
-          durationMs: entry.durationMs ?? Math.max(Date.now() - turn.startedAt, 1000),
+          durationMs:
+            entry.durationMs ?? Math.max(Date.now() - (entry.createdAt || turn.startedAt), 1000),
         };
       }
 
@@ -1720,13 +1992,23 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
   activities = deduplicatePlanResponseActivities(activities);
 
   const summary = buildAgentTurnSummaryFromStreamJsonState(state);
-  const incompleteFallback = resolveIncompleteStreamJsonResponseFallback(state, activities);
+  const incompleteFallback = resolveIncompleteStreamJsonResponseFallback(state, activities, {
+    trailingThought: endedDuringThought,
+  });
   const hasPendingInteraction =
     hasPendingStreamJsonInteraction(state, activities) ||
     turn.activities.some((entry) => isPendingInteractionActivity(entry));
 
   const safeLead = sanitizeResponseText(state.responseLead?.trim() ?? '').trim();
   const safeSummaryLead = sanitizeResponseText(summary?.responseLead?.trim() ?? '').trim();
+  const lastResponseLabel = [...activities]
+    .reverse()
+    .find((entry) => entry.kind === 'response')
+    ?.label.trim();
+  const needsTrailingIncompleteResponse =
+    endedDuringThought &&
+    !hasPendingInteraction &&
+    lastResponseLabel !== incompleteFallback;
 
   if (activities.length === 0 && isAgentTurnSummaryVisible(summary)) {
     activities = [
@@ -1766,6 +2048,8 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
         safeLead || incompleteFallback,
       ),
     ];
+  } else if (needsTrailingIncompleteResponse) {
+    activities = [...activities, createActivity('response', incompleteFallback)];
   }
 
   // #region agent log

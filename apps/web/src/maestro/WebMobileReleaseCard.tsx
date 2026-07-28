@@ -63,6 +63,7 @@ function WebMobileReleaseCardComponent({
 
   const handleDismiss = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
       event.stopPropagation();
       onDismiss();
     },
@@ -107,11 +108,17 @@ function WebMobileReleaseCardComponent({
     ],
   );
 
-  const handleCardClick = useCallback(() => {
-    if (canDownload) {
-      void handleDownload();
-    }
-  }, [canDownload, handleDownload]);
+  const handleCardClick = useCallback(
+    (event: React.MouseEvent<HTMLElement>) => {
+      if ((event.target as HTMLElement).closest('button')) {
+        return;
+      }
+      if (canDownload) {
+        void handleDownload();
+      }
+    },
+    [canDownload, handleDownload],
+  );
 
   const cardClassName = `sidebar-mobile-release-card web-mobile-release-card app-button--enter${
     canDownload ? ' sidebar-mobile-release-card--copyable app-button' : ''

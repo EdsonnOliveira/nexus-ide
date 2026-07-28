@@ -5,10 +5,14 @@ export const TERMINAL_URL_HINT_LABEL_REFERENCE = 'http://localhost:3000';
 
 export const TERMINAL_URL_HINT_MAX_COUNT = 1;
 
-export const TERMINAL_URL_REGEX =
-  /https?:\/\/[^\s<>"'\x1b[\]()]+|localhost(?::\d+)?(?:\/[^\s<>"'\x1b[\]()]*)?|127\.0\.0\.1(?::\d+)?(?:\/[^\s<>"'\x1b[\]()]*)?/gi;
+const TERMINAL_URL_BODY_CHAR_CLASS = String.raw`[^\s<>"'\x1b[\]()]`;
 
-export const TERMINAL_URL_CONTINUE_REGEX = /^[a-zA-Z0-9_\-.%=&?#/:]+/;
+export const TERMINAL_URL_REGEX = new RegExp(
+  String.raw`https?:\/\/${TERMINAL_URL_BODY_CHAR_CLASS}+|localhost(?::\d+)?(?:\/${TERMINAL_URL_BODY_CHAR_CLASS}*)?|127\.0\.0\.1(?::\d+)?(?:\/${TERMINAL_URL_BODY_CHAR_CLASS}*)?`,
+  'gi',
+);
+
+export const TERMINAL_URL_CONTINUE_REGEX = new RegExp(String.raw`^${TERMINAL_URL_BODY_CHAR_CLASS}+`);
 
 export type TerminalLineTextReader = (row: number) => string | null;
 
@@ -21,7 +25,10 @@ export function stripTrailingUrlChars(value: string): string {
 }
 
 export function joinWrappedTerminalUrlLines(text: string): string {
-  return stripTerminalControlChars(text).replace(/\n(?=[a-zA-Z0-9_%.=&?#/:-])/g, '');
+  return stripTerminalControlChars(text).replace(
+    new RegExp(String.raw`\n(?=${TERMINAL_URL_BODY_CHAR_CLASS})`, 'g'),
+    '',
+  );
 }
 
 function findLastUrlMatch(text: string): RegExpExecArray | null {
@@ -37,6 +44,22 @@ function findLastUrlMatch(text: string): RegExpExecArray | null {
   return lastMatch;
 }
 
+function lineIsPureUrlContinuation(text: string): boolean {
+  const trimmedStart = text.trimStart();
+
+  if (!trimmedStart || /^https?:\/\//i.test(trimmedStart)) {
+    return false;
+  }
+
+  const continuation = trimmedStart.match(TERMINAL_URL_CONTINUE_REGEX)?.[0] ?? '';
+
+  if (!continuation) {
+    return false;
+  }
+
+  return trimmedStart.slice(continuation.length).trim() === '';
+}
+
 export function lineEndsWithUrlContinuation(
   getLineText: TerminalLineTextReader,
   row: number,
@@ -49,13 +72,12 @@ export function lineEndsWithUrlContinuation(
 
   const lastMatch = findLastUrlMatch(text);
 
-  if (!lastMatch) {
-    return false;
+  if (lastMatch) {
+    const end = (lastMatch.index ?? 0) + lastMatch[0].length;
+    return text.slice(end).trim() === '';
   }
 
-  const end = (lastMatch.index ?? 0) + lastMatch[0].length;
-
-  return text.slice(end).trim() === '';
+  return lineIsPureUrlContinuation(text);
 }
 
 export function isTerminalUrlContinuationLine(
@@ -68,21 +90,47 @@ export function isTerminalUrlContinuationLine(
 
   const text = getLineText(row) ?? '';
 
-  if (!text.trim()) {
+  if (!lineIsPureUrlContinuation(text)) {
     return false;
   }
 
-  if (/https?:\/\//i.test(text)) {
-    return false;
+  let prevRow = row - 1;
+
+  while (prevRow >= 0) {
+    const prevText = getLineText(prevRow) ?? '';
+
+    if (!prevText.trim()) {
+      return false;
+    }
+
+    const lastMatch = findLastUrlMatch(prevText);
+
+    if (lastMatch) {
+      const end = (lastMatch.index ?? 0) + lastMatch[0].length;
+
+      if (prevText.slice(end).trim() !== '') {
+        return false;
+      }
+
+      const seed = stripTrailingUrlChars(lastMatch[0]);
+      const extended = extendTerminalUrlAcrossLines(
+        getLineText,
+        prevRow,
+        lastMatch.index ?? 0,
+        seed,
+      );
+
+      return extended.endRow >= row;
+    }
+
+    if (!lineIsPureUrlContinuation(prevText)) {
+      return false;
+    }
+
+    prevRow -= 1;
   }
 
-  if (!lineEndsWithUrlContinuation(getLineText, row - 1)) {
-    return false;
-  }
-
-  const continuation = text.trimStart().match(TERMINAL_URL_CONTINUE_REGEX)?.[0] ?? '';
-
-  return continuation.length > 0;
+  return false;
 }
 
 export function extendTerminalUrlAcrossLines(

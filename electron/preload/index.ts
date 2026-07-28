@@ -129,6 +129,7 @@ const nexusApi = {
   dialog: {
     openDirectory: (): Promise<string | null> => ipcRenderer.invoke('dialog:openDirectory'),
     openImage: (): Promise<string | null> => ipcRenderer.invoke('dialog:openImage'),
+    openImages: (): Promise<string[] | null> => ipcRenderer.invoke('dialog:openImages'),
     openFile: (): Promise<string | null> => ipcRenderer.invoke('dialog:openFile'),
     openFiles: (): Promise<string[] | null> => ipcRenderer.invoke('dialog:openFiles'),
   },
@@ -302,6 +303,11 @@ const nexusApi = {
     const listener = () => callback();
     ipcRenderer.on('app:browser-reload', listener);
     return () => ipcRenderer.off('app:browser-reload', listener);
+  },
+  onBrowserFocusUrl: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('app:browser-focus-url', listener);
+    return () => ipcRenderer.off('app:browser-focus-url', listener);
   },
   onFlushSession: (callback: () => void): (() => void) => {
     const listener = () => callback();

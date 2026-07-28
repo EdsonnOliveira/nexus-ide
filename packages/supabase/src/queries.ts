@@ -775,6 +775,7 @@ export interface AgentSessionRow {
   status: string;
   cursor_chat_id: string | null;
   model_id: string | null;
+  source?: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -830,6 +831,7 @@ export async function createAgentSession(
       device_id: input.device_id,
       title: input.title,
       status: 'running',
+      source: 'cloud',
       model_id: input.model_id ?? 'auto',
       created_by: input.created_by,
     })

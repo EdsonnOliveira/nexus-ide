@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getMobileReleaseSnapshot } from '@nexus/supabase';
 import { supabase } from '../lib/supabase';
 import {
@@ -8,24 +8,35 @@ import {
 } from './mobileRelease';
 
 const POLL_INTERVAL_MS = 5_000;
-const DISMISSED_RELEASE_UID_STORAGE_KEY = 'nexus-web-mobile-dismissed-release-uid';
+const DISMISSED_RELEASE_UIDS_STORAGE_KEY = 'nexus-web-mobile-dismissed-release-uids';
+const LEGACY_DISMISSED_RELEASE_UID_STORAGE_KEY = 'nexus-web-mobile-dismissed-release-uid';
 const VISIBLE_FINISHED_MS = 60 * 60 * 1000;
 
-function readDismissedReleaseUid(): string | null {
+function readDismissedReleaseUids(): Set<string> {
   try {
-    return localStorage.getItem(DISMISSED_RELEASE_UID_STORAGE_KEY);
+    const raw = localStorage.getItem(DISMISSED_RELEASE_UIDS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed)) {
+        return new Set(parsed.filter((entry): entry is string => typeof entry === 'string'));
+      }
+    }
+
+    const legacy = localStorage.getItem(LEGACY_DISMISSED_RELEASE_UID_STORAGE_KEY);
+    if (legacy) {
+      return new Set([legacy]);
+    }
+
+    return new Set();
   } catch {
-    return null;
+    return new Set();
   }
 }
 
-function writeDismissedReleaseUid(uid: string | null): void {
+function writeDismissedReleaseUids(uids: Set<string>): void {
   try {
-    if (uid) {
-      localStorage.setItem(DISMISSED_RELEASE_UID_STORAGE_KEY, uid);
-      return;
-    }
-    localStorage.removeItem(DISMISSED_RELEASE_UID_STORAGE_KEY);
+    localStorage.setItem(DISMISSED_RELEASE_UIDS_STORAGE_KEY, JSON.stringify([...uids]));
+    localStorage.removeItem(LEGACY_DISMISSED_RELEASE_UID_STORAGE_KEY);
   } catch {
     return;
   }
@@ -34,7 +45,7 @@ function writeDismissedReleaseUid(uid: string | null): void {
 function pickVisibleRelease(
   active: MobileActiveRelease | null,
   releases: MobileActiveRelease[],
-  dismissedUid: string | null,
+  dismissedUids: Set<string>,
 ): MobileActiveRelease | null {
   const now = Date.now();
   const candidates = [active, ...releases].filter((entry): entry is MobileActiveRelease =>
@@ -48,7 +59,7 @@ function pickVisibleRelease(
 
   const visible = [...merged.values()]
     .filter((release) => {
-      if (dismissedUid && release.uid === dismissedUid) {
+      if (dismissedUids.has(release.uid)) {
         return false;
       }
       if (release.state === 'BUILDING') {
@@ -62,11 +73,36 @@ function pickVisibleRelease(
   return visible[0] ?? null;
 }
 
+function collectFinishedReleaseUids(
+  active: MobileActiveRelease | null,
+  releases: MobileActiveRelease[],
+): string[] {
+  const now = Date.now();
+  const candidates = [active, ...releases].filter((entry): entry is MobileActiveRelease =>
+    Boolean(entry),
+  );
+  const merged = new Map<string, MobileActiveRelease>();
+
+  for (const entry of candidates) {
+    merged.set(entry.uid, entry);
+  }
+
+  return [...merged.values()]
+    .filter((release) => {
+      if (release.state === 'BUILDING') {
+        return false;
+      }
+      const finishedAt = release.readyAt ?? release.createdAt;
+      return now - finishedAt <= VISIBLE_FINISHED_MS;
+    })
+    .map((release) => release.uid);
+}
+
 export function useWebMobileReleases(enabled: boolean) {
   const [activeRelease, setActiveRelease] = useState<MobileActiveRelease | null>(null);
   const [releases, setReleases] = useState<MobileActiveRelease[]>([]);
   const [deviceId, setDeviceId] = useState<string | null>(null);
-  const [dismissedUid, setDismissedUid] = useState<string | null>(() => readDismissedReleaseUid());
+  const [dismissedUids, setDismissedUids] = useState<Set<string>>(() => readDismissedReleaseUids());
   const requestIdRef = useRef(0);
 
   const refresh = useCallback(async () => {
@@ -107,12 +143,12 @@ export function useWebMobileReleases(enabled: boolean) {
 
       setReleases(parsedList);
       setDeviceId(typeof snapshot.device_id === 'string' ? snapshot.device_id : null);
-      setActiveRelease(pickVisibleRelease(parsedActive, parsedList, dismissedUid));
+      setActiveRelease(parsedActive);
       return snapshot;
     } catch {
       return null;
     }
-  }, [dismissedUid]);
+  }, []);
 
   useEffect(() => {
     if (!enabled) {
@@ -146,26 +182,33 @@ export function useWebMobileReleases(enabled: boolean) {
     };
   }, [enabled, refresh]);
 
+  const visibleRelease = useMemo(
+    () => pickVisibleRelease(activeRelease, releases, dismissedUids),
+    [activeRelease, dismissedUids, releases],
+  );
+
   const dismiss = useCallback(
     (uid?: string) => {
-      const nextUid = uid ?? activeRelease?.uid ?? null;
-      writeDismissedReleaseUid(nextUid);
-      setDismissedUid(nextUid);
-      setActiveRelease((current) => {
-        if (!current) {
-          return null;
-        }
-        if (nextUid && current.uid === nextUid) {
-          return pickVisibleRelease(null, releases, nextUid);
-        }
-        return current;
-      });
+      const targetUid = uid ?? visibleRelease?.uid;
+      if (!targetUid) {
+        return;
+      }
+
+      const next = new Set(dismissedUids);
+      next.add(targetUid);
+
+      for (const finishedUid of collectFinishedReleaseUids(activeRelease, releases)) {
+        next.add(finishedUid);
+      }
+
+      writeDismissedReleaseUids(next);
+      setDismissedUids(next);
     },
-    [activeRelease?.uid, releases],
+    [activeRelease, dismissedUids, releases, visibleRelease?.uid],
   );
 
   return {
-    activeRelease,
+    activeRelease: visibleRelease,
     releases,
     deviceId,
     dismiss,

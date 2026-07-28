@@ -22,6 +22,7 @@ export interface CloudAgentSession {
   projectColor: string;
   logoUrl: string | null;
   deviceId: string | null;
+  source: 'cloud' | 'desktop_pane';
   status: CloudAgentTurnStatus;
   createdAt: number;
   turns: CloudAgentTurn[];

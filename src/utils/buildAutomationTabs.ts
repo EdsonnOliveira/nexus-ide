@@ -14,9 +14,9 @@ import type { Automation, AutomationStep } from '@/types/automation';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import { terminalAgentToCli } from '@/utils/agentTabHelpers';
 import { AUTOMATION_API_COLLECTION_ID } from '@/utils/automationApiRequest';
-import { normalizeAutomation } from '@/utils/normalizeAutomation';
+import { isJoinWithPreviousOpenMode, normalizeAutomation } from '@/utils/normalizeAutomation';
 import { normalizeBrowserUrl } from '@/utils/browserUrl';
-import { createTabLayout } from '@/utils/splitLayout';
+import { buildGridSplitLayout, createTabLayout, getVisibleTabIds } from '@/utils/splitLayout';
 import { createBadgeColorIndex } from '@/utils/tabBadge';
 
 function countPanesByType(tabs: TabBarItem[], type: TabType): number {
@@ -84,6 +84,90 @@ export function buildBalancedSplitLayout(tabIds: string[]): SplitLayoutNode {
     right: buildBalancedSplitLayout(tabIds.slice(mid)),
     ratio: 0.5,
   };
+}
+
+function buildGroupSplitLayout(panes: Tab[], steps: AutomationStep[]): SplitLayoutNode {
+  const hasGrid = steps.some(
+    (step, index) => index > 0 && step.openMode === 'grid-with-previous',
+  );
+
+  if (!hasGrid) {
+    return buildBalancedSplitLayout(panes.map((pane) => pane.id));
+  }
+
+  let layout: SplitLayoutNode = createTabLayout(panes[0].id);
+  let gridRegionIds: string[] | null = null;
+
+  for (let index = 1; index < panes.length; index += 1) {
+    const pane = panes[index];
+    const step = steps[index];
+    const previousStep = steps[index - 1];
+
+    if (step.openMode !== 'grid-with-previous') {
+      gridRegionIds = null;
+      layout = {
+        type: 'split',
+        orientation: 'horizontal',
+        left: layout,
+        right: createTabLayout(pane.id),
+        ratio: 0.5,
+      };
+      continue;
+    }
+
+    if (gridRegionIds === null) {
+      if (layout.type === 'tab') {
+        if (previousStep.type !== step.type) {
+          gridRegionIds = [pane.id];
+          layout = {
+            type: 'split',
+            orientation: 'horizontal',
+            left: layout,
+            right: createTabLayout(pane.id),
+            ratio: 0.5,
+          };
+        } else {
+          gridRegionIds = [layout.tabId, pane.id];
+          layout = buildGridSplitLayout(gridRegionIds);
+        }
+      } else if (
+        layout.type === 'split' &&
+        layout.orientation === 'horizontal' &&
+        layout.left.type === 'tab' &&
+        getVisibleTabIds(layout.right).length === 1
+      ) {
+        gridRegionIds = [...getVisibleTabIds(layout.right), pane.id];
+        layout = {
+          ...layout,
+          right: buildGridSplitLayout(gridRegionIds),
+        };
+      } else {
+        gridRegionIds = [...getVisibleTabIds(layout), pane.id];
+        layout = buildGridSplitLayout(gridRegionIds);
+      }
+
+      continue;
+    }
+
+    gridRegionIds = [...gridRegionIds, pane.id];
+
+    if (
+      layout.type === 'split' &&
+      layout.orientation === 'horizontal' &&
+      layout.left.type === 'tab' &&
+      !gridRegionIds.includes(layout.left.tabId)
+    ) {
+      layout = {
+        ...layout,
+        right: buildGridSplitLayout(gridRegionIds),
+      };
+      continue;
+    }
+
+    layout = buildGridSplitLayout(gridRegionIds);
+  }
+
+  return layout;
 }
 
 function buildSplitTabTitle(panes: Tab[]): string {
@@ -232,7 +316,7 @@ export async function buildTabsFromAutomation(
       outputItems.push(group[0]);
     } else {
       const leaderStep = groupSteps[0];
-      const layout = buildBalancedSplitLayout(group.map((pane) => pane.id));
+      const layout = buildGroupSplitLayout(group, groupSteps);
       outputItems.push({
         id: crypto.randomUUID(),
         title: resolveStepTabTitle(leaderStep, buildSplitTabTitle(group)),
@@ -253,7 +337,7 @@ export async function buildTabsFromAutomation(
     const step = steps[index];
     const pane = panes[index];
 
-    if (index === 0 || step.openMode !== 'split-with-previous') {
+    if (index === 0 || !isJoinWithPreviousOpenMode(step.openMode)) {
       flushGroup();
       group = [pane];
       groupSteps = [step];

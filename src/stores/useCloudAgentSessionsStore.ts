@@ -34,9 +34,12 @@ export const useCloudAgentSessionsStore = create<CloudAgentSessionsState>((set) 
   mergeSessions: (incoming) =>
     set((state) => {
       const existingById = new Map(state.sessions.map((session) => [session.id, session]));
+      const next = incoming
+        .filter((session) => session.source !== 'desktop_pane')
+        .map((session) => mergeSession(existingById.get(session.id), session));
 
       return {
-        sessions: incoming.map((session) => mergeSession(existingById.get(session.id), session)),
+        sessions: next,
       };
     }),
   patchRunningTurn: (sessionId, patch) =>

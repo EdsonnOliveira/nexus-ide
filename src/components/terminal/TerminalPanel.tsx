@@ -13,6 +13,7 @@ import { WorkspaceDropOverlay } from '@/components/workspace/WorkspaceDropOverla
 import {
   useWorkspacePaneContext,
   WorkspacePaneProvider,
+  type TabDropOverlayState,
   type WorkspacePaneContextValue,
 } from '@/components/workspace/WorkspacePaneContext';
 import { TerminalFooter } from '@/components/terminal/TerminalFooter';
@@ -21,7 +22,12 @@ import { XTermView } from '@/components/terminal/XTermView';
 import type { XTermViewHandle } from '@/types';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import { parseCdCommandLine } from '@/utils/terminalCwd';
-import { collectProjectPanes, findPaneTab, resolveActiveTabBarItem } from '@/utils/tabGroups';
+import {
+  collectProjectPanes,
+  findPaneTab,
+  isSplitTab,
+  resolveActiveTabBarItem,
+} from '@/utils/tabGroups';
 import { useIsHomeAgentOverlayPane } from '@/hooks/useHomeAgentOverlayPanes';
 import { persistTerminalCwd } from '@/utils/persistTerminalSession';
 import { registerTerminalHandle } from '@/utils/terminalHandleRegistry';
@@ -80,7 +86,16 @@ import {
   resolvePaneAgentCommand,
   shouldMarkAgentAwaiting,
 } from '@/utils/projectAgentStatus';
-import type { ApiTab, EmulatorTab, Project, SplitLayoutNode, Tab, TabBarItem, AgentTab } from '@/types';
+import type {
+  ApiTab,
+  EmulatorTab,
+  Project,
+  SplitLayoutNode,
+  SplitSide,
+  Tab,
+  TabBarItem,
+  AgentTab,
+} from '@/types';
 
 const LazyAgentView = lazy(() =>
   import('@/components/agent/AgentView').then((module) => ({ default: module.AgentView })),
@@ -525,10 +540,22 @@ const ProjectPaneSlot = memo(function ProjectPaneSlotComponent({ paneId }: { pan
     isPaneVisible,
     isPaneFocused,
     isPaneRuntimeActive,
+    tabDropOverlay,
   } = useWorkspacePaneContext();
   const isHomeOverlayPane = useIsHomeAgentOverlayPane(paneId);
 
   const tab = findPaneTab(project.tabs, paneId);
+  const showPaneDropOverlay =
+    isProjectActive &&
+    isPaneVisible(paneId) &&
+    Boolean(tabDropOverlay?.targetPaneIds.includes(paneId));
+
+  const handlePaneDrop = useCallback(
+    (sourceTabId: string, side: SplitSide) => {
+      tabDropOverlay?.onDrop(sourceTabId, side, paneId);
+    },
+    [paneId, tabDropOverlay],
+  );
 
   const handleTerminalRef = useCallback(
     (handle: XTermViewHandle | null) => {
@@ -565,6 +592,13 @@ const ProjectPaneSlot = memo(function ProjectPaneSlotComponent({ paneId }: { pan
         onUpdateApiTab={onUpdateApiTab}
         onUpdateAgentTab={onUpdateAgentTab}
       />
+      {showPaneDropOverlay && tabDropOverlay ? (
+        <WorkspaceDropOverlay
+          mode={tabDropOverlay.mode}
+          variant='pane'
+          onDrop={handlePaneDrop}
+        />
+      ) : null}
     </div>
   );
 });
@@ -609,15 +643,20 @@ const WorkspaceSplit = memo(function WorkspaceSplitComponent({
       divider.setPointerCapture(event.pointerId);
 
       const rect = container.getBoundingClientRect();
-      const startX = event.clientX;
+      const isVertical = node.orientation === 'vertical';
+      const startPos = isVertical ? event.clientY : event.clientX;
       const startRatio = liveRatio ?? node.ratio;
+      const resizingClass = isVertical
+        ? 'workspace-split--resizing-row'
+        : 'workspace-split--resizing';
 
       setIsDragging(true);
-      document.body.classList.add('workspace-split--resizing');
+      document.body.classList.add(resizingClass);
 
       const handlePointerMove = (moveEvent: PointerEvent) => {
-        const delta = moveEvent.clientX - startX;
-        const nextRatio = clampSplitRatio(startRatio + delta / rect.width);
+        const delta = (isVertical ? moveEvent.clientY : moveEvent.clientX) - startPos;
+        const size = isVertical ? rect.height : rect.width;
+        const nextRatio = clampSplitRatio(startRatio + delta / size);
         setLiveRatio(nextRatio);
       };
 
@@ -625,11 +664,12 @@ const WorkspaceSplit = memo(function WorkspaceSplitComponent({
         divider.releasePointerCapture(upEvent.pointerId);
         window.removeEventListener('pointermove', handlePointerMove);
         window.removeEventListener('pointerup', handlePointerUp);
-        document.body.classList.remove('workspace-split--resizing');
+        document.body.classList.remove(resizingClass);
         setIsDragging(false);
 
-        const delta = upEvent.clientX - startX;
-        const nextRatio = clampSplitRatio(startRatio + delta / rect.width);
+        const delta = (isVertical ? upEvent.clientY : upEvent.clientX) - startPos;
+        const size = isVertical ? rect.height : rect.width;
+        const nextRatio = clampSplitRatio(startRatio + delta / size);
         setLiveRatio(nextRatio);
         onRatioCommit(splitTabId, path, nextRatio);
       };
@@ -644,8 +684,16 @@ const WorkspaceSplit = memo(function WorkspaceSplitComponent({
     return <ProjectPaneSlot paneId={node.tabId} />;
   }
 
+  const isVertical = node.orientation === 'vertical';
+  const orientationClass = isVertical
+    ? 'workspace-split--vertical'
+    : 'workspace-split--horizontal';
+  const dividerClass = isVertical
+    ? `workspace-split__divider workspace-split__divider--row${isDragging ? ' workspace-split__divider--dragging' : ''}`
+    : `workspace-split__divider${isDragging ? ' workspace-split__divider--dragging' : ''}`;
+
   return (
-    <div ref={splitRef} className='workspace-split workspace-split--horizontal'>
+    <div ref={splitRef} className={`workspace-split ${orientationClass}`}>
       <div className='workspace-split__pane' style={{ flex: splitRatio }}>
         <WorkspaceSplit
           node={node.left}
@@ -655,9 +703,9 @@ const WorkspaceSplit = memo(function WorkspaceSplitComponent({
         />
       </div>
       <div
-        className={`workspace-split__divider${isDragging ? ' workspace-split__divider--dragging' : ''}`}
+        className={dividerClass}
         role='separator'
-        aria-orientation='vertical'
+        aria-orientation={isVertical ? 'horizontal' : 'vertical'}
         aria-valuenow={Math.round(splitRatio * 100)}
         onPointerDown={handlePointerDown}
       />
@@ -674,7 +722,6 @@ const WorkspaceSplit = memo(function WorkspaceSplitComponent({
 });
 
 const KEEP_ALIVE_PANE_TYPES = new Set<Tab['type']>([
-  'browser',
   'terminal',
   'agent',
   'emulator',
@@ -781,6 +828,7 @@ interface ProjectWorkspaceProps {
   isProjectActive: boolean;
   agentSession: PaneAgentSessionSnapshot;
   terminalRefs: React.MutableRefObject<Record<string, XTermViewHandle | null>>;
+  tabDropOverlay: TabDropOverlayState | null;
   onFocusPane: (paneId: string) => void;
   onPtyCreated: (projectId: string, tabId: string, ptyId: string) => void;
   onPtyLost: (projectId: string, tabId: string) => void;
@@ -810,6 +858,7 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
   isProjectActive,
   agentSession,
   terminalRefs,
+  tabDropOverlay,
   onFocusPane,
   onPtyCreated,
   onPtyLost,
@@ -861,6 +910,7 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
       isPaneVisible: isPaneVisibleForProject,
       isPaneFocused: isPaneFocusedForProject,
       isPaneRuntimeActive: isPaneRuntimeActiveForProject,
+      tabDropOverlay: isProjectActive ? tabDropOverlay : null,
     }),
     [
       isPaneFocusedForProject,
@@ -876,6 +926,7 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
       onUpdateAgentTab,
       onUpdateEmulatorTab,
       project,
+      tabDropOverlay,
       terminalRefs,
     ],
   );
@@ -1087,8 +1138,8 @@ function TerminalPanelComponent() {
   }, []);
 
   const handleWorkspaceDrop = useCallback(
-    (sourceTabId: string, side: 'left' | 'right') => {
-      if (!sourceTabId || !activeProject) {
+    (sourceTabId: string, side: SplitSide, targetPaneId: string) => {
+      if (!sourceTabId || !activeProject || !targetPaneId) {
         return;
       }
 
@@ -1098,33 +1149,57 @@ function TerminalPanelComponent() {
         return;
       }
 
-      if (sourceTabId === activeTabItem.id) {
+      if (sourceTabId === activeTabItem.id || sourceTabId === targetPaneId) {
         return;
       }
 
-      void splitTab(sourceTabId, activeTabItem.id, side);
+      void splitTab(sourceTabId, activeTabItem.id, side, targetPaneId);
       setDraggedTabId(null);
     },
     [activeProject, splitTab],
   );
 
-  const showDropOverlay = useMemo(() => {
+  const tabDropOverlay = useMemo<TabDropOverlayState | null>(() => {
     if (!draggedTabId || !activeProject) {
-      return false;
+      return null;
     }
 
     const activeTabItem = resolveActiveTabBarItem(activeProject.tabs, activeProject.activeTabId);
 
     if (!activeTabItem) {
-      return false;
+      return null;
     }
 
     if (draggedTabId === activeTabItem.id) {
-      return false;
+      return null;
     }
 
-    return activeProject.tabs.length >= 2;
-  }, [activeProject, draggedTabId]);
+    if (activeProject.tabs.length < 2) {
+      return null;
+    }
+
+    if (isSplitTab(activeTabItem)) {
+      const targetPaneIds = activeTabItem.panes
+        .map((pane) => pane.id)
+        .filter((paneId) => paneId !== draggedTabId);
+
+      if (targetPaneIds.length === 0) {
+        return null;
+      }
+
+      return {
+        mode: 'quadrants',
+        targetPaneIds,
+        onDrop: handleWorkspaceDrop,
+      };
+    }
+
+    return {
+      mode: 'sides',
+      targetPaneIds: [activeTabItem.id],
+      onDrop: handleWorkspaceDrop,
+    };
+  }, [activeProject, draggedTabId, handleWorkspaceDrop]);
 
   useEffect(() => {
     if (!draggedTabId) {
@@ -1418,6 +1493,7 @@ function TerminalPanelComponent() {
                   isProjectActive={false}
                   agentSession={agentSession}
                   terminalRefs={terminalRefs}
+                  tabDropOverlay={null}
                   onFocusPane={handleFocusPane}
                   onPtyCreated={handlePtyCreated}
                   onPtyLost={handlePtyLost}
@@ -1556,6 +1632,7 @@ function TerminalPanelComponent() {
                     isProjectActive={project.id === activeProjectId}
                     agentSession={agentSession}
                     terminalRefs={terminalRefs}
+                    tabDropOverlay={project.id === activeProjectId ? tabDropOverlay : null}
                     onFocusPane={handleFocusPane}
                     onPtyCreated={handlePtyCreated}
                     onPtyLost={handlePtyLost}
@@ -1572,7 +1649,6 @@ function TerminalPanelComponent() {
           ) : (
             <div className='terminal-panel__view terminal-panel__view--active' />
           )}
-          {showDropOverlay ? <WorkspaceDropOverlay onDrop={handleWorkspaceDrop} /> : null}
         </div>
       )}
     </div>

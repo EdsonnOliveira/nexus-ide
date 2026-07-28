@@ -28,28 +28,34 @@ function normalizeRelativePath(value: string): string {
   return value.replace(/\\/g, '/').replace(/^\/+/, '');
 }
 
-export const useTerminalPasteImageStore = create<TerminalPasteImageState>((set, get) => ({
+export const useTerminalPasteImageStore = create<TerminalPasteImageState>((set) => ({
   imagesByPane: {},
   confirmedInPromptByPane: {},
   addImage: (paneId, dataUrl, saved) => {
-    const current = get().imagesByPane[paneId] ?? [];
-    const nextImage: TerminalPasteImage = {
-      id: current.length + 1,
-      label: `Image #${current.length + 1}`,
-      dataUrl,
-      relativePath: normalizeRelativePath(saved.relativePath),
-      absolutePath: saved.absolutePath,
-      addedAt: Date.now(),
-    };
+    let created: TerminalPasteImage | null = null;
 
-    set((state) => ({
-      imagesByPane: {
-        ...state.imagesByPane,
-        [paneId]: [...current, nextImage],
-      },
-    }));
+    set((state) => {
+      const current = state.imagesByPane[paneId] ?? [];
+      const nextImage: TerminalPasteImage = {
+        id: current.length + 1,
+        label: `Image #${current.length + 1}`,
+        dataUrl,
+        relativePath: normalizeRelativePath(saved.relativePath),
+        absolutePath: saved.absolutePath,
+        addedAt: Date.now(),
+      };
 
-    return nextImage;
+      created = nextImage;
+
+      return {
+        imagesByPane: {
+          ...state.imagesByPane,
+          [paneId]: [...current, nextImage],
+        },
+      };
+    });
+
+    return created!;
   },
   removeImage: (paneId, imageId) => {
     set((state) => {

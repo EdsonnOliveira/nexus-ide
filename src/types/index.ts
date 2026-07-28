@@ -359,11 +359,15 @@ export interface SplitTab {
 
 export type TabBarItem = Tab | SplitTab;
 
+export type SplitOrientation = 'horizontal' | 'vertical';
+
+export type SplitSide = 'left' | 'right' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+
 export type SplitLayoutNode =
   | { type: 'tab'; tabId: string }
   | {
       type: 'split';
-      orientation: 'horizontal';
+      orientation: SplitOrientation;
       left: SplitLayoutNode;
       right: SplitLayoutNode;
       ratio: number;
@@ -860,6 +864,7 @@ export interface NexusAPI {
   dialog: {
     openDirectory: () => Promise<string | null>;
     openImage: () => Promise<string | null>;
+    openImages: () => Promise<string[] | null>;
     openFile: () => Promise<string | null>;
     openFiles: () => Promise<string[] | null>;
   };
@@ -1088,6 +1093,7 @@ export interface NexusAPI {
   onOpenTabAddMenu: (callback: () => void) => () => void;
   onOpenGlobalSearch: (callback: () => void) => () => void;
   onBrowserReload: (callback: () => void) => () => void;
+  onBrowserFocusUrl: (callback: () => void) => () => void;
   onFlushSession: (callback: () => void) => () => void;
   music: {
     getNowPlaying: () => Promise<AppleMusicNowPlaying>;

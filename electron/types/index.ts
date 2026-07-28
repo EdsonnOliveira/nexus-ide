@@ -288,11 +288,15 @@ export interface FileTab {
 
 export type Tab = TerminalTab | AgentTab | BrowserTab | FileTab | EmulatorTab | ApiTab;
 
+export type SplitOrientation = 'horizontal' | 'vertical';
+
+export type SplitSide = 'left' | 'right' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+
 export type SplitLayoutNode =
   | { type: 'tab'; tabId: string }
   | {
       type: 'split';
-      orientation: 'horizontal';
+      orientation: SplitOrientation;
       left: SplitLayoutNode;
       right: SplitLayoutNode;
       ratio: number;
@@ -313,7 +317,7 @@ export type TabBarItem = Tab | SplitTab;
 
 export type AutomationStepType = 'terminal' | 'agent' | 'browser' | 'emulator' | 'api';
 export type AutomationTrigger = 'manual' | 'interval';
-export type AutomationStepOpenMode = 'separate' | 'split-with-previous';
+export type AutomationStepOpenMode = 'separate' | 'split-with-previous' | 'grid-with-previous';
 
 export type AutomationHttpMethod =
   | 'GET'

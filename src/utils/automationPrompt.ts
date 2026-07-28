@@ -13,9 +13,13 @@ import { normalizeAutomationSteps } from '@/utils/normalizeAutomation';
 const PROMPT_VERSION = 1;
 
 const STEP_TYPES: AutomationStepType[] = ['terminal', 'agent', 'browser', 'emulator', 'api'];
-const TRIGGERS: AutomationTrigger[] = ['manual', 'interval', 'app_open'];
+const TRIGGERS: AutomationTrigger[] = ['manual', 'interval'];
 const AGENT_MODES: AutomationAgentMode[] = ['agent', 'plan', 'debug', 'multitask', 'ask'];
-const OPEN_MODES: AutomationStepOpenMode[] = ['separate', 'split-with-previous'];
+const OPEN_MODES: AutomationStepOpenMode[] = [
+  'separate',
+  'split-with-previous',
+  'grid-with-previous',
+];
 const HTTP_METHODS: AutomationHttpMethod[] = [
   'GET',
   'POST',

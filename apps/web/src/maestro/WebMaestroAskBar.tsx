@@ -11,6 +11,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowUp, AtSign, Bot, FolderKanban, Globe, Layers, Paperclip, X } from 'lucide-react';
 import type { CloudProject, DeviceRecord } from '@nexus/protocol';
 import type { WebAgentSession } from '../store';
@@ -41,6 +42,9 @@ interface WebMaestroAskBarProps {
   onAgentFilterChange: (projectId: string | null) => void;
   submitting: boolean;
   onSubmit: (prompt: string, imageDataUrls?: string[]) => boolean | Promise<boolean>;
+  desktopAgents: WebAgentSession[];
+  onSelectAgent: (agentId: string) => void;
+  onRequestDesktopAgents: () => void | Promise<void>;
 }
 
 interface OpenAgentProjectEntry {
@@ -125,6 +129,9 @@ export function WebMaestroAskBar({
   onAgentFilterChange,
   submitting,
   onSubmit,
+  desktopAgents,
+  onSelectAgent,
+  onRequestDesktopAgents,
 }: WebMaestroAskBarProps) {
   const [prompt, setPrompt] = useState('');
   const [pendingImages, setPendingImages] = useState<WebPendingAskImage[]>([]);
@@ -132,9 +139,20 @@ export function WebMaestroAskBar({
   const [dropActive, setDropActive] = useState(false);
   const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
   const [previewImageName, setPreviewImageName] = useState('imagem.png');
+  const [desktopAgentsPhase, setDesktopAgentsPhase] = useState<'closed' | 'in' | 'out'>('closed');
+  const [desktopAgentsLoading, setDesktopAgentsLoading] = useState(false);
+  const [desktopAgentsMenuRect, setDesktopAgentsMenuRect] = useState<{
+    left: number;
+    top?: number;
+    bottom?: number;
+    maxHeight: number;
+    openUp: boolean;
+  } | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const askFormRef = useRef<HTMLFormElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const desktopAgentsTriggerRef = useRef<HTMLButtonElement>(null);
+  const desktopAgentsMenuRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef(prompt);
   const pendingImagesRef = useRef(pendingImages);
   const submitInFlightRef = useRef(false);
@@ -330,7 +348,109 @@ export function WebMaestroAskBar({
     return Array.from(byKey.values());
   }, [agents, projects]);
 
+  const desktopAgentsForProject = useMemo(
+    () =>
+      desktopAgents.filter(
+        (agent) => Boolean(projectId) && agent.projectId === projectId,
+      ),
+    [desktopAgents, projectId],
+  );
+
   const showOpenAgentProjects = openAgentProjects.length >= 2;
+
+  const updateDesktopAgentsMenuPosition = useCallback(() => {
+    const trigger = desktopAgentsTriggerRef.current;
+    if (!trigger) {
+      return;
+    }
+    const rect = trigger.getBoundingClientRect();
+    const gap = 6;
+    const spaceAbove = rect.top - gap;
+    const spaceBelow = window.innerHeight - rect.bottom - gap;
+    const openUp = spaceAbove >= spaceBelow || spaceBelow < 220;
+    const maxHeight = Math.min(280, Math.max(140, openUp ? spaceAbove : spaceBelow));
+    const width = 300;
+    let left = rect.left;
+    if (left + width > window.innerWidth - 12) {
+      left = Math.max(12, window.innerWidth - width - 12);
+    }
+    setDesktopAgentsMenuRect(
+      openUp
+        ? {
+            left,
+            bottom: window.innerHeight - rect.top + gap,
+            maxHeight,
+            openUp: true,
+          }
+        : {
+            left,
+            top: rect.bottom + gap,
+            maxHeight,
+            openUp: false,
+          },
+    );
+  }, []);
+
+  const closeDesktopAgentsMenu = useCallback(() => {
+    setDesktopAgentsPhase((current) => (current === 'closed' ? current : 'out'));
+  }, []);
+
+  const openDesktopAgentsMenu = useCallback(async () => {
+    const trigger = desktopAgentsTriggerRef.current;
+    if (!trigger || !projectId || submitting) {
+      return;
+    }
+    updateDesktopAgentsMenuPosition();
+    setDesktopAgentsPhase('in');
+    setDesktopAgentsLoading(true);
+    try {
+      await onRequestDesktopAgents();
+    } finally {
+      setDesktopAgentsLoading(false);
+      updateDesktopAgentsMenuPosition();
+    }
+  }, [onRequestDesktopAgents, projectId, submitting, updateDesktopAgentsMenuPosition]);
+
+  useEffect(() => {
+    if (desktopAgentsPhase !== 'in') {
+      return;
+    }
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        desktopAgentsTriggerRef.current?.contains(target) ||
+        desktopAgentsMenuRef.current?.contains(target)
+      ) {
+        return;
+      }
+      closeDesktopAgentsMenu();
+    };
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeDesktopAgentsMenu();
+      }
+    };
+    window.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('mousedown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [closeDesktopAgentsMenu, desktopAgentsPhase]);
+
+  useLayoutEffect(() => {
+    if (desktopAgentsPhase === 'closed') {
+      return;
+    }
+    updateDesktopAgentsMenuPosition();
+    const sync = () => updateDesktopAgentsMenuPosition();
+    window.addEventListener('resize', sync);
+    window.addEventListener('scroll', sync, true);
+    return () => {
+      window.removeEventListener('resize', sync);
+      window.removeEventListener('scroll', sync, true);
+    };
+  }, [desktopAgentsPhase, desktopAgentsForProject.length, desktopAgentsLoading, updateDesktopAgentsMenuPosition]);
 
   useEffect(() => {
     const { prompt: nextPrompt, pendingImages: nextImages } = renumberWebAgentPromptImages(
@@ -700,6 +820,27 @@ export function WebMaestroAskBar({
               }
             }}
           />
+          <button
+            ref={desktopAgentsTriggerRef}
+            type='button'
+            className={`home-dashboard__ask-desktop-agents app-button app-button--enter${
+              desktopAgentsPhase === 'in' ? ' home-dashboard__ask-desktop-agents--open' : ''
+            }`}
+            aria-label='Agents ativos no Desktop'
+            aria-haspopup='menu'
+            aria-expanded={desktopAgentsPhase === 'in'}
+            title='Agents ativos no Desktop'
+            disabled={!projectId || submitting}
+            onClick={() => {
+              if (desktopAgentsPhase === 'in') {
+                closeDesktopAgentsMenu();
+                return;
+              }
+              void openDesktopAgentsMenu();
+            }}
+          >
+            <Bot size={16} strokeWidth={2} aria-hidden='true' />
+          </button>
           <WebMacSelect
             devices={devices}
             deviceId={deviceId}
@@ -789,6 +930,81 @@ export function WebMaestroAskBar({
           onClose={handleClosePreview}
         />
       ) : null}
+      {desktopAgentsPhase !== 'closed' && desktopAgentsMenuRect
+        ? createPortal(
+            <div
+              ref={desktopAgentsMenuRef}
+              className={`web-desktop-agents-popup context-menu overlay-popup overlay-popup--${desktopAgentsPhase}${
+                desktopAgentsMenuRect.openUp
+                  ? ' web-desktop-agents-popup--up'
+                  : ' web-desktop-agents-popup--down'
+              }`}
+              role='menu'
+              aria-label='Agents ativos no Desktop'
+              style={{
+                left: desktopAgentsMenuRect.left,
+                maxHeight: desktopAgentsMenuRect.maxHeight,
+                ...(desktopAgentsMenuRect.openUp
+                  ? { bottom: desktopAgentsMenuRect.bottom, top: 'auto' }
+                  : { top: desktopAgentsMenuRect.top, bottom: 'auto' }),
+              }}
+              onAnimationEnd={() => {
+                if (desktopAgentsPhase === 'out') {
+                  setDesktopAgentsPhase('closed');
+                  setDesktopAgentsMenuRect(null);
+                }
+              }}
+            >
+              <div className='web-desktop-agents-popup__header'>Agents no Desktop</div>
+              {desktopAgentsLoading ? (
+                <div className='web-desktop-agents-popup__empty'>Atualizando…</div>
+              ) : desktopAgentsForProject.length === 0 ? (
+                <div className='empty-state web-desktop-agents-popup__empty-state'>
+                  <div className='empty-state__icon'>
+                    <Bot size={22} aria-hidden='true' />
+                  </div>
+                  <p className='empty-state__message'>Nenhum agent ativo neste projeto</p>
+                </div>
+              ) : (
+                <ul className='web-desktop-agents-popup__list'>
+                  {desktopAgentsForProject.map((agent) => (
+                    <li key={agent.id}>
+                      <button
+                        type='button'
+                        className='web-desktop-agents-popup__item app-button app-button--enter'
+                        role='menuitem'
+                        onClick={() => {
+                          onSelectAgent(agent.id);
+                          closeDesktopAgentsMenu();
+                        }}
+                      >
+                        <Bot
+                          size={14}
+                          strokeWidth={2.25}
+                          className='web-desktop-agents-popup__item-icon'
+                          aria-hidden='true'
+                        />
+                        <span className='web-desktop-agents-popup__item-title'>
+                          {agent.prompt || 'Agent'}
+                        </span>
+                        <span
+                          className={`web-desktop-agents-popup__item-status web-desktop-agents-popup__item-status--${agent.status}`}
+                        >
+                          {agent.status === 'running'
+                            ? 'Executando'
+                            : agent.status === 'error'
+                              ? 'Erro'
+                              : 'Aberto'}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

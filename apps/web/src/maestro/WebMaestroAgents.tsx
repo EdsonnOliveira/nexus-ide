@@ -9,6 +9,8 @@ import { WebAgentShellTerminals } from './WebAgentShellTerminals';
 interface WebMaestroAgentsProps {
   agents: WebAgentSession[];
   deviceId: string | null;
+  focusedAgentId?: string | null;
+  onFocusedAgentHandled?: () => void;
   onRemove: (id: string) => void;
   onFollowUp: (agentId: string, prompt: string) => boolean | Promise<boolean>;
   onStop: (agentId: string) => void;
@@ -96,6 +98,7 @@ function AgentCloseConfirm({
 function AgentCard({
   agent,
   deviceId,
+  highlighted,
   onRemove,
   onFollowUp,
   onStop,
@@ -104,6 +107,7 @@ function AgentCard({
 }: {
   agent: WebAgentSession;
   deviceId: string | null;
+  highlighted: boolean;
   onRemove: (id: string) => void;
   onFollowUp: (agentId: string, prompt: string) => boolean | Promise<boolean>;
   onStop: (agentId: string) => void;
@@ -113,7 +117,12 @@ function AgentCard({
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   return (
-    <article className='home-dashboard__agent-card home-dashboard__agent-card--spawn'>
+    <article
+      data-agent-id={agent.id}
+      className={`home-dashboard__agent-card home-dashboard__agent-card--spawn${
+        highlighted ? ' home-dashboard__agent-card--focused' : ''
+      }`}
+    >
       <div className='home-dashboard__agent-card-head'>
         <div className='home-dashboard__agent-card-thumb-wrap'>
           <AgentThumb logoUrl={agent.logoUrl} color={agent.projectColor} />
@@ -165,6 +174,8 @@ function AgentCard({
 export function WebMaestroAgents({
   agents,
   deviceId,
+  focusedAgentId = null,
+  onFocusedAgentHandled,
   onRemove,
   onFollowUp,
   onStop,
@@ -173,6 +184,7 @@ export function WebMaestroAgents({
   onScrollChange,
 }: WebMaestroAgentsProps) {
   const sectionRef = useRef<HTMLElement>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
 
   useEffect(() => {
     const node = sectionRef.current;
@@ -191,6 +203,34 @@ export function WebMaestroAgents({
       node.removeEventListener('scroll', syncScroll);
     };
   }, [agents.length, onScrollChange]);
+
+  useEffect(() => {
+    if (!focusedAgentId) {
+      return;
+    }
+
+    const section = sectionRef.current;
+    if (!section) {
+      return;
+    }
+
+    const card = section.querySelector<HTMLElement>(
+      `[data-agent-id="${CSS.escape(focusedAgentId)}"]`,
+    );
+    if (!card) {
+      return;
+    }
+
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    setHighlightId(focusedAgentId);
+    onFocusedAgentHandled?.();
+
+    const timeoutId = window.setTimeout(() => {
+      setHighlightId((current) => (current === focusedAgentId ? null : current));
+    }, 1600);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [agents, focusedAgentId, onFocusedAgentHandled]);
 
   if (agents.length === 0) {
     return (
@@ -219,6 +259,7 @@ export function WebMaestroAgents({
             key={agent.id}
             agent={agent}
             deviceId={deviceId}
+            highlighted={highlightId === agent.id}
             onRemove={onRemove}
             onFollowUp={onFollowUp}
             onStop={onStop}

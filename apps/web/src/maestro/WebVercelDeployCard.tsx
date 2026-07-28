@@ -104,6 +104,7 @@ function WebVercelDeployCardComponent({
 
   const handleDismiss = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
       event.stopPropagation();
       onDismiss();
     },
@@ -146,7 +147,16 @@ function WebVercelDeployCardComponent({
       <section
         className={cardClassName}
         title={cardTitle}
-        onClick={canCopyLogs ? () => void copyLogs() : undefined}
+        onClick={
+          canCopyLogs
+            ? (event) => {
+                if ((event.target as HTMLElement).closest('button')) {
+                  return;
+                }
+                void copyLogs();
+              }
+            : undefined
+        }
       >
         <div className='sidebar-vercel-deploy-card__header'>
           <span className='sidebar-vercel-deploy-card__project-icon' aria-hidden='true'>

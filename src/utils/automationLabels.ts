@@ -54,9 +54,5 @@ export function formatAutomationTrigger(trigger: Automation['trigger'], interval
     return `A cada ${intervalMinutes} min`;
   }
 
-  if (trigger === 'app_open') {
-    return 'Ao abrir a IDE';
-  }
-
   return 'Por clique';
 }

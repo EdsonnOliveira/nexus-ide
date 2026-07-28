@@ -44,6 +44,7 @@ export interface WebAgentSession {
   cursorSessionId: string | null;
   modelId: string;
   modeId: 'agent' | 'plan' | 'debug' | 'multitask' | 'ask';
+  source: 'cloud' | 'desktop_pane';
   stream: string;
   status: 'running' | 'done' | 'error';
   createdAt: number;

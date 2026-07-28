@@ -43,7 +43,7 @@ import {
   resetAgentReadyDetectors,
   syncAgentBusyFromTail,
 } from '@/utils/terminalTaskCompletion';
-import { attachAgentPromptImageToPane } from '@/utils/attachAgentPromptImage';
+import { restoreAgentPromptAttachmentsToPane } from '@/utils/attachAgentPromptImage';
 import { buildImagePathReference } from '@/utils/terminalPasteImageTokens';
 import {
   buildAgentPaneLaunchCommand,
@@ -56,9 +56,11 @@ import {
 import {
   createAgentStreamJsonParserState,
   clearStreamJsonLiveStatus,
+  ensureStreamJsonStallProgressUi,
   feedAgentStreamJsonChunk,
   finalizeStreamJsonTurn,
   forceSettleStreamJsonInFlightWork,
+  hasIncompleteStreamJsonTurnEnding,
   hasMeaningfulStreamJsonTurnOutput,
   hasPendingStreamJsonInteraction,
   isAgentStreamJsonStateAwaitingCompletion,
@@ -120,6 +122,8 @@ const SUBMIT_SETUP_TIMEOUT_MS = 8_000;
 const COMPOSER_READY_POLL_MS = 250;
 const COMPOSER_READY_MAX_MS = 12_000;
 const STREAM_JSON_AUTO_RETRY_DELAY_MS = 600;
+const STREAM_JSON_INCOMPLETE_CONTINUE_PROMPT =
+  'Continue from where you left off. Finish the incomplete response.';
 const STREAMING_TURNS_UI_MS = 200;
 const PERSIST_TURNS_DEBOUNCE_MS = 1200;
 const CONTEXT_USAGE_REPORT_DELAY_MS = 700;
@@ -252,7 +256,11 @@ export function useAgentPaneSession({
   const submitTimeoutRef = useRef<number | null>(null);
   const cwdParserRef = useRef(createNexusCwdStreamParser(() => {}));
   const streamJsonAutoRetryRef = useRef(false);
+  const streamJsonIncompleteContinueRef = useRef(false);
   const tryScheduleStreamJsonAutoRetryRef = useRef<(finishAgentPrintRun: () => void) => boolean>(
+    () => false,
+  );
+  const tryContinueIncompleteStreamJsonTurnRef = useRef<(finishAgentPrintRun: () => void) => boolean>(
     () => false,
   );
   const streamJsonBootstrappedRef = useRef(false);
@@ -853,6 +861,7 @@ export function useAgentPaneSession({
     streamJsonStateRef.current = createAgentStreamJsonParserState();
     turnOutputBufferRef.current = '';
     streamJsonAutoRetryRef.current = false;
+    streamJsonIncompleteContinueRef.current = false;
     clearAgentPrintRunToken(paneId);
     persistTurns(nextTurns, { flush: true });
     recordHomeDashboardActivity('agentExecutions');
@@ -904,6 +913,16 @@ export function useAgentPaneSession({
 
       feedAgentStreamJsonChunk(streamJsonStateRef.current, '');
 
+      if (
+        !processRunning &&
+        hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current) &&
+        tryContinueIncompleteStreamJsonTurnRef.current(() => {
+          clearAgentPrintRunToken(paneIdRef.current);
+        })
+      ) {
+        return true;
+      }
+
       if (streamJsonStateRef.current.shouldFinalize) {
         // #region agent log
         writeDebugSessionLog({
@@ -918,6 +937,11 @@ export function useAgentPaneSession({
           hypothesisId: 'C',
         });
         // #endregion
+
+        if (hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current)) {
+          streamJsonStateRef.current.shouldFinalize = false;
+          return false;
+        }
 
         if (!hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current)) {
           streamJsonStateRef.current.shouldFinalize = false;
@@ -979,6 +1003,15 @@ export function useAgentPaneSession({
 
   const syncStreamJsonStallLiveStatus = useCallback(
     (idleMs: number) => {
+      if (ensureStreamJsonStallProgressUi(streamJsonStateRef.current)) {
+        streamJsonStallLabelRef.current = '';
+        updateActiveTurn((turn) => ({
+          ...turn,
+          activities: streamJsonStateRef.current.activities.map((entry) => ({ ...entry })),
+        }));
+        return;
+      }
+
       const label = resolveStreamJsonStallLiveStatus(streamJsonStateRef.current, idleMs);
 
       if (!label) {
@@ -1201,6 +1234,7 @@ export function useAgentPaneSession({
 
       if (!options?.isAutoRetry) {
         streamJsonAutoRetryRef.current = false;
+        streamJsonIncompleteContinueRef.current = false;
       }
 
       if (shouldMarkAgentAwaiting(paneId, fullPrompt, session.activeAgentByPane)) {
@@ -1281,6 +1315,80 @@ export function useAgentPaneSession({
     [startStreamJsonAgentRun],
   );
   tryScheduleStreamJsonAutoRetryRef.current = tryScheduleStreamJsonAutoRetry;
+
+  const tryContinueIncompleteStreamJsonTurn = useCallback(
+    (finishAgentPrintRun: () => void): boolean => {
+      if (streamJsonIncompleteContinueRef.current || streamJsonAutoRetryRef.current) {
+        return false;
+      }
+
+      if (!hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current)) {
+        return false;
+      }
+
+      if (!turnsRef.current.some((turn) => turn.running)) {
+        return false;
+      }
+
+      const paneId = paneIdRef.current;
+      const session = useTerminalSessionStore.getState();
+      const resumeChatId =
+        streamJsonStateRef.current.sessionId?.trim() ||
+        session.resumeChatIdByPane[paneId]?.trim() ||
+        null;
+
+      if (!resumeChatId) {
+        return false;
+      }
+
+      streamJsonIncompleteContinueRef.current = true;
+      streamJsonStateRef.current.shouldFinalize = false;
+      clearStreamJsonLiveStatus(streamJsonStateRef.current);
+      forceSettleStreamJsonInFlightWork(streamJsonStateRef.current);
+      ensureStreamJsonStallProgressUi(streamJsonStateRef.current);
+      finishAgentPrintRun();
+
+      updateActiveTurn((turn) => ({
+        ...turn,
+        activities: streamJsonStateRef.current.activities.map((entry) => ({ ...entry })),
+      }));
+
+      const currentMode = session.activeAgentModeByPane[paneId] ?? 'agent';
+      const model = session.agentModelByPane[paneId] ?? null;
+      const mode = resolveCursorAgentPrintMode(currentMode);
+      const runToken = crypto.randomUUID();
+
+      lastStreamJsonChunkAtRef.current = Date.now();
+      bindAgentPrintRunToken(paneId, runToken);
+      hasStreamJsonChunkRef.current = true;
+      session.setResumeChatId(paneId, resumeChatId);
+      session.setAgentBusy(paneId, true);
+      session.markAwaitingResponse(paneId);
+      cursorAgentContinueRef.current = true;
+      streamJsonStateRef.current.sessionId = resumeChatId;
+
+      window.setTimeout(() => {
+        if (!turnsRef.current.some((turn) => turn.running)) {
+          return;
+        }
+
+        void window.nexus.agentPrint.start({
+          paneId,
+          cwd: agentRootPath,
+          prompt: STREAM_JSON_INCOMPLETE_CONTINUE_PROMPT,
+          model,
+          mode,
+          resumeChatId,
+          continueSession: false,
+          runToken,
+        });
+      }, STREAM_JSON_AUTO_RETRY_DELAY_MS);
+
+      return true;
+    },
+    [agentRootPath, bindAgentPrintRunToken, updateActiveTurn],
+  );
+  tryContinueIncompleteStreamJsonTurnRef.current = tryContinueIncompleteStreamJsonTurn;
 
   const requestContextUsageReport = useCallback(() => {
     setContextUsageLoading(true);
@@ -1912,10 +2020,7 @@ export function useAgentPaneSession({
 
       setFollowUps((current) => current.filter((entry) => entry.id !== id));
       onRestoreDraftRef.current?.(resolveFollowUpAgentPrompt(item));
-
-      for (const attachment of item.attachments) {
-        void attachAgentPromptImageToPane(projectPath, paneIdRef.current, attachment.dataUrl, false);
-      }
+      void restoreAgentPromptAttachmentsToPane(projectPath, paneIdRef.current, item.attachments);
     },
     [projectPath],
   );
@@ -2339,7 +2444,6 @@ export function useAgentPaneSession({
       setEditingTurnId(turnId);
       setFollowUps([]);
 
-      useTerminalPasteImageStore.getState().clearPaneImages(paneIdRef.current);
       onRestoreDraftRef.current?.(target.user.agentPrompt ?? target.user.content);
 
       const turnMode = target.user.mode ?? 'agent';
@@ -2349,9 +2453,11 @@ export function useAgentPaneSession({
         runCommand(`/${turnMode}\n`);
       }
 
-      for (const attachment of target.user.attachments ?? []) {
-        void attachAgentPromptImageToPane(projectPath, paneIdRef.current, attachment.dataUrl, false);
-      }
+      void restoreAgentPromptAttachmentsToPane(
+        projectPath,
+        paneIdRef.current,
+        target.user.attachments ?? [],
+      );
 
       return true;
     },
@@ -2847,7 +2953,19 @@ export function useAgentPaneSession({
           clearAgentPrintRunToken(paneIdRef.current);
         };
 
-        if (applyStreamJsonChunk('')) {
+        applyStreamJsonChunk('');
+
+        if (
+          payload.code === 0 &&
+          !payload.error &&
+          turnsRef.current.some((turn) => turn.running) &&
+          !streamJsonIncompleteContinueRef.current &&
+          tryContinueIncompleteStreamJsonTurnRef.current(finishAgentPrintRun)
+        ) {
+          return;
+        }
+
+        if (streamJsonStateRef.current.shouldFinalize) {
           if (!hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current)) {
             if (tryScheduleStreamJsonAutoRetry(finishAgentPrintRun)) {
               return;
@@ -2871,12 +2989,21 @@ export function useAgentPaneSession({
             finalizeActiveTurn(true);
             finishAgentPrintRun();
             streamJsonAutoRetryRef.current = false;
+            streamJsonIncompleteContinueRef.current = false;
             return;
           }
 
-          finalizeStreamJsonTurnFromEvent('onDone-shouldFinalize');
-          finishAgentPrintRun();
-          return;
+          if (
+            hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current) &&
+            !streamJsonIncompleteContinueRef.current
+          ) {
+            streamJsonStateRef.current.shouldFinalize = false;
+          } else {
+            finalizeStreamJsonTurnFromEvent('onDone-shouldFinalize');
+            finishAgentPrintRun();
+            streamJsonIncompleteContinueRef.current = false;
+            return;
+          }
         }
 
         const activePaneId = paneIdRef.current;
@@ -2971,6 +3098,7 @@ export function useAgentPaneSession({
 
           finalizeStreamJsonTurnFromEvent('onDone-shouldFinalize-late');
           finishAgentPrintRun();
+          streamJsonIncompleteContinueRef.current = false;
           return;
         }
 
@@ -3015,12 +3143,14 @@ export function useAgentPaneSession({
           finalizeActiveTurn(true);
           finishAgentPrintRun();
           streamJsonAutoRetryRef.current = false;
+          streamJsonIncompleteContinueRef.current = false;
           return;
         }
 
         finalizeActiveTurn(true);
         finishAgentPrintRun();
         streamJsonAutoRetryRef.current = false;
+        streamJsonIncompleteContinueRef.current = false;
       },
     });
   }, [
