@@ -12,7 +12,7 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowUp, AtSign, Bot, FolderKanban, Globe, Paperclip, X } from 'lucide-react';
+import { ArrowUp, AtSign, Bot, FileText, FolderKanban, Globe, Image, Paperclip, X } from 'lucide-react';
 import type { CloudProject, DeviceRecord } from '@nexus/protocol';
 import type { WebAgentSession } from '../store';
 import { WebAskMenuSelect } from './WebAskMenuSelect';
@@ -20,13 +20,19 @@ import { WebMacSelect } from './WebMacSelect';
 import { WebAgentPromptImageMentionText } from './WebAgentPromptImageMentionText';
 import { WebMarkdownImageLightbox } from './WebMarkdownImageLightbox';
 import {
+  buildWebAgentPromptFileMentionInsertion,
   buildWebAgentPromptImageMention,
   buildWebAgentPromptImageMentionInsertion,
   getWebAgentPromptImageBadgeColor,
+  MAX_WEB_PROMPT_FILES,
   MAX_WEB_PROMPT_IMAGES,
-  readImageFilesAsDataUrls,
+  notifyRejectedAttachments,
+  readAttachmentFiles,
   renumberWebAgentPromptImages,
+  toWebFileAttachmentPayloads,
   WEB_AGENT_PROMPT_IMAGE_MENTION_REGEX,
+  type WebFileAttachmentPayload,
+  type WebPendingAskFile,
   type WebPendingAskImage,
 } from './webAgentPromptImages';
 
@@ -38,7 +44,11 @@ interface WebMaestroAskBarProps {
   deviceId: string | null;
   onDeviceChange: (deviceId: string | null) => void;
   submitting: boolean;
-  onSubmit: (prompt: string, imageDataUrls?: string[]) => boolean | Promise<boolean>;
+  onSubmit: (
+    prompt: string,
+    imageDataUrls?: string[],
+    fileAttachments?: WebFileAttachmentPayload[],
+  ) => boolean | Promise<boolean>;
   desktopAgents: WebAgentSession[];
   onSelectAgent: (agentId: string) => void;
   onRequestDesktopAgents: () => void | Promise<void>;
@@ -91,8 +101,12 @@ export function WebMaestroAskBar({
 }: WebMaestroAskBarProps) {
   const [prompt, setPrompt] = useState('');
   const [pendingImages, setPendingImages] = useState<WebPendingAskImage[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<WebPendingAskFile[]>([]);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const [dropActive, setDropActive] = useState(false);
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const [attachMenuPhase, setAttachMenuPhase] = useState<'in' | 'out'>('in');
+  const [attachMenuRect, setAttachMenuRect] = useState<DOMRect | null>(null);
   const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
   const [previewImageName, setPreviewImageName] = useState('imagem.png');
   const [desktopAgentsPhase, setDesktopAgentsPhase] = useState<'closed' | 'in' | 'out'>('closed');
@@ -107,18 +121,23 @@ export function WebMaestroAskBar({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const askFormRef = useRef<HTMLFormElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const attachTriggerRef = useRef<HTMLButtonElement>(null);
+  const attachMenuRef = useRef<HTMLDivElement>(null);
   const desktopAgentsTriggerRef = useRef<HTMLButtonElement>(null);
   const desktopAgentsMenuRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef(prompt);
   const pendingImagesRef = useRef(pendingImages);
+  const pendingFilesRef = useRef(pendingFiles);
   const submitInFlightRef = useRef(false);
 
   promptRef.current = prompt;
   pendingImagesRef.current = pendingImages;
+  pendingFilesRef.current = pendingFiles;
 
   const selectedProject = projects.find((project) => project.id === projectId) ?? null;
   const canSubmit =
-    (prompt.trim().length > 0 || pendingImages.length > 0) &&
+    (prompt.trim().length > 0 || pendingImages.length > 0 || pendingFiles.length > 0) &&
     !submitting &&
     Boolean(selectedProject);
   const imageActionsDisabled = submitting;
@@ -220,6 +239,7 @@ export function WebMaestroAskBar({
 
       const remainingSlots = MAX_WEB_PROMPT_IMAGES - pendingImagesRef.current.length;
       if (remainingSlots <= 0) {
+        window.alert(`Máximo de ${MAX_WEB_PROMPT_IMAGES} imagens por mensagem.`);
         return;
       }
 
@@ -251,6 +271,129 @@ export function WebMaestroAskBar({
     },
     [setPromptWithCaret],
   );
+
+  const attachFilesWithMentions = useCallback(
+    (files: WebPendingAskFile[]) => {
+      if (files.length === 0) {
+        return;
+      }
+
+      const remainingSlots = MAX_WEB_PROMPT_FILES - pendingFilesRef.current.length;
+      if (remainingSlots <= 0) {
+        window.alert(`Máximo de ${MAX_WEB_PROMPT_FILES} arquivos por mensagem.`);
+        return;
+      }
+
+      const limited = files.slice(0, remainingSlots);
+      const selectionStart = inputRef.current?.selectionStart ?? promptRef.current.length;
+      let nextPrompt = promptRef.current;
+      let nextCaret = selectionStart;
+      const merged = [...pendingFilesRef.current, ...limited];
+
+      for (const file of limited) {
+        const insertion = buildWebAgentPromptFileMentionInsertion(
+          nextPrompt,
+          nextCaret,
+          nextCaret,
+          file.name,
+        );
+        nextPrompt = insertion.nextDraft;
+        nextCaret = insertion.nextCaret;
+      }
+
+      pendingFilesRef.current = merged;
+      setPendingFiles(merged);
+      setPromptWithCaret(nextPrompt, nextCaret);
+    },
+    [setPromptWithCaret],
+  );
+
+  const ingestFiles = useCallback(
+    async (fileList: Iterable<File>) => {
+      const { imageDataUrls, fileAttachments, rejectedNames } =
+        await readAttachmentFiles(fileList);
+      notifyRejectedAttachments(rejectedNames);
+      attachImagesWithMentions(imageDataUrls);
+      attachFilesWithMentions(fileAttachments);
+    },
+    [attachFilesWithMentions, attachImagesWithMentions],
+  );
+
+  const removePendingFile = useCallback(
+    (fileId: string) => {
+      const files = pendingFilesRef.current;
+      const target = files.find((file) => file.id === fileId);
+      if (!target) {
+        return;
+      }
+
+      const kept = files.filter((file) => file.id !== fileId);
+      const escaped = target.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const mentionPattern = new RegExp(`@${escaped}(?=\\s|$|[\\n])`);
+      const nextPrompt = promptRef.current
+        .replace(mentionPattern, '')
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/\n{3,}/g, '\n\n');
+
+      pendingFilesRef.current = kept;
+      setPendingFiles(kept);
+      promptRef.current = nextPrompt;
+      setPrompt(nextPrompt);
+
+      window.requestAnimationFrame(() => {
+        const input = inputRef.current;
+        if (!input) {
+          return;
+        }
+        resizeAskInput(input);
+      });
+    },
+    [resizeAskInput],
+  );
+
+  const closeAttachMenu = useCallback(() => {
+    setAttachMenuPhase('out');
+  }, []);
+
+  const openAttachMenu = useCallback(() => {
+    if (imageActionsDisabled) {
+      return;
+    }
+    const rect = attachTriggerRef.current?.getBoundingClientRect() ?? null;
+    if (!rect) {
+      return;
+    }
+    setAttachMenuRect(rect);
+    setAttachMenuPhase('in');
+    setAttachMenuOpen(true);
+  }, [imageActionsDisabled]);
+
+  useEffect(() => {
+    if (!attachMenuOpen) {
+      return;
+    }
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        attachTriggerRef.current?.contains(target) ||
+        attachMenuRef.current?.contains(target)
+      ) {
+        return;
+      }
+      closeAttachMenu();
+    };
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeAttachMenu();
+      }
+    };
+    window.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('mousedown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [attachMenuOpen, closeAttachMenu]);
 
   const syncAskBarHeight = useCallback(() => {
     const form = askFormRef.current;
@@ -419,7 +562,7 @@ export function WebMaestroAskBar({
       resizeObserver?.disconnect();
       window.removeEventListener('resize', syncAskBarHeight);
     };
-  }, [syncAskBarHeight, prompt, pendingImages.length]);
+  }, [syncAskBarHeight, prompt, pendingImages.length, pendingFiles.length]);
 
   const submitPrompt = useCallback(() => {
     if (!canSubmit || submitInFlightRef.current) {
@@ -428,9 +571,11 @@ export function WebMaestroAskBar({
 
     const trimmed = prompt.trim();
     const imageDataUrls = pendingImages.map((image) => image.dataUrl);
+    const fileAttachments = toWebFileAttachmentPayloads(pendingFiles);
     const snapshot = {
       prompt,
       pendingImages,
+      pendingFiles,
       webSearchEnabled,
     };
     let nextPrompt = trimmed;
@@ -441,16 +586,23 @@ export function WebMaestroAskBar({
         : 'Pesquise na web quando necessário.';
     }
 
-    if (!nextPrompt && imageDataUrls.length > 0) {
-      nextPrompt = pendingImages
-        .map((_, index) => `(img ${index + 1})`)
-        .join(' ');
+    if (!nextPrompt && (imageDataUrls.length > 0 || fileAttachments.length > 0)) {
+      const parts: string[] = [];
+      if (imageDataUrls.length > 0) {
+        parts.push(...pendingImages.map((_, index) => `(img ${index + 1})`));
+      }
+      if (fileAttachments.length > 0) {
+        parts.push(...pendingFiles.map((file) => `@${file.name}`));
+      }
+      nextPrompt = parts.join(' ');
     }
 
     const restoreSnapshot = () => {
       pendingImagesRef.current = snapshot.pendingImages;
+      pendingFilesRef.current = snapshot.pendingFiles;
       promptRef.current = snapshot.prompt;
       setPendingImages(snapshot.pendingImages);
+      setPendingFiles(snapshot.pendingFiles);
       setPrompt(snapshot.prompt);
       setWebSearchEnabled(snapshot.webSearchEnabled);
       window.requestAnimationFrame(() => {
@@ -468,17 +620,19 @@ export function WebMaestroAskBar({
     submitInFlightRef.current = true;
     setPrompt('');
     setPendingImages([]);
+    setPendingFiles([]);
     setWebSearchEnabled(false);
     setPreviewImageSrc(null);
     promptRef.current = '';
     pendingImagesRef.current = [];
+    pendingFilesRef.current = [];
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
     }
 
-    void Promise.resolve(onSubmit(nextPrompt, imageDataUrls))
+    void Promise.resolve(onSubmit(nextPrompt, imageDataUrls, fileAttachments))
       .then((ok) => {
-        if (!ok) {
+        if (ok === false) {
           restoreSnapshot();
         }
       })
@@ -488,7 +642,15 @@ export function WebMaestroAskBar({
       .finally(() => {
         submitInFlightRef.current = false;
       });
-  }, [canSubmit, onSubmit, pendingImages, prompt, resizeAskInput, webSearchEnabled]);
+  }, [
+    canSubmit,
+    onSubmit,
+    pendingFiles,
+    pendingImages,
+    prompt,
+    resizeAskInput,
+    webSearchEnabled,
+  ]);
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -513,38 +675,34 @@ export function WebMaestroAskBar({
         return;
       }
 
-      let imageFile: File | null = null;
+      const files: File[] = [];
 
       for (const item of clipboard.items) {
-        if (!item.type.startsWith('image/')) {
+        if (!item.type.startsWith('image/') && !item.type.startsWith('video/')) {
           continue;
         }
         const file = item.getAsFile();
         if (file) {
-          imageFile = file;
-          break;
+          files.push(file);
         }
       }
 
-      if (!imageFile) {
+      if (files.length === 0) {
         for (const file of clipboard.files) {
-          if (file.type.startsWith('image/')) {
-            imageFile = file;
-            break;
+          if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
+            files.push(file);
           }
         }
       }
 
-      if (!imageFile) {
+      if (files.length === 0) {
         return;
       }
 
       event.preventDefault();
-      void readImageFilesAsDataUrls([imageFile]).then((dataUrls) => {
-        attachImagesWithMentions(dataUrls);
-      });
+      void ingestFiles(files);
     },
-    [attachImagesWithMentions, imageActionsDisabled],
+    [imageActionsDisabled, ingestFiles],
   );
 
   const handleDragOver = useCallback(
@@ -578,20 +736,28 @@ export function WebMaestroAskBar({
         return;
       }
 
-      void readImageFilesAsDataUrls(event.dataTransfer.files).then((dataUrls) => {
-        attachImagesWithMentions(dataUrls);
+      void ingestFiles(event.dataTransfer.files).then(() => {
         inputRef.current?.focus();
       });
     },
-    [attachImagesWithMentions, imageActionsDisabled],
+    [imageActionsDisabled, ingestFiles],
   );
 
   const handleAttachImageClick = useCallback(() => {
     if (imageActionsDisabled) {
       return;
     }
+    closeAttachMenu();
     imageInputRef.current?.click();
-  }, [imageActionsDisabled]);
+  }, [closeAttachMenu, imageActionsDisabled]);
+
+  const handleAttachFileClick = useCallback(() => {
+    if (imageActionsDisabled) {
+      return;
+    }
+    closeAttachMenu();
+    fileInputRef.current?.click();
+  }, [closeAttachMenu, imageActionsDisabled]);
 
   const handleImageInputChange = useCallback(() => {
     const input = imageInputRef.current;
@@ -599,12 +765,23 @@ export function WebMaestroAskBar({
       return;
     }
 
-    void readImageFilesAsDataUrls(input.files).then((dataUrls) => {
-      attachImagesWithMentions(dataUrls);
+    void ingestFiles(input.files).then(() => {
       input.value = '';
       inputRef.current?.focus();
     });
-  }, [attachImagesWithMentions]);
+  }, [ingestFiles]);
+
+  const handleFileInputChange = useCallback(() => {
+    const input = fileInputRef.current;
+    if (!input?.files || input.files.length === 0) {
+      return;
+    }
+
+    void ingestFiles(input.files).then(() => {
+      input.value = '';
+      inputRef.current?.focus();
+    });
+  }, [ingestFiles]);
 
   return (
     <div className='home-dashboard__ask-bar'>
@@ -621,15 +798,22 @@ export function WebMaestroAskBar({
         <input
           ref={imageInputRef}
           type='file'
-          accept='image/*'
+          accept='image/png,image/jpeg,image/jpg,image/webp,image/gif'
           multiple
           hidden
           onChange={handleImageInputChange}
         />
-        {pendingImages.length > 0 ? (
+        <input
+          ref={fileInputRef}
+          type='file'
+          multiple
+          hidden
+          onChange={handleFileInputChange}
+        />
+        {pendingImages.length > 0 || pendingFiles.length > 0 ? (
           <div
             className='home-dashboard__ask-attachments app-button--enter'
-            aria-label='Imagens anexadas'
+            aria-label='Anexos'
           >
             {pendingImages.map((image, index) => {
               const imageNumber = index + 1;
@@ -671,6 +855,23 @@ export function WebMaestroAskBar({
                 </div>
               );
             })}
+            {pendingFiles.map((file) => (
+              <div key={file.id} className='web-agent-file-chip app-button--enter'>
+                <FileText size={14} strokeWidth={2} aria-hidden='true' />
+                <span className='web-agent-file-chip__name' title={file.name}>
+                  {file.name}
+                </span>
+                <button
+                  type='button'
+                  className='web-agent-file-chip__remove app-button'
+                  aria-label={`Remover ${file.name}`}
+                  disabled={imageActionsDisabled}
+                  onClick={() => removePendingFile(file.id)}
+                >
+                  <X size={12} strokeWidth={2.5} aria-hidden='true' />
+                </button>
+              </div>
+            ))}
           </div>
         ) : null}
         <div className='home-dashboard__ask-selects'>
@@ -758,12 +959,23 @@ export function WebMaestroAskBar({
         </div>
         <div className='home-dashboard__ask-actions'>
           <button
+            ref={attachTriggerRef}
             type='button'
-            className='home-dashboard__ask-action app-button'
-            aria-label='Anexar imagem'
+            className={`home-dashboard__ask-action app-button${
+              attachMenuOpen ? ' home-dashboard__ask-action--open' : ''
+            }`}
+            aria-label='Anexar'
+            aria-haspopup='menu'
+            aria-expanded={attachMenuOpen}
             disabled={imageActionsDisabled}
-            title='Anexar imagem'
-            onClick={handleAttachImageClick}
+            title='Anexar'
+            onClick={() => {
+              if (attachMenuOpen) {
+                closeAttachMenu();
+                return;
+              }
+              openAttachMenu();
+            }}
           >
             <Paperclip size={16} strokeWidth={2} aria-hidden='true' />
           </button>
@@ -805,6 +1017,46 @@ export function WebMaestroAskBar({
           onClose={handleClosePreview}
         />
       ) : null}
+      {attachMenuOpen && attachMenuRect
+        ? createPortal(
+            <div
+              ref={attachMenuRef}
+              className={`context-menu overlay-popup overlay-popup--${attachMenuPhase}`}
+              role='menu'
+              style={{
+                left: Math.max(12, Math.min(attachMenuRect.left, window.innerWidth - 200)),
+                bottom: window.innerHeight - attachMenuRect.top + 6,
+                zIndex: 10000,
+              }}
+              onAnimationEnd={() => {
+                if (attachMenuPhase === 'out') {
+                  setAttachMenuOpen(false);
+                  setAttachMenuRect(null);
+                }
+              }}
+            >
+              <button
+                type='button'
+                className='context-menu__item app-button app-button--enter'
+                role='menuitem'
+                onClick={handleAttachImageClick}
+              >
+                <Image size={14} strokeWidth={2} aria-hidden='true' />
+                <span>Imagem</span>
+              </button>
+              <button
+                type='button'
+                className='context-menu__item app-button app-button--enter'
+                role='menuitem'
+                onClick={handleAttachFileClick}
+              >
+                <FileText size={14} strokeWidth={2} aria-hidden='true' />
+                <span>Arquivo</span>
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
       {desktopAgentsPhase !== 'closed' && desktopAgentsMenuRect
         ? createPortal(
             <div

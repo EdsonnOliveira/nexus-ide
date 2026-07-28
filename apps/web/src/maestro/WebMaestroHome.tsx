@@ -24,6 +24,7 @@ import { useWebEmulatorProjectIds } from './useWebEmulatorProjectIds';
 import { useWebVercelDeployments } from './useWebVercelDeployments';
 import { WebMobileReleaseCard } from './WebMobileReleaseCard';
 import { useWebMobileReleases } from './useWebMobileReleases';
+import type { WebFileAttachmentPayload } from './webAgentPromptImages';
 import {
   dismissWebAgentTerminal,
   handleWebAgentShellToolEvents,
@@ -352,7 +353,11 @@ export function WebMaestroHome() {
   );
 
   const handleSubmit = useCallback(
-    async (prompt: string, imageDataUrls: string[] = []): Promise<boolean> => {
+    async (
+      prompt: string,
+      imageDataUrls: string[] = [],
+      fileAttachments: WebFileAttachmentPayload[] = [],
+    ): Promise<boolean> => {
       const deviceId = resolveDeviceId();
       if (!deviceId) {
         window.alert('Nenhum Mac cadastrado. Clique no logo e escolha Cadastrar Mac.');
@@ -382,7 +387,7 @@ export function WebMaestroHome() {
       }
 
       const trimmedPrompt = prompt.trim();
-      if (!trimmedPrompt && imageDataUrls.length === 0) {
+      if (!trimmedPrompt && imageDataUrls.length === 0 && fileAttachments.length === 0) {
         return false;
       }
 
@@ -396,7 +401,7 @@ export function WebMaestroHome() {
           throw new Error('Usuário não autenticado');
         }
         const agentId = crypto.randomUUID();
-        const titleSource = trimmedPrompt || 'Imagem anexada';
+        const titleSource = trimmedPrompt || (imageDataUrls.length > 0 ? 'Imagem anexada' : 'Arquivo anexado');
         await createAgentSession(supabase, {
           id: agentId,
           workspace_id: workspaceId,
@@ -416,6 +421,7 @@ export function WebMaestroHome() {
           payload: {
             prompt: trimmedPrompt,
             ...(imageDataUrls.length > 0 ? { image_data_urls: imageDataUrls } : {}),
+            ...(fileAttachments.length > 0 ? { file_attachments: fileAttachments } : {}),
             agent_command: 'cursor-agent',
             model: 'auto',
             session_id: agentId,
@@ -483,7 +489,12 @@ export function WebMaestroHome() {
   );
 
   const handleFollowUp = useCallback(
-    async (agentId: string, prompt: string): Promise<boolean> => {
+    async (
+      agentId: string,
+      prompt: string,
+      imageDataUrls: string[] = [],
+      fileAttachments: WebFileAttachmentPayload[] = [],
+    ): Promise<boolean> => {
       const agent = useWebStore.getState().agents.find((item) => item.id === agentId);
       if (!agent) {
         return false;
@@ -519,6 +530,8 @@ export function WebMaestroHome() {
           type: 'agent_prompt',
           payload: {
             prompt,
+            ...(imageDataUrls.length > 0 ? { image_data_urls: imageDataUrls } : {}),
+            ...(fileAttachments.length > 0 ? { file_attachments: fileAttachments } : {}),
             agent_command: 'cursor-agent',
             model: agent.modelId || 'auto',
             mode: agent.modeId && agent.modeId !== 'agent' ? agent.modeId : undefined,
@@ -782,7 +795,9 @@ export function WebMaestroHome() {
           deviceId={selectedDeviceId}
           onDeviceChange={setSelectedDeviceId}
           submitting={submitting}
-          onSubmit={(prompt, imageDataUrls) => handleSubmit(prompt, imageDataUrls)}
+          onSubmit={(prompt, imageDataUrls, fileAttachments) =>
+            handleSubmit(prompt, imageDataUrls, fileAttachments)
+          }
           desktopAgents={desktopAgentsCatalog}
           onSelectAgent={handleSelectAgent}
           onRequestDesktopAgents={handleRequestDesktopAgents}
@@ -800,7 +815,9 @@ export function WebMaestroHome() {
         onBackToProjects={handleBackToProjects}
         onFocusedAgentHandled={() => setFocusedAgentId(null)}
         onRemove={(agentId) => void handleRemove(agentId)}
-        onFollowUp={(agentId, prompt) => handleFollowUp(agentId, prompt)}
+        onFollowUp={(agentId, prompt, imageDataUrls, fileAttachments) =>
+          handleFollowUp(agentId, prompt, imageDataUrls, fileAttachments)
+        }
         onStop={(agentId) => void handleStop(agentId)}
         onModelChange={handleModelChange}
         onModeChange={handleModeChange}

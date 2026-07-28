@@ -3043,7 +3043,7 @@ html.nexus-standalone .home-dashboard__ask-bar {
 
   .home-dashboard__ask-action[aria-label='Anexar'],
   .home-dashboard__ask-action[aria-label='Mencionar arquivo'] {
-    display: none;
+    display: inline-flex;
   }
 }
 

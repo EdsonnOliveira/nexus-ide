@@ -5,6 +5,7 @@ import type { WebAgentSession } from '../store';
 import { WebAgentChat } from './WebAgentChat';
 import type { WebAgentMode } from './WebAgentPlusMenu';
 import { WebAgentShellTerminals } from './WebAgentShellTerminals';
+import type { WebFileAttachmentPayload } from './webAgentPromptImages';
 
 interface WebMaestroAgentsProps {
   agents: WebAgentSession[];
@@ -17,7 +18,12 @@ interface WebMaestroAgentsProps {
   onBackToProjects: () => void;
   onFocusedAgentHandled?: () => void;
   onRemove: (id: string) => void;
-  onFollowUp: (agentId: string, prompt: string) => boolean | Promise<boolean>;
+  onFollowUp: (
+    agentId: string,
+    prompt: string,
+    imageDataUrls?: string[],
+    fileAttachments?: WebFileAttachmentPayload[],
+  ) => boolean | Promise<boolean>;
   onStop: (agentId: string) => void;
   onModelChange: (agentId: string, modelId: string) => void;
   onModeChange: (agentId: string, modeId: WebAgentMode) => void;
@@ -173,7 +179,12 @@ function AgentCard({
   deviceId: string | null;
   highlighted: boolean;
   onRemove: (id: string) => void;
-  onFollowUp: (agentId: string, prompt: string) => boolean | Promise<boolean>;
+  onFollowUp: (
+    agentId: string,
+    prompt: string,
+    imageDataUrls?: string[],
+    fileAttachments?: WebFileAttachmentPayload[],
+  ) => boolean | Promise<boolean>;
   onStop: (agentId: string) => void;
   onModelChange: (agentId: string, modelId: string) => void;
   onModeChange: (agentId: string, modeId: WebAgentMode) => void;

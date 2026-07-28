@@ -4,11 +4,14 @@ import {
   useMemo,
   useRef,
   useState,
+  type ClipboardEvent as ReactClipboardEvent,
+  type CSSProperties,
+  type DragEvent as ReactDragEvent,
   type FormEvent,
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react';
-import { ArrowUp, Check, ChevronDown, ChevronRight, Square } from 'lucide-react';
+import { ArrowUp, Check, ChevronDown, ChevronRight, FileText, Square, X } from 'lucide-react';
 import type { WebAgentSession, WebAgentTurn } from '../store';
 import logoCursor from '../assets/logo-cursor.svg';
 import { renderWebMarkdown } from './webMarkdown';
@@ -17,10 +20,31 @@ import { findMarkdownPreviewImage } from './downloadImageSrc';
 import { WebMarkdownImageLightbox } from './WebMarkdownImageLightbox';
 import { WebAskMenuSelect } from './WebAskMenuSelect';
 import { WebAgentPlusMenu, type WebAgentMode } from './WebAgentPlusMenu';
+import { WebAgentPromptImageMentionText } from './WebAgentPromptImageMentionText';
+import {
+  buildWebAgentPromptFileMentionInsertion,
+  buildWebAgentPromptImageMentionInsertion,
+  getWebAgentPromptImageBadgeColor,
+  MAX_WEB_PROMPT_FILES,
+  MAX_WEB_PROMPT_IMAGES,
+  notifyRejectedAttachments,
+  readAttachmentFiles,
+  renumberWebAgentPromptImages,
+  toWebFileAttachmentPayloads,
+  WEB_AGENT_PROMPT_IMAGE_MENTION_REGEX,
+  type WebFileAttachmentPayload,
+  type WebPendingAskFile,
+  type WebPendingAskImage,
+} from './webAgentPromptImages';
 
 interface WebAgentChatProps {
   agent: WebAgentSession;
-  onFollowUp: (agentId: string, prompt: string) => boolean | Promise<boolean>;
+  onFollowUp: (
+    agentId: string,
+    prompt: string,
+    imageDataUrls?: string[],
+    fileAttachments?: WebFileAttachmentPayload[],
+  ) => boolean | Promise<boolean>;
   onStop: (agentId: string) => void;
   onModelChange: (agentId: string, modelId: string) => void;
   onModeChange: (agentId: string, modeId: WebAgentMode) => void;
@@ -291,13 +315,33 @@ export function WebAgentChat({
   onModeChange,
 }: WebAgentChatProps) {
   const [draft, setDraft] = useState('');
+  const [pendingImages, setPendingImages] = useState<WebPendingAskImage[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<WebPendingAskFile[]>([]);
   const [sendingFollowUp, setSendingFollowUp] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
+  const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
+  const [previewImageName, setPreviewImageName] = useState('imagem.png');
   const followUpInFlightRef = useRef(false);
   const draftRef = useRef(draft);
+  const pendingImagesRef = useRef(pendingImages);
+  const pendingFilesRef = useRef(pendingFiles);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const composerCardRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const accent = agent.projectColor || '#8b5cf6';
-  const canStop = agent.status === 'running' && !draft.trim() && !sendingFollowUp;
-  const canSend = Boolean(draft.trim()) && !canStop && !sendingFollowUp;
+  const attachDisabled = sendingFollowUp;
+  const canStop =
+    agent.status === 'running' &&
+    !draft.trim() &&
+    pendingImages.length === 0 &&
+    pendingFiles.length === 0 &&
+    !sendingFollowUp;
+  const canSend =
+    (Boolean(draft.trim()) || pendingImages.length > 0 || pendingFiles.length > 0) &&
+    !canStop &&
+    !sendingFollowUp;
   const modelId = agent.modelId || 'auto';
   const modeId = agent.modeId || 'agent';
   const modelLabel = WEB_AGENT_MODELS.find((item) => item.value === modelId)?.label ?? 'Auto';
@@ -307,6 +351,16 @@ export function WebAgentChat({
   );
 
   draftRef.current = draft;
+  pendingImagesRef.current = pendingImages;
+  pendingFilesRef.current = pendingFiles;
+
+  const imagePreviewByNumber = useMemo(() => {
+    const map = new Map<number, string>();
+    pendingImages.forEach((image, index) => {
+      map.set(index + 1, image.dataUrl);
+    });
+    return map;
+  }, [pendingImages]);
 
   const modelOptions = useMemo(
     () =>
@@ -331,6 +385,215 @@ export function WebAgentChat({
   const turns = useMemo(() => (agent.turns.length > 0 ? agent.turns : []), [agent.turns]);
   const stickToBottomRef = useRef(true);
   const lastTurnIdRef = useRef<string | null>(null);
+
+  const resizeComposerInput = useCallback((element: HTMLTextAreaElement) => {
+    element.style.height = 'auto';
+    element.style.height = `${Math.min(element.scrollHeight, 160)}px`;
+  }, []);
+
+  const setDraftWithCaret = useCallback(
+    (nextDraft: string, nextCaret: number) => {
+      setDraft(nextDraft);
+      draftRef.current = nextDraft;
+      window.requestAnimationFrame(() => {
+        const input = inputRef.current;
+        if (!input) {
+          return;
+        }
+        input.focus();
+        input.setSelectionRange(nextCaret, nextCaret);
+        resizeComposerInput(input);
+      });
+    },
+    [resizeComposerInput],
+  );
+
+  const attachImagesWithMentions = useCallback(
+    (dataUrls: string[]) => {
+      if (dataUrls.length === 0) {
+        return;
+      }
+
+      const remainingSlots = MAX_WEB_PROMPT_IMAGES - pendingImagesRef.current.length;
+      if (remainingSlots <= 0) {
+        window.alert(`Máximo de ${MAX_WEB_PROMPT_IMAGES} imagens por mensagem.`);
+        return;
+      }
+
+      const limited = dataUrls.slice(0, remainingSlots);
+      const selectionStart = inputRef.current?.selectionStart ?? draftRef.current.length;
+      let nextDraft = draftRef.current;
+      let nextCaret = selectionStart;
+      const merged = [...pendingImagesRef.current];
+
+      for (const dataUrl of limited) {
+        const imageNumber = merged.length + 1;
+        const insertion = buildWebAgentPromptImageMentionInsertion(
+          nextDraft,
+          nextCaret,
+          nextCaret,
+          imageNumber,
+        );
+        nextDraft = insertion.nextDraft;
+        nextCaret = insertion.nextCaret;
+        merged.push({
+          id: `${Date.now()}-${imageNumber}-${Math.random().toString(36).slice(2, 7)}`,
+          dataUrl,
+        });
+      }
+
+      pendingImagesRef.current = merged;
+      setPendingImages(merged);
+      setDraftWithCaret(nextDraft, nextCaret);
+    },
+    [setDraftWithCaret],
+  );
+
+  const attachFilesWithMentions = useCallback(
+    (files: WebPendingAskFile[]) => {
+      if (files.length === 0) {
+        return;
+      }
+
+      const remainingSlots = MAX_WEB_PROMPT_FILES - pendingFilesRef.current.length;
+      if (remainingSlots <= 0) {
+        window.alert(`Máximo de ${MAX_WEB_PROMPT_FILES} arquivos por mensagem.`);
+        return;
+      }
+
+      const limited = files.slice(0, remainingSlots);
+      const selectionStart = inputRef.current?.selectionStart ?? draftRef.current.length;
+      let nextDraft = draftRef.current;
+      let nextCaret = selectionStart;
+      const merged = [...pendingFilesRef.current, ...limited];
+
+      for (const file of limited) {
+        const insertion = buildWebAgentPromptFileMentionInsertion(
+          nextDraft,
+          nextCaret,
+          nextCaret,
+          file.name,
+        );
+        nextDraft = insertion.nextDraft;
+        nextCaret = insertion.nextCaret;
+      }
+
+      pendingFilesRef.current = merged;
+      setPendingFiles(merged);
+      setDraftWithCaret(nextDraft, nextCaret);
+    },
+    [setDraftWithCaret],
+  );
+
+  const ingestFiles = useCallback(
+    async (fileList: Iterable<File>) => {
+      const { imageDataUrls, fileAttachments, rejectedNames } =
+        await readAttachmentFiles(fileList);
+      notifyRejectedAttachments(rejectedNames);
+      attachImagesWithMentions(imageDataUrls);
+      attachFilesWithMentions(fileAttachments);
+    },
+    [attachFilesWithMentions, attachImagesWithMentions],
+  );
+
+  const removePendingImage = useCallback(
+    (imageId: string) => {
+      const images = pendingImagesRef.current;
+      const index = images.findIndex((image) => image.id === imageId);
+      if (index < 0) {
+        return;
+      }
+
+      const kept = images.filter((image) => image.id !== imageId);
+      const mentionPattern = new RegExp(
+        WEB_AGENT_PROMPT_IMAGE_MENTION_REGEX.source,
+        WEB_AGENT_PROMPT_IMAGE_MENTION_REGEX.flags,
+      );
+      const nextDraft = draftRef.current
+        .replace(mentionPattern, (full, rawNumber: string) => {
+          const oldNumber = Number.parseInt(rawNumber, 10);
+          if (!Number.isFinite(oldNumber) || oldNumber <= 0) {
+            return full;
+          }
+          if (oldNumber === index + 1) {
+            return '';
+          }
+          if (oldNumber > index + 1) {
+            return `(img ${oldNumber - 1})`;
+          }
+          return `(img ${oldNumber})`;
+        })
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/\n{3,}/g, '\n\n');
+
+      pendingImagesRef.current = kept;
+      setPendingImages(kept);
+      draftRef.current = nextDraft;
+      setDraft(nextDraft);
+
+      if (previewImageSrc && images[index]?.dataUrl === previewImageSrc) {
+        setPreviewImageSrc(null);
+      }
+
+      window.requestAnimationFrame(() => {
+        const input = inputRef.current;
+        if (!input) {
+          return;
+        }
+        resizeComposerInput(input);
+      });
+    },
+    [previewImageSrc, resizeComposerInput],
+  );
+
+  const removePendingFile = useCallback(
+    (fileId: string) => {
+      const files = pendingFilesRef.current;
+      const target = files.find((file) => file.id === fileId);
+      if (!target) {
+        return;
+      }
+
+      const kept = files.filter((file) => file.id !== fileId);
+      const escaped = target.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const mentionPattern = new RegExp(`@${escaped}(?=\\s|$|[\\n])`);
+      const nextDraft = draftRef.current
+        .replace(mentionPattern, '')
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/\n{3,}/g, '\n\n');
+
+      pendingFilesRef.current = kept;
+      setPendingFiles(kept);
+      draftRef.current = nextDraft;
+      setDraft(nextDraft);
+
+      window.requestAnimationFrame(() => {
+        const input = inputRef.current;
+        if (!input) {
+          return;
+        }
+        resizeComposerInput(input);
+      });
+    },
+    [resizeComposerInput],
+  );
+
+  useEffect(() => {
+    const { prompt: nextDraft, pendingImages: nextImages } = renumberWebAgentPromptImages(
+      draft,
+      pendingImagesRef.current,
+    );
+
+    if (nextImages !== pendingImagesRef.current) {
+      pendingImagesRef.current = nextImages;
+      setPendingImages(nextImages);
+    }
+
+    if (nextDraft !== draft) {
+      draftRef.current = nextDraft;
+      setDraft(nextDraft);
+    }
+  }, [draft]);
 
   useEffect(() => {
     const node = transcriptRef.current;
@@ -412,22 +675,70 @@ export function WebAgentChat({
       return;
     }
     const text = draft.trim();
-    if (!text) {
+    const imageDataUrls = pendingImages.map((image) => image.dataUrl);
+    const fileAttachments = toWebFileAttachmentPayloads(pendingFiles);
+    if (!text && imageDataUrls.length === 0 && fileAttachments.length === 0) {
       return;
     }
-    const snapshot = draft;
+
+    let nextPrompt = text;
+    if (!nextPrompt && (imageDataUrls.length > 0 || fileAttachments.length > 0)) {
+      const parts: string[] = [];
+      if (imageDataUrls.length > 0) {
+        parts.push(...pendingImages.map((_, index) => `(img ${index + 1})`));
+      }
+      if (fileAttachments.length > 0) {
+        parts.push(...pendingFiles.map((file) => `@${file.name}`));
+      }
+      nextPrompt = parts.join(' ');
+    }
+
+    const snapshot = {
+      draft,
+      pendingImages,
+      pendingFiles,
+    };
     followUpInFlightRef.current = true;
     setSendingFollowUp(true);
     setDraft('');
-    void Promise.resolve(onFollowUp(agent.id, text))
+    setPendingImages([]);
+    setPendingFiles([]);
+    setPreviewImageSrc(null);
+    draftRef.current = '';
+    pendingImagesRef.current = [];
+    pendingFilesRef.current = [];
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto';
+    }
+
+    void Promise.resolve(onFollowUp(agent.id, nextPrompt, imageDataUrls, fileAttachments))
       .then((ok) => {
-        if (!ok && draftRef.current === '') {
-          setDraft(snapshot);
+        if (
+          ok === false &&
+          draftRef.current === '' &&
+          pendingImagesRef.current.length === 0 &&
+          pendingFilesRef.current.length === 0
+        ) {
+          draftRef.current = snapshot.draft;
+          pendingImagesRef.current = snapshot.pendingImages;
+          pendingFilesRef.current = snapshot.pendingFiles;
+          setDraft(snapshot.draft);
+          setPendingImages(snapshot.pendingImages);
+          setPendingFiles(snapshot.pendingFiles);
         }
       })
       .catch(() => {
-        if (draftRef.current === '') {
-          setDraft(snapshot);
+        if (
+          draftRef.current === '' &&
+          pendingImagesRef.current.length === 0 &&
+          pendingFilesRef.current.length === 0
+        ) {
+          draftRef.current = snapshot.draft;
+          pendingImagesRef.current = snapshot.pendingImages;
+          pendingFilesRef.current = snapshot.pendingFiles;
+          setDraft(snapshot.draft);
+          setPendingImages(snapshot.pendingImages);
+          setPendingFiles(snapshot.pendingFiles);
         }
       })
       .finally(() => {
@@ -442,6 +753,118 @@ export function WebAgentChat({
       submit();
     }
   };
+
+  const handlePaste = useCallback(
+    (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
+      if (attachDisabled) {
+        return;
+      }
+
+      const clipboard = event.clipboardData;
+      if (!clipboard) {
+        return;
+      }
+
+      const files: File[] = [];
+      for (const item of clipboard.items) {
+        if (!item.type.startsWith('image/') && !item.type.startsWith('video/')) {
+          continue;
+        }
+        const file = item.getAsFile();
+        if (file) {
+          files.push(file);
+        }
+      }
+
+      if (files.length === 0) {
+        for (const file of clipboard.files) {
+          if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
+            files.push(file);
+          }
+        }
+      }
+
+      if (files.length === 0) {
+        return;
+      }
+
+      event.preventDefault();
+      void ingestFiles(files);
+    },
+    [attachDisabled, ingestFiles],
+  );
+
+  const handleDragOver = useCallback(
+    (event: ReactDragEvent<HTMLDivElement>) => {
+      if (attachDisabled) {
+        return;
+      }
+      if (![...event.dataTransfer.types].includes('Files')) {
+        return;
+      }
+      event.preventDefault();
+      setDropActive(true);
+    },
+    [attachDisabled],
+  );
+
+  const handleDragLeave = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    const related = event.relatedTarget as Node | null;
+    if (!composerCardRef.current?.contains(related)) {
+      setDropActive(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(
+    (event: ReactDragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setDropActive(false);
+      if (attachDisabled) {
+        return;
+      }
+      void ingestFiles(event.dataTransfer.files).then(() => {
+        inputRef.current?.focus();
+      });
+    },
+    [attachDisabled, ingestFiles],
+  );
+
+  const handleAttachImage = useCallback(() => {
+    if (attachDisabled) {
+      return;
+    }
+    imageInputRef.current?.click();
+  }, [attachDisabled]);
+
+  const handleAttachFile = useCallback(() => {
+    if (attachDisabled) {
+      return;
+    }
+    fileInputRef.current?.click();
+  }, [attachDisabled]);
+
+  const handleImageInputChange = useCallback(() => {
+    const input = imageInputRef.current;
+    if (!input?.files || input.files.length === 0) {
+      return;
+    }
+    void ingestFiles(input.files).then(() => {
+      input.value = '';
+      inputRef.current?.focus();
+    });
+  }, [ingestFiles]);
+
+  const handleFileInputChange = useCallback(() => {
+    const input = fileInputRef.current;
+    if (!input?.files || input.files.length === 0) {
+      return;
+    }
+    void ingestFiles(input.files).then(() => {
+      input.value = '';
+      inputRef.current?.focus();
+    });
+  }, [ingestFiles]);
 
   return (
     <div className='agent-view web-agent-view' style={{ ['--agent-accent' as string]: accent }}>
@@ -459,25 +882,132 @@ export function WebAgentChat({
       </div>
       <div className={`agent-view__footer${turns.length === 0 ? ' agent-view__footer--idle' : ''}`}>
         <form className='agent-view__composer' onSubmit={submit}>
-          <div className='agent-view__composer-card'>
-            <textarea
-              className='agent-view__composer-input'
-              value={draft}
-              rows={1}
-              placeholder='Adicionar follow-up'
-              spellCheck={false}
-              disabled={sendingFollowUp}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={onKeyDown}
-            />
+          <input
+            ref={imageInputRef}
+            type='file'
+            accept='image/png,image/jpeg,image/jpg,image/webp,image/gif'
+            multiple
+            hidden
+            onChange={handleImageInputChange}
+          />
+          <input
+            ref={fileInputRef}
+            type='file'
+            multiple
+            hidden
+            onChange={handleFileInputChange}
+          />
+          <div
+            ref={composerCardRef}
+            className={`agent-view__composer-card${
+              dropActive ? ' agent-view__composer-card--drop-target' : ''
+            }`}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            {pendingImages.length > 0 || pendingFiles.length > 0 ? (
+              <div className='agent-view__composer-attachments' aria-label='Anexos'>
+                {pendingImages.map((image, index) => {
+                  const imageNumber = index + 1;
+                  const badgeColor = getWebAgentPromptImageBadgeColor(imageNumber);
+                  return (
+                    <div key={image.id} className='agent-view__paste-image app-button--enter'>
+                      <span
+                        className='home-dashboard__ask-attachment-index'
+                        style={{ '--prompt-image-badge-color': badgeColor } as CSSProperties}
+                        aria-hidden='true'
+                      >
+                        {imageNumber}
+                      </span>
+                      <button
+                        type='button'
+                        className='agent-view__paste-image-thumb-btn app-button'
+                        aria-label={`Ver imagem ${imageNumber}`}
+                        disabled={attachDisabled}
+                        onClick={() => {
+                          setPreviewImageSrc(image.dataUrl);
+                          setPreviewImageName(`imagem-${imageNumber}.png`);
+                        }}
+                      >
+                        <img
+                          src={image.dataUrl}
+                          alt=''
+                          className='agent-view__paste-image-thumb'
+                          draggable={false}
+                        />
+                      </button>
+                      <button
+                        type='button'
+                        className='agent-view__paste-image-remove app-button app-button--enter'
+                        aria-label={`Remover imagem ${imageNumber}`}
+                        disabled={attachDisabled}
+                        onClick={() => removePendingImage(image.id)}
+                      >
+                        <X size={12} strokeWidth={2.5} aria-hidden='true' />
+                      </button>
+                    </div>
+                  );
+                })}
+                {pendingFiles.map((file) => (
+                  <div key={file.id} className='web-agent-file-chip app-button--enter'>
+                    <FileText size={14} strokeWidth={2} aria-hidden='true' />
+                    <span className='web-agent-file-chip__name' title={file.name}>
+                      {file.name}
+                    </span>
+                    <button
+                      type='button'
+                      className='web-agent-file-chip__remove app-button'
+                      aria-label={`Remover ${file.name}`}
+                      disabled={attachDisabled}
+                      onClick={() => removePendingFile(file.id)}
+                    >
+                      <X size={12} strokeWidth={2.5} aria-hidden='true' />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <div className='agent-view__composer-input-wrap'>
+              <div className='agent-view__composer-input-mirror' aria-hidden='true'>
+                {draft ? (
+                  <WebAgentPromptImageMentionText
+                    text={draft}
+                    imagePreviewByNumber={imagePreviewByNumber}
+                  />
+                ) : (
+                  <span className='agent-view__composer-input-mirror-placeholder'>
+                    Adicionar follow-up
+                  </span>
+                )}
+              </div>
+              <textarea
+                ref={inputRef}
+                className='agent-view__composer-input agent-view__composer-input--mirrored'
+                value={draft}
+                rows={1}
+                placeholder='Adicionar follow-up'
+                spellCheck={false}
+                disabled={sendingFollowUp}
+                onChange={(event) => {
+                  setDraft(event.target.value);
+                  resizeComposerInput(event.target);
+                }}
+                onKeyDown={onKeyDown}
+                onPaste={handlePaste}
+              />
+            </div>
             <div className='agent-view__composer-bar'>
               <div className='agent-view__composer-bar-left'>
                 <WebAgentPlusMenu
                   mode={modeId}
                   modelId={modelId}
                   models={modelList}
+                  attachDisabled={attachDisabled}
                   onModeChange={(next) => onModeChange(agent.id, next)}
                   onModelChange={(next) => onModelChange(agent.id, next)}
+                  onAttachImage={handleAttachImage}
+                  onAttachFile={handleAttachFile}
                 />
                 <WebAskMenuSelect
                   value={modelId}
@@ -528,6 +1058,13 @@ export function WebAgentChat({
           </div>
         </form>
       </div>
+      {previewImageSrc ? (
+        <WebMarkdownImageLightbox
+          src={previewImageSrc}
+          fileName={previewImageName}
+          onClose={() => setPreviewImageSrc(null)}
+        />
+      ) : null}
     </div>
   );
 }

@@ -15,7 +15,9 @@ const PROMPT_IMAGE_COLORS = [
 
 export const WEB_AGENT_PROMPT_IMAGE_MENTION_REGEX = /\((?:imagem|img)\s+(\d+)\)/gi;
 export const MAX_WEB_PROMPT_IMAGES = 6;
+export const MAX_WEB_PROMPT_FILES = 6;
 export const MAX_WEB_PROMPT_IMAGE_BYTES = 4 * 1024 * 1024;
+export const MAX_WEB_PROMPT_FILE_BYTES = 4 * 1024 * 1024;
 const ALLOWED_WEB_IMAGE_MIME = new Set([
   'image/png',
   'image/jpeg',
@@ -27,6 +29,18 @@ const ALLOWED_WEB_IMAGE_MIME = new Set([
 export interface WebPendingAskImage {
   id: string;
   dataUrl: string;
+}
+
+export interface WebPendingAskFile {
+  id: string;
+  name: string;
+  mime: string;
+  dataUrl: string;
+}
+
+export interface WebFileAttachmentPayload {
+  name: string;
+  data_url: string;
 }
 
 export type WebAgentPromptImageMentionSegment =
@@ -49,6 +63,25 @@ export function buildWebAgentPromptImageMentionInsertion(
   imageNumber: number,
 ): { nextDraft: string; nextCaret: number } {
   const mention = buildWebAgentPromptImageMention(imageNumber);
+  const before = draft.slice(0, selectionStart);
+  const after = draft.slice(selectionEnd);
+  const needsSpaceBefore = before.length > 0 && !/[\s\n]$/.test(before);
+  const needsSpaceAfter = !/^[\s\n]/.test(after);
+  const insertion = `${needsSpaceBefore ? ' ' : ''}${mention}${needsSpaceAfter ? ' ' : ''}`;
+
+  return {
+    nextDraft: `${before}${insertion}${after}`,
+    nextCaret: selectionStart + insertion.length,
+  };
+}
+
+export function buildWebAgentPromptFileMentionInsertion(
+  draft: string,
+  selectionStart: number,
+  selectionEnd: number,
+  fileName: string,
+): { nextDraft: string; nextCaret: number } {
+  const mention = `@${fileName.trim() || 'arquivo'}`;
   const before = draft.slice(0, selectionStart);
   const after = draft.slice(selectionEnd);
   const needsSpaceBefore = before.length > 0 && !/[\s\n]$/.test(before);
@@ -186,6 +219,19 @@ function estimateDataUrlBytes(dataUrl: string): number {
   return Math.floor((dataUrl.length - comma - 1) * 0.75);
 }
 
+function createPendingId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+export function toWebFileAttachmentPayloads(
+  files: WebPendingAskFile[],
+): WebFileAttachmentPayload[] {
+  return files.map((file) => ({
+    name: file.name,
+    data_url: file.dataUrl,
+  }));
+}
+
 export async function readImageFilesAsDataUrls(files: Iterable<File>): Promise<string[]> {
   const dataUrls: string[] = [];
 
@@ -211,4 +257,60 @@ export async function readImageFilesAsDataUrls(files: Iterable<File>): Promise<s
   }
 
   return dataUrls;
+}
+
+export async function readAttachmentFiles(files: Iterable<File>): Promise<{
+  imageDataUrls: string[];
+  fileAttachments: WebPendingAskFile[];
+  rejectedNames: string[];
+}> {
+  const imageDataUrls: string[] = [];
+  const fileAttachments: WebPendingAskFile[] = [];
+  const rejectedNames: string[] = [];
+
+  for (const file of files) {
+    const mime = (file.type || 'application/octet-stream').toLowerCase();
+    const isImage = ALLOWED_WEB_IMAGE_MIME.has(mime);
+    const maxBytes = isImage ? MAX_WEB_PROMPT_IMAGE_BYTES : MAX_WEB_PROMPT_FILE_BYTES;
+
+    if (file.size > maxBytes) {
+      rejectedNames.push(file.name || 'arquivo');
+      continue;
+    }
+
+    try {
+      const dataUrl = await blobToDataUrl(file);
+      if (estimateDataUrlBytes(dataUrl) > maxBytes) {
+        rejectedNames.push(file.name || 'arquivo');
+        continue;
+      }
+
+      if (isImage) {
+        imageDataUrls.push(dataUrl);
+        continue;
+      }
+
+      fileAttachments.push({
+        id: createPendingId('file'),
+        name: file.name || 'arquivo',
+        mime,
+        dataUrl,
+      });
+    } catch {
+      rejectedNames.push(file.name || 'arquivo');
+    }
+  }
+
+  return { imageDataUrls, fileAttachments, rejectedNames };
+}
+
+export function notifyRejectedAttachments(rejectedNames: string[]): void {
+  if (rejectedNames.length === 0) {
+    return;
+  }
+  window.alert(
+    rejectedNames.length === 1
+      ? `"${rejectedNames[0]}" não pôde ser anexado (máx. 4MB ou formato inválido).`
+      : `${rejectedNames.length} arquivos não puderam ser anexados (máx. 4MB ou formato inválido).`,
+  );
 }

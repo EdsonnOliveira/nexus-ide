@@ -310,6 +310,8 @@ async function handleEmulatorCommand(
 
 const MAX_PROMPT_IMAGE_DATA_URL_BYTES = 4 * 1024 * 1024;
 const MAX_PROMPT_IMAGES = 6;
+const MAX_PROMPT_FILES = 6;
+const MAX_PROMPT_FILE_DATA_URL_BYTES = 4 * 1024 * 1024;
 const ALLOWED_PROMPT_IMAGE_MIME = new Set([
   'image/png',
   'image/jpeg',
@@ -317,6 +319,37 @@ const ALLOWED_PROMPT_IMAGE_MIME = new Set([
   'image/webp',
   'image/gif',
 ]);
+const BLOCKED_PROMPT_FILE_EXTENSIONS = new Set([
+  '.sh',
+  '.bash',
+  '.zsh',
+  '.fish',
+  '.command',
+  '.bat',
+  '.cmd',
+  '.ps1',
+  '.exe',
+  '.com',
+  '.msi',
+  '.scr',
+  '.dll',
+  '.so',
+  '.dylib',
+  '.app',
+  '.jar',
+  '.apk',
+  '.ipa',
+  '.cgi',
+  '.php',
+  '.jsp',
+  '.asp',
+  '.aspx',
+]);
+
+interface PromptFileAttachment {
+  name: string;
+  dataUrl: string;
+}
 
 function resolvePromptImageExtension(mimeType: string): string {
   if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') {
@@ -333,6 +366,58 @@ function resolvePromptImageExtension(mimeType: string): string {
 
 function sanitizePromptImagePaneSegment(paneId: string): string {
   return paneId.replace(/[^\w.-]+/g, '_').slice(0, 64) || 'pane';
+}
+
+function sanitizePromptAttachmentFileName(name: string, fallbackExtension: string): string {
+  const rawBase = path.basename(String(name || 'attachment'));
+  let safeBase = rawBase.replace(/[^\w.\-()+ ]+/g, '_').trim().slice(0, 120) || 'attachment';
+  const fallback = fallbackExtension.replace(/^\./, '').replace(/[^\w.-]+/g, '').slice(0, 12) || 'bin';
+  let extension = path.extname(safeBase).toLowerCase();
+
+  if (!extension || BLOCKED_PROMPT_FILE_EXTENSIONS.has(extension)) {
+    const stem = path.basename(safeBase, path.extname(safeBase)).trim() || 'attachment';
+    safeBase = `${stem}.${fallback}`;
+    extension = `.${fallback}`;
+  }
+
+  if (BLOCKED_PROMPT_FILE_EXTENSIONS.has(extension) || safeBase === '.' || safeBase === '..') {
+    return `attachment.${fallback}`;
+  }
+
+  return safeBase;
+}
+
+function resolveMimeExtension(mimeType: string): string {
+  const normalized = mimeType.toLowerCase();
+  if (normalized.startsWith('image/')) {
+    return resolvePromptImageExtension(normalized);
+  }
+  if (normalized === 'video/mp4') {
+    return 'mp4';
+  }
+  if (normalized === 'video/webm') {
+    return 'webm';
+  }
+  if (normalized === 'video/quicktime') {
+    return 'mov';
+  }
+  if (normalized === 'application/pdf') {
+    return 'pdf';
+  }
+  if (normalized === 'application/json') {
+    return 'json';
+  }
+  if (normalized === 'text/plain') {
+    return 'txt';
+  }
+  if (normalized === 'text/markdown') {
+    return 'md';
+  }
+  if (normalized === 'application/zip') {
+    return 'zip';
+  }
+  const subtype = normalized.split('/')[1]?.split('+')[0] ?? '';
+  return subtype.replace(/[^\w.-]+/g, '').slice(0, 12) || 'bin';
 }
 
 function estimateDataUrlBytes(dataUrl: string): number {
@@ -393,6 +478,71 @@ function saveAgentPromptImageDataUrls(
   return refs;
 }
 
+function saveAgentPromptFileAttachments(
+  projectRoot: string,
+  sessionId: string,
+  files: PromptFileAttachment[],
+): string[] {
+  if (files.length === 0) {
+    return [];
+  }
+
+  if (files.length > MAX_PROMPT_FILES) {
+    throw new Error(`Too many files (max ${MAX_PROMPT_FILES})`);
+  }
+
+  const resolvedRoot = path.resolve(projectRoot);
+  const paneSegment = sanitizePromptImagePaneSegment(sessionId || 'prompt');
+  const targetDir = path.join(resolvedRoot, '.nexus', 'terminal-paste', paneSegment);
+  mkdirSync(targetDir, { recursive: true });
+
+  const refs: string[] = [];
+  const stamp = Date.now();
+  const usedNames = new Set<string>();
+
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    const match = String(file.dataUrl).match(/^data:([^;,]+);base64,(.+)$/);
+    if (!match) {
+      throw new Error('Invalid file data URL');
+    }
+
+    const mimeType = match[1].toLowerCase();
+    if (!mimeType || mimeType.includes('..')) {
+      throw new Error('Unsupported file type');
+    }
+
+    if (!match[2] || match[2].length === 0) {
+      throw new Error('Empty file attachment');
+    }
+
+    if (estimateDataUrlBytes(file.dataUrl) > MAX_PROMPT_FILE_DATA_URL_BYTES) {
+      throw new Error('File exceeds 4MB limit');
+    }
+
+    const extension = resolveMimeExtension(mimeType);
+    if (BLOCKED_PROMPT_FILE_EXTENSIONS.has(`.${extension}`)) {
+      throw new Error(`Unsupported file type: ${mimeType}`);
+    }
+
+    let fileName = sanitizePromptAttachmentFileName(file.name, extension);
+    if (usedNames.has(fileName.toLowerCase())) {
+      const ext = path.extname(fileName);
+      const stem = path.basename(fileName, ext) || 'attachment';
+      fileName = `${stem}-${index + 1}${ext || `.${extension}`}`;
+    }
+    usedNames.add(fileName.toLowerCase());
+
+    const absolutePath = path.join(targetDir, `${stamp}-${fileName}`);
+    const safePath = assertPathInsideSandbox(absolutePath, [resolvedRoot]);
+    writeFileSync(safePath, Buffer.from(match[2], 'base64'));
+    const relativePath = path.relative(resolvedRoot, safePath).replace(/\\/g, '/');
+    refs.push(`@${relativePath}`);
+  }
+
+  return refs;
+}
+
 function collectAgentPromptImageDataUrls(payload: Record<string, unknown> | null | undefined): string[] {
   if (!payload || typeof payload !== 'object') {
     return [];
@@ -415,6 +565,39 @@ function collectAgentPromptImageDataUrls(payload: Record<string, unknown> | null
   return urls;
 }
 
+function collectAgentPromptFileAttachments(
+  payload: Record<string, unknown> | null | undefined,
+): PromptFileAttachment[] {
+  if (!payload || typeof payload !== 'object') {
+    return [];
+  }
+
+  const raw = payload.file_attachments;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  if (raw.length > MAX_PROMPT_FILES) {
+    throw new Error(`Too many files (max ${MAX_PROMPT_FILES})`);
+  }
+
+  const files: PromptFileAttachment[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') {
+      throw new Error('Invalid file_attachments payload');
+    }
+    const record = item as Record<string, unknown>;
+    const name = typeof record.name === 'string' ? record.name.trim() : '';
+    const dataUrl = typeof record.data_url === 'string' ? record.data_url : '';
+    if (!name || !dataUrl.startsWith('data:')) {
+      throw new Error('Invalid file_attachments payload');
+    }
+    files.push({ name, dataUrl });
+  }
+
+  return files;
+}
+
 async function runAgentPrompt(
   client: NexusClient,
   command: CommandRow,
@@ -422,6 +605,7 @@ async function runAgentPrompt(
 ): Promise<Record<string, unknown>> {
   const prompt = String(command.payload?.prompt ?? '');
   const imageDataUrls = collectAgentPromptImageDataUrls(command.payload);
+  const fileAttachments = collectAgentPromptFileAttachments(command.payload);
   const agentCommand = String(command.payload?.agent_command ?? 'cursor-agent');
   const resumeChatId = String(command.payload?.resume_chat_id ?? '').trim();
   const continueSession = Boolean(command.payload?.continue_session);
@@ -430,7 +614,7 @@ async function runAgentPrompt(
   const sessionId = String(command.payload?.session_id ?? '').trim();
   const projectRoot = await getProjectRoot(client, deviceId, command.project_id);
 
-  if (imageDataUrls.length > 0 && !projectRoot) {
+  if ((imageDataUrls.length > 0 || fileAttachments.length > 0) && !projectRoot) {
     throw new Error('Project path not found on device');
   }
 
@@ -528,7 +712,10 @@ async function runAgentPrompt(
   const imageRefs = projectRoot
     ? saveAgentPromptImageDataUrls(projectRoot, session!.id, imageDataUrls)
     : [];
-  const fullPrompt = [prompt, ...imageRefs].filter(Boolean).join(' ').trim();
+  const fileRefs = projectRoot
+    ? saveAgentPromptFileAttachments(projectRoot, session!.id, fileAttachments)
+    : [];
+  const fullPrompt = [prompt, ...imageRefs, ...fileRefs].filter(Boolean).join(' ').trim();
 
   if (fullPrompt) {
     args.push(fullPrompt);

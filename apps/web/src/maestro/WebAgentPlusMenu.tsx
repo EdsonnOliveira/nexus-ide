@@ -41,6 +41,9 @@ interface WebAgentPlusMenuProps {
   models: ModelOption[];
   onModeChange: (mode: WebAgentMode) => void;
   onModelChange: (modelId: string) => void;
+  onAttachImage: () => void;
+  onAttachFile: () => void;
+  attachDisabled?: boolean;
 }
 
 export function WebAgentPlusMenu({
@@ -49,6 +52,9 @@ export function WebAgentPlusMenu({
   models,
   onModeChange,
   onModelChange,
+  onAttachImage,
+  onAttachFile,
+  attachDisabled = false,
 }: WebAgentPlusMenuProps) {
   const [open, setOpen] = useState(false);
   const [phase, setPhase] = useState<'in' | 'out'>('in');
@@ -187,8 +193,11 @@ export function WebAgentPlusMenu({
             <button
               type='button'
               className='context-menu__item app-button'
-              disabled
-              title='Em breve'
+              disabled={attachDisabled}
+              onClick={() => {
+                onAttachImage();
+                close();
+              }}
             >
               <Image size={14} strokeWidth={2} aria-hidden='true' />
               <span>Imagem</span>
@@ -196,8 +205,11 @@ export function WebAgentPlusMenu({
             <button
               type='button'
               className='context-menu__item app-button'
-              disabled
-              title='Em breve'
+              disabled={attachDisabled}
+              onClick={() => {
+                onAttachFile();
+                close();
+              }}
             >
               <FileText size={14} strokeWidth={2} aria-hidden='true' />
               <span>Arquivo</span>
