@@ -12,7 +12,7 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowUp, AtSign, Bot, FolderKanban, Globe, Layers, Paperclip, X } from 'lucide-react';
+import { ArrowUp, AtSign, Bot, FolderKanban, Globe, Paperclip, X } from 'lucide-react';
 import type { CloudProject, DeviceRecord } from '@nexus/protocol';
 import type { WebAgentSession } from '../store';
 import { WebAskMenuSelect } from './WebAskMenuSelect';
@@ -37,23 +37,12 @@ interface WebMaestroAskBarProps {
   devices: DeviceRecord[];
   deviceId: string | null;
   onDeviceChange: (deviceId: string | null) => void;
-  agents: WebAgentSession[];
-  agentFilterProjectId: string | null;
-  onAgentFilterChange: (projectId: string | null) => void;
   submitting: boolean;
   onSubmit: (prompt: string, imageDataUrls?: string[]) => boolean | Promise<boolean>;
   desktopAgents: WebAgentSession[];
   onSelectAgent: (agentId: string) => void;
   onRequestDesktopAgents: () => void | Promise<void>;
-}
-
-interface OpenAgentProjectEntry {
-  key: string;
-  projectId: string | null;
-  name: string;
-  color: string;
-  logoUrl: string | null;
-  icon: string | null;
+  hideProjectSelect?: boolean;
 }
 
 function ProjectLeading({
@@ -86,37 +75,6 @@ function ProjectLeading({
   );
 }
 
-function RoundProjectThumb({
-  logoUrl,
-  color,
-  icon,
-}: {
-  logoUrl: string | null;
-  color: string;
-  icon: string | null;
-}) {
-  if (logoUrl) {
-    return (
-      <img
-        src={logoUrl}
-        alt=''
-        className='home-dashboard__open-agent-project-logo'
-        draggable={false}
-      />
-    );
-  }
-
-  return (
-    <span className='home-dashboard__open-agent-project-icon' style={{ background: color }}>
-      {icon ? (
-        <span className='web-ask-project-letter'>{icon.slice(0, 1)}</span>
-      ) : (
-        <Bot size={16} aria-hidden='true' />
-      )}
-    </span>
-  );
-}
-
 export function WebMaestroAskBar({
   projects,
   projectId,
@@ -124,14 +82,12 @@ export function WebMaestroAskBar({
   devices,
   deviceId,
   onDeviceChange,
-  agents,
-  agentFilterProjectId,
-  onAgentFilterChange,
   submitting,
   onSubmit,
   desktopAgents,
   onSelectAgent,
   onRequestDesktopAgents,
+  hideProjectSelect = false,
 }: WebMaestroAskBarProps) {
   const [prompt, setPrompt] = useState('');
   const [pendingImages, setPendingImages] = useState<WebPendingAskImage[]>([]);
@@ -323,31 +279,6 @@ export function WebMaestroAskBar({
     [projects],
   );
 
-  const openAgentProjects = useMemo(() => {
-    const projectsById = new Map(projects.map((project) => [project.id, project]));
-    const byKey = new Map<string, OpenAgentProjectEntry>();
-
-    for (const agent of agents) {
-      const project = agent.projectId ? projectsById.get(agent.projectId) : null;
-      const key = agent.projectId ?? `agent:${agent.id}`;
-
-      if (byKey.has(key)) {
-        continue;
-      }
-
-      byKey.set(key, {
-        key,
-        projectId: agent.projectId,
-        name: project?.name ?? agent.projectName,
-        color: project?.color || agent.projectColor || '#8b5cf6',
-        logoUrl: project?.logo_url ?? agent.logoUrl,
-        icon: project?.icon ?? null,
-      });
-    }
-
-    return Array.from(byKey.values());
-  }, [agents, projects]);
-
   const desktopAgentsForProject = useMemo(
     () =>
       desktopAgents.filter(
@@ -355,8 +286,6 @@ export function WebMaestroAskBar({
       ),
     [desktopAgents, projectId],
   );
-
-  const showOpenAgentProjects = openAgentProjects.length >= 2;
 
   const updateDesktopAgentsMenuPosition = useCallback(() => {
     const trigger = desktopAgentsTriggerRef.current;
@@ -679,62 +608,6 @@ export function WebMaestroAskBar({
 
   return (
     <div className='home-dashboard__ask-bar'>
-      {showOpenAgentProjects ? (
-        <div
-          className='home-dashboard__open-agent-projects app-button--enter'
-          aria-label='Filtrar agents por projeto'
-        >
-          <div className='home-dashboard__open-agent-projects-track'>
-            <button
-              type='button'
-              className={`home-dashboard__open-agent-project app-button app-button--enter${
-                agentFilterProjectId === null
-                  ? ' home-dashboard__open-agent-project--active'
-                  : ''
-              }`}
-              title='Todos'
-              aria-label='Mostrar todos os agents'
-              aria-pressed={agentFilterProjectId === null}
-              disabled={submitting}
-              onClick={() => onAgentFilterChange(null)}
-            >
-              <span className='home-dashboard__open-agent-project-icon home-dashboard__open-agent-project-icon--all'>
-                <Layers size={16} aria-hidden='true' />
-              </span>
-            </button>
-            {openAgentProjects.map((entry) => {
-              const isActive =
-                entry.projectId !== null && entry.projectId === agentFilterProjectId;
-              return (
-                <button
-                  key={entry.key}
-                  type='button'
-                  className={`home-dashboard__open-agent-project app-button app-button--enter${
-                    isActive ? ' home-dashboard__open-agent-project--active' : ''
-                  }`}
-                  title={entry.name}
-                  aria-label={`Mostrar agents de ${entry.name}`}
-                  aria-pressed={isActive}
-                  disabled={submitting || !entry.projectId}
-                  onClick={() => {
-                    if (!entry.projectId) {
-                      return;
-                    }
-                    onAgentFilterChange(entry.projectId);
-                    onProjectChange(entry.projectId);
-                  }}
-                >
-                  <RoundProjectThumb
-                    logoUrl={entry.logoUrl}
-                    color={entry.color}
-                    icon={entry.icon}
-                  />
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
       <form
         ref={askFormRef}
         className={`home-dashboard__ask app-button--enter${
@@ -801,25 +674,27 @@ export function WebMaestroAskBar({
           </div>
         ) : null}
         <div className='home-dashboard__ask-selects'>
-          <WebAskMenuSelect
-            value={projectId ?? ''}
-            options={projectOptions}
-            disabled={projects.length === 0 || submitting}
-            ariaLabel='Projeto'
-            triggerLabel={selectedProject?.name ?? 'Escolha um projeto'}
-            triggerLeading={
-              <ProjectLeading
-                logoUrl={selectedProject?.logo_url ?? null}
-                color={selectedProject?.color ?? null}
-                icon={selectedProject?.icon ?? null}
-              />
-            }
-            onChange={(next) => {
-              if (next) {
-                onProjectChange(next);
+          {hideProjectSelect ? null : (
+            <WebAskMenuSelect
+              value={projectId ?? ''}
+              options={projectOptions}
+              disabled={projects.length === 0 || submitting}
+              ariaLabel='Projeto'
+              triggerLabel={selectedProject?.name ?? 'Escolha um projeto'}
+              triggerLeading={
+                <ProjectLeading
+                  logoUrl={selectedProject?.logo_url ?? null}
+                  color={selectedProject?.color ?? null}
+                  icon={selectedProject?.icon ?? null}
+                />
               }
-            }}
-          />
+              onChange={(next) => {
+                if (next) {
+                  onProjectChange(next);
+                }
+              }}
+            />
+          )}
           <button
             ref={desktopAgentsTriggerRef}
             type='button'

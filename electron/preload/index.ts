@@ -413,6 +413,10 @@ const nexusApi = {
     typeText: (sessionId, text) => ipcRenderer.invoke('emulator:typeText', sessionId, text),
     sendInput: (sessionId, line) => ipcRenderer.invoke('emulator:sendInput', sessionId, line),
     screenshot: (sessionId) => ipcRenderer.invoke('emulator:screenshot', sessionId),
+    listApps: (sessionId) => ipcRenderer.invoke('emulator:listApps', sessionId),
+    launchApp: (sessionId, appId) => ipcRenderer.invoke('emulator:launchApp', sessionId, appId),
+    terminateApp: (sessionId, appId) =>
+      ipcRenderer.invoke('emulator:terminateApp', sessionId, appId),
     onVideoChunk: (callback) => {
       const listener = (
         _: Electron.IpcRendererEvent,
@@ -521,6 +525,23 @@ const nexusApi = {
 
       ipcRenderer.on('emulator:session-created', listener);
       return () => ipcRenderer.off('emulator:session-created', listener);
+    },
+    onEnsureRemoteTab: (callback) => {
+      const listener = (
+        _: Electron.IpcRendererEvent,
+        payload: {
+          tabId: string;
+          platform: 'android' | 'ios';
+          deviceId: string;
+          sessionId?: string | null;
+          localProjectId?: string | null;
+        },
+      ) => {
+        callback(payload);
+      };
+
+      ipcRenderer.on('emulator:ensure-remote-tab', listener);
+      return () => ipcRenderer.off('emulator:ensure-remote-tab', listener);
     },
   },
   api: {

@@ -251,8 +251,6 @@ async function main(): Promise<void> {
 
   console.log(`[nexus-runtime] device=${deviceId} workspace=${workspaceId}`);
 
-  let heartbeatTicks = 0;
-
   startLocalSocket(
     env.socketPath,
     () => ({
@@ -272,10 +270,7 @@ async function main(): Promise<void> {
 
   const heartbeat = async () => {
     try {
-      heartbeatTicks += 1;
-      if (heartbeatTicks === 1 || heartbeatTicks % 4 === 0) {
-        await publishDesktopAgentPanes(client, deviceId, session.user.id);
-      }
+      await publishDesktopAgentPanes(client, deviceId, session.user.id);
       await touchHeartbeat(client, deviceId, {
         capabilities: detectCapabilities(),
         active_terminals: listActiveTerminalIds().length,
@@ -290,6 +285,16 @@ async function main(): Promise<void> {
     void heartbeat();
   }, HEARTBEAT_MS);
 
+  const FAST_EMULATOR_TYPES = new Set([
+    'emulator_tap',
+    'emulator_swipe',
+    'emulator_press_home',
+    'emulator_press_back',
+    'emulator_press_app_switcher',
+    'emulator_rotate',
+    'emulator_type',
+  ]);
+
   const poll = async () => {
     try {
       const claimed = await claimCommand(client, deviceId, 90);
@@ -297,8 +302,16 @@ async function main(): Promise<void> {
         return;
       }
       console.log(`[nexus-runtime] claimed ${claimed.id} type=${claimed.type}`);
-      await executeCommand(client, claimed, deviceId);
-      console.log(`[nexus-runtime] completed ${claimed.id}`);
+      const run = executeCommand(client, claimed, deviceId).then(() => {
+        console.log(`[nexus-runtime] completed ${claimed.id}`);
+      });
+      if (FAST_EMULATOR_TYPES.has(String(claimed.type))) {
+        void run.catch((error) => {
+          console.error('[nexus-runtime] fast command failed', error);
+        });
+        return;
+      }
+      await run;
     } catch (error) {
       console.error('[nexus-runtime] poll/execute failed', error);
     }

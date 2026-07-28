@@ -88,6 +88,24 @@ export function registerEmulatorHandlers(getWindow: WindowGetter): void {
   ipcMain.handle('emulator:screenshot', async (_event, sessionId: string) => {
     return emulatorSessionManager.screenshot(sessionId);
   });
+
+  ipcMain.handle('emulator:listApps', async (_event, sessionId: string) => {
+    return emulatorSessionManager.listApps(sessionId);
+  });
+
+  ipcMain.handle(
+    'emulator:launchApp',
+    async (_event, sessionId: string, appId: string) => {
+      await emulatorSessionManager.launchApp(sessionId, appId);
+    },
+  );
+
+  ipcMain.handle(
+    'emulator:terminateApp',
+    async (_event, sessionId: string, appId: string) => {
+      await emulatorSessionManager.terminateApp(sessionId, appId);
+    },
+  );
 }
 
 export async function cleanupEmulatorSessions(): Promise<void> {

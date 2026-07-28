@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type {
@@ -43,6 +43,11 @@ export interface EmulatorSessionEvents {
   ) => void;
 }
 
+export interface EmulatorAppInfo {
+  id: string;
+  name: string;
+}
+
 export interface EmulatorSessionHandle {
   stop(): Promise<void>;
   tap(x: number, y: number): Promise<void>;
@@ -58,6 +63,9 @@ export interface EmulatorSessionHandle {
   takeScreenshot(outputPath: string): Promise<void>;
   typeText(text: string): Promise<void>;
   sendInput(line: string): Promise<boolean>;
+  listApps(): Promise<EmulatorAppInfo[]>;
+  launchApp(appId: string): Promise<void>;
+  terminateApp(appId: string): Promise<void>;
 }
 
 interface SimulatorScreenInfo {
@@ -1750,6 +1758,21 @@ export async function createIosSimulatorSession(
 
   statsTimer = setInterval(publishStreamStats, 1000);
 
+  if (useSimulatorServer && simulatorServerController) {
+    let lastRelayEmitAt = 0;
+    simulatorServerController.startFrameRelay((frame) => {
+      if (stopped) {
+        return;
+      }
+      const now = Date.now();
+      if (now - lastRelayEmitAt < 80) {
+        return;
+      }
+      lastRelayEmitAt = now;
+      emitFrame(frame);
+    });
+  }
+
   if (!useSimulatorServer && !useIdbCapture) {
     scheduleCapture();
   }
@@ -1899,6 +1922,54 @@ export async function createIosSimulatorSession(
     },
     async takeScreenshot(outputPath: string) {
       await runCommand(xcrun.path, ['simctl', 'io', udid, 'screenshot', outputPath]);
+      triggerBurstCapture();
+    },
+    async listApps() {
+      const listed = await runCommand(xcrun.path, ['simctl', 'listapps', udid]);
+      if (listed.code !== 0 || !listed.stdout.trim()) {
+        return [];
+      }
+
+      const plistPath = path.join(sessionTempDir, 'listapps.plist');
+      await writeFile(plistPath, listed.stdout, 'utf8');
+      const converted = await runCommand('plutil', ['-convert', 'json', '-o', '-', plistPath]);
+      if (converted.code !== 0 || !converted.stdout.trim()) {
+        return [];
+      }
+
+      try {
+        const parsed = JSON.parse(converted.stdout) as Record<
+          string,
+          { CFBundleDisplayName?: string; CFBundleName?: string; CFBundleIdentifier?: string }
+        >;
+        const apps: EmulatorAppInfo[] = [];
+        for (const [bundleId, info] of Object.entries(parsed)) {
+          const id = info.CFBundleIdentifier || bundleId;
+          if (!id || id.startsWith('com.apple.')) {
+            continue;
+          }
+          apps.push({
+            id,
+            name: info.CFBundleDisplayName || info.CFBundleName || id,
+          });
+        }
+        return apps.sort((a, b) => a.name.localeCompare(b.name));
+      } catch {
+        return [];
+      }
+    },
+    async launchApp(appId: string) {
+      if (!appId.trim()) {
+        return;
+      }
+      await runCommand(xcrun.path, ['simctl', 'launch', udid, appId.trim()]);
+      triggerBurstCapture();
+    },
+    async terminateApp(appId: string) {
+      if (!appId.trim()) {
+        return;
+      }
+      await runCommand(xcrun.path, ['simctl', 'terminate', udid, appId.trim()]);
       triggerBurstCapture();
     },
   };

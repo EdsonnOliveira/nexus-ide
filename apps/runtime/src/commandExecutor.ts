@@ -24,6 +24,12 @@ import {
 import { syncLocalState } from './syncLocalState';
 import { streamChunkIndicatesPlanWaiting } from './detectPlanWaiting';
 import { notifyPush } from './notifyPush';
+import { requestDesktopJson } from './desktopControlClient';
+import {
+  attachEmulatorViewer,
+  configureEmulatorRelay,
+  detachEmulatorViewer,
+} from './emulatorRelay';
 
 const execFileAsync = promisify(execFile);
 
@@ -151,6 +157,155 @@ async function getProjectRoot(
     .eq('project_id', projectId)
     .maybeSingle();
   return data?.local_path ?? null;
+}
+
+async function resolveLocalProjectId(
+  client: NexusClient,
+  projectId: string | null,
+): Promise<string | null> {
+  if (!projectId) {
+    return null;
+  }
+  const { data } = await client
+    .from('projects')
+    .select('local_id')
+    .eq('id', projectId)
+    .maybeSingle();
+  return typeof data?.local_id === 'string' ? data.local_id : null;
+}
+
+async function handleEmulatorCommand(
+  client: NexusClient,
+  command: CommandRow,
+  deviceId: string,
+): Promise<Record<string, unknown>> {
+  configureEmulatorRelay(client, broadcast);
+  const payload = (command.payload ?? {}) as Record<string, unknown>;
+  const sessionId = String(payload.session_id ?? payload.sessionId ?? '');
+  const requiresSession = ![
+    'emulator_list_sessions',
+    'emulator_list_devices',
+    'emulator_setup_status',
+    'emulator_start',
+  ].includes(command.type);
+  if (requiresSession && !sessionId) {
+    throw new Error('session_id is required');
+  }
+
+  switch (command.type) {
+    case 'emulator_list_sessions': {
+      const listed = await requestDesktopJson('emulator.list_sessions');
+      const sessions = Array.isArray(listed.sessions) ? listed.sessions : [];
+      const localIds = sessions
+        .map((item) => {
+          const row = item as Record<string, unknown>;
+          return String(row.localProjectId ?? row.local_project_id ?? '').trim();
+        })
+        .filter(Boolean);
+
+      const projectByLocalId = new Map<string, string>();
+      if (localIds.length > 0) {
+        const { data } = await client
+          .from('projects')
+          .select('id, local_id')
+          .in('local_id', localIds);
+        for (const project of data ?? []) {
+          if (project.local_id && project.id) {
+            projectByLocalId.set(project.local_id, project.id);
+          }
+        }
+      }
+
+      return {
+        sessions: sessions.map((item) => {
+          const row = item as Record<string, unknown>;
+          const localProjectId = String(row.localProjectId ?? row.local_project_id ?? '').trim();
+          return {
+            ...row,
+            local_project_id: localProjectId || null,
+            project_id: localProjectId ? projectByLocalId.get(localProjectId) ?? null : null,
+          };
+        }),
+      };
+    }
+    case 'emulator_list_devices':
+      return requestDesktopJson('emulator.list_devices', {
+        platform: payload.platform ?? 'android',
+      });
+    case 'emulator_setup_status':
+      return requestDesktopJson('emulator.setup_status');
+    case 'emulator_start': {
+      const localProjectId = await resolveLocalProjectId(client, command.project_id);
+      return requestDesktopJson(
+        'emulator.start',
+        {
+          platform: payload.platform ?? 'android',
+          device_id: payload.device_id ?? payload.deviceId,
+          tab_id: payload.tab_id ?? payload.tabId,
+          local_project_id: localProjectId,
+        },
+        180000,
+      );
+    }
+    case 'emulator_stop':
+      return requestDesktopJson('emulator.stop', { session_id: sessionId });
+    case 'emulator_attach': {
+      const snapshot = await requestDesktopJson('emulator.attach', { session_id: sessionId });
+      const attached = await attachEmulatorViewer({
+        sessionId,
+        workspaceId: command.workspace_id,
+        deviceId,
+        projectId: command.project_id,
+      });
+      return { ...snapshot, ...attached };
+    }
+    case 'emulator_detach':
+      return detachEmulatorViewer(sessionId);
+    case 'emulator_tap':
+      return requestDesktopJson('emulator.tap', {
+        session_id: sessionId,
+        x: payload.x,
+        y: payload.y,
+      });
+    case 'emulator_swipe':
+      return requestDesktopJson('emulator.swipe', {
+        session_id: sessionId,
+        x1: payload.x1,
+        y1: payload.y1,
+        x2: payload.x2,
+        y2: payload.y2,
+        duration_ms: payload.duration_ms ?? payload.durationMs ?? 300,
+      });
+    case 'emulator_type':
+      return requestDesktopJson('emulator.type', {
+        session_id: sessionId,
+        text: payload.text ?? '',
+      });
+    case 'emulator_press_home':
+      return requestDesktopJson('emulator.press_home', { session_id: sessionId });
+    case 'emulator_press_back':
+      return requestDesktopJson('emulator.press_back', { session_id: sessionId });
+    case 'emulator_press_app_switcher':
+      return requestDesktopJson('emulator.press_app_switcher', { session_id: sessionId });
+    case 'emulator_rotate':
+      return requestDesktopJson('emulator.rotate', { session_id: sessionId });
+    case 'emulator_screenshot':
+      return requestDesktopJson('emulator.screenshot', { session_id: sessionId }, 30000);
+    case 'emulator_list_apps':
+      return requestDesktopJson('emulator.list_apps', { session_id: sessionId }, 30000);
+    case 'emulator_launch_app':
+      return requestDesktopJson('emulator.launch_app', {
+        session_id: sessionId,
+        app_id: payload.app_id ?? payload.appId,
+      });
+    case 'emulator_terminate_app':
+      return requestDesktopJson('emulator.terminate_app', {
+        session_id: sessionId,
+        app_id: payload.app_id ?? payload.appId,
+      });
+    default:
+      throw new Error(`Unsupported emulator command: ${command.type}`);
+  }
 }
 
 const MAX_PROMPT_IMAGE_DATA_URL_BYTES = 4 * 1024 * 1024;
@@ -1153,6 +1308,26 @@ export async function executeCommand(
         break;
       case 'sync_local_state':
         result = await syncLocalState(client, deviceId, command.created_by);
+        break;
+      case 'emulator_list_sessions':
+      case 'emulator_list_devices':
+      case 'emulator_setup_status':
+      case 'emulator_start':
+      case 'emulator_stop':
+      case 'emulator_attach':
+      case 'emulator_detach':
+      case 'emulator_tap':
+      case 'emulator_swipe':
+      case 'emulator_type':
+      case 'emulator_press_home':
+      case 'emulator_press_back':
+      case 'emulator_press_app_switcher':
+      case 'emulator_rotate':
+      case 'emulator_screenshot':
+      case 'emulator_list_apps':
+      case 'emulator_launch_app':
+      case 'emulator_terminate_app':
+        result = await handleEmulatorCommand(client, command, deviceId);
         break;
       default:
         throw new Error(`Unsupported command type: ${command.type}`);

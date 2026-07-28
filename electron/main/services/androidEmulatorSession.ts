@@ -25,6 +25,11 @@ export interface EmulatorSessionEvents {
   ) => void;
 }
 
+export interface EmulatorAppInfo {
+  id: string;
+  name: string;
+}
+
 export interface EmulatorSessionHandle {
   stop(): Promise<void>;
   tap(x: number, y: number): Promise<void>;
@@ -40,6 +45,9 @@ export interface EmulatorSessionHandle {
   takeScreenshot(outputPath: string): Promise<void>;
   typeText(text: string): Promise<void>;
   sendInput(line: string): Promise<boolean>;
+  listApps(): Promise<EmulatorAppInfo[]>;
+  launchApp(appId: string): Promise<void>;
+  terminateApp(appId: string): Promise<void>;
 }
 
 export interface EmulatorSessionStartControls {
@@ -624,6 +632,12 @@ export async function createAndroidEmulatorSession(
   let isLandscape = false;
   let burstUntil = 0;
   let inputShell: ChildProcess | null = null;
+  const androidTouchRef = {
+    active: false,
+    lastX: 0,
+    lastY: 0,
+    lastMotionAt: 0,
+  };
 
   const isCancelled = (): boolean => stopped || (controls?.isCancelled() ?? false);
 
@@ -1177,6 +1191,10 @@ export async function createAndroidEmulatorSession(
         return;
       }
 
+      if (Date.now() - androidTouchRef.lastMotionAt < 280) {
+        return;
+      }
+
       await withInputGate(async () => {
         const startX = Math.round(x1 * inputSize.width);
         const startY = Math.round(y1 * inputSize.height);
@@ -1323,8 +1341,99 @@ export async function createAndroidEmulatorSession(
         await writeFile(outputPath, png);
       }
     },
-    async sendInput() {
-      return false;
+    async listApps() {
+      if (!serial) {
+        return [];
+      }
+
+      const listed = await runAdb(adbTool.path, ['shell', 'pm', 'list', 'packages', '-3'], serial);
+      const apps: EmulatorAppInfo[] = [];
+
+      for (const line of listed.stdout.split('\n')) {
+        const match = line.trim().match(/^package:(.+)$/);
+        if (!match?.[1]) {
+          continue;
+        }
+        const id = match[1];
+        apps.push({ id, name: id.split('.').pop() || id });
+      }
+
+      return apps.sort((a, b) => a.name.localeCompare(b.name));
+    },
+    async launchApp(appId: string) {
+      if (!serial || !appId.trim()) {
+        return;
+      }
+
+      await withInputGate(async () => {
+        sendShellCommand(
+          `monkey -p ${appId.trim()} -c android.intent.category.LAUNCHER 1`,
+        );
+      });
+    },
+    async terminateApp(appId: string) {
+      if (!serial || !appId.trim()) {
+        return;
+      }
+
+      await withInputGate(async () => {
+        sendShellCommand(`am force-stop ${appId.trim()}`);
+      });
+    },
+    async sendInput(line: string) {
+      if (!serial || !line) {
+        return false;
+      }
+
+      const match = /^touch (Down|Move|Up) ([0-9.+-]+),([0-9.+-]+)$/.exec(line.trim());
+      if (!match) {
+        return false;
+      }
+
+      const action = match[1];
+      const nx = Number(match[2]);
+      const ny = Number(match[3]);
+      if (!Number.isFinite(nx) || !Number.isFinite(ny)) {
+        return false;
+      }
+
+      const px = Math.round(Math.min(1, Math.max(0, nx)) * inputSize.width);
+      const py = Math.round(Math.min(1, Math.max(0, ny)) * inputSize.height);
+
+      if (action === 'Down') {
+        androidTouchRef.active = true;
+        androidTouchRef.lastX = px;
+        androidTouchRef.lastY = py;
+        sendShellCommand(`input motionevent DOWN ${px} ${py}`);
+        androidTouchRef.lastMotionAt = Date.now();
+        triggerBurstCapture();
+        return true;
+      }
+
+      if (!androidTouchRef.active) {
+        return false;
+      }
+
+      if (action === 'Move') {
+        const dx = Math.abs(px - androidTouchRef.lastX);
+        const dy = Math.abs(py - androidTouchRef.lastY);
+        if (dx < 2 && dy < 2) {
+          return true;
+        }
+        androidTouchRef.lastX = px;
+        androidTouchRef.lastY = py;
+        sendShellCommand(`input motionevent MOVE ${px} ${py}`);
+        androidTouchRef.lastMotionAt = Date.now();
+        return true;
+      }
+
+      androidTouchRef.active = false;
+      androidTouchRef.lastX = px;
+      androidTouchRef.lastY = py;
+      sendShellCommand(`input motionevent UP ${px} ${py}`);
+      androidTouchRef.lastMotionAt = Date.now();
+      triggerBurstCapture();
+      return true;
     },
   };
 }

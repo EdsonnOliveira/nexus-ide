@@ -11,6 +11,8 @@ import type {
 export interface NexusBridge {
   executeCommand(command: NexusCommand): Promise<string>;
   subscribeToExecution(id: string, onEvent: (payload: unknown) => void): Unsubscribe;
+  subscribeToEmulator(sessionId: string, onEvent: (payload: unknown) => void): Unsubscribe;
+  sendEmulatorInput(sessionId: string, payload: Record<string, unknown>): Promise<boolean>;
   getRuntimeStatus(): Promise<RuntimeStatus>;
   listDevices(): Promise<DeviceRecord[]>;
   listWorkspaces(): Promise<CloudWorkspace[]>;

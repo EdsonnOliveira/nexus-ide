@@ -1200,6 +1200,9 @@ export interface NexusAPI {
     typeText: (sessionId: string, text: string) => Promise<void>;
     sendInput: (sessionId: string, line: string) => Promise<boolean>;
     screenshot: (sessionId: string) => Promise<boolean>;
+    listApps: (sessionId: string) => Promise<Array<{ id: string; name: string }>>;
+    launchApp: (sessionId: string, appId: string) => Promise<void>;
+    terminateApp: (sessionId: string, appId: string) => Promise<void>;
     onVideoChunk: (
       callback: (payload: {
         sessionId: string;
@@ -1244,6 +1247,15 @@ export interface NexusAPI {
     ) => () => void;
     onSessionCreated: (
       callback: (payload: { sessionId: string; tabId: string }) => void,
+    ) => () => void;
+    onEnsureRemoteTab: (
+      callback: (payload: {
+        tabId: string;
+        platform: EmulatorPlatform;
+        deviceId: string;
+        sessionId?: string | null;
+        localProjectId?: string | null;
+      }) => void,
     ) => () => void;
   };
   api: {

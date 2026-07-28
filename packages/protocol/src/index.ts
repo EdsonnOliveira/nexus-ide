@@ -29,7 +29,25 @@ export type CommandType =
   | 'git_commit'
   | 'git_push'
   | 'scan_projects'
-  | 'sync_local_state';
+  | 'sync_local_state'
+  | 'emulator_list_sessions'
+  | 'emulator_list_devices'
+  | 'emulator_setup_status'
+  | 'emulator_start'
+  | 'emulator_stop'
+  | 'emulator_attach'
+  | 'emulator_detach'
+  | 'emulator_tap'
+  | 'emulator_swipe'
+  | 'emulator_type'
+  | 'emulator_press_home'
+  | 'emulator_press_back'
+  | 'emulator_press_app_switcher'
+  | 'emulator_rotate'
+  | 'emulator_screenshot'
+  | 'emulator_list_apps'
+  | 'emulator_launch_app'
+  | 'emulator_terminate_app';
 
 export type NexusEventType =
   | 'device.online'
@@ -56,7 +74,10 @@ export type NexusEventType =
   | 'command.created'
   | 'command.claimed'
   | 'command.completed'
-  | 'command.cancelled';
+  | 'command.cancelled'
+  | 'emulator.frame'
+  | 'emulator.state'
+  | 'emulator.closed';
 
 export interface NexusEventEnvelope<TPayload = Record<string, unknown>> {
   event_id: string;

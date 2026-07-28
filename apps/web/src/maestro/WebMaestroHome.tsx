@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Smartphone } from 'lucide-react';
 import {
   closeAgentSession,
   createAgentSession,
@@ -18,6 +19,8 @@ import { WebMaestroAskBar } from './WebMaestroAskBar';
 import { WebPushModal } from './WebPushModal';
 import { WebVercelDeployCard } from './WebVercelDeployCard';
 import { WebVercelTokenModal } from './WebVercelTokenModal';
+import { WebEmulatorPanel } from './WebEmulatorPanel';
+import { useWebEmulatorProjectIds } from './useWebEmulatorProjectIds';
 import { useWebVercelDeployments } from './useWebVercelDeployments';
 import { WebMobileReleaseCard } from './WebMobileReleaseCard';
 import { useWebMobileReleases } from './useWebMobileReleases';
@@ -95,32 +98,74 @@ export function WebMaestroHome() {
   const [pairingOpen, setPairingOpen] = useState(false);
   const [vercelTokenOpen, setVercelTokenOpen] = useState(false);
   const [pushOpen, setPushOpen] = useState(false);
+  const [emulatorOpen, setEmulatorOpen] = useState(false);
   const [agentFilterProjectId, setAgentFilterProjectId] = useState<string | null>(null);
   const [focusedAgentId, setFocusedAgentId] = useState<string | null>(null);
   const [desktopAgentsCatalog, setDesktopAgentsCatalog] = useState<WebAgentSession[]>([]);
   const [heroScrolled, setHeroScrolled] = useState(false);
   const parsersRef = useRef(new Map<string, WebStreamJsonState>());
   const heroRef = useRef<HTMLElement>(null);
-  const compact = agents.length >= 5;
-  const filteredAgents = useMemo(() => {
-    const visible = agents.filter(
-      (agent) =>
-        agent.source !== 'desktop_pane' || pinnedDesktopAgentIdsRef.current.has(agent.id),
-    );
-    if (!agentFilterProjectId) {
-      return visible;
-    }
-    return visible.filter((agent) => agent.projectId === agentFilterProjectId);
-  }, [agentFilterProjectId, agents]);
+  const visibleAgents = useMemo(
+    () =>
+      agents.filter(
+        (agent) =>
+          agent.source !== 'desktop_pane' || pinnedDesktopAgentIdsRef.current.has(agent.id),
+      ),
+    [agents],
+  );
+  const compact = visibleAgents.length >= 5;
+  const emulatorWorkspaceId = useMemo(() => resolveStoreWorkspaceId(), [
+    activeWorkspaceId,
+    selectedProjectId,
+    projects,
+    devices,
+    selectedDeviceId,
+  ]);
+  const emulatorProjectIds = useWebEmulatorProjectIds({
+    workspaceId: emulatorWorkspaceId,
+    deviceId: selectedDeviceId,
+    projects,
+    enabled: Boolean(selectedDeviceId),
+  });
+
+  const handleOpenEmulator = useCallback(
+    (projectId: string) => {
+      setSelectedProjectId(projectId);
+      setAgentFilterProjectId(projectId);
+      const project = projects.find((item) => item.id === projectId);
+      if (project?.workspace_id) {
+        setActiveWorkspaceId(project.workspace_id);
+      }
+      setEmulatorOpen(true);
+    },
+    [projects, setActiveWorkspaceId, setSelectedProjectId],
+  );
 
   useEffect(() => {
     if (!agentFilterProjectId) {
       return;
     }
-    if (!agents.some((agent) => agent.projectId === agentFilterProjectId)) {
+    if (!visibleAgents.some((agent) => agent.projectId === agentFilterProjectId)) {
       setAgentFilterProjectId(null);
     }
-  }, [agentFilterProjectId, agents]);
+  }, [agentFilterProjectId, visibleAgents]);
+
+  const handleSelectProjectAgents = useCallback(
+    (projectId: string) => {
+      setAgentFilterProjectId(projectId);
+      setSelectedProjectId(projectId);
+      const project = projects.find((item) => item.id === projectId);
+      if (project?.workspace_id) {
+        setActiveWorkspaceId(project.workspace_id);
+      }
+    },
+    [projects, setActiveWorkspaceId, setSelectedProjectId],
+  );
+
+  const handleBackToProjects = useCallback(() => {
+    setAgentFilterProjectId(null);
+    setFocusedAgentId(null);
+  }, []);
 
   const {
     tokenConfigured: vercelTokenConfigured,
@@ -409,6 +454,8 @@ export function WebMaestroHome() {
             },
           ],
         });
+        setAgentFilterProjectId(selectedProjectId);
+        setFocusedAgentId(agentId);
 
         subscribeAgent(agentId, commandId);
         return true;
@@ -605,6 +652,36 @@ export function WebMaestroHome() {
         }
       }
       setFocusedAgentId(agentId);
+
+      if (agent.source !== 'desktop_pane') {
+        return;
+      }
+
+      void (async () => {
+        const workspaceId = resolveStoreWorkspaceId();
+        if (!workspaceId) {
+          return;
+        }
+        try {
+          const {
+            data: { user },
+          } = await supabase.auth.getUser();
+          if (!user) {
+            return;
+          }
+          const bundles = await listOpenAgentSessionBundles(supabase, workspaceId, user.id);
+          const hydrated = hydrateWebAgentsFromBundles(bundles);
+          const fresh = hydrated.find((item) => item.id === agentId);
+          if (!fresh) {
+            return;
+          }
+          setDesktopAgentsCatalog(hydrated.filter((item) => item.source === 'desktop_pane'));
+          if (pinnedDesktopAgentIdsRef.current.has(agentId)) {
+            addAgent(fresh);
+          }
+        } catch {
+        }
+      })();
     },
     [addAgent, desktopAgentsCatalog, projects, setActiveWorkspaceId, setSelectedProjectId],
   );
@@ -676,6 +753,17 @@ export function WebMaestroHome() {
           </div>
         </div>
         <div className='home-dashboard__hero-mac'>
+          {agentFilterProjectId && emulatorProjectIds.has(agentFilterProjectId) ? (
+            <button
+              type='button'
+              className='web-emulator-header-btn app-button'
+              aria-label='Abrir emulador'
+              title='Emulador rodando'
+              onClick={() => handleOpenEmulator(agentFilterProjectId)}
+            >
+              <Smartphone size={15} aria-hidden='true' />
+            </button>
+          ) : null}
           <WebMacSelect
             devices={devices}
             deviceId={selectedDeviceId}
@@ -693,20 +781,23 @@ export function WebMaestroHome() {
           devices={devices}
           deviceId={selectedDeviceId}
           onDeviceChange={setSelectedDeviceId}
-          agents={agents}
-          agentFilterProjectId={agentFilterProjectId}
-          onAgentFilterChange={setAgentFilterProjectId}
           submitting={submitting}
           onSubmit={(prompt, imageDataUrls) => handleSubmit(prompt, imageDataUrls)}
           desktopAgents={desktopAgentsCatalog}
           onSelectAgent={handleSelectAgent}
           onRequestDesktopAgents={handleRequestDesktopAgents}
+          hideProjectSelect={Boolean(agentFilterProjectId)}
         />
       </div>
       <WebMaestroAgents
-        agents={filteredAgents}
+        agents={visibleAgents}
+        selectedProjectId={agentFilterProjectId}
         deviceId={resolveDeviceId()}
         focusedAgentId={focusedAgentId}
+        emulatorProjectIds={emulatorProjectIds}
+        onOpenEmulator={handleOpenEmulator}
+        onSelectProject={handleSelectProjectAgents}
+        onBackToProjects={handleBackToProjects}
         onFocusedAgentHandled={() => setFocusedAgentId(null)}
         onRemove={(agentId) => void handleRemove(agentId)}
         onFollowUp={(agentId, prompt) => handleFollowUp(agentId, prompt)}
@@ -742,6 +833,13 @@ export function WebMaestroHome() {
         onClear={clearVercelToken}
       />
       <WebPushModal open={pushOpen} onClose={() => setPushOpen(false)} />
+      <WebEmulatorPanel
+        open={emulatorOpen}
+        onClose={() => setEmulatorOpen(false)}
+        workspaceId={resolveStoreWorkspaceId()}
+        projectId={selectedProjectId}
+        deviceId={selectedDeviceId}
+      />
     </div>
   );
 }

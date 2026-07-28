@@ -46,6 +46,11 @@ export function hydrateWebAgentsFromBundles(bundles: AgentSessionBundle[]): WebA
       if (parsed?.shellToolEvents?.length) {
         terminals.push(...collectWebShellTerminalsFromEvents(parsed.shellToolEvents));
       }
+      const thought = parsed?.thought?.trim() ?? '';
+      let response = parsed?.response?.trim() ?? '';
+      if (!thought && !response && stream.trim() && !stream.trimStart().startsWith('{')) {
+        response = stream.trim();
+      }
       const createdAt = execution.started_at
         ? new Date(execution.started_at).getTime()
         : new Date(execution.created_at).getTime();
@@ -55,9 +60,9 @@ export function hydrateWebAgentsFromBundles(bundles: AgentSessionBundle[]): WebA
       return {
         id: execution.id,
         prompt: execution.prompt ?? session.title ?? '',
-        thought: parsed?.thought ?? '',
+        thought,
         thoughtStreaming: false,
-        response: parsed?.response ?? '',
+        response,
         status: mapExecutionStatus(execution.status),
         createdAt,
         endedAt,

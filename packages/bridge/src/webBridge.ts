@@ -26,6 +26,7 @@ import {
   type Unsubscribe,
 } from '@nexus/protocol';
 import type { NexusBridge } from './types';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 function asCapabilities(value: unknown): DeviceCapabilities {
   if (!value || typeof value !== 'object') {
@@ -36,6 +37,7 @@ function asCapabilities(value: unknown): DeviceCapabilities {
 
 export function createWebBridge(config: NexusSupabaseConfig): NexusBridge {
   const client = createNexusSupabaseClient(config);
+  const emulatorInputChannels = new Map<string, RealtimeChannel>();
 
   async function resolveWorkspaceId(): Promise<string> {
     const membership = await getPrimaryWorkspace(client);
@@ -123,6 +125,59 @@ export function createWebBridge(config: NexusSupabaseConfig): NexusBridge {
       return () => {
         void client.removeChannel(channel);
       };
+    },
+
+    subscribeToEmulator(sessionId: string, onEvent: (payload: unknown) => void): Unsubscribe {
+      const existing = emulatorInputChannels.get(sessionId);
+      if (existing) {
+        void client.removeChannel(existing);
+        emulatorInputChannels.delete(sessionId);
+      }
+
+      const channel = client.channel(`emulator:${sessionId}`, {
+        config: {
+          broadcast: { self: false, ack: false },
+        },
+      });
+
+      channel.on('broadcast', { event: 'nexus' }, (message) => {
+        onEvent(message.payload);
+      });
+
+      const ready = new Promise<void>((resolve) => {
+        channel.subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            resolve();
+          }
+        });
+      });
+
+      emulatorInputChannels.set(sessionId, channel);
+      void ready;
+
+      return () => {
+        if (emulatorInputChannels.get(sessionId) === channel) {
+          emulatorInputChannels.delete(sessionId);
+        }
+        void client.removeChannel(channel);
+      };
+    },
+
+    async sendEmulatorInput(sessionId: string, payload: Record<string, unknown>): Promise<boolean> {
+      const channel = emulatorInputChannels.get(sessionId);
+      if (!channel) {
+        return false;
+      }
+      try {
+        const status = await channel.send({
+          type: 'broadcast',
+          event: 'input',
+          payload,
+        });
+        return status === 'ok';
+      } catch {
+        return false;
+      }
     },
 
     async getRuntimeStatus(): Promise<RuntimeStatus> {

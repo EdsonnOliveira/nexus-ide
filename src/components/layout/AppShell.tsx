@@ -26,6 +26,7 @@ import { CloudDeviceSelect } from '@/components/cloud/CloudDeviceSelect';
 import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useCloudAgentSessionsSync } from '@/hooks/useCloudAgentSessionsSync';
+import { useRemoteEmulatorTabSync } from '@/hooks/useRemoteEmulatorTabSync';
 import { useCloudStore } from '@/stores/useCloudStore';
 import { projectHasLiveAgentSession } from '@/utils/paneAgentSession';
 import { isAnyModalOpen, subscribeOverlayBlockingChange } from '@/utils/overlayBlocking';
@@ -200,6 +201,7 @@ function AppShellComponent() {
   useAutomationScheduler();
   const refreshCloud = useCloudStore((state) => state.refresh);
   useCloudAgentSessionsSync(true);
+  useRemoteEmulatorTabSync();
 
   useEffect(() => {
     void refreshCloud();

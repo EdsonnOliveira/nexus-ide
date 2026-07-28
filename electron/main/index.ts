@@ -7,6 +7,10 @@ import { registerApiHandlers } from './ipc/api';
 import { registerBrowserHandlers } from './ipc/browser';
 import { registerDialogHandlers } from './ipc/dialog';
 import { cleanupEmulatorSessions, registerEmulatorHandlers } from './ipc/emulator';
+import {
+  startDesktopControlServer,
+  stopDesktopControlServer,
+} from './services/desktopControlServer';
 import { registerFileHandlers } from './ipc/files';
 import { registerProjectHandlers } from './ipc/projects';
 import { registerGitHandlers } from './ipc/git';
@@ -436,6 +440,7 @@ app.whenReady().then(() => {
   registerCursorUsageHandlers();
   registerWhatsAppHandlers();
   registerEmulatorHandlers(() => win);
+  startDesktopControlServer();
   registerSessionHandlers(() => {
     completeSessionFlush();
   });
@@ -497,6 +502,7 @@ app.on('window-all-closed', () => {
   ptyManager.killAll();
   agentPrintRunner.stopAll();
   testRunnerSession.stopAll();
+  stopDesktopControlServer();
   void cleanupEmulatorSessions();
 
   if (process.platform !== 'darwin') {
@@ -524,6 +530,7 @@ app.on('will-quit', () => {
   ptyManager.killAll();
   agentPrintRunner.stopAll();
   testRunnerSession.stopAll();
+  stopDesktopControlServer();
   void cleanupEmulatorSessions();
 });
 
