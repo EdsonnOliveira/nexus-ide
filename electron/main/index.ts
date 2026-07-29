@@ -1,6 +1,14 @@
 delete process.env.NODE_OPTIONS;
 
-import { app, BrowserWindow, globalShortcut, nativeImage, shell, type NativeImage } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  globalShortcut,
+  nativeImage,
+  session,
+  shell,
+  type NativeImage,
+} from 'electron';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { registerApiHandlers } from './ipc/api';
@@ -19,6 +27,7 @@ import { registerMusicHandlers } from './ipc/music';
 import { registerMailHandlers } from './ipc/mail';
 import { registerCalendarHandlers } from './ipc/calendar';
 import { registerMacParakeetHandlers } from './ipc/macParakeet';
+import { registerJarvisHandlers } from './ipc/jarvis';
 import { registerVercelHandlers } from './ipc/vercel';
 import { registerCursorUsageHandlers } from './ipc/cursorUsage';
 import { registerWhatsAppHandlers } from './ipc/whatsapp';
@@ -415,6 +424,15 @@ function registerShortcuts() {
 }
 
 app.whenReady().then(() => {
+  const mediaPermissions = new Set(['media', 'mediaKeySystem']);
+
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(mediaPermissions.has(permission));
+  });
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) =>
+    mediaPermissions.has(permission),
+  );
+
   registerLocalFileProtocol();
   registerProjectHandlers();
   registerCloudHandlers();
@@ -436,6 +454,7 @@ app.whenReady().then(() => {
   registerMailHandlers();
   registerCalendarHandlers();
   registerMacParakeetHandlers();
+  registerJarvisHandlers();
   registerVercelHandlers();
   registerCursorUsageHandlers();
   registerWhatsAppHandlers();

@@ -12,11 +12,13 @@ import { stripAnsi } from '@/utils/stripAnsi';
 
 const AAB_SUCCESS_PATTERNS = [
   /\bAAB:\s*(.+)/i,
-  /app-release\.aab/i,
   /AAB pronto para a Play Store:\s*\n?\s*(.+)/i,
 ];
 
-const APK_SUCCESS_PATTERNS = [/\bAPK:\s*(.+)/i, /app-release\.apk/i];
+const APK_SUCCESS_PATTERNS = [
+  /\bAPK:\s*(.+)/i,
+  /APK pronto(?:\s+para\s+distribui[cç][aã]o)?:\s*\n?\s*(.+)/i,
+];
 
 const ERROR_PATTERNS = [
   /BUILD FAILED/i,
@@ -51,10 +53,7 @@ const PHASE_PATTERNS_BY_KIND: Record<MobileReleaseKind, Array<{ pattern: RegExp;
   ],
 };
 
-const IOS_TESTFLIGHT_SUCCESS_PATTERNS = [
-  /TestFlight upload submitted successfully/i,
-  /Skipping TestFlight upload/i,
-];
+const IOS_TESTFLIGHT_SUCCESS_PATTERNS = [/TestFlight upload submitted successfully/i];
 
 function detectKindsFromCommand(command: string): MobileReleaseKind[] {
   const normalized = command.toLowerCase().replace(/\s+/g, ' ');
@@ -64,7 +63,7 @@ function detectKindsFromCommand(command: string): MobileReleaseKind[] {
   }
 
   if (/android:bundle|android-bundle-release|\bbundlerelease\b|\bbundle-release\b/.test(normalized)) {
-    return ['android-aab', 'android-apk'];
+    return ['android-aab'];
   }
 
   if (/android:apk|android-apk-release/.test(normalized)) {
@@ -86,7 +85,7 @@ function detectKindsFromOutput(plain: string): MobileReleaseKind[] {
   }
 
   if (/syncing capacitor android|android-bundle-release|gradlew bundleRelease|\bbundlerelease\b/.test(normalized)) {
-    return ['android-aab', 'android-apk'];
+    return ['android-aab'];
   }
 
   if (/android-apk-release|gradlew assembleRelease|\bassemblerelease\b/.test(normalized) && !/\bbundlerelease\b/.test(normalized)) {
@@ -360,20 +359,21 @@ function extractArtifactPath(patterns: RegExp[], plain: string): string | null {
       }
     }
 
-    const lineMatch = plain.match(new RegExp(`${pattern.source}.*`, 'i'));
+    const matchedLine = match[0];
+    const lineStart = typeof match.index === 'number' ? match.index : plain.indexOf(matchedLine);
+    const lineEnd = plain.indexOf('\n', lineStart >= 0 ? lineStart : 0);
+    const line =
+      lineStart >= 0
+        ? plain.slice(lineStart, lineEnd >= 0 ? lineEnd : undefined).trim()
+        : matchedLine;
+    const fromLine = sanitizeMobileArtifactPath(line.replace(/^[^:]+:\s*/i, '').trim());
 
-    if (lineMatch?.[0]) {
-      const fromLine = sanitizeMobileArtifactPath(
-        lineMatch[0].replace(/^[^:]+:\s*/i, '').trim(),
-      );
-
-      if (fromLine) {
-        return fromLine;
-      }
+    if (fromLine) {
+      return fromLine;
     }
   }
 
-  return sanitizeMobileArtifactPath(plain);
+  return null;
 }
 
 function createRelease(
@@ -495,13 +495,6 @@ function shouldCompleteReleaseFromShell(
 
   if (release.kind === 'ios-testflight') {
     if (isIosTestFlightSuccess(plain)) {
-      return {
-        complete: true,
-        artifactPath: artifactPath ?? resolveIosTestFlightArtifact(plain),
-      };
-    }
-
-    if (exitCode === 0 && commandMatchesReleaseKind(command, release.kind)) {
       return {
         complete: true,
         artifactPath: artifactPath ?? resolveIosTestFlightArtifact(plain),

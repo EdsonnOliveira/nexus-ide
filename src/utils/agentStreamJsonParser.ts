@@ -1008,6 +1008,43 @@ function mergeInteractionActivitiesFromTurn(
   return merged;
 }
 
+function mergeStatusActivitiesFromTurn(
+  activities: AgentActivity[],
+  turn: AgentTurn,
+): AgentActivity[] {
+  const merged = [...activities];
+  const seenIds = new Set(merged.map((entry) => entry.id));
+
+  for (const entry of turn.activities) {
+    if (entry.kind !== 'status' || !entry.label.trim() || seenIds.has(entry.id)) {
+      continue;
+    }
+
+    merged.push({ ...entry });
+    seenIds.add(entry.id);
+  }
+
+  return merged;
+}
+
+function hasStreamJsonStateContent(state: AgentStreamJsonParserState): boolean {
+  if (state.pendingResponseText.trim()) {
+    return true;
+  }
+
+  return state.activities.some(
+    (entry) =>
+      (entry.kind === 'thought' && Boolean(entry.label.trim())) ||
+      entry.kind === 'response' ||
+      entry.kind === 'file_edit' ||
+      entry.kind === 'file_read' ||
+      entry.kind === 'question' ||
+      entry.kind === 'plan' ||
+      entry.kind === 'status' ||
+      (entry.kind === 'tool_run' && Boolean(entry.label.trim() || entry.toolCommand?.trim())),
+  );
+}
+
 export function hasMeaningfulStreamJsonTurnOutput(state: AgentStreamJsonParserState): boolean {
   if (state.pendingResponseText.trim()) {
     return true;
@@ -1066,6 +1103,10 @@ function isRenderableStreamJsonActivity(entry: AgentActivity): boolean {
 
   if (entry.kind === 'tool_run') {
     return Boolean(entry.label.trim() || entry.toolCommand?.trim());
+  }
+
+  if (entry.kind === 'status') {
+    return Boolean(entry.label.trim());
   }
 
   return false;
@@ -1951,7 +1992,11 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
   consumeJsonObjects(state);
   state.jsonBuffer = '';
 
-  const sourceActivities = state.activities.length > 0 ? state.activities : turn.activities;
+  const sourceActivities = hasStreamJsonStateContent(state)
+    ? state.activities
+    : turn.activities.length > 0
+      ? turn.activities
+      : state.activities;
   const endedDuringThought = hasIncompleteStreamJsonEnding(state, sourceActivities);
 
   let activities = sourceActivities
@@ -1988,6 +2033,7 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
   }
 
   activities = mergeInteractionActivitiesFromTurn(activities, turn);
+  activities = mergeStatusActivitiesFromTurn(activities, turn);
   activities = activities.filter((entry) => isRenderableStreamJsonActivity(entry));
   activities = deduplicatePlanResponseActivities(activities);
 
@@ -2009,6 +2055,10 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
     endedDuringThought &&
     !hasPendingInteraction &&
     lastResponseLabel !== incompleteFallback;
+  const statusFallback = [...turn.activities]
+    .reverse()
+    .find((entry) => entry.kind === 'status' && entry.label.trim())
+    ?.label.trim();
 
   if (activities.length === 0 && isAgentTurnSummaryVisible(summary)) {
     activities = [
@@ -2019,14 +2069,22 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
     ];
   } else if (activities.length === 0 && !hasPendingInteraction) {
     activities = [
-      createActivity(
-        'response',
-        'Nenhuma resposta foi capturada. Tente enviar novamente.',
-      ),
+      statusFallback
+        ? {
+            id: crypto.randomUUID(),
+            kind: 'status',
+            label: statusFallback,
+            createdAt: Date.now(),
+          }
+        : createActivity(
+            'response',
+            'Nenhuma resposta foi capturada. Tente enviar novamente.',
+          ),
     ];
   } else if (
     activities.length > 0 &&
     !activities.some((entry) => entry.kind === 'response') &&
+    !activities.some((entry) => entry.kind === 'status' && entry.label.trim()) &&
     isAgentTurnSummaryVisible(summary)
   ) {
     activities = [
@@ -2039,6 +2097,7 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
   } else if (
     activities.length > 0 &&
     !activities.some((entry) => entry.kind === 'response') &&
+    !activities.some((entry) => entry.kind === 'status' && entry.label.trim()) &&
     !hasPendingInteraction
   ) {
     activities = [
@@ -2048,7 +2107,10 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
         safeLead || incompleteFallback,
       ),
     ];
-  } else if (needsTrailingIncompleteResponse) {
+  } else if (
+    needsTrailingIncompleteResponse &&
+    !activities.some((entry) => entry.kind === 'status' && entry.label.trim())
+  ) {
     activities = [...activities, createActivity('response', incompleteFallback)];
   }
 

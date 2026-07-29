@@ -880,6 +880,69 @@ export async function updateAgentSessionMeta(
   }
 }
 
+export async function listWebAgentCursorChatIds(
+  client: NexusClient,
+  chatIds: string[],
+): Promise<string[]> {
+  const rows = await listAgentHistoryCursorChatMeta(client, chatIds);
+  return rows.filter((row) => row.fromWeb).map((row) => row.cursorChatId);
+}
+
+export async function listAgentHistoryCursorChatMeta(
+  client: NexusClient,
+  chatIds: string[],
+): Promise<Array<{ cursorChatId: string; title: string | null; fromWeb: boolean }>> {
+  const uniqueIds = Array.from(new Set(chatIds.map((id) => id.trim()).filter(Boolean)));
+
+  if (uniqueIds.length === 0) {
+    return [];
+  }
+
+  const byChatId = new Map<string, { cursorChatId: string; title: string | null; fromWeb: boolean }>();
+  const chunkSize = 100;
+
+  for (let offset = 0; offset < uniqueIds.length; offset += chunkSize) {
+    const chunk = uniqueIds.slice(offset, offset + chunkSize);
+    const { data, error } = await client
+      .from('agent_sessions')
+      .select('cursor_chat_id, title, source')
+      .in('cursor_chat_id', chunk);
+
+    if (error) {
+      throw error;
+    }
+
+    for (const row of (data as Array<{
+      cursor_chat_id: string | null;
+      title: string | null;
+      source?: string | null;
+    }> | null) ?? []) {
+      const cursorChatId = row.cursor_chat_id?.trim() ?? '';
+
+      if (!cursorChatId) {
+        continue;
+      }
+
+      const fromWeb = row.source !== 'desktop_pane';
+      const title = row.title?.trim() || null;
+      const existing = byChatId.get(cursorChatId);
+
+      if (!existing) {
+        byChatId.set(cursorChatId, { cursorChatId, title, fromWeb });
+        continue;
+      }
+
+      byChatId.set(cursorChatId, {
+        cursorChatId,
+        title: existing.title || title,
+        fromWeb: existing.fromWeb || fromWeb,
+      });
+    }
+  }
+
+  return Array.from(byChatId.values());
+}
+
 export async function listOpenAgentSessionBundles(
   client: NexusClient,
   workspaceId?: string | null,

@@ -30,8 +30,13 @@ import {
   configureEmulatorRelay,
   detachEmulatorViewer,
 } from './emulatorRelay';
+import { rememberWebAgentChatId } from './webAgentChatIds';
 
 const execFileAsync = promisify(execFile);
+
+const AGENT_IDLE_TIMEOUT_MS = 8 * 60 * 1000;
+const AGENT_IDLE_CHECK_MS = 15_000;
+const AGENT_STALL_EXIT_CODE = 124;
 
 interface ActiveAgentProcess {
   child: ChildProcess;
@@ -718,7 +723,7 @@ async function runAgentPrompt(
   const fullPrompt = [prompt, ...imageRefs, ...fileRefs].filter(Boolean).join(' ').trim();
 
   if (fullPrompt) {
-    args.push(fullPrompt);
+    args.push('--', fullPrompt);
   }
 
   let projectName = 'Projeto';
@@ -733,10 +738,14 @@ async function runAgentPrompt(
     }
   }
 
+  let lastActivityAt = Date.now();
+  let stalled = false;
+
   const emitChunk = (chunk: string) => {
     if (!chunk) {
       return;
     }
+    lastActivityAt = Date.now();
     output += chunk;
     sequence += 1;
     const envelope = createEventEnvelope({
@@ -806,6 +815,42 @@ async function runAgentPrompt(
     };
     registerActiveAgent(active);
 
+    let idleWatch: ReturnType<typeof setInterval> | null = null;
+    let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearIdleWatch = () => {
+      if (idleWatch) {
+        clearInterval(idleWatch);
+        idleWatch = null;
+      }
+      if (forceKillTimer) {
+        clearTimeout(forceKillTimer);
+        forceKillTimer = null;
+      }
+    };
+
+    idleWatch = setInterval(() => {
+      if (active.cancelled || stalled || planWaitingNotified) {
+        return;
+      }
+      if (Date.now() - lastActivityAt < AGENT_IDLE_TIMEOUT_MS) {
+        return;
+      }
+      stalled = true;
+      try {
+        child.kill('SIGTERM');
+      } catch {
+      }
+      forceKillTimer = setTimeout(() => {
+        forceKillTimer = null;
+        try {
+          if (!child.killed) {
+            child.kill('SIGKILL');
+          }
+        } catch {
+        }
+      }, 2000);
+    }, AGENT_IDLE_CHECK_MS);
+
     child.stdout.on('data', (buffer: Buffer) => {
       emitChunk(buffer.toString('utf8'));
     });
@@ -813,17 +858,24 @@ async function runAgentPrompt(
       emitChunk(buffer.toString('utf8'));
     });
     child.on('error', (error) => {
+      clearIdleWatch();
       unregisterActiveAgent(command.id, session!.id);
       reject(error);
     });
     child.on('close', (code) => {
       const wasCancelled = active.cancelled;
+      clearIdleWatch();
       unregisterActiveAgent(command.id, session!.id);
+      if (stalled && !wasCancelled) {
+        resolve(AGENT_STALL_EXIT_CODE);
+        return;
+      }
       resolve(wasCancelled ? 130 : (code ?? 0));
     });
   });
 
   const cancelled = exitCode === 130;
+  const stalledExit = exitCode === AGENT_STALL_EXIT_CODE;
   const failed = !cancelled && exitCode !== 0;
   await client.from('agent_messages').insert({
     session_id: session!.id,
@@ -843,6 +895,7 @@ async function runAgentPrompt(
         exit_code: exitCode,
         format: 'stream-json',
         cancelled,
+        stalled: stalledExit,
       },
     })
     .eq('id', execution!.id);
@@ -852,15 +905,21 @@ async function runAgentPrompt(
     return match?.[1] ?? null;
   })();
 
+  const nextCursorChatId = resumeChatId || cursorFromStream;
+
   await client
     .from('agent_sessions')
     .update({
       status: cancelled ? 'active' : failed ? 'error' : 'active',
-      cursor_chat_id: resumeChatId || cursorFromStream,
+      cursor_chat_id: nextCursorChatId,
       model_id: model || null,
       updated_at: new Date().toISOString(),
     })
     .eq('id', session!.id);
+
+  if (nextCursorChatId) {
+    rememberWebAgentChatId(nextCursorChatId);
+  }
 
   if (cancelled) {
     await client
@@ -883,6 +942,7 @@ async function runAgentPrompt(
       status: cancelled ? 'cancelled' : failed ? 'failed' : 'completed',
       exit_code: exitCode,
       format: 'stream-json',
+      ...(stalledExit ? { reason: 'stalled' } : {}),
     },
   });
   await broadcast(client, `execution:${execution!.id}`, doneEnvelope);
@@ -892,13 +952,14 @@ async function runAgentPrompt(
     await notifyPush({
       userId: command.created_by,
       kind: 'agent',
-      title: failed ? 'Agent falhou' : 'Agent concluiu',
+      title: stalledExit ? 'Agent sem resposta' : failed ? 'Agent falhou' : 'Agent concluiu',
       body: projectName,
       dedupeKey: `agent:${execution!.id}:${failed ? 'failed' : 'completed'}`,
       data: {
         sessionId: session!.id,
         executionId: execution!.id,
         status: failed ? 'failed' : 'completed',
+        ...(stalledExit ? { reason: 'stalled' } : {}),
       },
     });
   }
@@ -910,6 +971,7 @@ async function runAgentPrompt(
     format: 'stream-json',
     failed,
     cancelled,
+    stalled: stalledExit,
   };
 }
 
@@ -1523,13 +1585,26 @@ export async function executeCommand(
     const cancelled = Boolean(
       result && typeof result === 'object' && (result as { cancelled?: unknown }).cancelled === true,
     );
+    const failed = Boolean(
+      result && typeof result === 'object' && (result as { failed?: unknown }).failed === true,
+    );
 
     await client
       .from('commands')
       .update({
-        status: cancelled ? 'cancelled' : 'completed',
+        status: cancelled ? 'cancelled' : failed ? 'failed' : 'completed',
         completed_at: new Date().toISOString(),
         result,
+        ...(failed
+          ? {
+              error_message:
+                result &&
+                typeof result === 'object' &&
+                (result as { stalled?: unknown }).stalled === true
+                  ? 'Agent stalled (no output)'
+                  : 'Agent failed',
+            }
+          : {}),
       })
       .eq('id', command.id);
 

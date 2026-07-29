@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from 'react-dom';
 import {
   BookOpen,
+  Bot,
   Bug,
   Check,
   ChevronRight,
@@ -11,7 +12,6 @@ import {
   Layers,
   ListTodo,
   MessageCircleQuestion,
-  Plus,
 } from 'lucide-react';
 
 export type WebAgentMode = 'agent' | 'plan' | 'debug' | 'multitask' | 'ask';
@@ -270,8 +270,8 @@ export function WebAgentPlusMenu({
       <button
         ref={triggerRef}
         type='button'
-        className={`agent-view__composer-add app-button app-button--enter${
-          open ? ' agent-view__composer-add--open' : ''
+        className={`home-dashboard__ask-desktop-agents app-button app-button--enter${
+          open ? ' home-dashboard__ask-desktop-agents--open' : ''
         }`}
         aria-label='Adicionar agentes, contexto, ferramentas'
         aria-expanded={open}
@@ -284,7 +284,7 @@ export function WebAgentPlusMenu({
           openMenu();
         }}
       >
-        <Plus size={16} strokeWidth={2} aria-hidden='true' />
+        <Bot size={16} strokeWidth={2} aria-hidden='true' />
       </button>
       {menu}
     </>

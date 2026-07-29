@@ -250,7 +250,7 @@ export function buildAgentPrintPromptCommand(options: AgentPrintPromptOptions): 
     parts.push('--auto-review');
   }
 
-  parts.push(shellEscapeSingleQuotes(prompt));
+  parts.push('--', shellEscapeSingleQuotes(prompt));
 
   return `${parts.join(' ')} 2>&1 | cat`;
 }

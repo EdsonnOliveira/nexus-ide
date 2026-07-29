@@ -19,10 +19,16 @@ export function getMobileReleaseKindLabel(kind: MobileReleaseKind): string {
   }
 }
 
-export function getMobileReleaseStatusLabel(state: MobileReleaseState): string {
+export function getMobileReleaseStatusLabel(
+  state: MobileReleaseState,
+  kind?: MobileReleaseKind,
+): string {
   switch (state) {
     case 'READY':
-      return 'Pronto';
+      if (kind === 'ios-testflight') {
+        return 'Enviado';
+      }
+      return 'Build pronto';
     case 'ERROR':
       return 'Erro';
     case 'BUILDING':

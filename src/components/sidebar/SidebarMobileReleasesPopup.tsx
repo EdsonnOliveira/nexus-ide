@@ -43,7 +43,7 @@ function SidebarMobileReleaseListItem({ release, now, onOpen }: SidebarMobileRel
   const { copyLogs, loading: logsLoading, copied: logsCopied } = useMobileReleaseLogsCopy(release.uid);
   const kindLabel = getMobileReleaseKindLabel(release.kind);
   const versionLabel = formatMobileReleaseVersion(release.version, release.versionCode);
-  const statusLabel = getMobileReleaseStatusLabel(release.state);
+  const statusLabel = getMobileReleaseStatusLabel(release.state, release.kind);
   const statusClassName = getMobileReleaseStatusClassName(release.state);
   const statusDisplayLabel = logsCopied ? 'Copiado' : logsLoading ? 'Copiando...' : statusLabel;
   const timeLabel =

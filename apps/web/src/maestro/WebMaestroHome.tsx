@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Smartphone } from 'lucide-react';
 import {
   closeAgentSession,
   createAgentSession,
@@ -26,6 +25,10 @@ import { WebMobileReleaseCard } from './WebMobileReleaseCard';
 import { useWebMobileReleases } from './useWebMobileReleases';
 import type { WebFileAttachmentPayload } from './webAgentPromptImages';
 import {
+  buildWebTaskPrompt,
+  type WebProjectTask,
+} from './webProjectTasks';
+import {
   dismissWebAgentTerminal,
   handleWebAgentShellToolEvents,
 } from './webShellTerminal';
@@ -48,6 +51,11 @@ function formatUnknownError(error: unknown, fallback: string): string {
   }
   return fallback;
 }
+
+const WEB_AGENT_STALL_MESSAGE =
+  'Agent sem resposta (travou ou ficou sem atividade). Pare e tente de novo.';
+const WEB_AGENT_RECONCILE_MS = 20_000;
+const WEB_AGENT_CLIENT_STALL_MS = 12 * 60 * 1000;
 
 function resolveStoreWorkspaceId(): string | null {
   const state = useWebStore.getState();
@@ -82,6 +90,7 @@ export function WebMaestroHome() {
   const selectedDeviceId = useWebStore((state) => state.selectedDeviceId);
   const setSelectedDeviceId = useWebStore((state) => state.setSelectedDeviceId);
   const activeWorkspaceId = useWebStore((state) => state.activeWorkspaceId);
+  const setProjects = useWebStore((state) => state.setProjects);
   const setActiveWorkspaceId = useWebStore((state) => state.setActiveWorkspaceId);
   const agents = useWebStore((state) => state.agents);
   const setAgents = useWebStore((state) => state.setAgents);
@@ -102,9 +111,11 @@ export function WebMaestroHome() {
   const [emulatorOpen, setEmulatorOpen] = useState(false);
   const [agentFilterProjectId, setAgentFilterProjectId] = useState<string | null>(null);
   const [focusedAgentId, setFocusedAgentId] = useState<string | null>(null);
+  const [openAgentId, setOpenAgentId] = useState<string | null>(null);
   const [desktopAgentsCatalog, setDesktopAgentsCatalog] = useState<WebAgentSession[]>([]);
   const [heroScrolled, setHeroScrolled] = useState(false);
   const parsersRef = useRef(new Map<string, WebStreamJsonState>());
+  const agentActivityRef = useRef(new Map<string, number>());
   const heroRef = useRef<HTMLElement>(null);
   const visibleAgents = useMemo(
     () =>
@@ -146,10 +157,10 @@ export function WebMaestroHome() {
     if (!agentFilterProjectId) {
       return;
     }
-    if (!visibleAgents.some((agent) => agent.projectId === agentFilterProjectId)) {
+    if (!projects.some((project) => project.id === agentFilterProjectId)) {
       setAgentFilterProjectId(null);
     }
-  }, [agentFilterProjectId, visibleAgents]);
+  }, [agentFilterProjectId, projects]);
 
   const handleSelectProjectAgents = useCallback(
     (projectId: string) => {
@@ -166,7 +177,11 @@ export function WebMaestroHome() {
   const handleBackToProjects = useCallback(() => {
     setAgentFilterProjectId(null);
     setFocusedAgentId(null);
+    setOpenAgentId(null);
   }, []);
+
+  const projectScreenOpen = Boolean(agentFilterProjectId) && !emulatorOpen;
+  const agentScreenOpen = Boolean(openAgentId) && projectScreenOpen;
 
   const {
     tokenConfigured: vercelTokenConfigured,
@@ -192,6 +207,41 @@ export function WebMaestroHome() {
       null
     );
   }, [devices, selectedDeviceId]);
+
+  useEffect(() => {
+    if (!agentFilterProjectId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const refreshProjectTasks = async () => {
+      const deviceId = resolveDeviceId();
+      if (
+        deviceId &&
+        isDeviceOnline(devices.find((device) => device.id === deviceId)?.last_seen_at ?? null)
+      ) {
+        try {
+          await bridge.requestLocalSync(deviceId);
+        } catch {
+        }
+      }
+
+      try {
+        const projectList = await bridge.listProjects(activeWorkspaceId);
+        if (!cancelled) {
+          setProjects(projectList);
+        }
+      } catch {
+      }
+    };
+
+    void refreshProjectTasks();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId, agentFilterProjectId, devices, resolveDeviceId, setProjects]);
 
   const syncHeroChromeHeight = useCallback(() => {
     const hero = heroRef.current;
@@ -231,15 +281,19 @@ export function WebMaestroHome() {
     (agentId: string, commandId: string) => {
       const parserKey = `${agentId}:${commandId}`;
       parsersRef.current.set(parserKey, createWebStreamJsonState());
+      if (!agentActivityRef.current.has(agentId)) {
+        agentActivityRef.current.set(agentId, Date.now());
+      }
 
       bridge.subscribeToExecution(commandId, (payload) => {
         const envelope = payload as {
           type?: string;
-          payload?: { chunk?: string; status?: string; format?: string };
+          payload?: { chunk?: string; status?: string; format?: string; reason?: string };
         };
         const chunk = extractStreamChunk(payload);
 
         if (chunk) {
+          agentActivityRef.current.set(agentId, Date.now());
           const parser =
             parsersRef.current.get(parserKey) ?? createWebStreamJsonState();
           parsersRef.current.set(parserKey, parser);
@@ -266,6 +320,7 @@ export function WebMaestroHome() {
 
         const type = envelope?.type ?? '';
         const status = envelope?.payload?.status ?? '';
+        const reason = envelope?.payload?.reason ?? '';
         if (
           type === 'completed' ||
           type === 'agent.completed' ||
@@ -273,14 +328,20 @@ export function WebMaestroHome() {
           status === 'completed' ||
           status === 'cancelled'
         ) {
+          agentActivityRef.current.set(agentId, Date.now());
           setAgentStatus(agentId, 'done');
           void updateAgentSessionMeta(supabase, agentId, { status: 'active' });
         }
         if (type === 'failed' || type === 'agent.failed' || status === 'failed') {
+          agentActivityRef.current.set(agentId, Date.now());
+          if (reason === 'stalled') {
+            patchAgentTurn(agentId, { response: WEB_AGENT_STALL_MESSAGE });
+          }
           setAgentStatus(agentId, 'error');
           void updateAgentSessionMeta(supabase, agentId, { status: 'error' });
         }
         if (type === 'agent.waiting_user') {
+          agentActivityRef.current.set(agentId, Date.now());
           setAgentStatus(agentId, 'running');
           void updateAgentSessionMeta(supabase, agentId, { status: 'waiting_user' });
         }
@@ -329,6 +390,11 @@ export function WebMaestroHome() {
         hydratedWorkspaceRef.current = workspaceId;
         for (const agent of [...cloudAgents, ...pinnedDesktop]) {
           if (agent.status === 'running' && agent.commandId) {
+            const lastTurn = agent.turns[agent.turns.length - 1];
+            agentActivityRef.current.set(
+              agent.id,
+              lastTurn?.createdAt ?? agent.createdAt,
+            );
             subscribeAgent(agent.id, agent.commandId);
           }
         }
@@ -340,6 +406,117 @@ export function WebMaestroHome() {
       cancelled = true;
     };
   }, [activeWorkspaceId, selectedProjectId, selectedDeviceId, setAgents, subscribeAgent]);
+
+  useEffect(() => {
+    const reconcileRunningAgents = async () => {
+      const runningAgents = useWebStore
+        .getState()
+        .agents.filter((agent) => agent.status === 'running' && agent.commandId);
+
+      if (runningAgents.length === 0) {
+        return;
+      }
+
+      const now = Date.now();
+
+      for (const agent of runningAgents) {
+        const lastActivity =
+          agentActivityRef.current.get(agent.id) ?? agent.createdAt ?? now;
+        const idleMs = now - lastActivity;
+
+        try {
+          const { data: execution } = await supabase
+            .from('agent_executions')
+            .select('status,result')
+            .eq('command_id', agent.commandId)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          const executionStatus =
+            execution && typeof execution.status === 'string' ? execution.status : '';
+          const result =
+            execution?.result && typeof execution.result === 'object'
+              ? (execution.result as { stalled?: unknown })
+              : null;
+          const stalled = result?.stalled === true;
+
+          if (
+            executionStatus === 'completed' ||
+            executionStatus === 'cancelled'
+          ) {
+            agentActivityRef.current.set(agent.id, Date.now());
+            setAgentStatus(agent.id, 'done');
+            void updateAgentSessionMeta(supabase, agent.id, { status: 'active' });
+            continue;
+          }
+
+          if (executionStatus === 'failed') {
+            agentActivityRef.current.set(agent.id, Date.now());
+            if (stalled) {
+              patchAgentTurn(agent.id, { response: WEB_AGENT_STALL_MESSAGE });
+            }
+            setAgentStatus(agent.id, 'error');
+            void updateAgentSessionMeta(supabase, agent.id, { status: 'error' });
+            continue;
+          }
+        } catch {
+        }
+
+        if (idleMs < WEB_AGENT_CLIENT_STALL_MS) {
+          continue;
+        }
+
+        const lastTurn = agent.turns[agent.turns.length - 1];
+        const hasProgress = Boolean(
+          lastTurn?.thought?.trim() || lastTurn?.response?.trim(),
+        );
+        if (hasProgress) {
+          continue;
+        }
+
+        agentActivityRef.current.set(agent.id, Date.now());
+        patchAgentTurn(agent.id, { response: WEB_AGENT_STALL_MESSAGE });
+        setAgentStatus(agent.id, 'error');
+        void updateAgentSessionMeta(supabase, agent.id, { status: 'error' });
+
+        const deviceId = resolveDeviceId();
+        if (!deviceId) {
+          continue;
+        }
+
+        try {
+          const workspaceId = await resolveAgentWorkspaceId(agent.projectId);
+          if (!workspaceId) {
+            continue;
+          }
+          await bridge.executeCommand({
+            workspace_id: workspaceId,
+            project_id: agent.projectId,
+            target_device_id: deviceId,
+            agent_id: agent.id,
+            type: 'agent_cancel',
+            payload: {
+              command_id: agent.commandId,
+              session_id: agent.id,
+            },
+            idempotency_key: crypto.randomUUID(),
+          });
+        } catch {
+        }
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void reconcileRunningAgents();
+    }, WEB_AGENT_RECONCILE_MS);
+
+    void reconcileRunningAgents();
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [patchAgentTurn, resolveDeviceId, setAgentStatus]);
 
   const handleProjectChange = useCallback(
     (projectId: string | null) => {
@@ -463,6 +640,7 @@ export function WebMaestroHome() {
         setAgentFilterProjectId(selectedProjectId);
         setFocusedAgentId(agentId);
 
+        agentActivityRef.current.set(agentId, createdAt);
         subscribeAgent(agentId, commandId);
         return true;
       } catch (error) {
@@ -552,6 +730,7 @@ export function WebMaestroHome() {
           createdAt: Date.now(),
           commandId,
         });
+        agentActivityRef.current.set(agentId, Date.now());
         subscribeAgent(agentId, commandId);
         return true;
       } catch (error) {
@@ -719,6 +898,17 @@ export function WebMaestroHome() {
     }
   }, []);
 
+  const handleExecuteTask = useCallback(
+    async (task: WebProjectTask) => {
+      const prompt = buildWebTaskPrompt(task);
+      if (!prompt) {
+        return;
+      }
+      await handleSubmit(prompt);
+    },
+    [handleSubmit],
+  );
+
   const handleModelChange = useCallback(
     (agentId: string, modelId: string) => {
       setAgentModelId(agentId, modelId);
@@ -735,12 +925,21 @@ export function WebMaestroHome() {
   );
 
   return (
-    <div className='home-dashboard nexus-hero home-dashboard--maestro'>
+    <div
+      className={`home-dashboard nexus-hero home-dashboard--maestro${
+        emulatorOpen ? ' home-dashboard--emulator-open' : ''
+      }${projectScreenOpen ? ' home-dashboard--project-open' : ''}${
+        agentScreenOpen ? ' home-dashboard--agent-open' : ''
+      }`}
+    >
       <header
         ref={heroRef}
         className={`home-dashboard__hero app-button--enter${
           compact ? ' home-dashboard__hero--compact' : ''
-        }${heroScrolled ? ' home-dashboard__hero--scrolled' : ''}`}
+        }${heroScrolled ? ' home-dashboard__hero--scrolled' : ''}${
+          emulatorOpen || projectScreenOpen ? ' home-dashboard__hero--exit' : ''
+        }`}
+        aria-hidden={emulatorOpen || projectScreenOpen}
       >
         <div className='home-dashboard__hero-brand'>
           <WebLogoMenu
@@ -766,17 +965,6 @@ export function WebMaestroHome() {
           </div>
         </div>
         <div className='home-dashboard__hero-mac'>
-          {agentFilterProjectId && emulatorProjectIds.has(agentFilterProjectId) ? (
-            <button
-              type='button'
-              className='web-emulator-header-btn app-button'
-              aria-label='Abrir emulador'
-              title='Emulador rodando'
-              onClick={() => handleOpenEmulator(agentFilterProjectId)}
-            >
-              <Smartphone size={15} aria-hidden='true' />
-            </button>
-          ) : null}
           <WebMacSelect
             devices={devices}
             deviceId={selectedDeviceId}
@@ -786,44 +974,51 @@ export function WebMaestroHome() {
           />
         </div>
       </header>
-      <div className='home-dashboard__hero-ask'>
-        <WebMaestroAskBar
+      {!emulatorOpen && !agentScreenOpen ? (
+        <div className='home-dashboard__hero-ask'>
+          <WebMaestroAskBar
+            projects={projects}
+            projectId={selectedProjectId}
+            onProjectChange={handleProjectChange}
+            devices={devices}
+            deviceId={selectedDeviceId}
+            onDeviceChange={setSelectedDeviceId}
+            submitting={submitting}
+            onSubmit={(prompt, imageDataUrls, fileAttachments) =>
+              handleSubmit(prompt, imageDataUrls, fileAttachments)
+            }
+            desktopAgents={desktopAgentsCatalog}
+            onSelectAgent={handleSelectAgent}
+            onRequestDesktopAgents={handleRequestDesktopAgents}
+            hideProjectSelect={Boolean(agentFilterProjectId)}
+          />
+        </div>
+      ) : null}
+      {!emulatorOpen ? (
+        <WebMaestroAgents
+          agents={visibleAgents}
           projects={projects}
-          projectId={selectedProjectId}
-          onProjectChange={handleProjectChange}
-          devices={devices}
-          deviceId={selectedDeviceId}
-          onDeviceChange={setSelectedDeviceId}
-          submitting={submitting}
-          onSubmit={(prompt, imageDataUrls, fileAttachments) =>
-            handleSubmit(prompt, imageDataUrls, fileAttachments)
+          selectedProjectId={agentFilterProjectId}
+          deviceId={resolveDeviceId()}
+          focusedAgentId={focusedAgentId}
+          emulatorProjectIds={emulatorProjectIds}
+          onOpenEmulator={handleOpenEmulator}
+          onSelectProject={handleSelectProjectAgents}
+          onBackToProjects={handleBackToProjects}
+          onFocusedAgentHandled={() => setFocusedAgentId(null)}
+          onOpenAgentChange={setOpenAgentId}
+          onRemove={(agentId) => void handleRemove(agentId)}
+          onFollowUp={(agentId, prompt, imageDataUrls, fileAttachments) =>
+            handleFollowUp(agentId, prompt, imageDataUrls, fileAttachments)
           }
-          desktopAgents={desktopAgentsCatalog}
-          onSelectAgent={handleSelectAgent}
-          onRequestDesktopAgents={handleRequestDesktopAgents}
-          hideProjectSelect={Boolean(agentFilterProjectId)}
+          onStop={(agentId) => void handleStop(agentId)}
+          onModelChange={handleModelChange}
+          onModeChange={handleModeChange}
+          onExecuteTask={(task) => void handleExecuteTask(task)}
+          onScrollChange={setHeroScrolled}
         />
-      </div>
-      <WebMaestroAgents
-        agents={visibleAgents}
-        selectedProjectId={agentFilterProjectId}
-        deviceId={resolveDeviceId()}
-        focusedAgentId={focusedAgentId}
-        emulatorProjectIds={emulatorProjectIds}
-        onOpenEmulator={handleOpenEmulator}
-        onSelectProject={handleSelectProjectAgents}
-        onBackToProjects={handleBackToProjects}
-        onFocusedAgentHandled={() => setFocusedAgentId(null)}
-        onRemove={(agentId) => void handleRemove(agentId)}
-        onFollowUp={(agentId, prompt, imageDataUrls, fileAttachments) =>
-          handleFollowUp(agentId, prompt, imageDataUrls, fileAttachments)
-        }
-        onStop={(agentId) => void handleStop(agentId)}
-        onModelChange={handleModelChange}
-        onModeChange={handleModeChange}
-        onScrollChange={setHeroScrolled}
-      />
-      {mobileActiveRelease || vercelActiveDeployment ? (
+      ) : null}
+      {!emulatorOpen && (mobileActiveRelease || vercelActiveDeployment) ? (
         <div className='web-vercel-deploy-dock'>
           {mobileActiveRelease ? (
             <WebMobileReleaseCard

@@ -1,14 +1,20 @@
 import { useEffect, useRef } from 'react';
 import { useMaestroHighlightStore } from '@/stores/useMaestroHighlightStore';
 import { useTestExecutionStore } from '@/stores/useTestExecutionStore';
+import { useNexusReady } from '@/hooks/useNexusReady';
 
 export function useTestRunnerEvents(): void {
+  const nexusReady = useNexusReady();
   const applyOutput = useTestExecutionStore((state) => state.applyOutput);
   const finishRun = useTestExecutionStore((state) => state.finishRun);
   const applyHighlightEvent = useMaestroHighlightStore((state) => state.applyHighlightEvent);
   const lastRunningStepRef = useRef<{ runId: string; stepId: string } | null>(null);
 
   useEffect(() => {
+    if (!nexusReady || !window.nexus?.tests) {
+      return;
+    }
+
     const unsubscribeOutput = window.nexus.tests.onOutput(({ runId, chunk }) => {
       const store = useTestExecutionStore.getState();
       const entry = Object.values(store.runsByEntryId).find((run) => run.runId === runId);
@@ -57,5 +63,5 @@ export function useTestRunnerEvents(): void {
       unsubscribeExit();
       unsubscribeHighlight();
     };
-  }, [applyHighlightEvent, applyOutput, finishRun]);
+  }, [applyHighlightEvent, applyOutput, finishRun, nexusReady]);
 }

@@ -590,3 +590,39 @@ export type MacParakeetStartCallResult =
 export type MacParakeetTranslateConclusionResult =
   | { ok: true; conclusion: string }
   | { ok: false; reason: 'not_found' | 'empty' | 'unauthorized' | 'failed' };
+
+export type JarvisPhase =
+  | 'idle'
+  | 'listening'
+  | 'processing'
+  | 'speaking'
+  | 'executing'
+  | 'error';
+
+export type JarvisIntentMode = 'action' | 'question' | 'ping';
+
+export interface JarvisIntent {
+  mode: JarvisIntentMode;
+  projectQuery: string | null;
+  agentPrompt: string;
+  ackPhrase: string;
+  transcript: string;
+}
+
+export interface JarvisStatus {
+  enabled: boolean;
+  phase: JarvisPhase;
+  ollamaReady: boolean;
+  whisperReady: boolean;
+  ollamaModel: string;
+  whisperDetail: string;
+  lastTranscript: string | null;
+  lastError: string | null;
+}
+
+export interface JarvisProcessResult {
+  accepted: boolean;
+  transcript: string;
+  intent: JarvisIntent | null;
+  error?: string;
+}

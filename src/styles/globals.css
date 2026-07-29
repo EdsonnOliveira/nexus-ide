@@ -13046,6 +13046,56 @@ html.cmd-pressed .markdown-preview a.markdown-preview__link:hover {
   flex: 1;
 }
 
+.status-bar--jarvis-on .status-bar__path {
+  flex: 0 1 38%;
+  max-width: 38%;
+}
+
+.status-bar__jarvis-live {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 46%;
+  padding: 0 10px;
+  color: var(--text-muted);
+  animation: app-button-in var(--motion-in) var(--motion-ease-in);
+}
+
+.status-bar__jarvis-live-icon {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.status-bar__jarvis-live-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.status-bar__jarvis-live--heard {
+  color: var(--text-secondary);
+}
+
+.status-bar__jarvis-live--busy {
+  color: #f59e0b;
+}
+
+.status-bar__jarvis-live--error {
+  color: #ef4444;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-bar__jarvis-live {
+    animation: none;
+  }
+}
+
 .status-bar__info {
   display: flex;
   align-items: center;
@@ -13174,6 +13224,38 @@ html.cmd-pressed .markdown-preview a.markdown-preview__link:hover {
 .status-bar__btn:hover:not(:disabled) {
   background: var(--bg-tab-hover);
   color: var(--text-secondary);
+}
+
+.status-bar__btn--jarvis-on {
+  color: var(--accent, #7c3aed);
+}
+
+.status-bar__btn--jarvis-listening {
+  animation: jarvis-pulse 1.6s ease-in-out infinite;
+}
+
+.status-bar__btn--jarvis-busy {
+  color: #f59e0b;
+}
+
+.status-bar__btn--jarvis-error {
+  color: #ef4444;
+}
+
+@keyframes jarvis-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-bar__btn--jarvis-listening {
+    animation: none;
+  }
 }
 
 .xterm-viewport {
@@ -14311,6 +14393,12 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   max-height: min(320px, 52vh);
   overflow-y: auto;
   z-index: calc(var(--z-overlay) + 2);
+  background: #1e1e26;
+  backdrop-filter: var(--popup-blur);
+  -webkit-backdrop-filter: var(--popup-blur);
+  border: 1px solid var(--popup-border);
+  box-shadow: var(--popup-shadow);
+  isolation: isolate;
 }
 
 .context-menu__submenu::before {
@@ -14338,12 +14426,58 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 }
 
 .context-menu__history-title {
-  width: 100%;
+  min-width: 0;
+  flex: 1;
   font-size: 13px;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.context-menu__history-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.context-menu__history-web-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  background: rgba(59, 130, 246, 0.14);
+  color: #93c5fd;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  animation: context-menu-history-web-badge-in var(--motion-in) var(--motion-ease-in) both;
+}
+
+@keyframes context-menu-history-web-badge-in {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .context-menu__history-web-badge {
+    animation: none;
+  }
 }
 
 .context-menu__history-date {
@@ -15109,7 +15243,7 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 
 .emulator-view__toolbar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
@@ -15160,7 +15294,7 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 }
 
 .emulator-view__device-bar {
-  flex: 1 1 220px;
+  flex: 1 1 0;
   min-width: 0;
   height: 32px;
   display: flex;
@@ -15849,36 +15983,7 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 }
 
 @container emulator-view (max-width: 640px) {
-  .emulator-view__platforms {
-    order: 1;
-  }
-
-  .emulator-view__action {
-    order: 2;
-    margin-left: auto;
-  }
-
-  .emulator-view__stream-badge {
-    order: 3;
-  }
-
-  .emulator-view__device-bar {
-    order: 4;
-    flex: 1 1 100%;
-  }
-
-  .emulator-view__toolbar--running .emulator-view__device-bar {
-    order: 1;
-    flex: 1 1 100%;
-  }
-
   .emulator-view__toolbar--running .emulator-view__stream-badge {
-    order: 2;
-    margin-left: auto;
-  }
-
-  .emulator-view__toolbar--running .emulator-view__action--stop {
-    order: unset;
     margin-left: auto;
   }
 }
@@ -23819,12 +23924,18 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 }
 
 .task-integration-modal__secret input {
-  padding-right: 36px;
+  padding-right: 64px;
+}
+
+.task-integration-modal__secret-actions {
+  position: absolute;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
 }
 
 .task-integration-modal__secret-toggle {
-  position: absolute;
-  right: 4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -23839,6 +23950,52 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 .task-integration-modal__secret-toggle:hover:not(:disabled) {
   color: var(--text-secondary);
   background: rgba(255, 255, 255, 0.06);
+}
+
+.task-integration-modal__secret-toggle:disabled {
+  opacity: 0.4;
+}
+
+.task-integration-modal__secret-toggle--copied {
+  color: #86efac;
+}
+
+.task-integration-modal__secret-copy-icon {
+  position: relative;
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+}
+
+.task-integration-modal__secret-copy-icon-copy,
+.task-integration-modal__secret-copy-icon-check {
+  position: absolute;
+  inset: 0;
+  transition:
+    opacity var(--motion-out) var(--motion-ease-out),
+    transform var(--motion-out) var(--motion-ease-out);
+}
+
+.task-integration-modal__secret-copy-icon-check {
+  opacity: 0;
+  transform: scale(0.7);
+}
+
+.task-integration-modal__secret-copy-icon--copied .task-integration-modal__secret-copy-icon-copy {
+  opacity: 0;
+  transform: scale(0.7);
+}
+
+.task-integration-modal__secret-copy-icon--copied .task-integration-modal__secret-copy-icon-check {
+  opacity: 1;
+  transform: scale(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-integration-modal__secret-copy-icon-copy,
+  .task-integration-modal__secret-copy-icon-check {
+    transition: none;
+  }
 }
 
 .task-form-modal__attachments {

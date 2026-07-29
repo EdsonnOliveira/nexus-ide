@@ -1,5 +1,5 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Check, Copy, Eye, EyeOff } from 'lucide-react';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
 import type {
@@ -10,6 +10,8 @@ import type {
 } from '@/types/task';
 import { formatTaskIntegrationError, parseJiraIntegrationInput } from '@/utils/jiraIntegration';
 import { formatDeepcrmIntegrationError } from '@/utils/deepcrmIntegration';
+
+const COPY_FEEDBACK_MS = 1600;
 
 type TaskIntegrationPlatformOption = TaskIntegrationPlatform | 'none';
 
@@ -27,10 +29,46 @@ function TaskIntegrationSecretInputComponent({
   onChange,
 }: TaskIntegrationSecretInputProps) {
   const [visible, setVisible] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const copyFeedbackTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyFeedbackTimeoutRef.current !== null) {
+        window.clearTimeout(copyFeedbackTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleToggle = useCallback(() => {
     setVisible((current) => !current);
   }, []);
+
+  const handleCopy = useCallback(async () => {
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(trimmed);
+      setCopied(true);
+
+      if (copyFeedbackTimeoutRef.current !== null) {
+        window.clearTimeout(copyFeedbackTimeoutRef.current);
+      }
+
+      copyFeedbackTimeoutRef.current = window.setTimeout(() => {
+        setCopied(false);
+        copyFeedbackTimeoutRef.current = null;
+      }, COPY_FEEDBACK_MS);
+    } catch {
+      setCopied(false);
+    }
+  }, [value]);
+
+  const canCopy = value.trim().length > 0;
 
   return (
     <label className='task-integration-modal__field'>
@@ -42,14 +80,40 @@ function TaskIntegrationSecretInputComponent({
           placeholder={placeholder}
           onChange={(event) => onChange(event.target.value)}
         />
-        <button
-          type='button'
-          className='task-integration-modal__secret-toggle app-button app-button--enter'
-          aria-label={visible ? 'Ocultar' : 'Mostrar'}
-          onClick={handleToggle}
-        >
-          {visible ? <EyeOff size={14} /> : <Eye size={14} />}
-        </button>
+        <div className='task-integration-modal__secret-actions'>
+          <button
+            type='button'
+            className={`task-integration-modal__secret-toggle app-button app-button--enter${copied ? ' task-integration-modal__secret-toggle--copied' : ''}`}
+            aria-label={copied ? 'Token copiado' : 'Copiar'}
+            title={copied ? 'Copiado' : 'Copiar'}
+            disabled={!canCopy}
+            onClick={() => void handleCopy()}
+          >
+            <span
+              className={`task-integration-modal__secret-copy-icon${copied ? ' task-integration-modal__secret-copy-icon--copied' : ''}`}
+              aria-hidden='true'
+            >
+              <Copy
+                size={14}
+                strokeWidth={2.25}
+                className='task-integration-modal__secret-copy-icon-copy'
+              />
+              <Check
+                size={14}
+                strokeWidth={2.25}
+                className='task-integration-modal__secret-copy-icon-check'
+              />
+            </span>
+          </button>
+          <button
+            type='button'
+            className='task-integration-modal__secret-toggle app-button app-button--enter'
+            aria-label={visible ? 'Ocultar' : 'Mostrar'}
+            onClick={handleToggle}
+          >
+            {visible ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+        </div>
       </div>
     </label>
   );

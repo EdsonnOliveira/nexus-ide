@@ -17,6 +17,7 @@ import { PaneErrorBoundary } from '@/components/overlay/PaneErrorBoundary';
 import { ProjectSidebar } from '@/components/sidebar/ProjectSidebar';
 import { StatusBar } from '@/components/layout/StatusBar';
 import { TitleBar } from '@/components/layout/TitleBar';
+import { useJarvisController } from '@/hooks/useJarvisController';
 import { GlobalSearchPalette } from '@/components/search/GlobalSearchPalette';
 import { DailyGenerationProvider } from '@/components/home/DailyGenerationProvider';
 import { CalendarEventAlertHost } from '@/components/sidebar/CalendarEventAlertHost';
@@ -166,6 +167,7 @@ function AppShellComponent() {
   const projectPaths = useMemo(() => projects.map((project) => project.path), [projects]);
   const { openFileTab, openFilePreviewTab, openFileCodeTab, openDiffTab, openBrowserTab, selectPane } =
     useTabActions();
+  const { toggle: toggleJarvis } = useJarvisController();
 
   const handleOpenExplorerFile = useCallback(
     (entry: { path: string; name: string }) => {
@@ -431,7 +433,7 @@ function AppShellComponent() {
         </div>
       ) : null}
 
-      <StatusBar />
+      <StatusBar onToggleJarvis={() => { void toggleJarvis(); }} />
 
       <div className='cloud-device-select-host'>
         <CloudDeviceSelect />

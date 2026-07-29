@@ -495,6 +495,7 @@ export interface CursorAgentHistoryEntry {
   id: string;
   title: string;
   updatedAtMs: number;
+  fromWeb?: boolean;
 }
 
 export interface TerminalCommandHint {
@@ -712,6 +713,42 @@ export type MacParakeetStartCallResult =
 export type MacParakeetTranslateConclusionResult =
   | { ok: true; conclusion: string }
   | { ok: false; reason: 'not_found' | 'empty' | 'unauthorized' | 'failed' };
+
+export type JarvisPhase =
+  | 'idle'
+  | 'listening'
+  | 'processing'
+  | 'speaking'
+  | 'executing'
+  | 'error';
+
+export type JarvisIntentMode = 'action' | 'question' | 'ping';
+
+export interface JarvisIntent {
+  mode: JarvisIntentMode;
+  projectQuery: string | null;
+  agentPrompt: string;
+  ackPhrase: string;
+  transcript: string;
+}
+
+export interface JarvisStatus {
+  enabled: boolean;
+  phase: JarvisPhase;
+  ollamaReady: boolean;
+  whisperReady: boolean;
+  ollamaModel: string;
+  whisperDetail: string;
+  lastTranscript: string | null;
+  lastError: string | null;
+}
+
+export interface JarvisProcessResult {
+  accepted: boolean;
+  transcript: string;
+  intent: JarvisIntent | null;
+  error?: string;
+}
 
 export type VercelDeploymentState =
   | 'READY'
@@ -1158,6 +1195,30 @@ export interface NexusAPI {
       id: string,
       title: string,
     ) => Promise<{ ok: true; title: string } | { ok: false }>;
+  };
+  jarvis: {
+    status: () => Promise<JarvisStatus>;
+    start: () => Promise<JarvisStatus>;
+    stop: () => Promise<JarvisStatus>;
+    processUtterance: (
+      wavBase64: string,
+      projectNames?: string[],
+    ) => Promise<JarvisProcessResult>;
+    processTranscript: (
+      transcript: string,
+      projectNames?: string[],
+    ) => Promise<JarvisProcessResult>;
+    speakSummary: (text: string) => Promise<string>;
+    speak: (text: string) => Promise<void>;
+    notifyFinished: (ok: boolean, error?: string) => Promise<void>;
+    setOllamaModel: (model: string) => Promise<void>;
+    onPhase: (callback: (phase: JarvisPhase) => void) => () => void;
+    onListening: (callback: (listening: boolean) => void) => () => void;
+    onHeard: (callback: (transcript: string) => void) => () => void;
+    onStarted: (callback: (transcript: string) => void) => () => void;
+    onIntent: (callback: (intent: JarvisIntent) => void) => () => void;
+    onFinished: (callback: (ok: boolean, error: string | null) => void) => () => void;
+    onError: (callback: (message: string) => void) => () => void;
   };
   vercel: {
     getTokenConfigured: () => Promise<boolean>;

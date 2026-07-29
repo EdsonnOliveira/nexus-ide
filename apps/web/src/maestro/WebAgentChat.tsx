@@ -11,14 +11,12 @@ import {
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react';
-import { ArrowUp, Check, ChevronDown, ChevronRight, FileText, Square, X } from 'lucide-react';
+import { ArrowUp, AtSign, ChevronDown, ChevronRight, FileText, Globe, Paperclip, Square, X } from 'lucide-react';
 import type { WebAgentSession, WebAgentTurn } from '../store';
-import logoCursor from '../assets/logo-cursor.svg';
 import { renderWebMarkdown } from './webMarkdown';
 import { hydrateWebMarkdownImages } from './webHydrateMarkdownImages';
 import { findMarkdownPreviewImage } from './downloadImageSrc';
 import { WebMarkdownImageLightbox } from './WebMarkdownImageLightbox';
-import { WebAskMenuSelect } from './WebAskMenuSelect';
 import { WebAgentPlusMenu, type WebAgentMode } from './WebAgentPlusMenu';
 import { WebAgentPromptImageMentionText } from './WebAgentPromptImageMentionText';
 import {
@@ -97,6 +95,15 @@ function ThoughtBlock({
     ? `Thinking ${elapsed}s`
     : `Thought for ${formatThoughtDuration((endedAt ?? Date.now()) - startedAt)}`;
 
+  const waitingHint =
+    streaming && !body.trim()
+      ? elapsed >= 300
+        ? 'Demorando demais. Se continuar assim, pare o agent e tente de novo.'
+        : elapsed >= 90
+          ? 'Ainda sem resposta do agent neste Mac...'
+          : null
+      : null;
+
   return (
     <div
       className={`agent-view__thought${streaming ? ' agent-view__thought--streaming' : ''}${
@@ -125,6 +132,9 @@ function ThoughtBlock({
               <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
               <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
               <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
+              {waitingHint ? (
+                <span className='agent-view__thought-waiting-hint'>{waitingHint}</span>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -288,20 +298,19 @@ function TurnView({
           body={turn.thought}
         />
       ) : null}
-      {turn.response.trim() ? (
+      {turn.status === 'error' ? (
+        <div className='agent-view__response agent-view__response--settled'>
+          <div className='agent-view__response-body web-agent-error'>
+            {turn.response.trim() || 'Falha ao executar o agent neste Mac.'}
+          </div>
+        </div>
+      ) : turn.response.trim() ? (
         <ResponseBody
           text={turn.response}
           streaming={responseStreaming}
           deviceId={deviceId}
           projectId={projectId}
         />
-      ) : null}
-      {turn.status === 'error' && !turn.response.trim() ? (
-        <div className='agent-view__response agent-view__response--settled'>
-          <div className='agent-view__response-body web-agent-error'>
-            Falha ao executar o agent neste Mac.
-          </div>
-        </div>
       ) : null}
     </div>
   );
@@ -328,7 +337,7 @@ export function WebAgentChat({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const composerCardRef = useRef<HTMLDivElement>(null);
+  const askFormRef = useRef<HTMLFormElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const accent = agent.projectColor || '#8b5cf6';
   const attachDisabled = sendingFollowUp;
@@ -344,7 +353,6 @@ export function WebAgentChat({
     !sendingFollowUp;
   const modelId = agent.modelId || 'auto';
   const modeId = agent.modeId || 'agent';
-  const modelLabel = WEB_AGENT_MODELS.find((item) => item.value === modelId)?.label ?? 'Auto';
   const modelList = useMemo(
     () => WEB_AGENT_MODELS.map((item) => ({ value: item.value, label: item.label })),
     [],
@@ -361,26 +369,6 @@ export function WebAgentChat({
     });
     return map;
   }, [pendingImages]);
-
-  const modelOptions = useMemo(
-    () =>
-      WEB_AGENT_MODELS.map((item) => ({
-        value: item.value,
-        label: item.label,
-        leading:
-          item.value === modelId ? (
-            <Check size={14} aria-hidden='true' />
-          ) : (
-            <img
-              src={logoCursor}
-              alt=''
-              className='agent-view__composer-mode-icon'
-              draggable={false}
-            />
-          ),
-      })),
-    [modelId],
-  );
 
   const turns = useMemo(() => (agent.turns.length > 0 ? agent.turns : []), [agent.turns]);
   const stickToBottomRef = useRef(true);
@@ -795,7 +783,7 @@ export function WebAgentChat({
   );
 
   const handleDragOver = useCallback(
-    (event: ReactDragEvent<HTMLDivElement>) => {
+    (event: ReactDragEvent<HTMLFormElement>) => {
       if (attachDisabled) {
         return;
       }
@@ -808,15 +796,15 @@ export function WebAgentChat({
     [attachDisabled],
   );
 
-  const handleDragLeave = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+  const handleDragLeave = useCallback((event: ReactDragEvent<HTMLFormElement>) => {
     const related = event.relatedTarget as Node | null;
-    if (!composerCardRef.current?.contains(related)) {
+    if (!askFormRef.current?.contains(related)) {
       setDropActive(false);
     }
   }, []);
 
   const handleDrop = useCallback(
-    (event: ReactDragEvent<HTMLDivElement>) => {
+    (event: ReactDragEvent<HTMLFormElement>) => {
       event.preventDefault();
       event.stopPropagation();
       setDropActive(false);
@@ -881,7 +869,16 @@ export function WebAgentChat({
         </div>
       </div>
       <div className={`agent-view__footer${turns.length === 0 ? ' agent-view__footer--idle' : ''}`}>
-        <form className='agent-view__composer' onSubmit={submit}>
+        <form
+          ref={askFormRef}
+          className={`home-dashboard__ask agent-view__ask app-button--enter${
+            dropActive ? ' home-dashboard__ask--drop-target' : ''
+          }`}
+          onSubmit={submit}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
           <input
             ref={imageInputRef}
             type='file'
@@ -897,98 +894,106 @@ export function WebAgentChat({
             hidden
             onChange={handleFileInputChange}
           />
-          <div
-            ref={composerCardRef}
-            className={`agent-view__composer-card${
-              dropActive ? ' agent-view__composer-card--drop-target' : ''
-            }`}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-          >
-            {pendingImages.length > 0 || pendingFiles.length > 0 ? (
-              <div className='agent-view__composer-attachments' aria-label='Anexos'>
-                {pendingImages.map((image, index) => {
-                  const imageNumber = index + 1;
-                  const badgeColor = getWebAgentPromptImageBadgeColor(imageNumber);
-                  return (
-                    <div key={image.id} className='agent-view__paste-image app-button--enter'>
-                      <span
-                        className='home-dashboard__ask-attachment-index'
-                        style={{ '--prompt-image-badge-color': badgeColor } as CSSProperties}
-                        aria-hidden='true'
-                      >
-                        {imageNumber}
-                      </span>
-                      <button
-                        type='button'
-                        className='agent-view__paste-image-thumb-btn app-button'
-                        aria-label={`Ver imagem ${imageNumber}`}
-                        disabled={attachDisabled}
-                        onClick={() => {
-                          setPreviewImageSrc(image.dataUrl);
-                          setPreviewImageName(`imagem-${imageNumber}.png`);
-                        }}
-                      >
-                        <img
-                          src={image.dataUrl}
-                          alt=''
-                          className='agent-view__paste-image-thumb'
-                          draggable={false}
-                        />
-                      </button>
-                      <button
-                        type='button'
-                        className='agent-view__paste-image-remove app-button app-button--enter'
-                        aria-label={`Remover imagem ${imageNumber}`}
-                        disabled={attachDisabled}
-                        onClick={() => removePendingImage(image.id)}
-                      >
-                        <X size={12} strokeWidth={2.5} aria-hidden='true' />
-                      </button>
-                    </div>
-                  );
-                })}
-                {pendingFiles.map((file) => (
-                  <div key={file.id} className='web-agent-file-chip app-button--enter'>
-                    <FileText size={14} strokeWidth={2} aria-hidden='true' />
-                    <span className='web-agent-file-chip__name' title={file.name}>
-                      {file.name}
+          {pendingImages.length > 0 || pendingFiles.length > 0 ? (
+            <div
+              className='home-dashboard__ask-attachments app-button--enter'
+              aria-label='Anexos'
+            >
+              {pendingImages.map((image, index) => {
+                const imageNumber = index + 1;
+                const badgeColor = getWebAgentPromptImageBadgeColor(imageNumber);
+                return (
+                  <div key={image.id} className='home-dashboard__ask-attachment app-button--enter'>
+                    <span
+                      className='home-dashboard__ask-attachment-index'
+                      style={{ '--prompt-image-badge-color': badgeColor } as CSSProperties}
+                      aria-hidden='true'
+                    >
+                      {imageNumber}
                     </span>
                     <button
                       type='button'
-                      className='web-agent-file-chip__remove app-button'
-                      aria-label={`Remover ${file.name}`}
+                      className='home-dashboard__ask-attachment-thumb-btn app-button'
+                      aria-label={`Ver imagem ${imageNumber}`}
                       disabled={attachDisabled}
-                      onClick={() => removePendingFile(file.id)}
+                      onClick={() => {
+                        setPreviewImageSrc(image.dataUrl);
+                        setPreviewImageName(`imagem-${imageNumber}.png`);
+                      }}
+                    >
+                      <img
+                        src={image.dataUrl}
+                        alt=''
+                        className='home-dashboard__ask-attachment-thumb'
+                        draggable={false}
+                      />
+                    </button>
+                    <button
+                      type='button'
+                      className='home-dashboard__ask-attachment-remove app-button app-button--enter'
+                      aria-label={`Remover imagem ${imageNumber}`}
+                      disabled={attachDisabled}
+                      onClick={() => removePendingImage(image.id)}
                     >
                       <X size={12} strokeWidth={2.5} aria-hidden='true' />
                     </button>
                   </div>
-                ))}
-              </div>
-            ) : null}
-            <div className='agent-view__composer-input-wrap'>
-              <div className='agent-view__composer-input-mirror' aria-hidden='true'>
+                );
+              })}
+              {pendingFiles.map((file) => (
+                <div key={file.id} className='web-agent-file-chip app-button--enter'>
+                  <FileText size={14} strokeWidth={2} aria-hidden='true' />
+                  <span className='web-agent-file-chip__name' title={file.name}>
+                    {file.name}
+                  </span>
+                  <button
+                    type='button'
+                    className='web-agent-file-chip__remove app-button'
+                    aria-label={`Remover ${file.name}`}
+                    disabled={attachDisabled}
+                    onClick={() => removePendingFile(file.id)}
+                  >
+                    <X size={12} strokeWidth={2.5} aria-hidden='true' />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <div className='home-dashboard__ask-selects'>
+            <WebAgentPlusMenu
+              mode={modeId}
+              modelId={modelId}
+              models={modelList}
+              attachDisabled={attachDisabled}
+              onModeChange={(next) => onModeChange(agent.id, next)}
+              onModelChange={(next) => onModelChange(agent.id, next)}
+              onAttachImage={handleAttachImage}
+              onAttachFile={handleAttachFile}
+            />
+          </div>
+          <div className='home-dashboard__ask-main'>
+            <div className='home-dashboard__ask-input-wrap'>
+              <div className='home-dashboard__ask-input-mirror' aria-hidden='true'>
                 {draft ? (
                   <WebAgentPromptImageMentionText
                     text={draft}
                     imagePreviewByNumber={imagePreviewByNumber}
                   />
                 ) : (
-                  <span className='agent-view__composer-input-mirror-placeholder'>
-                    Adicionar follow-up
+                  <span className='home-dashboard__ask-input-mirror-placeholder'>
+                    Pergunte algo ao Nexus...
                   </span>
                 )}
               </div>
               <textarea
                 ref={inputRef}
-                className='agent-view__composer-input agent-view__composer-input--mirrored'
+                className='home-dashboard__ask-input home-dashboard__ask-input--mirrored'
                 value={draft}
                 rows={1}
-                placeholder='Adicionar follow-up'
+                placeholder='Pergunte algo ao Nexus...'
                 spellCheck={false}
                 disabled={sendingFollowUp}
+                aria-label='Pergunte algo ao Nexus'
                 onChange={(event) => {
                   setDraft(event.target.value);
                   resizeComposerInput(event.target);
@@ -997,64 +1002,58 @@ export function WebAgentChat({
                 onPaste={handlePaste}
               />
             </div>
-            <div className='agent-view__composer-bar'>
-              <div className='agent-view__composer-bar-left'>
-                <WebAgentPlusMenu
-                  mode={modeId}
-                  modelId={modelId}
-                  models={modelList}
-                  attachDisabled={attachDisabled}
-                  onModeChange={(next) => onModeChange(agent.id, next)}
-                  onModelChange={(next) => onModelChange(agent.id, next)}
-                  onAttachImage={handleAttachImage}
-                  onAttachFile={handleAttachFile}
-                />
-                <WebAskMenuSelect
-                  value={modelId}
-                  options={modelOptions}
-                  ariaLabel='Modelo do agent'
-                  className='web-agent-model-select'
-                  triggerLabel={modelLabel}
-                  triggerLeading={
-                    <img
-                      src={logoCursor}
-                      alt=''
-                      className='agent-view__composer-mode-icon'
-                      draggable={false}
-                    />
-                  }
-                  onChange={(next) => onModelChange(agent.id, next || 'auto')}
-                />
-              </div>
-              <div className='agent-view__composer-bar-actions'>
-                <button
-                  type={canStop ? 'button' : 'submit'}
-                  className={`agent-view__composer-send app-button app-button--enter${
-                    canStop
-                      ? ' agent-view__composer-send--stop agent-view__composer-send--ready'
-                      : canSend
-                        ? ' agent-view__composer-send--ready'
-                        : ''
-                  }`}
-                  aria-label={canStop ? 'Parar agent' : 'Enviar follow-up'}
-                  disabled={!canSend && !canStop}
-                  onClick={
-                    canStop
-                      ? (event) => {
-                          event.preventDefault();
-                          onStop(agent.id);
-                        }
-                      : undefined
-                  }
-                >
-                  {canStop ? (
-                    <Square size={13} strokeWidth={2.25} fill='currentColor' aria-hidden='true' />
-                  ) : (
-                    <ArrowUp size={16} strokeWidth={2.25} aria-hidden='true' />
-                  )}
-                </button>
-              </div>
-            </div>
+          </div>
+          <div className='home-dashboard__ask-actions'>
+            <button
+              type='button'
+              className='home-dashboard__ask-action app-button'
+              aria-label='Anexar'
+              disabled={attachDisabled}
+              title='Anexar'
+              onClick={handleAttachImage}
+            >
+              <Paperclip size={16} strokeWidth={2} aria-hidden='true' />
+            </button>
+            <button
+              type='button'
+              className='home-dashboard__ask-action app-button'
+              aria-label='Mencionar arquivo'
+              disabled
+              title='Em breve'
+            >
+              <AtSign size={16} strokeWidth={2} aria-hidden='true' />
+            </button>
+            <button
+              type='button'
+              className='home-dashboard__ask-action app-button'
+              aria-label='Pesquisar na web'
+              disabled
+              title='Em breve'
+            >
+              <Globe size={16} strokeWidth={2} aria-hidden='true' />
+            </button>
+            <button
+              type={canStop ? 'button' : 'submit'}
+              className={`home-dashboard__ask-send app-button app-button--enter${
+                canStop ? ' home-dashboard__ask-send--stop' : ''
+              }`}
+              aria-label={canStop ? 'Parar agent' : 'Enviar'}
+              disabled={!canSend && !canStop}
+              onClick={
+                canStop
+                  ? (event) => {
+                      event.preventDefault();
+                      onStop(agent.id);
+                    }
+                  : undefined
+              }
+            >
+              {canStop ? (
+                <Square size={13} strokeWidth={2.25} fill='currentColor' aria-hidden='true' />
+              ) : (
+                <ArrowUp size={16} strokeWidth={2.25} aria-hidden='true' />
+              )}
+            </button>
           </div>
         </form>
       </div>

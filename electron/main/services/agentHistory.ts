@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +9,7 @@ export interface CursorAgentHistoryEntry {
   id: string;
   title: string;
   updatedAtMs: number;
+  fromWeb: boolean;
 }
 
 interface CursorAgentSessionMeta {
@@ -20,6 +21,125 @@ interface CursorAgentSessionMeta {
 const MAX_HISTORY_ENTRIES = 5;
 const HISTORY_META_PROBE_COUNT = 8;
 const MAX_TRANSCRIPT_BYTES = 2 * 1024 * 1024;
+const HISTORY_TITLE_PROBE_BYTES = 64 * 1024;
+const USER_QUERY_PATTERN = /<user_query>\s*([\s\S]*?)\s*<\/user_query>/i;
+
+function readWebAgentChatIdSet(): Set<string> {
+  const filePath = join(homedir(), '.nexus', 'runtime', 'web-agent-chat-ids.json');
+
+  try {
+    const parsed = JSON.parse(readFileSync(filePath, 'utf8')) as unknown;
+
+    if (!Array.isArray(parsed)) {
+      return new Set();
+    }
+
+    return new Set(
+      parsed.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function normalizeHistoryTitle(raw: string): string {
+  const cleaned = raw.replace(/\s+/g, ' ').trim();
+
+  if (!cleaned) {
+    return '';
+  }
+
+  if (cleaned.length <= 80) {
+    return cleaned;
+  }
+
+  return `${cleaned.slice(0, 79)}…`;
+}
+
+function isPlaceholderHistoryTitle(title: string, sessionId: string): boolean {
+  const trimmed = title.trim();
+
+  if (!trimmed) {
+    return true;
+  }
+
+  if (/^new agent$/i.test(trimmed)) {
+    return true;
+  }
+
+  if (trimmed === sessionId.slice(0, 8)) {
+    return true;
+  }
+
+  return /^[0-9a-f]{8}$/i.test(trimmed);
+}
+
+async function readTranscriptHead(filePath: string): Promise<string | null> {
+  try {
+    const fileStats = await stat(filePath);
+
+    if (!fileStats.isFile() || fileStats.size <= 0) {
+      return null;
+    }
+
+    const handle = await open(filePath, 'r');
+
+    try {
+      const size = Math.min(fileStats.size, HISTORY_TITLE_PROBE_BYTES);
+      const buffer = Buffer.alloc(size);
+      await handle.read(buffer, 0, size, 0);
+      return buffer.toString('utf8');
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+function extractTitleFromTranscriptHead(raw: string): string | null {
+  const lines = raw.split('\n');
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed) as {
+        role?: string;
+        message?: { content?: Array<{ type?: string; text?: string }> };
+      };
+
+      if (parsed.role !== 'user') {
+        continue;
+      }
+
+      const text = (parsed.message?.content ?? [])
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text ?? '')
+        .join('')
+        .trim();
+
+      if (!text) {
+        continue;
+      }
+
+      const queryMatch = USER_QUERY_PATTERN.exec(text);
+      const title = normalizeHistoryTitle(queryMatch?.[1] ?? text);
+
+      if (title) {
+        return title;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
 
 async function readTranscriptWithinLimit(filePath: string): Promise<string | null> {
   try {
@@ -85,6 +205,7 @@ export async function listCursorAgentHistory(
     .slice(0, HISTORY_META_PROBE_COUNT);
 
   const sessions: CursorAgentHistoryEntry[] = [];
+  const webChatIds = readWebAgentChatIdSet();
 
   for (const { sessionId } of rankedSessions) {
     const metaPath = join(chatsDir, sessionId, 'meta.json');
@@ -97,12 +218,38 @@ export async function listCursorAgentHistory(
         continue;
       }
 
-      const title = meta.title?.trim();
+      const metaTitle = normalizeHistoryTitle(meta.title ?? '');
+      let title = metaTitle;
+
+      if (isPlaceholderHistoryTitle(title, sessionId)) {
+        const transcriptPath =
+          resolveCursorAgentTranscriptPath(workspacePath, sessionId) ??
+          resolveCursorAgentTranscriptPathFallback(
+            join(homedir(), '.cursor', 'projects', resolveCursorProjectSlug(workspacePath), 'agent-transcripts'),
+            sessionId,
+          );
+
+        if (transcriptPath) {
+          const transcriptHead = await readTranscriptHead(transcriptPath);
+          const transcriptTitle = transcriptHead
+            ? extractTitleFromTranscriptHead(transcriptHead)
+            : null;
+
+          if (transcriptTitle) {
+            title = transcriptTitle;
+          }
+        }
+      }
+
+      if (isPlaceholderHistoryTitle(title, sessionId)) {
+        title = sessionId.slice(0, 8);
+      }
 
       sessions.push({
         id: sessionId,
-        title: title || sessionId.slice(0, 8),
+        title,
         updatedAtMs: meta.updatedAtMs ?? 0,
+        fromWeb: webChatIds.has(sessionId),
       });
     } catch {
       continue;

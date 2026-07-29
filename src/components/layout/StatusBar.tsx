@@ -4,6 +4,7 @@ import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { StatusBarBranchMenu } from '@/components/layout/StatusBarBranchMenu';
 import { useGitBranch } from '@/hooks/useGitBranch';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { useJarvisStore } from '@/stores/useJarvisStore';
 import { getActiveTerminalCwd, type GitBranchBarEntry } from '@/utils/gitRepoSelection';
 import { getGitPendingWorkMessage, gitRepoHasPendingWork } from '@/utils/gitPendingWork';
 import { shortenPath } from '@/utils/shortenPath';
@@ -20,7 +21,11 @@ interface BlockedCheckoutState {
   repoLabel: string;
 }
 
-function StatusBarComponent() {
+interface StatusBarProps {
+  onToggleJarvis?: () => void;
+}
+
+function StatusBarComponent({ onToggleJarvis }: StatusBarProps) {
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const projects = useProjectStore((state) => state.projects);
   const activeProject = useMemo(
@@ -42,6 +47,92 @@ function StatusBarComponent() {
   const [branchMenu, setBranchMenu] = useState<BranchMenuState | null>(null);
   const [blockedCheckout, setBlockedCheckout] = useState<BlockedCheckoutState | null>(null);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const jarvisEnabled = useJarvisStore((state) => state.enabled);
+  const jarvisPhase = useJarvisStore((state) => state.phase);
+  const jarvisError = useJarvisStore((state) => state.lastError);
+  const jarvisBusy = useJarvisStore((state) => state.busy);
+  const jarvisTranscript = useJarvisStore((state) => state.lastTranscript);
+
+  const jarvisButtonClassName = useMemo(() => {
+    const classes = ['status-bar__btn', 'app-button', 'app-button--enter'];
+    const phase = jarvisBusy ? 'executing' : jarvisPhase;
+
+    if (jarvisEnabled) {
+      classes.push('status-bar__btn--jarvis-on');
+    }
+
+    if (phase === 'listening') {
+      classes.push('status-bar__btn--jarvis-listening');
+    }
+
+    if (phase === 'processing' || phase === 'speaking' || phase === 'executing') {
+      classes.push('status-bar__btn--jarvis-busy');
+    }
+
+    if (phase === 'error') {
+      classes.push('status-bar__btn--jarvis-error');
+    }
+
+    return classes.join(' ');
+  }, [jarvisBusy, jarvisEnabled, jarvisPhase]);
+
+  const jarvisAriaLabel = useMemo(() => {
+    if (jarvisError) {
+      return `Jarvis: ${jarvisError}`;
+    }
+    if (!jarvisEnabled) {
+      return 'Ativar Jarvis por voz';
+    }
+    if (jarvisTranscript) {
+      return `Jarvis ouviu: ${jarvisTranscript}`;
+    }
+    if (jarvisPhase === 'listening') {
+      return 'Jarvis ouvindo — clique para desativar';
+    }
+    if (jarvisPhase === 'executing' || jarvisPhase === 'processing') {
+      return 'Jarvis executando';
+    }
+    if (jarvisPhase === 'speaking') {
+      return 'Jarvis falando';
+    }
+    return 'Desativar Jarvis por voz';
+  }, [jarvisEnabled, jarvisError, jarvisPhase, jarvisTranscript]);
+
+  const jarvisLiveText = useMemo(() => {
+    if (!jarvisEnabled) {
+      return null;
+    }
+    if (jarvisError) {
+      return jarvisError;
+    }
+    if (jarvisTranscript?.trim()) {
+      return jarvisTranscript.trim();
+    }
+    const phase = jarvisBusy ? 'executing' : jarvisPhase;
+    if (phase === 'processing') {
+      return 'Processando…';
+    }
+    if (phase === 'speaking') {
+      return 'Falando…';
+    }
+    if (phase === 'executing') {
+      return 'Executando…';
+    }
+    return 'Ouvindo…';
+  }, [jarvisBusy, jarvisEnabled, jarvisError, jarvisPhase, jarvisTranscript]);
+
+  const jarvisLiveClassName = useMemo(() => {
+    const classes = ['status-bar__jarvis-live', 'app-button--enter'];
+    const phase = jarvisBusy ? 'executing' : jarvisPhase;
+    if (jarvisError) {
+      classes.push('status-bar__jarvis-live--error');
+    } else if (phase === 'processing' || phase === 'speaking' || phase === 'executing') {
+      classes.push('status-bar__jarvis-live--busy');
+    } else if (jarvisTranscript?.trim()) {
+      classes.push('status-bar__jarvis-live--heard');
+    }
+    return classes.join(' ');
+  }, [jarvisBusy, jarvisError, jarvisPhase, jarvisTranscript]);
 
   const handleBranchClick = useCallback(
     (entry: GitBranchBarEntry, event: MouseEvent<HTMLButtonElement>) => {
@@ -134,7 +225,7 @@ function StatusBarComponent() {
 
   return (
     <>
-      <footer className='status-bar'>
+      <footer className={`status-bar${jarvisEnabled ? ' status-bar--jarvis-on' : ''}`}>
         <div className='status-bar__path'>
           <div className='status-bar__info'>
             {activeProject ? (
@@ -177,6 +268,13 @@ function StatusBarComponent() {
           </div>
         </div>
 
+        {jarvisLiveText ? (
+          <div className={jarvisLiveClassName} aria-live='polite' title={jarvisLiveText}>
+            <Mic size={11} className='status-bar__jarvis-live-icon' aria-hidden='true' />
+            <span className='status-bar__jarvis-live-text'>{jarvisLiveText}</span>
+          </div>
+        ) : null}
+
         <div className='status-bar__right'>
           <div className='status-bar__actions'>
             <button type='button' className='status-bar__btn app-button app-button--enter' aria-label='Depurar'>
@@ -185,7 +283,16 @@ function StatusBarComponent() {
             <button type='button' className='status-bar__btn app-button app-button--enter' aria-label='Atalhos'>
               <Keyboard size={12} />
             </button>
-            <button type='button' className='status-bar__btn app-button app-button--enter' aria-label='Voz'>
+            <button
+              type='button'
+              className={jarvisButtonClassName}
+              aria-label={jarvisAriaLabel}
+              aria-pressed={jarvisEnabled}
+              title={jarvisAriaLabel}
+              onClick={() => {
+                onToggleJarvis?.();
+              }}
+            >
               <Mic size={12} />
             </button>
             <button type='button' className='status-bar__btn app-button app-button--enter' aria-label='Configurações'>

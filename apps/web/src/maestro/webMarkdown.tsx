@@ -62,13 +62,136 @@ function formatInline(value: string): string {
   html = html.replace(/(^|[\s(])\*([^*]+)\*(?=[\s).,]|$)/g, '$1<em>$2</em>');
   html = html.replace(
     /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
-    '<a href="$2" target="_blank" rel="noreferrer">$1</a>',
+    (_match, label: string, href: string) =>
+      `<a href="${href}" target="_blank" rel="noreferrer noopener">${label}</a>`,
   );
   return html;
 }
 
+function isTableSeparator(line: string): boolean {
+  const trimmed = line.trim();
+
+  if (!trimmed.includes('-')) {
+    return false;
+  }
+
+  return /^[\|\s:\-]+$/.test(trimmed);
+}
+
+function parseTableCells(line: string): string[] {
+  const trimmed = line.trim().replace(/^\*\*(.+)\*\*$/, '$1').trim();
+
+  if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+    return trimmed
+      .slice(1, -1)
+      .split('|')
+      .map((cell) => cell.trim());
+  }
+
+  return trimmed.split('|').map((cell) => cell.trim());
+}
+
+function isTableRow(line: string): boolean {
+  const trimmed = line.trim().replace(/^\*\*(.+)\*\*$/, '$1').trim();
+
+  if (!trimmed.includes('|')) {
+    return false;
+  }
+
+  if (isTableSeparator(trimmed)) {
+    return true;
+  }
+
+  if (trimmed.startsWith('|')) {
+    return parseTableCells(trimmed).length >= 2;
+  }
+
+  const cells = parseTableCells(trimmed);
+
+  if (cells.length < 2) {
+    return false;
+  }
+
+  return cells.every((cell) => cell.length > 0 && cell.length <= 96 && !/[{}();=<>]/.test(cell));
+}
+
+function splitGluedTableRow(line: string): string[] {
+  const trimmed = line.trim();
+
+  if (!trimmed.includes('|')) {
+    return [line];
+  }
+
+  const parts = trimmed.split(/\|\s+\|(?=[^|])/);
+
+  if (parts.length <= 1) {
+    return [line];
+  }
+
+  const rows = parts.map((part, index) => {
+    const value = part.trim();
+
+    if (index === 0) {
+      return value.endsWith('|') ? value : `${value} |`;
+    }
+
+    if (index === parts.length - 1) {
+      return value.startsWith('|') ? value : `| ${value}`;
+    }
+
+    const middle = value.startsWith('|') ? value : `| ${value}`;
+    return middle.endsWith('|') ? middle : `${middle} |`;
+  });
+
+  if (rows.length > 1 && rows.every((row) => isTableRow(row))) {
+    return rows;
+  }
+
+  return [line];
+}
+
+function expandMarkdownLines(source: string): string[] {
+  const lines: string[] = [];
+
+  for (const line of source.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')) {
+    lines.push(...splitGluedTableRow(line));
+  }
+
+  return lines;
+}
+
+function renderMarkdownTable(tableLines: string[]): string {
+  const rows = tableLines
+    .filter((line) => !isTableSeparator(line.trim()))
+    .map((line) => parseTableCells(line.trim()))
+    .filter((cells) => cells.some(Boolean));
+
+  if (rows.length === 0) {
+    return '';
+  }
+
+  const [header, ...body] = rows;
+  const thead = `<thead><tr>${header
+    .map(
+      (cell) =>
+        `<th><span class="markdown-table-th-knockout">${formatInline(cell)}</span></th>`,
+    )
+    .join('')}</tr></thead>`;
+  const tbody =
+    body.length > 0
+      ? `<tbody>${body
+          .map(
+            (row) =>
+              `<tr>${row.map((cell) => `<td>${formatInline(cell)}</td>`).join('')}</tr>`,
+          )
+          .join('')}</tbody>`
+      : '';
+
+  return `<div class="markdown-table-wrap"><table>${thead}${tbody}</table></div>`;
+}
+
 export function renderWebMarkdown(source: string): string {
-  const lines = source.replace(/\r\n/g, '\n').split('\n');
+  const lines = expandMarkdownLines(source);
   const blocks: string[] = [];
   let index = 0;
 
@@ -110,6 +233,19 @@ export function renderWebMarkdown(source: string): string {
       continue;
     }
 
+    if (isTableRow(trimmed)) {
+      const tableLines: string[] = [];
+      while (index < lines.length && isTableRow((lines[index] ?? '').trim())) {
+        tableLines.push((lines[index] ?? '').trim());
+        index += 1;
+      }
+      const tableHtml = renderMarkdownTable(tableLines);
+      if (tableHtml) {
+        blocks.push(tableHtml);
+      }
+      continue;
+    }
+
     if (/^[-*]\s+/.test(trimmed)) {
       const items: string[] = [];
       while (index < lines.length && /^[-*]\s+/.test((lines[index] ?? '').trim())) {
@@ -140,6 +276,7 @@ export function renderWebMarkdown(source: string): string {
         !next ||
         next.startsWith('```') ||
         /^#{1,3}\s+/.test(next) ||
+        isTableRow(next) ||
         /^[-*]\s+/.test(next) ||
         /^\d+\.\s+/.test(next)
       ) {

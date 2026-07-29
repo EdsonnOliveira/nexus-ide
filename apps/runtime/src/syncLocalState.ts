@@ -23,6 +23,7 @@ interface LocalProject {
   automations?: unknown[];
   tasks?: unknown[];
   tabs?: unknown[];
+  taskIntegration?: Record<string, unknown> | null;
   passwordCollections?: Array<{ id: string; name: string; fields?: unknown[] }>;
   testEntries?: unknown[];
   whatsappLink?: string | null;
@@ -53,13 +54,41 @@ function summarizeProjectMetadata(project: LocalProject): Record<string, unknown
     fieldCount: Array.isArray(collection.fields) ? collection.fields.length : 0,
   }));
 
+  const tasks = (Array.isArray(project.tasks) ? project.tasks : []).map((task) => {
+    if (!task || typeof task !== 'object' || Array.isArray(task)) {
+      return task;
+    }
+    const record = task as Record<string, unknown>;
+    const attachments = Array.isArray(record.attachments)
+      ? record.attachments.map((attachment) => {
+          if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) {
+            return attachment;
+          }
+          const item = attachment as Record<string, unknown>;
+          return {
+            id: item.id,
+            name: item.name,
+            kind: item.kind,
+            mimeType: item.mimeType,
+          };
+        })
+      : [];
+    return {
+      ...record,
+      attachments,
+      description:
+        typeof record.description === 'string' ? record.description.slice(0, 4000) : record.description,
+    };
+  });
+
   return {
     automationsCount: Array.isArray(project.automations) ? project.automations.length : 0,
-    tasksCount: Array.isArray(project.tasks) ? project.tasks.length : 0,
+    tasksCount: tasks.length,
     tabsCount: Array.isArray(project.tabs) ? project.tabs.length : 0,
     testEntriesCount: Array.isArray(project.testEntries) ? project.testEntries.length : 0,
     automations: project.automations ?? [],
-    tasks: project.tasks ?? [],
+    tasks,
+    taskIntegration: project.taskIntegration ?? null,
     passwordCollections,
     whatsappLink: project.whatsappLink ?? null,
     flag: project.flag ?? null,

@@ -1,14 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Bot, FolderKanban, Smartphone, X } from 'lucide-react';
+import { ArrowLeft, Bot, FolderKanban, ListTodo, Play, Smartphone, Trash2 } from 'lucide-react';
+import type { CloudProject } from '@nexus/protocol';
 import type { WebAgentSession } from '../store';
 import { WebAgentChat } from './WebAgentChat';
 import type { WebAgentMode } from './WebAgentPlusMenu';
 import { WebAgentShellTerminals } from './WebAgentShellTerminals';
 import type { WebFileAttachmentPayload } from './webAgentPromptImages';
+import { WebTaskDetailModal } from './WebTaskDetailModal';
+import {
+  buildWebTaskPrompt,
+  formatWebTaskSource,
+  getWebTaskTagBorderColor,
+  resolveCloudProjectTasks,
+  resolveCloudTaskIntegration,
+  type WebProjectTask,
+} from './webProjectTasks';
 
 interface WebMaestroAgentsProps {
   agents: WebAgentSession[];
+  projects: CloudProject[];
   selectedProjectId: string | null;
   deviceId: string | null;
   focusedAgentId?: string | null;
@@ -17,6 +28,7 @@ interface WebMaestroAgentsProps {
   onSelectProject: (projectId: string) => void;
   onBackToProjects: () => void;
   onFocusedAgentHandled?: () => void;
+  onOpenAgentChange?: (agentId: string | null) => void;
   onRemove: (id: string) => void;
   onFollowUp: (
     agentId: string,
@@ -27,6 +39,7 @@ interface WebMaestroAgentsProps {
   onStop: (agentId: string) => void;
   onModelChange: (agentId: string, modelId: string) => void;
   onModeChange: (agentId: string, modeId: WebAgentMode) => void;
+  onExecuteTask?: (task: WebProjectTask) => void | Promise<void>;
   onScrollChange?: (scrolled: boolean) => void;
 }
 
@@ -42,6 +55,22 @@ interface AgentProjectGroup {
 
 function formatBadgeCount(count: number): string {
   return count > 99 ? '99+' : String(count);
+}
+
+function resolveAgentTitle(agent: WebAgentSession): string {
+  const latestPrompt = agent.turns[agent.turns.length - 1]?.prompt?.trim();
+  const prompt = latestPrompt || agent.prompt.trim();
+  return prompt || 'Agent';
+}
+
+function resolveAgentStatusLabel(status: WebAgentSession['status']): string {
+  if (status === 'running') {
+    return 'Rodando';
+  }
+  if (status === 'error') {
+    return 'Erro';
+  }
+  return 'Parado';
 }
 
 function groupAgentsByProject(agents: WebAgentSession[]): AgentProjectGroup[] {
@@ -138,10 +167,10 @@ function AgentCloseConfirm({
         onClick={(event) => event.stopPropagation()}
       >
         <span id='web-agent-close-title' className='project-dialog__title'>
-          Fechar agent?
+          Excluir agent?
         </span>
         <p className='project-dialog__message'>
-          Tem certeza que deseja fechar o agent de <strong>{projectName}</strong>?
+          Tem certeza que deseja excluir o agent de <strong>{projectName}</strong>?
         </p>
         <div className='project-dialog__actions'>
           <button
@@ -156,7 +185,7 @@ function AgentCloseConfirm({
             className='project-dialog__btn project-dialog__btn--danger app-button app-button--enter'
             onClick={onConfirm}
           >
-            Fechar
+            Excluir
           </button>
         </div>
       </div>
@@ -165,10 +194,185 @@ function AgentCloseConfirm({
   );
 }
 
-function AgentCard({
+function AgentListRow({
+  agent,
+  enterIndex,
+  onOpen,
+}: {
+  agent: WebAgentSession;
+  enterIndex: number;
+  onOpen: (agentId: string) => void;
+}) {
+  const title = resolveAgentTitle(agent);
+  const running = agent.status === 'running';
+  const statusLabel = resolveAgentStatusLabel(agent.status);
+
+  return (
+    <button
+      type='button'
+      data-agent-id={agent.id}
+      className='home-dashboard__agent-list-row app-button app-button--enter'
+      style={{ ['--enter-index' as string]: enterIndex }}
+      aria-label={`${title}. ${statusLabel}`}
+      onClick={() => onOpen(agent.id)}
+    >
+      <span className='home-dashboard__agent-list-row-main'>
+        <span className='home-dashboard__agent-list-row-title'>{title}</span>
+      </span>
+      <span
+        className={`home-dashboard__agent-list-row-status home-dashboard__agent-list-row-status--${agent.status}`}
+      >
+        <span
+          className={`home-dashboard__agent-list-row-dot${
+            running ? ' home-dashboard__agent-list-row-dot--running' : ''
+          }`}
+          aria-hidden='true'
+        />
+        {statusLabel}
+      </span>
+    </button>
+  );
+}
+
+function ProjectTaskItem({
+  task,
+  enterIndex,
+  onOpen,
+  onExecute,
+}: {
+  task: WebProjectTask;
+  enterIndex: number;
+  onOpen: (task: WebProjectTask) => void;
+  onExecute?: (task: WebProjectTask) => void | Promise<void>;
+}) {
+  const handlePlay = useCallback(
+    (event: MouseEvent) => {
+      event.stopPropagation();
+      void onExecute?.(task);
+    },
+    [onExecute, task],
+  );
+
+  const handleOpen = useCallback(() => {
+    onOpen(task);
+  }, [onOpen, task]);
+
+  const visibleLabels = task.labels.slice(0, 6);
+  const sourceLabel = formatWebTaskSource(task.source);
+
+  return (
+    <article
+      className='home-dashboard__project-task app-button--enter'
+      style={{ ['--enter-index' as string]: enterIndex }}
+      role='button'
+      tabIndex={0}
+      aria-label={task.title}
+      onClick={handleOpen}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          handleOpen();
+        }
+      }}
+    >
+      <div className='home-dashboard__project-task-body'>
+        <div className='home-dashboard__project-task-top'>
+          <span className='home-dashboard__project-task-title' title={task.title}>
+            {task.title}
+          </span>
+          {onExecute ? (
+            <button
+              type='button'
+              className='home-dashboard__project-task-play app-button app-button--enter'
+              aria-label={`Executar ${task.title}`}
+              onClick={handlePlay}
+            >
+              <Play size={13} strokeWidth={2.25} aria-hidden='true' />
+            </button>
+          ) : null}
+        </div>
+        {visibleLabels.length > 0 ? (
+          <div className='home-dashboard__project-task-tags'>
+            {visibleLabels.map((label) => (
+              <span
+                key={label}
+                className='home-dashboard__project-task-tag'
+                style={{ borderColor: getWebTaskTagBorderColor(label) }}
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        <div className='home-dashboard__project-task-footer'>
+          <div className='home-dashboard__project-task-meta'>
+            <span className='home-dashboard__project-task-key'>
+              {task.externalId ?? sourceLabel}
+            </span>
+            {task.priority ? (
+              <span
+                className='home-dashboard__project-task-priority'
+                title={task.priority}
+                aria-label={`Prioridade ${task.priority}`}
+              />
+            ) : null}
+          </div>
+          {task.assigneeAvatarUrl ? (
+            <img
+              className='home-dashboard__project-task-avatar'
+              src={task.assigneeAvatarUrl}
+              alt={task.assignee ?? 'Responsável'}
+              draggable={false}
+            />
+          ) : null}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function ProjectTasksRail({
+  tasks,
+  onOpen,
+  onExecute,
+}: {
+  tasks: WebProjectTask[];
+  onOpen: (task: WebProjectTask) => void;
+  onExecute?: (task: WebProjectTask) => void | Promise<void>;
+}) {
+  if (tasks.length === 0) {
+    return (
+      <div className='empty-state home-dashboard__project-section-empty' data-compact='true'>
+        <div className='empty-state__icon'>
+          <ListTodo size={22} aria-hidden='true' />
+        </div>
+        <p className='empty-state__message'>Nenhuma task neste projeto</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className='home-dashboard__project-tasks-rail' role='list'>
+      {tasks.map((task, index) => (
+        <div key={task.id} role='listitem'>
+          <ProjectTaskItem
+            task={task}
+            enterIndex={index}
+            onOpen={onOpen}
+            onExecute={onExecute}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AgentFullscreen({
   agent,
   deviceId,
-  highlighted,
+  hasEmulator,
+  onOpenEmulator,
+  onBack,
   onRemove,
   onFollowUp,
   onStop,
@@ -177,7 +381,9 @@ function AgentCard({
 }: {
   agent: WebAgentSession;
   deviceId: string | null;
-  highlighted: boolean;
+  hasEmulator: boolean;
+  onOpenEmulator?: (projectId: string) => void;
+  onBack: () => void;
   onRemove: (id: string) => void;
   onFollowUp: (
     agentId: string,
@@ -190,26 +396,69 @@ function AgentCard({
   onModeChange: (agentId: string, modeId: WebAgentMode) => void;
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const title = resolveAgentTitle(agent);
+  const statusLabel = resolveAgentStatusLabel(agent.status);
+  const running = agent.status === 'running';
 
   return (
-    <article
-      data-agent-id={agent.id}
-      className={`home-dashboard__agent-card home-dashboard__agent-card--spawn${
-        highlighted ? ' home-dashboard__agent-card--focused' : ''
-      }`}
+    <div
+      className='home-dashboard__agent-fullscreen app-button--enter'
+      role='main'
+      aria-label={title}
     >
-      <div className='home-dashboard__agent-card-float'>
-        <WebAgentShellTerminals agent={agent} deviceId={deviceId} />
+      <div className='home-dashboard__agent-fullscreen-header'>
         <button
           type='button'
-          className='home-dashboard__agent-card-close app-button app-button--enter'
-          aria-label='Fechar agent'
-          onClick={() => setConfirmOpen(true)}
+          className='home-dashboard__agent-project-back app-button app-button--enter'
+          aria-label='Voltar para agents do projeto'
+          onClick={onBack}
         >
-          <X size={14} strokeWidth={2.25} aria-hidden='true' />
+          <ArrowLeft size={16} strokeWidth={2.25} aria-hidden='true' />
         </button>
+        <div className='home-dashboard__agent-fullscreen-heading'>
+          <span className='home-dashboard__agent-fullscreen-title' title={title}>
+            {title}
+          </span>
+          <span
+            className={`home-dashboard__agent-list-row-status home-dashboard__agent-list-row-status--${agent.status}`}
+          >
+            <span
+              className={`home-dashboard__agent-list-row-dot${
+                running ? ' home-dashboard__agent-list-row-dot--running' : ''
+              }`}
+              aria-hidden='true'
+            />
+            {statusLabel}
+          </span>
+        </div>
+        <div className='home-dashboard__agent-fullscreen-actions'>
+          <WebAgentShellTerminals agent={agent} deviceId={deviceId} />
+          {hasEmulator && agent.projectId ? (
+            <button
+              type='button'
+              className='home-dashboard__agent-card-terminal app-button app-button--enter'
+              aria-label='Abrir emulador'
+              title='Emulador rodando'
+              onClick={() => {
+                if (agent.projectId) {
+                  onOpenEmulator?.(agent.projectId);
+                }
+              }}
+            >
+              <Smartphone size={14} strokeWidth={2.25} aria-hidden='true' />
+            </button>
+          ) : null}
+          <button
+            type='button'
+            className='home-dashboard__agent-card-close app-button app-button--enter'
+            aria-label='Excluir agent'
+            onClick={() => setConfirmOpen(true)}
+          >
+            <Trash2 size={14} strokeWidth={2.25} aria-hidden='true' />
+          </button>
+        </div>
       </div>
-      <div className='home-dashboard__agent-card-body'>
+      <div className='home-dashboard__agent-fullscreen-body'>
         <WebAgentChat
           agent={agent}
           onFollowUp={onFollowUp}
@@ -225,10 +474,11 @@ function AgentCard({
           onConfirm={() => {
             setConfirmOpen(false);
             onRemove(agent.id);
+            onBack();
           }}
         />
       ) : null}
-    </article>
+    </div>
   );
 }
 
@@ -250,7 +500,7 @@ function AgentProjectRow({
   }, [group.projectId, onSelect]);
 
   const handleOpenEmulator = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>) => {
+    (event: MouseEvent) => {
       event.preventDefault();
       event.stopPropagation();
       onOpenEmulator?.(group.projectId);
@@ -282,7 +532,7 @@ function AgentProjectRow({
       </span>
       <span className='home-dashboard__agent-project-name'>{group.name}</span>
       <span className='home-dashboard__agent-project-indicators'>
-        {!hasEmulator && showRunningBadge ? (
+        {showRunningBadge ? (
           <span
             className='home-dashboard__agent-project-badge home-dashboard__agent-project-badge--running'
             aria-label={`${group.agents.length} agents`}
@@ -290,7 +540,7 @@ function AgentProjectRow({
             {formatBadgeCount(group.agents.length)}
           </span>
         ) : null}
-        {!hasEmulator && showErrorBadge ? (
+        {showErrorBadge ? (
           <span
             className='home-dashboard__agent-project-badge home-dashboard__agent-project-badge--error'
             aria-label={`${group.errorCount} agents com erro`}
@@ -322,6 +572,7 @@ function AgentProjectRow({
 
 export function WebMaestroAgents({
   agents,
+  projects,
   selectedProjectId,
   deviceId,
   focusedAgentId = null,
@@ -330,15 +581,18 @@ export function WebMaestroAgents({
   onSelectProject,
   onBackToProjects,
   onFocusedAgentHandled,
+  onOpenAgentChange,
   onRemove,
   onFollowUp,
   onStop,
   onModelChange,
   onModeChange,
+  onExecuteTask,
   onScrollChange,
 }: WebMaestroAgentsProps) {
   const sectionRef = useRef<HTMLElement>(null);
-  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [openAgentId, setOpenAgentId] = useState<string | null>(null);
+  const [detailTask, setDetailTask] = useState<WebProjectTask | null>(null);
 
   const projectGroups = useMemo(() => groupAgentsByProject(agents), [agents]);
   const selectedGroup = useMemo(
@@ -350,6 +604,67 @@ export function WebMaestroAgents({
   );
   const projectAgents = selectedGroup?.agents ?? [];
   const showingProjects = selectedProjectId === null;
+  const selectedCloudProject = useMemo(
+    () =>
+      selectedProjectId
+        ? projects.find((project) => project.id === selectedProjectId) ?? null
+        : null,
+    [projects, selectedProjectId],
+  );
+  const projectTasks = useMemo(
+    () => resolveCloudProjectTasks(selectedCloudProject),
+    [selectedCloudProject],
+  );
+  const taskIntegration = useMemo(
+    () => resolveCloudTaskIntegration(selectedCloudProject),
+    [selectedCloudProject],
+  );
+  const openAgent = useMemo(
+    () => (openAgentId ? projectAgents.find((agent) => agent.id === openAgentId) ?? null : null),
+    [openAgentId, projectAgents],
+  );
+  const hasEmulator = Boolean(
+    selectedProjectId && emulatorProjectIds?.has(selectedProjectId),
+  );
+
+  const handleOpenAgent = useCallback(
+    (agentId: string) => {
+      setOpenAgentId(agentId);
+      onOpenAgentChange?.(agentId);
+    },
+    [onOpenAgentChange],
+  );
+
+  const handleCloseAgent = useCallback(() => {
+    setOpenAgentId(null);
+    onOpenAgentChange?.(null);
+  }, [onOpenAgentChange]);
+
+  const handleBackFromProject = useCallback(() => {
+    setDetailTask(null);
+    onBackToProjects();
+  }, [onBackToProjects]);
+
+  useEffect(() => {
+    setDetailTask(null);
+  }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (showingProjects) {
+      setOpenAgentId(null);
+      onOpenAgentChange?.(null);
+    }
+  }, [showingProjects, onOpenAgentChange]);
+
+  useEffect(() => {
+    if (!openAgentId) {
+      return;
+    }
+    if (!projectAgents.some((agent) => agent.id === openAgentId)) {
+      setOpenAgentId(null);
+      onOpenAgentChange?.(null);
+    }
+  }, [openAgentId, projectAgents, onOpenAgentChange]);
 
   useEffect(() => {
     const node = sectionRef.current;
@@ -367,35 +682,17 @@ export function WebMaestroAgents({
     return () => {
       node.removeEventListener('scroll', syncScroll);
     };
-  }, [agents.length, selectedProjectId, onScrollChange]);
+  }, [agents.length, selectedProjectId, openAgentId, onScrollChange]);
 
   useEffect(() => {
     if (!focusedAgentId || showingProjects) {
       return;
     }
 
-    const section = sectionRef.current;
-    if (!section) {
-      return;
-    }
-
-    const card = section.querySelector<HTMLElement>(
-      `[data-agent-id="${CSS.escape(focusedAgentId)}"]`,
-    );
-    if (!card) {
-      return;
-    }
-
-    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    setHighlightId(focusedAgentId);
+    setOpenAgentId(focusedAgentId);
+    onOpenAgentChange?.(focusedAgentId);
     onFocusedAgentHandled?.();
-
-    const timeoutId = window.setTimeout(() => {
-      setHighlightId((current) => (current === focusedAgentId ? null : current));
-    }, 1600);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [focusedAgentId, onFocusedAgentHandled, projectAgents, showingProjects]);
+  }, [focusedAgentId, onFocusedAgentHandled, onOpenAgentChange, showingProjects]);
 
   useEffect(() => {
     if (showingProjects) {
@@ -403,13 +700,18 @@ export function WebMaestroAgents({
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onBackToProjects();
+      if (event.key !== 'Escape') {
+        return;
       }
+      if (openAgentId) {
+        handleCloseAgent();
+        return;
+      }
+      onBackToProjects();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onBackToProjects, showingProjects]);
+  }, [handleCloseAgent, onBackToProjects, openAgentId, showingProjects]);
 
   if (agents.length === 0) {
     return (
@@ -461,61 +763,114 @@ export function WebMaestroAgents({
     );
   }
 
+  if (openAgent) {
+    return (
+      <section
+        ref={sectionRef}
+        className='home-dashboard__agent-mode home-dashboard__agent-mode--fullscreen app-button--enter'
+      >
+        <AgentFullscreen
+          agent={openAgent}
+          deviceId={deviceId}
+          hasEmulator={Boolean(
+            openAgent.projectId && emulatorProjectIds?.has(openAgent.projectId),
+          )}
+          onOpenEmulator={onOpenEmulator}
+          onBack={handleCloseAgent}
+          onRemove={onRemove}
+          onFollowUp={onFollowUp}
+          onStop={onStop}
+          onModelChange={onModelChange}
+          onModeChange={onModeChange}
+        />
+      </section>
+    );
+  }
+
   return (
-    <section ref={sectionRef} className='home-dashboard__agent-mode app-button--enter'>
+    <section
+      ref={sectionRef}
+      className='home-dashboard__agent-mode home-dashboard__agent-mode--project app-button--enter'
+    >
       <div className='home-dashboard__agent-project-header app-button--enter'>
         <button
           type='button'
           className='home-dashboard__agent-project-back app-button app-button--enter'
           aria-label='Voltar para projetos'
-          onClick={onBackToProjects}
+          onClick={handleBackFromProject}
         >
           <ArrowLeft size={16} strokeWidth={2.25} aria-hidden='true' />
         </button>
-        {selectedGroup ? (
+        {selectedGroup || selectedCloudProject ? (
           <>
             <span className='home-dashboard__agent-project-icon-wrap'>
               <ProjectThumb
-                logoUrl={selectedGroup.logoUrl}
-                color={selectedGroup.color}
-                name={selectedGroup.name}
+                logoUrl={selectedGroup?.logoUrl ?? selectedCloudProject?.logo_url ?? null}
+                color={
+                  selectedGroup?.color ?? selectedCloudProject?.color ?? '#8b5cf6'
+                }
+                name={selectedGroup?.name ?? selectedCloudProject?.name ?? 'Projeto'}
               />
             </span>
             <span className='home-dashboard__agent-project-header-name'>
-              {selectedGroup.name}
+              {selectedGroup?.name ?? selectedCloudProject?.name ?? 'Projeto'}
             </span>
           </>
         ) : (
-          <span className='home-dashboard__agent-project-header-name'>Agents</span>
+          <span className='home-dashboard__agent-project-header-name'>Projeto</span>
         )}
+        {hasEmulator && selectedProjectId ? (
+          <button
+            type='button'
+            className='web-emulator-header-btn app-button home-dashboard__agent-project-emulator'
+            aria-label='Abrir emulador'
+            title='Emulador rodando'
+            onClick={() => onOpenEmulator?.(selectedProjectId)}
+          >
+            <Smartphone size={15} aria-hidden='true' />
+          </button>
+        ) : null}
       </div>
-      {projectAgents.length === 0 ? (
-        <div className='empty-state home-dashboard__agent-mode-empty'>
-          <div className='empty-state__icon'>
-            <Bot size={28} aria-hidden='true' />
-          </div>
-          <strong className='empty-state__title'>Nenhum agent neste projeto</strong>
-          <p className='empty-state__message'>
-            Pergunte algo ao Nexus para criar um agent aqui.
-          </p>
-        </div>
-      ) : (
-        <div className='home-dashboard__agent-grid'>
-          {projectAgents.map((agent) => (
-            <AgentCard
-              key={agent.id}
-              agent={agent}
-              deviceId={deviceId}
-              highlighted={highlightId === agent.id}
-              onRemove={onRemove}
-              onFollowUp={onFollowUp}
-              onStop={onStop}
-              onModelChange={onModelChange}
-              onModeChange={onModeChange}
-            />
-          ))}
-        </div>
-      )}
+      <div className='home-dashboard__project-sections'>
+        <section className='home-dashboard__project-section' aria-label='Tasks'>
+          <h2 className='home-dashboard__project-section-title'>Tasks</h2>
+          <ProjectTasksRail
+            tasks={projectTasks}
+            onOpen={setDetailTask}
+            onExecute={onExecuteTask}
+          />
+        </section>
+        <section className='home-dashboard__project-section' aria-label='Agents'>
+          <h2 className='home-dashboard__project-section-title'>Agents</h2>
+          {projectAgents.length === 0 ? (
+            <div className='empty-state home-dashboard__project-section-empty'>
+              <div className='empty-state__icon'>
+                <Bot size={22} aria-hidden='true' />
+              </div>
+              <p className='empty-state__message'>Nenhum agent neste projeto</p>
+            </div>
+          ) : (
+            <div className='home-dashboard__agent-list' role='list'>
+              {projectAgents.map((agent, index) => (
+                <AgentListRow
+                  key={agent.id}
+                  agent={agent}
+                  enterIndex={index}
+                  onOpen={handleOpenAgent}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+      {detailTask ? (
+        <WebTaskDetailModal
+          task={detailTask}
+          integration={taskIntegration}
+          onClose={() => setDetailTask(null)}
+          onExecute={onExecuteTask}
+        />
+      ) : null}
     </section>
   );
 }

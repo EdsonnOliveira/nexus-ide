@@ -50,7 +50,7 @@ function WebMobileReleaseCardComponent({
   }, [release.uid, release.state]);
 
   const kindLabel = getMobileReleaseKindLabel(release.kind);
-  const statusLabel = release.phase ?? getMobileReleaseStatusLabel(release.state);
+  const statusLabel = release.phase ?? getMobileReleaseStatusLabel(release.state, release.kind);
   const statusClassName = getMobileReleaseStatusClassName(release.state);
   const versionLabel = formatMobileReleaseVersion(release.version, release.versionCode);
   const eyebrowLabel = useMemo(() => {

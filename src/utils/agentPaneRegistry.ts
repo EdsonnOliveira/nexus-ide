@@ -93,6 +93,13 @@ export function hasAgentPaneSubmit(paneId: string): boolean {
   return handlersByPane.has(paneId);
 }
 
+export {
+  getAgentPaneLatestResponseText,
+  isAgentPaneSettled,
+  waitForAgentPaneSettled,
+  waitForJarvisAgentAnswer,
+} from '@/utils/jarvis/waitForAgentAnswer';
+
 export function registerAgentPaneAttach(
   paneId: string,
   handlers: AgentPaneAttachHandlers | null,

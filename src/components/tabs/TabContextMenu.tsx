@@ -2,6 +2,7 @@ import {
   Bot,
   ChevronRight,
   Columns2,
+  Globe,
   History,
   Loader2,
   Pencil,
@@ -12,10 +13,12 @@ import {
 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { listAgentHistoryCursorChatMeta } from '@nexus/supabase';
 import {
   positionDropdownAtPointer,
   useAnchoredDropdownMenu,
 } from '@/hooks/useAnchoredDropdownMenu';
+import { cloudSupabase } from '@/lib/nexusCloud';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useTabActions } from '@/stores/useTabStore';
 import type { CursorAgentHistoryEntry, Project, TabBarItem, TerminalTab } from '@/types';
@@ -51,6 +54,24 @@ function formatHistoryDate(updatedAtMs: number): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function isPlaceholderHistoryTitle(title: string, sessionId: string): boolean {
+  const trimmed = title.trim();
+
+  if (!trimmed) {
+    return true;
+  }
+
+  if (/^new agent$/i.test(trimmed)) {
+    return true;
+  }
+
+  if (trimmed === sessionId.slice(0, 8)) {
+    return true;
+  }
+
+  return /^[0-9a-f]{8}$/i.test(trimmed);
 }
 
 function truncateRestartCommand(command: string, maxLength = 72): string {
@@ -126,7 +147,37 @@ function TabContextMenuComponent({
 
     try {
       const entries = await window.nexus.files.listCursorAgentHistory(project.path);
-      setHistoryEntries(entries);
+      let nextEntries = entries;
+
+      if (cloudSupabase && entries.length > 0) {
+        try {
+          const metaRows = await listAgentHistoryCursorChatMeta(
+            cloudSupabase,
+            entries.map((entry) => entry.id),
+          );
+          const metaById = new Map(metaRows.map((row) => [row.cursorChatId, row]));
+          nextEntries = entries.map((entry) => {
+            const meta = metaById.get(entry.id);
+            const cloudTitle = meta?.title?.replace(/\s+/g, ' ').trim() ?? '';
+            const title =
+              isPlaceholderHistoryTitle(entry.title, entry.id) && cloudTitle
+                ? cloudTitle.length > 80
+                  ? `${cloudTitle.slice(0, 79)}…`
+                  : cloudTitle
+                : entry.title;
+
+            return {
+              ...entry,
+              title,
+              fromWeb: Boolean(entry.fromWeb) || Boolean(meta?.fromWeb),
+            };
+          });
+        } catch {
+          nextEntries = entries;
+        }
+      }
+
+      setHistoryEntries(nextEntries);
       setHistoryLoaded(true);
     } finally {
       setHistoryLoading(false);
@@ -368,7 +419,18 @@ function TabContextMenuComponent({
                       disabled={Boolean(agentPane && restartingPaneIds[agentPane.id])}
                       onMouseDown={handleResumeSession(entry)}
                     >
-                      <span className='context-menu__history-title'>{entry.title}</span>
+                      <span className='context-menu__history-title-row'>
+                        <span className='context-menu__history-title'>{entry.title}</span>
+                        {entry.fromWeb ? (
+                          <span
+                            className='context-menu__history-web-badge'
+                            title='Agent iniciado na web'
+                          >
+                            <Globe size={10} strokeWidth={2.25} aria-hidden='true' />
+                            <span>Web</span>
+                          </span>
+                        ) : null}
+                      </span>
                       <span className='context-menu__history-date'>
                         {formatHistoryDate(entry.updatedAtMs)}
                       </span>

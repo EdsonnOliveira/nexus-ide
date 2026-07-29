@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type {
   AppState,
+  JarvisIntent,
+  JarvisPhase,
   Project,
   ProjectUpdatePayload,
   TerminalAgent,
@@ -378,6 +380,71 @@ const nexusApi = {
     startCallFromEvent: (title) => ipcRenderer.invoke('macParakeet:startCallFromEvent', title),
     renameTranscriptionTitle: (id, title) =>
       ipcRenderer.invoke('macParakeet:renameTranscriptionTitle', id, title),
+  },
+  jarvis: {
+    status: () => ipcRenderer.invoke('jarvis:status'),
+    start: () => ipcRenderer.invoke('jarvis:start'),
+    stop: () => ipcRenderer.invoke('jarvis:stop'),
+    processUtterance: (wavBase64, projectNames) =>
+      ipcRenderer.invoke('jarvis:processUtterance', wavBase64, projectNames ?? []),
+    processTranscript: (transcript, projectNames) =>
+      ipcRenderer.invoke('jarvis:processTranscript', transcript, projectNames ?? []),
+    speakSummary: (text) => ipcRenderer.invoke('jarvis:speakSummary', text),
+    speak: (text) => ipcRenderer.invoke('jarvis:speak', text),
+    notifyFinished: (ok, error) => ipcRenderer.invoke('jarvis:notifyFinished', ok, error),
+    setOllamaModel: (model) => ipcRenderer.invoke('jarvis:setOllamaModel', model),
+    onPhase: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { phase: JarvisPhase }) => {
+        callback(payload.phase);
+      };
+      ipcRenderer.on('jarvis:phase', listener);
+      return () => ipcRenderer.off('jarvis:phase', listener);
+    },
+    onListening: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { listening: boolean }) => {
+        callback(Boolean(payload.listening));
+      };
+      ipcRenderer.on('jarvis:listening', listener);
+      return () => ipcRenderer.off('jarvis:listening', listener);
+    },
+    onHeard: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { transcript: string }) => {
+        callback(payload.transcript);
+      };
+      ipcRenderer.on('jarvis:heard', listener);
+      return () => ipcRenderer.off('jarvis:heard', listener);
+    },
+    onStarted: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { transcript: string }) => {
+        callback(payload.transcript);
+      };
+      ipcRenderer.on('jarvis:started', listener);
+      return () => ipcRenderer.off('jarvis:started', listener);
+    },
+    onIntent: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { intent: JarvisIntent }) => {
+        callback(payload.intent);
+      };
+      ipcRenderer.on('jarvis:intent', listener);
+      return () => ipcRenderer.off('jarvis:intent', listener);
+    },
+    onFinished: (callback) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: { ok: boolean; error: string | null },
+      ) => {
+        callback(Boolean(payload.ok), payload.error ?? null);
+      };
+      ipcRenderer.on('jarvis:finished', listener);
+      return () => ipcRenderer.off('jarvis:finished', listener);
+    },
+    onError: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { message: string }) => {
+        callback(payload.message);
+      };
+      ipcRenderer.on('jarvis:error', listener);
+      return () => ipcRenderer.off('jarvis:error', listener);
+    },
   },
   vercel: {
     getTokenConfigured: () => ipcRenderer.invoke('vercel:getTokenConfigured'),

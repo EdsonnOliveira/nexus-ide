@@ -55,45 +55,14 @@ const HID_CODES: Record<string, number> = {
   ArrowLeft: 80,
   ArrowDown: 81,
   ArrowUp: 82,
+  ShiftLeft: 225,
 };
 
-const CHAR_TO_HID: Record<string, number> = {
-  a: 4,
-  b: 5,
-  c: 6,
-  d: 7,
-  e: 8,
-  f: 9,
-  g: 10,
-  h: 11,
-  i: 12,
-  j: 13,
-  k: 14,
-  l: 15,
-  m: 16,
-  n: 17,
-  o: 18,
-  p: 19,
-  q: 20,
-  r: 21,
-  s: 22,
-  t: 23,
-  u: 24,
-  v: 25,
-  w: 26,
-  x: 27,
-  y: 28,
-  z: 29,
-  '1': 30,
-  '2': 31,
-  '3': 32,
-  '4': 33,
-  '5': 34,
-  '6': 35,
-  '7': 36,
-  '8': 37,
-  '9': 38,
-  '0': 39,
+const SYMBOL_KEYCODES: Record<string, number> = {
+  '\n': 40,
+  '\r': 40,
+  '\b': 42,
+  '\t': 43,
   ' ': 44,
   '-': 45,
   '=': 46,
@@ -107,6 +76,39 @@ const CHAR_TO_HID: Record<string, number> = {
   '.': 55,
   '/': 56,
 };
+
+const SHIFTED_SYMBOLS: Record<string, string> = {
+  '!': '1',
+  '@': '2',
+  '#': '3',
+  $: '4',
+  '%': '5',
+  '^': '6',
+  '&': '7',
+  '*': '8',
+  '(': '9',
+  ')': '0',
+  _: '-',
+  '+': '=',
+  '{': '[',
+  '}': ']',
+  '|': '\\',
+  ':': ';',
+  '"': "'",
+  '~': '`',
+  '<': ',',
+  '>': '.',
+  '?': '/',
+};
+
+export const SHIFT_HID_KEYCODE = 225;
+export const LEFT_GUI_HID_KEYCODE = 227;
+export const KEY_V_HID_KEYCODE = 25;
+
+export interface SimulatorKeyPress {
+  keyCode: number;
+  withShift: boolean;
+}
 
 export function formatSimulatorTouchInput(
   action: 'Down' | 'Move' | 'Up',
@@ -128,26 +130,52 @@ export function keyboardCodeToHid(code: string): number | null {
   return HID_CODES[code] ?? null;
 }
 
+export function charToKeyPress(char: string): SimulatorKeyPress | null {
+  if (char.length !== 1) {
+    return null;
+  }
+
+  const codePoint = char.charCodeAt(0);
+
+  if (codePoint >= 0x61 && codePoint <= 0x7a) {
+    return { keyCode: codePoint - 0x61 + 4, withShift: false };
+  }
+
+  if (codePoint >= 0x41 && codePoint <= 0x5a) {
+    return { keyCode: codePoint - 0x41 + 4, withShift: true };
+  }
+
+  if (codePoint >= 0x31 && codePoint <= 0x39) {
+    return { keyCode: codePoint - 0x31 + 30, withShift: false };
+  }
+
+  if (char === '0') {
+    return { keyCode: 39, withShift: false };
+  }
+
+  const shiftedBase = SHIFTED_SYMBOLS[char];
+
+  if (shiftedBase !== undefined) {
+    const basePress = charToKeyPress(shiftedBase);
+
+    if (!basePress) {
+      return null;
+    }
+
+    return { keyCode: basePress.keyCode, withShift: true };
+  }
+
+  const symbolCode = SYMBOL_KEYCODES[char];
+
+  if (symbolCode === undefined) {
+    return null;
+  }
+
+  return { keyCode: symbolCode, withShift: false };
+}
+
 export function charToHid(char: string): number | null {
-  if (char === '\n' || char === '\r') {
-    return 40;
-  }
-
-  if (char === '\b') {
-    return 42;
-  }
-
-  if (char in CHAR_TO_HID) {
-    return CHAR_TO_HID[char]!;
-  }
-
-  const lower = char.toLowerCase();
-
-  if (lower in CHAR_TO_HID) {
-    return CHAR_TO_HID[lower]!;
-  }
-
-  return null;
+  return charToKeyPress(char)?.keyCode ?? null;
 }
 
 export function isValidSimulatorInputLine(line: string): boolean {

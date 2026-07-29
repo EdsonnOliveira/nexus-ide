@@ -281,6 +281,7 @@ function EmulatorViewComponent({
     handlePointerMove,
     handlePointerUp,
     handleCanvasPaste,
+    handleScreenKeyDown,
     handleStreamImgLoad,
     pressHome,
     pressAppSwitcher,
@@ -1049,6 +1050,7 @@ function EmulatorViewComponent({
                     onPointerDown={handlePointerDown}
                     onPointerMove={handlePointerMove}
                     onPointerUp={handlePointerUp}
+                    onKeyDown={handleScreenKeyDown}
                     onPaste={handleCanvasPaste}
                   />
                   {showMaestroHighlight ? (
@@ -1080,6 +1082,7 @@ function EmulatorViewComponent({
                     onPointerDown={iosOrientationActive ? undefined : handlePointerDown}
                     onPointerMove={iosOrientationActive ? undefined : handlePointerMove}
                     onPointerUp={iosOrientationActive ? undefined : handlePointerUp}
+                    onKeyDown={iosOrientationActive ? undefined : handleScreenKeyDown}
                     onPaste={iosOrientationActive ? undefined : handleCanvasPaste}
                   />
                   {iosOrientationActive ? (
@@ -1091,6 +1094,7 @@ function EmulatorViewComponent({
                       onPointerDown={handlePointerDown}
                       onPointerMove={handlePointerMove}
                       onPointerUp={handlePointerUp}
+                      onKeyDown={handleScreenKeyDown}
                       onPaste={handleCanvasPaste}
                     />
                   ) : null}

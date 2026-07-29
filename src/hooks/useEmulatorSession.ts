@@ -84,6 +84,7 @@ interface UseEmulatorSessionResult {
   handlePointerMove: (event: React.PointerEvent<HTMLElement>) => void;
   handlePointerUp: (event: React.PointerEvent<HTMLElement>) => void;
   handleCanvasPaste: (event: React.ClipboardEvent<HTMLElement>) => void;
+  handleScreenKeyDown: (event: React.KeyboardEvent<HTMLElement>) => void;
   handleStreamImgLoad: () => void;
   pressHome: () => Promise<void>;
   pressAppSwitcher: () => Promise<void>;
@@ -1098,6 +1099,59 @@ export function useEmulatorSession({
     [resolveSessionId],
   );
 
+  const pendingTypeRef = useRef('');
+  const typeFlushTimerRef = useRef<number | null>(null);
+
+  const flushPendingType = useCallback(() => {
+    if (typeFlushTimerRef.current !== null) {
+      window.clearTimeout(typeFlushTimerRef.current);
+      typeFlushTimerRef.current = null;
+    }
+
+    const pending = pendingTypeRef.current;
+    pendingTypeRef.current = '';
+
+    if (!pending) {
+      return;
+    }
+
+    void typeText(pending);
+  }, [typeText]);
+
+  const queueTypeText = useCallback(
+    (text: string) => {
+      if (!text) {
+        return;
+      }
+
+      if (text === '\b' || text === '\n' || text === '\t') {
+        flushPendingType();
+        void typeText(text);
+        return;
+      }
+
+      pendingTypeRef.current += text;
+
+      if (typeFlushTimerRef.current !== null) {
+        window.clearTimeout(typeFlushTimerRef.current);
+      }
+
+      typeFlushTimerRef.current = window.setTimeout(() => {
+        typeFlushTimerRef.current = null;
+        flushPendingType();
+      }, 60);
+    },
+    [flushPendingType, typeText],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (typeFlushTimerRef.current !== null) {
+        window.clearTimeout(typeFlushTimerRef.current);
+      }
+    };
+  }, []);
+
   const handleCanvasPaste = useCallback(
     (event: React.ClipboardEvent<HTMLElement>) => {
       if (!isFocused || sessionState !== 'running') {
@@ -1111,28 +1165,15 @@ export function useEmulatorSession({
       }
 
       event.preventDefault();
+      flushPendingType();
       void typeText(text);
     },
-    [isFocused, sessionState, typeText],
+    [flushPendingType, isFocused, sessionState, typeText],
   );
 
-  useEffect(() => {
-    if (!isFocused || !isRuntimeActive || sessionState !== 'running') {
-      return;
-    }
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (isOverlayBlockingTerminalHints()) {
-        return;
-      }
-
-      const target = event.target;
-
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        (target instanceof HTMLElement && target.isContentEditable)
-      ) {
+  const handleScreenKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLElement>) => {
+      if (sessionState !== 'running') {
         return;
       }
 
@@ -1140,30 +1181,126 @@ export function useEmulatorSession({
         return;
       }
 
+      if (event.nativeEvent.isComposing || event.key === 'Dead') {
+        return;
+      }
+
       if (event.key === 'Enter') {
         event.preventDefault();
-        void typeText('\n');
+        event.stopPropagation();
+        queueTypeText('\n');
         return;
       }
 
       if (event.key === 'Backspace') {
         event.preventDefault();
-        void typeText('\b');
+        event.stopPropagation();
+        queueTypeText('\b');
+        return;
+      }
+
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        event.stopPropagation();
+        queueTypeText('\t');
         return;
       }
 
       if (event.key.length === 1) {
         event.preventDefault();
-        void typeText(event.key);
+        event.stopPropagation();
+        queueTypeText(event.key);
+      }
+    },
+    [queueTypeText, sessionState],
+  );
+
+  useEffect(() => {
+    if (!isRuntimeActive || sessionState !== 'running') {
+      return;
+    }
+
+    const isEditableTarget = (target: EventTarget | null) =>
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      (target instanceof HTMLElement && target.isContentEditable);
+
+    const isEmulatorTarget = (target: EventTarget | null) =>
+      target instanceof HTMLElement && Boolean(target.closest('.emulator-view'));
+
+    const handlePaste = (event: ClipboardEvent) => {
+      if (isOverlayBlockingTerminalHints() || isEditableTarget(event.target)) {
+        return;
+      }
+
+      if (!isFocused && !isEmulatorTarget(event.target)) {
+        return;
+      }
+
+      const text = event.clipboardData?.getData('text') ?? '';
+
+      if (!text) {
+        return;
+      }
+
+      event.preventDefault();
+      flushPendingType();
+      void typeText(text);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isOverlayBlockingTerminalHints() || isEditableTarget(event.target)) {
+        return;
+      }
+
+      if (!isFocused && !isEmulatorTarget(event.target)) {
+        return;
+      }
+
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+
+      if (event.isComposing || event.key === 'Dead') {
+        return;
+      }
+
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        event.stopPropagation();
+        queueTypeText('\n');
+        return;
+      }
+
+      if (event.key === 'Backspace') {
+        event.preventDefault();
+        event.stopPropagation();
+        queueTypeText('\b');
+        return;
+      }
+
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        event.stopPropagation();
+        queueTypeText('\t');
+        return;
+      }
+
+      if (event.key.length === 1) {
+        event.preventDefault();
+        event.stopPropagation();
+        queueTypeText(event.key);
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('paste', handlePaste, true);
+    window.addEventListener('keydown', handleKeyDown, true);
 
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('paste', handlePaste, true);
+      window.removeEventListener('keydown', handleKeyDown, true);
     };
-  }, [isFocused, isRuntimeActive, sessionState, typeText]);
+  }, [flushPendingType, isFocused, isRuntimeActive, queueTypeText, sessionState, typeText]);
 
   const takeScreenshot = useCallback(async () => {
     const sessionId = resolveSessionId();
@@ -1201,6 +1338,7 @@ export function useEmulatorSession({
     handlePointerMove,
     handlePointerUp,
     handleCanvasPaste,
+    handleScreenKeyDown,
     handleStreamImgLoad,
     pressHome,
     pressAppSwitcher,

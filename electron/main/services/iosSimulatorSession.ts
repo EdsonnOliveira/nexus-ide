@@ -22,10 +22,11 @@ import {
   type SimulatorServerStreamController,
 } from './simulatorServerStream';
 import {
-  charToHid,
   formatSimulatorButtonInput,
   formatSimulatorKeyInput,
   formatSimulatorTouchInput,
+  KEY_V_HID_KEYCODE,
+  LEFT_GUI_HID_KEYCODE,
 } from '../utils/simulatorServerInput';
 
 export interface EmulatorSessionEvents {
@@ -692,6 +693,50 @@ function runCommand(
   });
 }
 
+function runCommandWithStdin(
+  command: string,
+  args: string[],
+  input: string,
+  timeoutMs = 5000,
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  return new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const child = spawn(command, args, { env: process.env });
+
+    const finish = (code: number) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timer);
+      resolve({ stdout, stderr, code });
+    };
+
+    const timer = setTimeout(() => {
+      void stopAndWait(child, 'SIGTERM').then(() => finish(1));
+    }, timeoutMs);
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on('close', (code) => {
+      finish(code ?? 1);
+    });
+    child.on('error', () => {
+      finish(1);
+    });
+
+    child.stdin?.on('error', () => undefined);
+    child.stdin?.end(input, 'utf8');
+  });
+}
+
 async function bootSimulator(udid: string): Promise<void> {
   const xcrun = resolveXcrunPath();
 
@@ -953,6 +998,13 @@ export async function createIosSimulatorSession(
 
   events.onState('booting');
   await bootSimulator(udid);
+  await runCommand('defaults', [
+    'write',
+    'com.apple.iphonesimulator',
+    'ConnectHardwareKeyboard',
+    '-bool',
+    'true',
+  ]);
 
   if (isCancelled()) {
     throw new Error('Session cancelled');
@@ -1313,17 +1365,114 @@ export async function createIosSimulatorSession(
     return simulatorServerController?.sendInput(line) ?? false;
   };
 
-  const typeTextWithSimulatorServer = async (text: string) => {
-    for (const char of text) {
-      const code = charToHid(char);
+  const sendHidKey = async (keyCode: number) => {
+    if (useSimulatorServer) {
+      await sendSimulatorInput(formatSimulatorKeyInput('Down', keyCode));
+      await delay(30);
+      await sendSimulatorInput(formatSimulatorKeyInput('Up', keyCode));
+      return;
+    }
 
-      if (code === null) {
+    if (idb.found) {
+      await runCommand(idb.path, ['ui', 'key', '--udid', udid, String(keyCode)]);
+      return;
+    }
+
+    const osascriptKeyCode =
+      keyCode === 40 ? 36 : keyCode === 42 ? 51 : keyCode === 43 ? 48 : null;
+
+    if (osascriptKeyCode !== null) {
+      await runCommand('osascript', [
+        '-e',
+        'tell application "Simulator" to activate',
+        '-e',
+        `tell application "System Events" to key code ${osascriptKeyCode}`,
+      ]);
+    }
+  };
+
+  const writeSimulatorPasteboard = async (text: string) => {
+    await runCommandWithStdin(xcrun.path, ['simctl', 'pbcopy', udid], text);
+  };
+
+  const sendPasteShortcut = async () => {
+    if (useSimulatorServer) {
+      await sendSimulatorInput(formatSimulatorKeyInput('Down', LEFT_GUI_HID_KEYCODE));
+      await delay(15);
+      await sendSimulatorInput(formatSimulatorKeyInput('Down', KEY_V_HID_KEYCODE));
+      await delay(40);
+      await sendSimulatorInput(formatSimulatorKeyInput('Up', KEY_V_HID_KEYCODE));
+      await delay(15);
+      await sendSimulatorInput(formatSimulatorKeyInput('Up', LEFT_GUI_HID_KEYCODE));
+      return;
+    }
+
+    await runCommand('osascript', [
+      '-e',
+      'tell application "Simulator" to activate',
+      '-e',
+      'tell application "System Events" to keystroke "v" using command down',
+    ]);
+  };
+
+  const typeTextWithPaste = async (text: string) => {
+    if (!text) {
+      return;
+    }
+
+    await writeSimulatorPasteboard(text);
+    await sendPasteShortcut();
+    await delay(50);
+  };
+
+  const typeSpecialKey = async (char: string) => {
+    if (char === '\n' || char === '\r') {
+      if (idb.found) {
+        await runCommand(idb.path, ['ui', 'key', '--udid', udid, 'Return']);
+      } else {
+        await sendHidKey(40);
+      }
+      return;
+    }
+
+    if (char === '\b') {
+      if (idb.found) {
+        await runCommand(idb.path, ['ui', 'key', '--udid', udid, 'Delete']);
+      } else {
+        await sendHidKey(42);
+      }
+      return;
+    }
+
+    if (char === '\t') {
+      await sendHidKey(43);
+    }
+  };
+
+  const typeTextContent = async (text: string) => {
+    let printable = '';
+
+    const flushPrintable = async () => {
+      if (!printable) {
+        return;
+      }
+
+      const chunk = printable;
+      printable = '';
+      await typeTextWithPaste(chunk);
+    };
+
+    for (const char of text) {
+      if (char === '\n' || char === '\r' || char === '\b' || char === '\t') {
+        await flushPrintable();
+        await typeSpecialKey(char);
         continue;
       }
 
-      await sendSimulatorInput(formatSimulatorKeyInput('Down', code));
-      await sendSimulatorInput(formatSimulatorKeyInput('Up', code));
+      printable += char;
     }
+
+    await flushPrintable();
   };
 
   const sendHomeButtonPress = async () => {
@@ -1655,48 +1804,6 @@ export async function createIosSimulatorSession(
     });
   };
 
-  const typeTextWithIdb = async (text: string) => {
-    let buffer = '';
-
-    const flushBuffer = async () => {
-      if (!buffer) {
-        return;
-      }
-
-      await runCommand(idb.path, ['ui', 'text', '--udid', udid, buffer]);
-      buffer = '';
-    };
-
-    for (const char of text) {
-      if (char === '\n' || char === '\r') {
-        await flushBuffer();
-        await runCommand(idb.path, ['ui', 'key', '--udid', udid, 'Return']);
-        continue;
-      }
-
-      if (char === '\b') {
-        await flushBuffer();
-        await runCommand(idb.path, ['ui', 'key', '--udid', udid, 'Delete']);
-        continue;
-      }
-
-      buffer += char;
-    }
-
-    await flushBuffer();
-  };
-
-  const typeTextWithOsascript = async (text: string) => {
-    const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-
-    await runCommand('osascript', [
-      '-e',
-      'tell application "Simulator" to activate',
-      '-e',
-      `tell application "System Events" to keystroke "${escaped}"`,
-    ]);
-  };
-
   const runCapture = async () => {
     if (stopped) {
       return;
@@ -1905,15 +2012,10 @@ export async function createIosSimulatorSession(
         return;
       }
 
-      await runInput(async () => {
-        if (useSimulatorServer) {
-          await typeTextWithSimulatorServer(text);
-        } else if (idb.found) {
-          await typeTextWithIdb(text);
-        } else {
-          await typeTextWithOsascript(text);
-        }
+      const limited = text.length > 20_000 ? text.slice(0, 20_000) : text;
 
+      await runInput(async () => {
+        await typeTextContent(limited);
         triggerBurstCapture();
       });
     },

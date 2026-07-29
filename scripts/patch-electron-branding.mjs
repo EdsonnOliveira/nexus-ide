@@ -18,6 +18,8 @@ const nexusAssetsCarPath = path.join(nexusAppPath, 'Contents/Resources/Assets.ca
 const calendarHelperSourcePath = path.join(rootDir, 'resources/shell/macosCalendarHelper.swift');
 const calendarHelperBinaryPath = path.join(rootDir, 'resources/shell/macosCalendarHelper');
 const calendarHelperInfoPlistPath = path.join(rootDir, 'resources/shell/CalendarHelper-Info.plist');
+const speechToTextSourcePath = path.join(rootDir, 'resources/shell/macosSpeechToText.swift');
+const speechToTextBinaryPath = path.join(rootDir, 'resources/shell/macosSpeechToText');
 const notificationReaderSourcePath = path.join(rootDir, 'resources/shell/macosNotificationReader.swift');
 const mailReaderSourcePath = path.join(rootDir, 'resources/shell/macosMailReader.swift');
 const notificationReaderBinaryPath = path.join(rootDir, 'resources/shell/macosNotificationReader');
@@ -129,6 +131,41 @@ function buildCalendarHelper() {
   ]);
 }
 
+function buildSpeechToTextHelper() {
+  if (process.platform !== 'darwin' || !existsSync(speechToTextSourcePath)) {
+    return;
+  }
+
+  const speechHelperAppPath = path.join(rootDir, 'resources/shell/SpeechHelper.app');
+  const speechHelperBinaryPath = path.join(speechHelperAppPath, 'Contents/MacOS/SpeechHelper');
+  const speechHelperInfoPlistPath = path.join(rootDir, 'resources/shell/SpeechHelper-Info.plist');
+
+  run('mkdir', ['-p', path.dirname(speechHelperBinaryPath)]);
+  run('swiftc', [
+    '-O',
+    '-o',
+    speechHelperBinaryPath,
+    speechToTextSourcePath,
+    '-framework',
+    'Speech',
+    '-framework',
+    'Foundation',
+    '-framework',
+    'AppKit',
+  ]);
+  copyFileSync(speechHelperBinaryPath, speechToTextBinaryPath);
+  execFileSync('chmod', ['+x', speechHelperBinaryPath]);
+  execFileSync('chmod', ['+x', speechToTextBinaryPath]);
+  if (existsSync(speechHelperInfoPlistPath)) {
+    copyFileSync(speechHelperInfoPlistPath, path.join(speechHelperAppPath, 'Contents/Info.plist'));
+  }
+  try {
+    execFileSync('codesign', ['--force', '-s', '-', speechHelperAppPath]);
+  } catch (error) {
+    console.warn('[patch-electron-branding] SpeechHelper codesign skipped:', error.message);
+  }
+}
+
 function buildNotificationReader() {
   if (process.platform !== 'darwin' || !existsSync(notificationReaderSourcePath)) {
     return;
@@ -205,6 +242,20 @@ function patchNexusAppBundle() {
       'O Nexus IDE precisa ler seus eventos do Calendário para exibi-los na barra lateral.',
       nexusInfoPlistPath,
     ]);
+    execFileSync('plutil', [
+      '-replace',
+      'NSMicrophoneUsageDescription',
+      '-string',
+      'O Nexus IDE usa o microfone para o Jarvis controlar o app por voz.',
+      nexusInfoPlistPath,
+    ]);
+    execFileSync('plutil', [
+      '-replace',
+      'NSSpeechRecognitionUsageDescription',
+      '-string',
+      'O Nexus IDE usa reconhecimento de fala para entender comandos do Jarvis.',
+      nexusInfoPlistPath,
+    ]);
   } catch (error) {
     console.error('[patch-electron-branding] Failed to patch Nexus.app Info.plist', error);
     process.exit(1);
@@ -258,5 +309,6 @@ function patchNexusAppBundle() {
 generateMacAppIcons();
 buildLiquidGlassIcon();
 buildCalendarHelper();
+buildSpeechToTextHelper();
 buildNotificationReader();
 patchNexusAppBundle();

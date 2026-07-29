@@ -108,7 +108,7 @@ class AgentPrintRunner {
     }
 
     if (options.prompt.trim()) {
-      args.push(options.prompt);
+      args.push('--', options.prompt);
     }
 
     const executable = resolveCursorAgentExecutable();
@@ -157,11 +157,13 @@ class AgentPrintRunner {
     child.stdout.on('data', (chunk) => forward(chunk, true));
     child.stderr.on('data', (chunk) => {
       stderrBuffer = `${stderrBuffer}${chunk.toString('utf8')}`.slice(-4096);
-      forward(chunk, false);
     });
 
     child.on('close', (code) => {
-      this.processes.delete(options.paneId);
+      if (this.processes.get(options.paneId) === child) {
+        this.processes.delete(options.paneId);
+      }
+
       const stderr = stderrBuffer.trim();
       const error =
         code !== 0 && stderr
@@ -197,7 +199,10 @@ class AgentPrintRunner {
     });
 
     child.on('error', (error) => {
-      this.processes.delete(options.paneId);
+      if (this.processes.get(options.paneId) === child) {
+        this.processes.delete(options.paneId);
+      }
+
       this.emit('agent:printDone', {
         paneId: options.paneId,
         runToken,
@@ -223,13 +228,16 @@ class AgentPrintRunner {
     });
     // #endregion
 
+    if (this.processes.get(paneId) === child) {
+      this.processes.delete(paneId);
+    }
+
     child.kill('SIGTERM');
     setTimeout(() => {
       if (!child.killed) {
         child.kill('SIGKILL');
       }
     }, 400);
-    this.processes.delete(paneId);
   }
 
   isRunning(paneId: string): boolean {

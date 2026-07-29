@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Camera,
@@ -18,6 +18,14 @@ import {
 } from './useWebEmulatorSession';
 import { bridge } from '../lib/supabase';
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
+}
 interface WebEmulatorPanelProps {
   open: boolean;
   onClose: () => void;
@@ -227,6 +235,7 @@ function WebEmulatorPanelComponent({
       if (!running) {
         return;
       }
+      event.currentTarget.focus({ preventScroll: true });
       const coords = resolveCoords(event.clientX, event.clientY);
       if (!coords) {
         return;
@@ -350,91 +359,211 @@ function WebEmulatorPanelComponent({
     });
   }, [refreshApps]);
 
+  const typeText = useCallback(
+    (text: string) => {
+      const value = text;
+      if (!running || !value) {
+        return;
+      }
+      void sendInput('emulator_type', { text: value });
+    },
+    [running, sendInput],
+  );
+
+  const handleScreenPaste = useCallback(
+    (event: React.ClipboardEvent<HTMLDivElement>) => {
+      if (!running) {
+        return;
+      }
+      const text = event.clipboardData.getData('text');
+      if (!text) {
+        return;
+      }
+      event.preventDefault();
+      typeText(text);
+    },
+    [running, typeText],
+  );
+
+  useEffect(() => {
+    if (!open || !running) {
+      return;
+    }
+
+    const handlePaste = (event: ClipboardEvent) => {
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+      const text = event.clipboardData?.getData('text') ?? '';
+      if (!text) {
+        return;
+      }
+      event.preventDefault();
+      typeText(text);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        typeText('\n');
+        return;
+      }
+      if (event.key === 'Backspace') {
+        event.preventDefault();
+        typeText('\b');
+        return;
+      }
+      if (event.key.length === 1) {
+        event.preventDefault();
+        typeText(event.key);
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('paste', handlePaste);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open, running, typeText]);
+
+  useEffect(() => {
+    if (!open || !running) {
+      return;
+    }
+    screenRef.current?.focus({ preventScroll: true });
+  }, [open, running]);
+
   if (!open) {
     return null;
   }
 
   return (
-    <div className='web-emulator-panel app-button--enter' role='dialog' aria-label='Emulador remoto'>
+    <div className='web-emulator-panel app-button--enter' role='main' aria-label='Emulador remoto'>
       <div className='web-emulator-panel__header'>
         <div className='web-emulator-panel__title'>
           <Smartphone size={16} />
           <span>Emulador</span>
-          {sessionState !== 'stopped' ? (
+          {!running && sessionState !== 'stopped' ? (
             <span className='web-emulator-panel__badge'>{sessionState}</span>
           ) : null}
         </div>
-        <button
-          type='button'
-          className='web-emulator-panel__icon-btn app-button'
-          aria-label='Fechar emulador'
-          onClick={onClose}
-        >
-          <X size={16} />
-        </button>
-      </div>
-
-      <div className='web-emulator-panel__toolbar'>
-        <div className='web-emulator-panel__platform'>
+        <div className='web-emulator-panel__header-actions'>
           <button
             type='button'
-            className={`web-emulator-panel__chip app-button${platform === 'android' ? ' is-active' : ''}`}
-            disabled={running || loading}
-            onClick={() => handlePlatform('android')}
+            className='web-emulator-panel__icon-btn app-button'
+            disabled={!running}
+            aria-label='Home'
+            onClick={() => void sendInput('emulator_press_home', {})}
           >
-            <AndroidLogoIcon />
-            Android
+            <Home size={15} />
           </button>
           <button
             type='button'
-            className={`web-emulator-panel__chip app-button${platform === 'ios' ? ' is-active' : ''}`}
-            disabled={running || loading}
-            onClick={() => handlePlatform('ios')}
+            className='web-emulator-panel__icon-btn app-button'
+            disabled={!running}
+            aria-label='Girar'
+            onClick={() => void sendInput('emulator_rotate', {})}
           >
-            <AppleLogoIcon />
-            iOS
+            <RotateCw size={15} />
+          </button>
+          <button
+            type='button'
+            className='web-emulator-panel__icon-btn app-button'
+            disabled={!running}
+            aria-label='Screenshot'
+            onClick={() => void takeScreenshot()}
+          >
+            <Camera size={15} />
+          </button>
+          <button
+            type='button'
+            className={`web-emulator-panel__icon-btn app-button${appsOpen ? ' is-active' : ''}`}
+            disabled={!running}
+            aria-label='Apps'
+            onClick={handleToggleApps}
+          >
+            <AppWindow size={15} />
+          </button>
+          {running ? (
+            <button
+              type='button'
+              className='web-emulator-panel__action app-button'
+              disabled={loading}
+              onClick={() => void stopSession()}
+            >
+              <Square size={14} />
+              Parar
+            </button>
+          ) : null}
+          <button
+            type='button'
+            className='web-emulator-panel__icon-btn app-button'
+            aria-label='Fechar emulador'
+            onClick={onClose}
+          >
+            <X size={16} />
           </button>
         </div>
+      </div>
 
-        <WebAskMenuSelect
-          value={selectedDeviceId}
-          options={deviceOptions}
-          disabled={running || loading || deviceOptions.length === 0}
-          ariaLabel='Dispositivo do emulador'
-          triggerLabel={selectedDeviceOption?.label || 'Selecionar dispositivo'}
-          triggerLeading={selectedDeviceOption?.leading}
-          onChange={setSelectedDeviceId}
-        />
+      {!running ? (
+        <div className='web-emulator-panel__toolbar'>
+          <div className='web-emulator-panel__platform'>
+            <button
+              type='button'
+              className={`web-emulator-panel__chip app-button${platform === 'android' ? ' is-active' : ''}`}
+              disabled={loading}
+              onClick={() => handlePlatform('android')}
+            >
+              <AndroidLogoIcon />
+              Android
+            </button>
+            <button
+              type='button'
+              className={`web-emulator-panel__chip app-button${platform === 'ios' ? ' is-active' : ''}`}
+              disabled={loading}
+              onClick={() => handlePlatform('ios')}
+            >
+              <AppleLogoIcon />
+              iOS
+            </button>
+          </div>
 
-        {sessionOptions.length > 0 ? (
           <WebAskMenuSelect
-            value={sessionId ?? ''}
-            options={sessionOptions}
-            disabled={loading}
-            ariaLabel='Sessões ativas no Desktop'
-            triggerLabel={
-              sessionOptions.find((item) => item.value === sessionId)?.label ||
-              'Sessão no Desktop'
-            }
-            onChange={(value) => {
-              if (value) {
-                void attachSession(value);
-              }
-            }}
+            value={selectedDeviceId}
+            options={deviceOptions}
+            disabled={loading || deviceOptions.length === 0}
+            ariaLabel='Dispositivo do emulador'
+            triggerLabel={selectedDeviceOption?.label || 'Selecionar dispositivo'}
+            triggerLeading={selectedDeviceOption?.leading}
+            onChange={setSelectedDeviceId}
           />
-        ) : null}
 
-        {running ? (
-          <button
-            type='button'
-            className='web-emulator-panel__action app-button'
-            disabled={loading}
-            onClick={() => void stopSession()}
-          >
-            <Square size={14} />
-            Parar
-          </button>
-        ) : (
+          {sessionOptions.length > 0 ? (
+            <WebAskMenuSelect
+              value={sessionId ?? ''}
+              options={sessionOptions}
+              disabled={loading}
+              ariaLabel='Sessões ativas no Desktop'
+              triggerLabel={
+                sessionOptions.find((item) => item.value === sessionId)?.label ||
+                'Sessão no Desktop'
+              }
+              onChange={(value) => {
+                if (value) {
+                  void attachSession(value);
+                }
+              }}
+            />
+          ) : null}
+
           <button
             type='button'
             className='web-emulator-panel__action app-button'
@@ -444,88 +573,56 @@ function WebEmulatorPanelComponent({
             {loading ? <Loader2 size={14} className='web-emulator-panel__spin' /> : <Play size={14} />}
             Iniciar
           </button>
-        )}
-      </div>
+        </div>
+      ) : null}
 
-      <div className='web-emulator-panel__controls'>
-        <button
-          type='button'
-          className='web-emulator-panel__icon-btn app-button'
-          disabled={!running}
-          aria-label='Home'
-          onClick={() => void sendInput('emulator_press_home', {})}
-        >
-          <Home size={15} />
-        </button>
-        {platform === 'android' ? (
+      {running && platform === 'android' ? (
+        <div className='web-emulator-panel__controls'>
           <button
             type='button'
             className='web-emulator-panel__icon-btn app-button'
-            disabled={!running}
             aria-label='Voltar'
             onClick={() => void sendInput('emulator_press_back', {})}
           >
             <ArrowLeft size={15} />
           </button>
-        ) : null}
-        <button
-          type='button'
-          className='web-emulator-panel__icon-btn app-button'
-          disabled={!running}
-          aria-label='Girar'
-          onClick={() => void sendInput('emulator_rotate', {})}
-        >
-          <RotateCw size={15} />
-        </button>
-        <button
-          type='button'
-          className='web-emulator-panel__icon-btn app-button'
-          disabled={!running}
-          aria-label='Screenshot'
-          onClick={() => void takeScreenshot()}
-        >
-          <Camera size={15} />
-        </button>
-        <button
-          type='button'
-          className={`web-emulator-panel__icon-btn app-button${appsOpen ? ' is-active' : ''}`}
-          disabled={!running}
-          aria-label='Apps'
-          onClick={handleToggleApps}
-        >
-          <AppWindow size={15} />
-        </button>
-      </div>
+        </div>
+      ) : null}
 
       {error ? <p className='web-emulator-panel__error'>{error}</p> : null}
       {sessionMessage ? <p className='web-emulator-panel__message'>{sessionMessage}</p> : null}
 
       <div className='web-emulator-panel__body'>
-        <div
-          ref={screenRef}
-          className='web-emulator-panel__screen'
-          style={{
-            aspectRatio:
-              frameSize.width > 0 && frameSize.height > 0
-                ? `${frameSize.width} / ${frameSize.height}`
-                : '9 / 19',
-          }}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerUp}
-        >
-          {frameUrl ? (
-            <img src={frameUrl} alt='Emulador' className='web-emulator-panel__frame' draggable={false} />
-          ) : (
-            <div className='web-emulator-panel__empty'>
-              {loading
-                ? 'Conectando…'
-                : running
-                  ? 'Recebendo tela do Desktop…'
-                  : 'Inicie ou anexe uma sessão do Desktop'}
-            </div>
-          )}
+        <div className='web-emulator-panel__stage'>
+          <div
+            ref={screenRef}
+            className='web-emulator-panel__screen'
+            tabIndex={0}
+            aria-label='Tela do emulador'
+            style={{
+              aspectRatio:
+                frameSize.width > 0 && frameSize.height > 0
+                  ? `${frameSize.width} / ${frameSize.height}`
+                  : '9 / 19',
+            }}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+            onPaste={handleScreenPaste}
+          >
+            {frameUrl ? (
+              <img src={frameUrl} alt='Emulador' className='web-emulator-panel__frame' draggable={false} />
+            ) : (
+              <div className='web-emulator-panel__empty'>
+                {loading
+                  ? 'Conectando…'
+                  : running
+                    ? 'Recebendo tela do Desktop…'
+                    : 'Inicie ou anexe uma sessão do Desktop'}
+              </div>
+            )}
+          </div>
         </div>
 
         {appsOpen ? (
