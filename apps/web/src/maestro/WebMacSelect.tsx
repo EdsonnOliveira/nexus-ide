@@ -27,6 +27,7 @@ interface WebMacSelectProps {
   onDeviceChange: (deviceId: string | null) => void;
   disabled?: boolean;
   className?: string;
+  iconOnly?: boolean;
 }
 
 export function WebMacSelect({
@@ -35,6 +36,7 @@ export function WebMacSelect({
   onDeviceChange,
   disabled = false,
   className = '',
+  iconOnly = false,
 }: WebMacSelectProps) {
   const selectedDevice =
     devices.find((device) => device.id === deviceId) ??
@@ -57,18 +59,19 @@ export function WebMacSelect({
     [devices],
   );
 
+  const triggerLabel = selectedDevice
+    ? shortenMacTriggerLabel(sanitizeDeviceName(selectedDevice.name))
+    : 'Nenhum Mac';
+
   return (
     <WebAskMenuSelect
       value={selectedDevice?.id ?? ''}
       options={deviceOptions}
       disabled={devices.length === 0 || disabled}
-      ariaLabel='Mac'
-      className={`web-ask-mac-select ${className}`.trim()}
-      triggerLabel={
-        selectedDevice
-          ? shortenMacTriggerLabel(sanitizeDeviceName(selectedDevice.name))
-          : 'Nenhum Mac'
-      }
+      ariaLabel={iconOnly ? `Mac: ${triggerLabel}` : 'Mac'}
+      className={`web-ask-mac-select${iconOnly ? ' web-ask-mac-select--icon-only' : ''} ${className}`.trim()}
+      iconOnly={iconOnly}
+      triggerLabel={triggerLabel}
       triggerLeading={<MacLeading online={selectedOnline} />}
       onChange={(next) => onDeviceChange(next || null)}
     />

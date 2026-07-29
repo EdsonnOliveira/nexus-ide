@@ -33,6 +33,7 @@ interface WebAskMenuSelectProps {
   triggerLeading?: ReactNode;
   triggerLabel: string;
   className?: string;
+  iconOnly?: boolean;
   onChange: (value: string) => void;
 }
 
@@ -44,6 +45,7 @@ export function WebAskMenuSelect({
   triggerLeading,
   triggerLabel,
   className = '',
+  iconOnly = false,
   onChange,
 }: WebAskMenuSelectProps) {
   const [menuPhase, setMenuPhase] = useState<'closed' | 'in' | 'out'>('closed');
@@ -182,14 +184,20 @@ export function WebAskMenuSelect({
       : null;
 
   return (
-    <div className={`home-dashboard__ask-project-wrap ${className}`.trim()} ref={triggerRef}>
+    <div
+      className={`home-dashboard__ask-project-wrap${iconOnly ? ' home-dashboard__ask-project-wrap--icon-only' : ''} ${className}`.trim()}
+      ref={triggerRef}
+    >
       <button
         type='button'
-        className='home-dashboard__ask-project app-button'
+        className={`home-dashboard__ask-project app-button${
+          iconOnly ? ' home-dashboard__ask-project--icon-only' : ''
+        }`}
         disabled={disabled}
         aria-label={ariaLabel}
         aria-expanded={menuPhase === 'in'}
         aria-haspopup='listbox'
+        title={iconOnly ? triggerLabel : undefined}
         onClick={() => {
           if (menuPhase === 'in') {
             closeMenu();
@@ -199,15 +207,19 @@ export function WebAskMenuSelect({
         }}
       >
         {triggerLeading}
-        <span className='home-dashboard__ask-project-label'>{triggerLabel}</span>
-        <ChevronDown
-          size={14}
-          className={
-            menuPhase === 'in'
-              ? 'web-ask-project-chevron web-ask-project-chevron--open'
-              : 'web-ask-project-chevron'
-          }
-        />
+        {iconOnly ? null : (
+          <span className='home-dashboard__ask-project-label'>{triggerLabel}</span>
+        )}
+        {iconOnly ? null : (
+          <ChevronDown
+            size={14}
+            className={
+              menuPhase === 'in'
+                ? 'web-ask-project-chevron web-ask-project-chevron--open'
+                : 'web-ask-project-chevron'
+            }
+          />
+        )}
       </button>
       {menu}
     </div>

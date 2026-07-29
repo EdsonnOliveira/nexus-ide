@@ -5,13 +5,14 @@ import { useWebStore } from '../store';
 import {
   disableWebPush,
   enableWebPush,
-  getCurrentPushSubscription,
   getPushPermissionState,
+  getWebPushStatus,
   isIosDevice,
   isStandaloneDisplay,
   isWebPushSupported,
   loadPushPreferences,
   savePushPreferences,
+  syncWebPushSubscription,
 } from './webPush';
 
 interface WebPushModalProps {
@@ -23,6 +24,7 @@ function WebPushModalComponent({ open, onClose }: WebPushModalProps) {
   const session = useWebStore((state) => state.session);
   const userId = session?.user?.id ?? null;
   const [enabled, setEnabled] = useState(false);
+  const [localOnly, setLocalOnly] = useState(false);
   const [agentEnabled, setAgentEnabled] = useState(true);
   const [deployEnabled, setDeployEnabled] = useState(true);
   const [deviceEnabled, setDeviceEnabled] = useState(true);
@@ -34,6 +36,23 @@ function WebPushModalComponent({ open, onClose }: WebPushModalProps) {
 
   const needsHomeScreen = isIosDevice() && !isStandaloneDisplay();
 
+  const refreshStatus = useCallback(async () => {
+    if (!userId) {
+      return;
+    }
+    const [permissionState, status, preferences] = await Promise.all([
+      getPushPermissionState(),
+      getWebPushStatus(userId),
+      loadPushPreferences(userId),
+    ]);
+    setPermission(permissionState);
+    setEnabled(status.enabled);
+    setLocalOnly(status.localSubscription && !status.serverSynced);
+    setAgentEnabled(preferences.agent_enabled);
+    setDeployEnabled(preferences.deploy_enabled);
+    setDeviceEnabled(preferences.device_enabled);
+  }, [userId]);
+
   useEffect(() => {
     if (!open || !userId) {
       return;
@@ -41,30 +60,35 @@ function WebPushModalComponent({ open, onClose }: WebPushModalProps) {
     let cancelled = false;
     void (async () => {
       try {
-        const [permissionState, subscription, preferences] = await Promise.all([
-          getPushPermissionState(),
-          getCurrentPushSubscription(),
-          loadPushPreferences(userId),
-        ]);
+        const sync = await syncWebPushSubscription(userId);
         if (cancelled) {
           return;
         }
-        setPermission(permissionState);
-        setEnabled(Boolean(subscription) && permissionState === 'granted');
-        setAgentEnabled(preferences.agent_enabled);
-        setDeployEnabled(preferences.deploy_enabled);
-        setDeviceEnabled(preferences.device_enabled);
-        setError(null);
+        await refreshStatus();
+        if (cancelled) {
+          return;
+        }
+        setError(
+          sync.synced || sync.reason === 'permission' || sync.reason === 'ios_not_standalone'
+            ? null
+            : sync.reason === 'missing_vapid'
+              ? 'Chave VAPID não configurada no app'
+              : null,
+        );
       } catch {
         if (!cancelled) {
-          setError('Não foi possível carregar as preferências');
+          try {
+            await refreshStatus();
+          } catch {
+            setError('Não foi possível carregar as preferências');
+          }
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [open, userId]);
+  }, [open, refreshStatus, userId]);
 
   useEffect(() => {
     if (!open) {
@@ -104,17 +128,22 @@ function WebPushModalComponent({ open, onClose }: WebPushModalProps) {
       if (enabled) {
         await disableWebPush(userId);
         setEnabled(false);
+        setLocalOnly(false);
       } else {
         await enableWebPush(userId);
-        setEnabled(true);
+        await refreshStatus();
         setPermission('granted');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Falha ao atualizar notificações');
+      try {
+        await refreshStatus();
+      } catch {
+      }
     } finally {
       setBusy(false);
     }
-  }, [busy, enabled, userId]);
+  }, [busy, enabled, refreshStatus, userId]);
 
   const handlePreferenceChange = useCallback(
     async (
@@ -182,24 +211,33 @@ function WebPushModalComponent({ open, onClose }: WebPushModalProps) {
           </p>
         ) : null}
 
+        {localOnly ? (
+          <p className='web-push-modal__hint'>
+            A permissão já está liberada neste aparelho, mas o servidor ainda não recebeu o registro.
+            Toque em Ativar para sincronizar.
+          </p>
+        ) : null}
+
         <div className='web-push-modal__row'>
           <div className='stack'>
             <strong>Ativar push</strong>
             <span className='muted'>
               {enabled
                 ? 'Ativo neste dispositivo'
-                : permission === 'denied'
-                  ? 'Permissão bloqueada no navegador'
-                  : 'Desativado'}
+                : localOnly
+                  ? 'Precisa sincronizar com o servidor'
+                  : permission === 'denied'
+                    ? 'Permissão bloqueada no navegador'
+                    : 'Desativado'}
             </span>
           </div>
           <button
             type='button'
             className='app-button web-vercel-token-modal__primary'
-            disabled={busy || !isWebPushSupported() || (needsHomeScreen && !enabled)}
+            disabled={busy || !isWebPushSupported() || (needsHomeScreen && !enabled && !localOnly)}
             onClick={() => void handleToggleEnabled()}
           >
-            {busy ? 'Aguarde...' : enabled ? 'Desativar' : 'Ativar'}
+            {busy ? 'Aguarde...' : enabled ? 'Desativar' : localOnly ? 'Sincronizar' : 'Ativar'}
           </button>
         </div>
 

@@ -12,7 +12,8 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { ArrowUp, AtSign, ChevronDown, ChevronRight, FileText, Globe, Paperclip, Square, X } from 'lucide-react';
-import type { WebAgentSession, WebAgentTurn } from '../store';
+import type { WebAgentSession, WebAgentTurn, WebAgentActivity } from '../store';
+import { buildWebLiveToolBatchSummary } from './webStreamJson';
 import { renderWebMarkdown } from './webMarkdown';
 import { hydrateWebMarkdownImages } from './webHydrateMarkdownImages';
 import { findMarkdownPreviewImage } from './downloadImageSrc';
@@ -274,10 +275,72 @@ function TurnView({
 }) {
   const multiline = turn.prompt.includes('\n') || turn.prompt.length > 72;
   const running = turn.status === 'running';
-  const showThought =
-    running || Boolean(turn.thought) || Boolean(turn.response) || turn.status === 'error';
+  const activities = turn.activities ?? [];
+  const hasActivities = activities.length > 0;
+  const showThoughtFallback =
+    !hasActivities &&
+    (running || Boolean(turn.thought) || Boolean(turn.response) || turn.status === 'error');
   const thoughtStreaming = running && (turn.thoughtStreaming || !turn.response.trim());
   const responseStreaming = running && Boolean(turn.response.trim());
+
+  const activityChunks = useMemo(() => {
+    if (!hasActivities) {
+      return [];
+    }
+
+    type Chunk =
+      | { type: 'single'; activity: WebAgentActivity }
+      | { type: 'tool-group'; activities: WebAgentActivity[]; key: string };
+
+    const isToolGroupActivity = (activity: WebAgentActivity): boolean => {
+      if (activity.kind === 'file_edit') {
+        return Boolean(activity.filePath?.trim());
+      }
+      if (activity.kind === 'file_read') {
+        return running && Boolean(activity.filePath?.trim());
+      }
+      if (activity.kind === 'tool_run') {
+        return running && Boolean(activity.label.trim() || activity.toolCommand?.trim());
+      }
+      return false;
+    };
+
+    const chunks: Chunk[] = [];
+    let toolGroup: WebAgentActivity[] = [];
+
+    const flushToolGroup = () => {
+      if (toolGroup.length === 0) {
+        return;
+      }
+      chunks.push({
+        type: 'tool-group',
+        activities: toolGroup,
+        key: `tool-group-${toolGroup[0]?.id ?? chunks.length}`,
+      });
+      toolGroup = [];
+    };
+
+    for (const activity of activities) {
+      if (isToolGroupActivity(activity)) {
+        toolGroup.push(activity);
+        continue;
+      }
+      flushToolGroup();
+      if (
+        activity.kind === 'tool_run' ||
+        activity.kind === 'file_read' ||
+        activity.kind === 'file_edit'
+      ) {
+        if (activity.kind === 'tool_run' && activity.toolCommand?.trim()) {
+          chunks.push({ type: 'single', activity });
+        }
+        continue;
+      }
+      chunks.push({ type: 'single', activity });
+    }
+    flushToolGroup();
+    return chunks;
+  }, [activities, hasActivities, running]);
 
   return (
     <div className='agent-view__turn app-button--enter'>
@@ -290,7 +353,80 @@ function TurnView({
           {turn.prompt}
         </div>
       </div>
-      {showThought ? (
+      {hasActivities
+        ? activityChunks.map((chunk) => {
+            if (chunk.type === 'tool-group') {
+              if (running) {
+                const summary = buildWebLiveToolBatchSummary(chunk.activities, true);
+                const liveDetail = [...chunk.activities]
+                  .reverse()
+                  .find(
+                    (entry) =>
+                      (entry.kind === 'tool_run' && entry.streaming) ||
+                      entry.kind === 'file_read' ||
+                      entry.kind === 'file_edit',
+                  );
+                return (
+                  <div key={chunk.key} className='agent-view__tool-batch'>
+                    {summary ? (
+                      <div className='agent-view__status-line agent-view__status-line--batch agent-view__status-line--live'>
+                        {summary}
+                      </div>
+                    ) : null}
+                    {liveDetail ? <WebToolActivityRow activity={liveDetail} live /> : null}
+                  </div>
+                );
+              }
+
+              return (
+                <div
+                  key={chunk.key}
+                  className='agent-view__file-list agent-view__file-list--inline app-button--enter'
+                >
+                  {chunk.activities.map((activity) => (
+                    <WebToolActivityRow key={activity.id} activity={activity} />
+                  ))}
+                </div>
+              );
+            }
+
+            const activity = chunk.activity;
+            if (activity.kind === 'thought') {
+              return (
+                <ThoughtBlock
+                  key={activity.id}
+                  streaming={Boolean(running && activity.streaming)}
+                  startedAt={activity.startedAt ?? turn.createdAt}
+                  endedAt={
+                    activity.durationMs
+                      ? (activity.startedAt ?? turn.createdAt) + activity.durationMs
+                      : turn.endedAt
+                  }
+                  body={activity.label}
+                />
+              );
+            }
+
+            if (activity.kind === 'response') {
+              return (
+                <ResponseBody
+                  key={activity.id}
+                  text={activity.label}
+                  streaming={Boolean(running && activity.streaming)}
+                  deviceId={deviceId}
+                  projectId={projectId}
+                />
+              );
+            }
+
+            if (activity.kind === 'tool_run' && activity.toolCommand?.trim()) {
+              return <WebToolActivityRow key={activity.id} activity={activity} />;
+            }
+
+            return null;
+          })
+        : null}
+      {showThoughtFallback ? (
         <ThoughtBlock
           streaming={thoughtStreaming}
           startedAt={turn.createdAt}
@@ -298,13 +434,14 @@ function TurnView({
           body={turn.thought}
         />
       ) : null}
-      {turn.status === 'error' ? (
+      {!hasActivities && turn.status === 'error' ? (
         <div className='agent-view__response agent-view__response--settled'>
           <div className='agent-view__response-body web-agent-error'>
             {turn.response.trim() || 'Falha ao executar o agent neste Mac.'}
           </div>
         </div>
-      ) : turn.response.trim() ? (
+      ) : null}
+      {!hasActivities && turn.status !== 'error' && turn.response.trim() ? (
         <ResponseBody
           text={turn.response}
           streaming={responseStreaming}
@@ -312,8 +449,96 @@ function TurnView({
           projectId={projectId}
         />
       ) : null}
+      {hasActivities && turn.status === 'error' && !turn.response.trim() ? (
+        <div className='agent-view__response agent-view__response--settled'>
+          <div className='agent-view__response-body web-agent-error'>
+            Falha ao executar o agent neste Mac.
+          </div>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function WebToolActivityRow({
+  activity,
+  live = false,
+}: {
+  activity: WebAgentActivity;
+  live?: boolean;
+}) {
+  if (activity.kind === 'tool_run' && activity.toolCommand?.trim()) {
+    const command = activity.toolCommand.trim();
+    const display = command.length > 96 ? `${command.slice(0, 93)}…` : command;
+    return (
+      <div
+        className={`agent-view__file-row app-button--enter${
+          live || activity.streaming ? ' agent-view__file-row--live' : ''
+        }`}
+      >
+        <span className='agent-view__file-verb'>
+          {live || activity.streaming ? 'Running' : 'Run'}
+        </span>
+        <span className='agent-view__file-name' title={command}>
+          {display}
+        </span>
+      </div>
+    );
+  }
+
+  if (activity.kind === 'tool_run') {
+    const liveMatch = /^(Reading|Editing|Writing|Glob|Grep)\s+(.+)$/i.exec(activity.label.trim());
+    if (liveMatch) {
+      return (
+        <div
+          className={`agent-view__file-row app-button--enter${
+            live || activity.streaming ? ' agent-view__file-row--live' : ''
+          }`}
+        >
+          <span className='agent-view__file-verb'>{liveMatch[1]}</span>
+          <span className='agent-view__file-name' title={liveMatch[2]}>
+            {liveMatch[2]}
+          </span>
+        </div>
+      );
+    }
+
+    return (
+      <div
+        className={`agent-view__file-row app-button--enter${
+          live || activity.streaming ? ' agent-view__file-row--live' : ''
+        }`}
+      >
+        <span className='agent-view__file-verb'>{activity.label.trim()}</span>
+      </div>
+    );
+  }
+
+  if (activity.kind === 'file_read' || activity.kind === 'file_edit') {
+    const filePath = activity.filePath?.trim() ?? '';
+    const fileName = filePath.split(/[/\\]/).pop() ?? filePath;
+    const verb = activity.kind === 'file_read' ? 'Read' : 'Edited';
+    return (
+      <div className='agent-view__file-row app-button--enter'>
+        <span className='agent-view__file-verb'>{verb}</span>
+        {fileName ? (
+          <span className='agent-view__file-name' title={filePath}>
+            {fileName}
+          </span>
+        ) : null}
+        {activity.kind === 'file_edit' &&
+        ((activity.additions ?? 0) > 0 || (activity.deletions ?? 0) > 0) ? (
+          <span className='agent-view__file-diff'>
+            {activity.additions ? `+${activity.additions}` : ''}
+            {activity.additions && activity.deletions ? ' ' : ''}
+            {activity.deletions ? `-${activity.deletions}` : ''}
+          </span>
+        ) : null}
+      </div>
+    );
+  }
+
+  return null;
 }
 
 export function WebAgentChat({

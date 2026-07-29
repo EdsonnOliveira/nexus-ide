@@ -1,6 +1,7 @@
 import {
   deletePushSubscription,
   getPushPreferences,
+  listPushSubscriptions,
   upsertPushPreferences,
   upsertPushSubscription,
   type PushPreferencesRow,
@@ -12,6 +13,8 @@ const DEFAULT_PREFERENCES: Omit<PushPreferencesRow, 'user_id' | 'updated_at'> = 
   deploy_enabled: true,
   device_enabled: true,
 };
+
+const PUSH_NUDGE_STORAGE_KEY = 'nexus.web.push.nudge.v1';
 
 export function isWebPushSupported(): boolean {
   return (
@@ -35,7 +38,8 @@ export function isIosDevice(): boolean {
   if (typeof navigator === 'undefined') {
     return false;
   }
-  return /iPad|iPhone|iPod/.test(navigator.userAgent);
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
@@ -47,6 +51,30 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
     output[index] = raw.charCodeAt(index);
   }
   return output;
+}
+
+async function persistSubscription(
+  userId: string,
+  subscription: PushSubscription,
+): Promise<void> {
+  const json = subscription.toJSON();
+  const endpoint = json.endpoint;
+  const p256dh = json.keys?.p256dh;
+  const auth = json.keys?.auth;
+  if (!endpoint || !p256dh || !auth) {
+    throw new Error('Subscription inválida');
+  }
+
+  await upsertPushSubscription(supabase, {
+    user_id: userId,
+    endpoint,
+    p256dh,
+    auth,
+    user_agent: navigator.userAgent,
+  });
+
+  const preferences = await loadPushPreferences(userId);
+  await savePushPreferences(userId, preferences);
 }
 
 export async function registerWebPushServiceWorker(): Promise<ServiceWorkerRegistration | null> {
@@ -99,8 +127,80 @@ export async function getCurrentPushSubscription(): Promise<PushSubscription | n
   if (!isWebPushSupported()) {
     return null;
   }
+  await registerWebPushServiceWorker();
   const registration = await navigator.serviceWorker.ready;
   return registration.pushManager.getSubscription();
+}
+
+export async function getWebPushStatus(userId: string): Promise<{
+  supported: boolean;
+  permission: NotificationPermission | 'unsupported';
+  localSubscription: boolean;
+  serverSynced: boolean;
+  enabled: boolean;
+}> {
+  if (!isWebPushSupported()) {
+    return {
+      supported: false,
+      permission: 'unsupported',
+      localSubscription: false,
+      serverSynced: false,
+      enabled: false,
+    };
+  }
+
+  const permission = Notification.permission;
+  const [subscription, rows] = await Promise.all([
+    getCurrentPushSubscription(),
+    listPushSubscriptions(supabase, userId).catch(() => []),
+  ]);
+
+  const localSubscription = Boolean(subscription);
+  const endpoint = subscription?.endpoint ?? null;
+  const serverSynced = endpoint
+    ? rows.some((row) => row.endpoint === endpoint)
+    : false;
+
+  return {
+    supported: true,
+    permission,
+    localSubscription,
+    serverSynced,
+    enabled: permission === 'granted' && localSubscription && serverSynced,
+  };
+}
+
+export async function syncWebPushSubscription(userId: string): Promise<{
+  synced: boolean;
+  reason?: string;
+}> {
+  if (!isWebPushSupported()) {
+    return { synced: false, reason: 'unsupported' };
+  }
+  if (Notification.permission !== 'granted') {
+    return { synced: false, reason: 'permission' };
+  }
+  if (isIosDevice() && !isStandaloneDisplay()) {
+    return { synced: false, reason: 'ios_not_standalone' };
+  }
+
+  const publicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY?.trim();
+  if (!publicKey) {
+    return { synced: false, reason: 'missing_vapid' };
+  }
+
+  await registerWebPushServiceWorker();
+  const registration = await navigator.serviceWorker.ready;
+  let subscription = await registration.pushManager.getSubscription();
+  if (!subscription) {
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey) as BufferSource,
+    });
+  }
+
+  await persistSubscription(userId, subscription);
+  return { synced: true };
 }
 
 export async function enableWebPush(userId: string): Promise<PushSubscription> {
@@ -130,34 +230,46 @@ export async function enableWebPush(userId: string): Promise<PushSubscription> {
     });
   }
 
-  const json = subscription.toJSON();
-  const endpoint = json.endpoint;
-  const p256dh = json.keys?.p256dh;
-  const auth = json.keys?.auth;
-  if (!endpoint || !p256dh || !auth) {
-    throw new Error('Subscription inválida');
-  }
-
-  await upsertPushSubscription(supabase, {
-    user_id: userId,
-    endpoint,
-    p256dh,
-    auth,
-    user_agent: navigator.userAgent,
-  });
-
-  const preferences = await loadPushPreferences(userId);
-  await savePushPreferences(userId, preferences);
-
+  await persistSubscription(userId, subscription);
   return subscription;
 }
 
 export async function disableWebPush(userId: string): Promise<void> {
   const subscription = await getCurrentPushSubscription();
   if (!subscription) {
+    const rows = await listPushSubscriptions(supabase, userId);
+    await Promise.all(
+      rows.map((row) => deletePushSubscription(supabase, userId, row.endpoint)),
+    );
     return;
   }
   const endpoint = subscription.endpoint;
   await subscription.unsubscribe();
   await deletePushSubscription(supabase, userId, endpoint);
+}
+
+export function shouldNudgeWebPush(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  try {
+    if (window.localStorage.getItem(PUSH_NUDGE_STORAGE_KEY) === 'dismissed') {
+      return false;
+    }
+  } catch {
+  }
+  if (isIosDevice() && !isStandaloneDisplay()) {
+    return true;
+  }
+  if (!isWebPushSupported()) {
+    return false;
+  }
+  return isStandaloneDisplay() || Notification.permission === 'granted';
+}
+
+export function dismissWebPushNudge(): void {
+  try {
+    window.localStorage.setItem(PUSH_NUDGE_STORAGE_KEY, 'dismissed');
+  } catch {
+  }
 }

@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowLeft,
   Camera,
@@ -32,6 +32,7 @@ interface WebEmulatorPanelProps {
   workspaceId: string | null;
   projectId: string | null;
   deviceId: string | null;
+  headerMacSelect?: ReactNode;
 }
 
 function AndroidLogoIcon({ size = 14 }: { size?: number }) {
@@ -56,6 +57,7 @@ function WebEmulatorPanelComponent({
   workspaceId,
   projectId,
   deviceId,
+  headerMacSelect,
 }: WebEmulatorPanelProps) {
   const {
     platform,
@@ -455,6 +457,9 @@ function WebEmulatorPanelComponent({
           ) : null}
         </div>
         <div className='web-emulator-panel__header-actions'>
+          {headerMacSelect ? (
+            <div className='home-dashboard__header-mac'>{headerMacSelect}</div>
+          ) : null}
           <button
             type='button'
             className='web-emulator-panel__icon-btn app-button'

@@ -7,12 +7,34 @@ import type {
 } from '@nexus/protocol';
 import type { Session, User } from '@supabase/supabase-js';
 
+export type WebAgentActivityKind =
+  | 'thought'
+  | 'response'
+  | 'tool_run'
+  | 'file_read'
+  | 'file_edit';
+
+export interface WebAgentActivity {
+  id: string;
+  kind: WebAgentActivityKind;
+  label: string;
+  streaming?: boolean;
+  filePath?: string;
+  toolCommand?: string;
+  toolOutput?: string;
+  additions?: number;
+  deletions?: number;
+  startedAt?: number;
+  durationMs?: number;
+}
+
 export interface WebAgentTurn {
   id: string;
   prompt: string;
   thought: string;
   thoughtStreaming: boolean;
   response: string;
+  activities: WebAgentActivity[];
   status: 'running' | 'done' | 'error';
   createdAt: number;
   endedAt?: number;
@@ -77,7 +99,12 @@ interface WebState {
   addAgent: (agent: WebAgentSession) => void;
   patchAgentTurn: (
     agentId: string,
-    patch: Partial<Pick<WebAgentTurn, 'thought' | 'thoughtStreaming' | 'response' | 'status' | 'endedAt'>>,
+    patch: Partial<
+      Pick<
+        WebAgentTurn,
+        'thought' | 'thoughtStreaming' | 'response' | 'activities' | 'status' | 'endedAt'
+      >
+    >,
   ) => void;
   setAgentCursorSessionId: (agentId: string, cursorSessionId: string | null) => void;
   setAgentModelId: (agentId: string, modelId: string) => void;
@@ -195,6 +222,9 @@ export const useWebStore = create<WebState>((set) => ({
                   status,
                   thoughtStreaming: false,
                   endedAt: Date.now(),
+                  activities: turn.activities.map((entry) =>
+                    entry.streaming ? { ...entry, streaming: undefined } : entry,
+                  ),
                 }
               : turn,
           ),

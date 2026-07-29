@@ -51,6 +51,12 @@ export function hydrateWebAgentsFromBundles(bundles: AgentSessionBundle[]): WebA
       if (!thought && !response && stream.trim() && !stream.trimStart().startsWith('{')) {
         response = stream.trim();
       }
+      const activities = (parsed?.activities ?? [])
+        .filter((entry) => !(entry.kind === 'thought' && !entry.label.trim()))
+        .map((entry) => ({
+          ...entry,
+          streaming: undefined,
+        }));
       const createdAt = execution.started_at
         ? new Date(execution.started_at).getTime()
         : new Date(execution.created_at).getTime();
@@ -63,6 +69,7 @@ export function hydrateWebAgentsFromBundles(bundles: AgentSessionBundle[]): WebA
         thought,
         thoughtStreaming: false,
         response,
+        activities,
         status: mapExecutionStatus(execution.status),
         createdAt,
         endedAt,

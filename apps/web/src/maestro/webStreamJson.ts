@@ -1,3 +1,7 @@
+import type { WebAgentActivity, WebAgentActivityKind } from '../store';
+
+export type { WebAgentActivity };
+
 export interface WebShellToolEvent {
   type: 'started' | 'completed';
   command: string;
@@ -13,6 +17,13 @@ export interface WebStreamJsonState {
   sessionId: string | null;
   done: boolean;
   shellToolEvents: WebShellToolEvent[];
+  activities: WebAgentActivity[];
+  thoughtId: string | null;
+  thoughtStartedAt: number | null;
+  responseId: string | null;
+  runningToolRunStack: string[];
+  seenReadPaths: Set<string>;
+  activitySeq: number;
 }
 
 export interface WebStreamJsonUpdate {
@@ -22,18 +33,66 @@ export interface WebStreamJsonUpdate {
   sessionId: string | null;
   done: boolean;
   shellToolEvents: WebShellToolEvent[];
+  activities: WebAgentActivity[];
 }
 
 export function createWebStreamJsonState(): WebStreamJsonState {
+  const startedAt = Date.now();
+  const thoughtId = 'web-act-thought-seed';
   return {
     buffer: '',
     thought: '',
-    thoughtStreaming: false,
+    thoughtStreaming: true,
     response: '',
     sessionId: null,
     done: false,
     shellToolEvents: [],
+    activities: [
+      {
+        id: thoughtId,
+        kind: 'thought',
+        label: '',
+        streaming: true,
+        startedAt,
+      },
+    ],
+    thoughtId,
+    thoughtStartedAt: startedAt,
+    responseId: null,
+    runningToolRunStack: [],
+    seenReadPaths: new Set(),
+    activitySeq: 0,
   };
+}
+
+function nextActivityId(state: WebStreamJsonState): string {
+  state.activitySeq += 1;
+  return `web-act-${state.activitySeq}`;
+}
+
+function createActivity(
+  state: WebStreamJsonState,
+  kind: WebAgentActivityKind,
+  label: string,
+  extra: Partial<WebAgentActivity> = {},
+): WebAgentActivity {
+  return {
+    id: nextActivityId(state),
+    kind,
+    label,
+    ...extra,
+  };
+}
+
+function basenamePath(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, '/');
+  const parts = normalized.split('/');
+  return parts[parts.length - 1] ?? filePath;
+}
+
+function shortenPath(filePath: string): string {
+  const home = filePath.replace(/^\/Users\/[^/]+/, '~');
+  return home.length > 72 ? `…${home.slice(-68)}` : home;
 }
 
 function extractShellToolOutput(result: unknown): string {
@@ -296,6 +355,407 @@ function findJsonObjectEnd(value: string): number {
   return -1;
 }
 
+function settleThought(state: WebStreamJsonState): void {
+  state.thoughtStreaming = false;
+
+  if (!state.thoughtId) {
+    return;
+  }
+
+  const thoughtId = state.thoughtId;
+  const startedAt = state.thoughtStartedAt;
+  const durationMs = startedAt ? Math.max(1, Date.now() - startedAt) : undefined;
+  const thoughtLabel = (state.activities.find((entry) => entry.id === thoughtId)?.label ?? state.thought).trim();
+
+  if (!thoughtLabel) {
+    state.activities = state.activities.filter((entry) => entry.id !== thoughtId);
+    state.thoughtId = null;
+    state.thoughtStartedAt = null;
+    return;
+  }
+
+  state.activities = state.activities.map((entry) =>
+    entry.id === thoughtId && entry.kind === 'thought'
+      ? {
+          ...entry,
+          streaming: undefined,
+          durationMs,
+          label: thoughtLabel,
+        }
+      : entry,
+  );
+
+  state.thoughtId = null;
+  state.thoughtStartedAt = null;
+}
+
+function upsertThought(state: WebStreamJsonState, text: string): void {
+  state.thought += text;
+  state.thoughtStreaming = true;
+
+  if (state.thoughtId) {
+    state.activities = state.activities.map((entry) =>
+      entry.id === state.thoughtId
+        ? { ...entry, label: state.thought, streaming: true }
+        : entry,
+    );
+    return;
+  }
+
+  const startedAt = Date.now();
+  const thought = createActivity(state, 'thought', state.thought, {
+    streaming: true,
+    startedAt,
+  });
+  state.thoughtId = thought.id;
+  state.thoughtStartedAt = startedAt;
+  state.activities = [...state.activities, thought];
+}
+
+function sealActiveResponseSegment(state: WebStreamJsonState): void {
+  if (!state.responseId) {
+    return;
+  }
+
+  const responseId = state.responseId;
+  state.activities = state.activities.map((entry) =>
+    entry.id === responseId && entry.kind === 'response'
+      ? { ...entry, streaming: undefined }
+      : entry,
+  );
+  state.responseId = null;
+}
+
+function upsertResponse(state: WebStreamJsonState, text: string, streaming: boolean): void {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return;
+  }
+
+  settleThought(state);
+  state.response = trimmed;
+
+  if (state.responseId) {
+    state.activities = state.activities.map((entry) =>
+      entry.id === state.responseId
+        ? { ...entry, label: trimmed, streaming: streaming ? true : undefined }
+        : entry,
+    );
+    return;
+  }
+
+  const response = createActivity(state, 'response', trimmed, {
+    streaming: streaming ? true : undefined,
+  });
+  state.responseId = response.id;
+  state.activities = [...state.activities, response];
+}
+
+function upsertFileRead(state: WebStreamJsonState, filePath: string, label?: string): void {
+  const normalized = filePath.trim().toLowerCase();
+  if (!normalized || state.seenReadPaths.has(normalized)) {
+    return;
+  }
+
+  state.seenReadPaths.add(normalized);
+  const displayPath = shortenPath(filePath);
+  const read = createActivity(state, 'file_read', label ?? `Read ${basenamePath(filePath)}`, {
+    filePath: displayPath,
+  });
+  state.activities = [...state.activities, read];
+}
+
+function upsertFileEdit(
+  state: WebStreamJsonState,
+  filePath: string,
+  additions = 0,
+  deletions = 0,
+): void {
+  const normalized = filePath.trim().toLowerCase();
+  if (!normalized) {
+    return;
+  }
+
+  const displayPath = shortenPath(filePath);
+  const existingIndex = state.activities.findIndex(
+    (entry) => entry.kind === 'file_edit' && entry.filePath?.trim().toLowerCase() === normalized,
+  );
+
+  if (existingIndex >= 0) {
+    const existing = state.activities[existingIndex]!;
+    const nextAdditions = (existing.additions ?? 0) + additions;
+    const nextDeletions = (existing.deletions ?? 0) + deletions;
+    state.activities = [
+      ...state.activities.slice(0, existingIndex),
+      {
+        ...existing,
+        filePath: displayPath,
+        label: `Edited ${basenamePath(filePath)}`,
+        additions: nextAdditions > 0 ? nextAdditions : undefined,
+        deletions: nextDeletions > 0 ? nextDeletions : undefined,
+      },
+      ...state.activities.slice(existingIndex + 1),
+    ];
+    return;
+  }
+
+  state.activities = [
+    ...state.activities,
+    createActivity(state, 'file_edit', `Edited ${basenamePath(filePath)}`, {
+      filePath: displayPath,
+      additions: additions > 0 ? additions : undefined,
+      deletions: deletions > 0 ? deletions : undefined,
+    }),
+  ];
+}
+
+function startToolRun(
+  state: WebStreamJsonState,
+  label: string,
+  extra: Partial<WebAgentActivity> = {},
+): void {
+  const trimmed = label.trim();
+  if (!trimmed) {
+    return;
+  }
+
+  const activity = createActivity(state, 'tool_run', trimmed, {
+    streaming: true,
+    ...extra,
+  });
+  state.activities = [...state.activities, activity];
+  state.runningToolRunStack.push(activity.id);
+}
+
+function completeToolRun(
+  state: WebStreamJsonState,
+  extra: Partial<WebAgentActivity> = {},
+): void {
+  const id = state.runningToolRunStack.pop();
+  if (!id) {
+    return;
+  }
+
+  state.activities = state.activities.map((entry) =>
+    entry.id === id
+      ? {
+          ...entry,
+          streaming: undefined,
+          ...extra,
+        }
+      : entry,
+  );
+}
+
+function trackFileMutationToolCall(
+  state: WebStreamJsonState,
+  toolCall:
+    | {
+        args?: { path?: string };
+        result?: { success?: { path?: string; linesAdded?: number; linesRemoved?: number } };
+      }
+    | undefined,
+  fallbackDeletions = 0,
+): void {
+  if (!toolCall?.result?.success) {
+    return;
+  }
+
+  const success = toolCall.result.success;
+  const path = success.path ?? toolCall.args?.path ?? '';
+  upsertFileEdit(
+    state,
+    path,
+    success.linesAdded ?? 0,
+    success.linesRemoved ?? fallbackDeletions,
+  );
+  completeToolRun(state);
+}
+
+function handleToolCallStarted(state: WebStreamJsonState, toolCall: unknown): void {
+  sealActiveResponseSegment(state);
+  settleThought(state);
+
+  if (!toolCall || typeof toolCall !== 'object') {
+    return;
+  }
+
+  const payload = toolCall as Record<string, unknown>;
+
+  const readToolCall = payload.readToolCall as { args?: { path?: string } } | undefined;
+  if (readToolCall?.args?.path) {
+    startToolRun(state, `Reading ${basenamePath(readToolCall.args.path)}`, {
+      filePath: readToolCall.args.path,
+    });
+    upsertFileRead(state, readToolCall.args.path);
+    return;
+  }
+
+  const editToolCall = payload.editToolCall as { args?: { path?: string } } | undefined;
+  if (editToolCall?.args?.path) {
+    startToolRun(state, `Editing ${basenamePath(editToolCall.args.path)}`, {
+      filePath: editToolCall.args.path,
+    });
+    return;
+  }
+
+  const writeToolCall = payload.writeToolCall as { args?: { path?: string } } | undefined;
+  if (writeToolCall?.args?.path) {
+    startToolRun(state, `Writing ${basenamePath(writeToolCall.args.path)}`, {
+      filePath: writeToolCall.args.path,
+    });
+    return;
+  }
+
+  const shellToolCall = payload.shellToolCall as { args?: { command?: string } } | undefined;
+  if (shellToolCall?.args?.command) {
+    const command = shellToolCall.args.command.trim();
+    state.shellToolEvents.push({
+      type: 'started',
+      command,
+      output: '',
+      exitCode: null,
+    });
+    startToolRun(state, 'Running', { toolCommand: command });
+    return;
+  }
+
+  const globToolCall = payload.globToolCall as
+    | { args?: { globPattern?: string; targetDirectory?: string } }
+    | undefined;
+  if (globToolCall?.args) {
+    const pattern = globToolCall.args.globPattern?.trim() || '**/*';
+    const directory = globToolCall.args.targetDirectory?.trim();
+    const label = directory
+      ? `Glob ${pattern} in ${basenamePath(directory)}`
+      : `Glob ${pattern}`;
+    startToolRun(state, label);
+    upsertFileRead(state, directory ?? pattern, label);
+    return;
+  }
+
+  const grepToolCall = payload.grepToolCall as
+    | { args?: { pattern?: string; path?: string } }
+    | undefined;
+  if (grepToolCall?.args?.pattern) {
+    const pattern = grepToolCall.args.pattern.trim();
+    const path = grepToolCall.args.path?.trim();
+    const label = path ? `Grep ${pattern} in ${basenamePath(path)}` : `Grep ${pattern}`;
+    startToolRun(state, label);
+    upsertFileRead(state, path ?? pattern, label);
+    return;
+  }
+
+  if (payload.mcpToolCall) {
+    startToolRun(state, 'Running tool');
+  }
+}
+
+function handleToolCallCompleted(state: WebStreamJsonState, toolCall: unknown): void {
+  if (!toolCall || typeof toolCall !== 'object') {
+    return;
+  }
+
+  const payload = toolCall as Record<string, unknown>;
+
+  const editToolCall = payload.editToolCall as
+    | {
+        args?: { path?: string };
+        result?: { success?: { path?: string; linesAdded?: number; linesRemoved?: number } };
+      }
+    | undefined;
+  if (editToolCall?.result?.success) {
+    trackFileMutationToolCall(state, editToolCall);
+    return;
+  }
+
+  const writeToolCall = payload.writeToolCall as
+    | {
+        args?: { path?: string };
+        result?: { success?: { path?: string; linesAdded?: number; linesRemoved?: number } };
+      }
+    | undefined;
+  if (writeToolCall?.result?.success) {
+    trackFileMutationToolCall(state, writeToolCall);
+    return;
+  }
+
+  const applyAgentDiffToolCall = payload.applyAgentDiffToolCall as
+    | {
+        args?: { path?: string };
+        result?: { success?: { path?: string; linesAdded?: number; linesRemoved?: number } };
+      }
+    | undefined;
+  if (applyAgentDiffToolCall?.result?.success) {
+    trackFileMutationToolCall(state, applyAgentDiffToolCall);
+    return;
+  }
+
+  const deleteToolCall = payload.deleteToolCall as
+    | {
+        args?: { path?: string };
+        result?: { success?: { path?: string; linesAdded?: number; linesRemoved?: number } };
+      }
+    | undefined;
+  if (deleteToolCall?.result?.success) {
+    trackFileMutationToolCall(state, deleteToolCall, 1);
+    return;
+  }
+
+  const readToolCall = payload.readToolCall as { args?: { path?: string } } | undefined;
+  if (readToolCall) {
+    completeToolRun(state);
+    return;
+  }
+
+  const globToolCall = payload.globToolCall as { args?: { globPattern?: string } } | undefined;
+  if (globToolCall) {
+    completeToolRun(state);
+    return;
+  }
+
+  const grepToolCall = payload.grepToolCall as { args?: { pattern?: string } } | undefined;
+  if (grepToolCall) {
+    completeToolRun(state);
+    return;
+  }
+
+  const shellToolCall = payload.shellToolCall as
+    | {
+        args?: { command?: string };
+        result?: unknown;
+      }
+    | undefined;
+  if (shellToolCall?.args?.command) {
+    const command = shellToolCall.args.command.trim();
+    state.shellToolEvents.push({
+      type: 'completed',
+      command,
+      output: extractShellToolOutput(shellToolCall.result),
+      exitCode: extractShellToolExitCode(shellToolCall.result),
+    });
+    completeToolRun(state, {
+      label: 'Run',
+      toolCommand: command,
+      toolOutput: extractShellToolOutput(shellToolCall.result),
+    });
+    return;
+  }
+
+  if (payload.mcpToolCall || payload.shellToolCall) {
+    completeToolRun(state, { label: 'Ran tool' });
+  }
+}
+
+function settleAllStreaming(state: WebStreamJsonState): void {
+  settleThought(state);
+  sealActiveResponseSegment(state);
+  state.runningToolRunStack = [];
+  state.activities = state.activities.map((entry) =>
+    entry.streaming ? { ...entry, streaming: undefined } : entry,
+  );
+}
+
 function handleEvent(state: WebStreamJsonState, event: Record<string, unknown>): void {
   const type = typeof event.type === 'string' ? event.type : '';
 
@@ -306,59 +766,29 @@ function handleEvent(state: WebStreamJsonState, event: Record<string, unknown>):
 
   if (type === 'thinking') {
     if (event.subtype === 'delta' && typeof event.text === 'string') {
-      state.thought += event.text;
-      state.thoughtStreaming = true;
+      upsertThought(state, event.text);
       return;
     }
     if (event.subtype === 'completed') {
-      state.thoughtStreaming = false;
+      settleThought(state);
     }
     return;
   }
 
-  if (type === 'tool_call') {
-    const toolCall = event.tool_call;
-    if (!toolCall || typeof toolCall !== 'object') {
-      return;
-    }
-    const payload = toolCall as {
-      shellToolCall?: {
-        args?: { command?: string };
-        result?: unknown;
-      };
-    };
-    const shellToolCall = payload.shellToolCall;
-    const command = shellToolCall?.args?.command?.trim();
-    if (!command) {
-      return;
-    }
+  if (type === 'tool_call' && event.subtype === 'started') {
+    handleToolCallStarted(state, event.tool_call);
+    return;
+  }
 
-    if (event.subtype === 'started') {
-      state.shellToolEvents.push({
-        type: 'started',
-        command,
-        output: '',
-        exitCode: null,
-      });
-      return;
-    }
-
-    if (event.subtype === 'completed') {
-      state.shellToolEvents.push({
-        type: 'completed',
-        command,
-        output: extractShellToolOutput(shellToolCall?.result),
-        exitCode: extractShellToolExitCode(shellToolCall?.result),
-      });
-    }
+  if (type === 'tool_call' && event.subtype === 'completed') {
+    handleToolCallCompleted(state, event.tool_call);
     return;
   }
 
   if (type === 'assistant') {
     const text = extractAssistantText(event.message);
     if (text) {
-      state.response = text;
-      state.thoughtStreaming = false;
+      upsertResponse(state, text, true);
     }
     return;
   }
@@ -370,9 +800,9 @@ function handleEvent(state: WebStreamJsonState, event: Record<string, unknown>):
     const resultText =
       typeof event.result === 'string' ? event.result.trim() : state.response.trim();
     if (resultText) {
-      state.response = resultText;
+      upsertResponse(state, resultText, false);
     }
-    state.thoughtStreaming = false;
+    settleAllStreaming(state);
     state.done = true;
   }
 }
@@ -416,5 +846,72 @@ export function feedWebStreamJson(
     sessionId: state.sessionId,
     done: state.done,
     shellToolEvents,
+    activities: state.activities.map((entry) => ({ ...entry })),
   };
+}
+
+export function buildWebLiveToolBatchSummary(
+  activities: WebAgentActivity[],
+  running: boolean,
+): string | null {
+  if (running) {
+    const streamingShell = [...activities]
+      .reverse()
+      .find(
+        (activity) =>
+          activity.kind === 'tool_run' && activity.streaming && activity.toolCommand?.trim(),
+      );
+
+    if (streamingShell?.toolCommand?.trim()) {
+      const command = streamingShell.toolCommand.trim();
+      const preview = command.length > 56 ? `${command.slice(0, 53)}…` : command;
+      return `Executando ${preview}`;
+    }
+
+    const streamingTool = [...activities]
+      .reverse()
+      .find((activity) => activity.kind === 'tool_run' && activity.streaming && activity.label.trim());
+
+    if (streamingTool?.label.trim()) {
+      return streamingTool.label.trim();
+    }
+  }
+
+  const fileReads = activities.filter((activity) => activity.kind === 'file_read');
+  const fileEdits = activities.filter((activity) => activity.kind === 'file_edit');
+  const searchCount = activities.filter(
+    (activity) =>
+      activity.kind === 'tool_run' && /^(?:Glob|Grep)/i.test(activity.label.trim()),
+  ).length;
+
+  if (fileEdits.length > 0) {
+    const additions = fileEdits.reduce((sum, entry) => sum + (entry.additions ?? 0), 0);
+    const deletions = fileEdits.reduce((sum, entry) => sum + (entry.deletions ?? 0), 0);
+    let label = `${running ? 'Editing' : 'Edited'} ${fileEdits.length} file${
+      fileEdits.length === 1 ? '' : 's'
+    }`;
+    if (additions > 0 || deletions > 0) {
+      label += ` +${additions} -${deletions}`;
+    }
+    return label;
+  }
+
+  if (fileReads.length > 0 || searchCount > 0) {
+    const prefix = running ? 'Exploring' : 'Explored';
+    const fileLabel = `${fileReads.length} file${fileReads.length === 1 ? '' : 's'}`;
+    const searchLabel =
+      searchCount > 0 ? `, ${searchCount} search${searchCount === 1 ? '' : 'es'}` : '';
+    return `${prefix} ${fileLabel}${searchLabel}`;
+  }
+
+  const shellRuns = activities.filter(
+    (activity) => activity.kind === 'tool_run' && activity.toolCommand?.trim(),
+  );
+  if (shellRuns.length > 0) {
+    return running
+      ? `Running ${shellRuns.length} command${shellRuns.length === 1 ? '' : 's'}`
+      : `Ran ${shellRuns.length} command${shellRuns.length === 1 ? '' : 's'}`;
+  }
+
+  return null;
 }

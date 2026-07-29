@@ -31,7 +31,7 @@
   display: flex;
   flex-direction: column;
   border-top: none;
-  padding: 10px 14px calc(14px + var(--safe-bottom));
+  padding: 10px 14px var(--web-ask-bar-inset);
   background: transparent;
 }
 
@@ -749,6 +749,111 @@
   40% {
     opacity: 1;
     transform: translateY(-2px);
+  }
+}
+
+.agent-view__thought + .agent-view__response {
+  margin-top: 2px;
+}
+
+.agent-view__tool-batch {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+}
+
+.agent-view__file-list {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.agent-view__file-list--inline {
+  gap: 0;
+}
+
+.agent-view__thought + .agent-view__file-list,
+.agent-view__thought + .agent-view__tool-batch,
+.agent-view__response + .agent-view__file-list,
+.agent-view__response + .agent-view__tool-batch,
+.agent-view__file-list + .agent-view__response,
+.agent-view__tool-batch + .agent-view__response {
+  margin-top: 2px;
+}
+
+.agent-view__status-line {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.agent-view__status-line--batch {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.agent-view__status-line--live {
+  color: var(--text-secondary);
+  animation: agent-status-pulse 1.6s var(--motion-ease-in-out, ease-in-out) infinite;
+}
+
+.agent-view__file-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 1px 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.agent-view__file-row + .agent-view__file-row {
+  margin-top: -2px;
+}
+
+.agent-view__file-verb {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.agent-view__file-name {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.agent-view__file-diff {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-view__file-row--live .agent-view__file-verb {
+  color: var(--text-secondary);
+  animation: agent-status-pulse 1.6s var(--motion-ease-in-out, ease-in-out) infinite;
+}
+
+@keyframes agent-status-pulse {
+  0%,
+  100% {
+    opacity: 0.72;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-view__status-line--live,
+  .agent-view__file-row--live .agent-view__file-verb {
+    animation: none;
   }
 }
 

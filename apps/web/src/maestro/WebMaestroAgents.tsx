@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, Bot, FolderKanban, ListTodo, Play, Smartphone, Trash2 } from 'lucide-react';
 import type { CloudProject } from '@nexus/protocol';
@@ -23,10 +23,13 @@ interface WebMaestroAgentsProps {
   selectedProjectId: string | null;
   deviceId: string | null;
   focusedAgentId?: string | null;
+  openAgentId?: string | null;
   emulatorProjectIds?: Set<string>;
+  headerMacSelect?: ReactNode;
   onOpenEmulator?: (projectId: string) => void;
   onSelectProject: (projectId: string) => void;
   onBackToProjects: () => void;
+  onBackFromAgent?: () => void;
   onFocusedAgentHandled?: () => void;
   onOpenAgentChange?: (agentId: string | null) => void;
   onRemove: (id: string) => void;
@@ -371,6 +374,7 @@ function AgentFullscreen({
   agent,
   deviceId,
   hasEmulator,
+  headerMacSelect,
   onOpenEmulator,
   onBack,
   onRemove,
@@ -382,6 +386,7 @@ function AgentFullscreen({
   agent: WebAgentSession;
   deviceId: string | null;
   hasEmulator: boolean;
+  headerMacSelect?: ReactNode;
   onOpenEmulator?: (projectId: string) => void;
   onBack: () => void;
   onRemove: (id: string) => void;
@@ -432,6 +437,9 @@ function AgentFullscreen({
           </span>
         </div>
         <div className='home-dashboard__agent-fullscreen-actions'>
+          {headerMacSelect ? (
+            <div className='home-dashboard__header-mac'>{headerMacSelect}</div>
+          ) : null}
           <WebAgentShellTerminals agent={agent} deviceId={deviceId} />
           {hasEmulator && agent.projectId ? (
             <button
@@ -576,10 +584,13 @@ export function WebMaestroAgents({
   selectedProjectId,
   deviceId,
   focusedAgentId = null,
+  openAgentId: openAgentIdProp = null,
   emulatorProjectIds,
+  headerMacSelect,
   onOpenEmulator,
   onSelectProject,
   onBackToProjects,
+  onBackFromAgent,
   onFocusedAgentHandled,
   onOpenAgentChange,
   onRemove,
@@ -591,8 +602,20 @@ export function WebMaestroAgents({
   onScrollChange,
 }: WebMaestroAgentsProps) {
   const sectionRef = useRef<HTMLElement>(null);
-  const [openAgentId, setOpenAgentId] = useState<string | null>(null);
+  const [openAgentId, setOpenAgentIdState] = useState<string | null>(openAgentIdProp);
   const [detailTask, setDetailTask] = useState<WebProjectTask | null>(null);
+
+  const setOpenAgentId = useCallback(
+    (agentId: string | null) => {
+      setOpenAgentIdState(agentId);
+      onOpenAgentChange?.(agentId);
+    },
+    [onOpenAgentChange],
+  );
+
+  useEffect(() => {
+    setOpenAgentIdState(openAgentIdProp);
+  }, [openAgentIdProp]);
 
   const projectGroups = useMemo(() => groupAgentsByProject(agents), [agents]);
   const selectedGroup = useMemo(
@@ -630,15 +653,17 @@ export function WebMaestroAgents({
   const handleOpenAgent = useCallback(
     (agentId: string) => {
       setOpenAgentId(agentId);
-      onOpenAgentChange?.(agentId);
     },
-    [onOpenAgentChange],
+    [setOpenAgentId],
   );
 
   const handleCloseAgent = useCallback(() => {
+    if (onBackFromAgent) {
+      onBackFromAgent();
+      return;
+    }
     setOpenAgentId(null);
-    onOpenAgentChange?.(null);
-  }, [onOpenAgentChange]);
+  }, [onBackFromAgent, setOpenAgentId]);
 
   const handleBackFromProject = useCallback(() => {
     setDetailTask(null);
@@ -651,7 +676,7 @@ export function WebMaestroAgents({
 
   useEffect(() => {
     if (showingProjects) {
-      setOpenAgentId(null);
+      setOpenAgentIdState(null);
       onOpenAgentChange?.(null);
     }
   }, [showingProjects, onOpenAgentChange]);
@@ -662,9 +687,8 @@ export function WebMaestroAgents({
     }
     if (!projectAgents.some((agent) => agent.id === openAgentId)) {
       setOpenAgentId(null);
-      onOpenAgentChange?.(null);
     }
-  }, [openAgentId, projectAgents, onOpenAgentChange]);
+  }, [openAgentId, projectAgents, setOpenAgentId]);
 
   useEffect(() => {
     const node = sectionRef.current;
@@ -690,9 +714,8 @@ export function WebMaestroAgents({
     }
 
     setOpenAgentId(focusedAgentId);
-    onOpenAgentChange?.(focusedAgentId);
     onFocusedAgentHandled?.();
-  }, [focusedAgentId, onFocusedAgentHandled, onOpenAgentChange, showingProjects]);
+  }, [focusedAgentId, onFocusedAgentHandled, setOpenAgentId, showingProjects]);
 
   useEffect(() => {
     if (showingProjects) {
@@ -775,6 +798,7 @@ export function WebMaestroAgents({
           hasEmulator={Boolean(
             openAgent.projectId && emulatorProjectIds?.has(openAgent.projectId),
           )}
+          headerMacSelect={headerMacSelect}
           onOpenEmulator={onOpenEmulator}
           onBack={handleCloseAgent}
           onRemove={onRemove}
@@ -819,17 +843,22 @@ export function WebMaestroAgents({
         ) : (
           <span className='home-dashboard__agent-project-header-name'>Projeto</span>
         )}
-        {hasEmulator && selectedProjectId ? (
-          <button
-            type='button'
-            className='web-emulator-header-btn app-button home-dashboard__agent-project-emulator'
-            aria-label='Abrir emulador'
-            title='Emulador rodando'
-            onClick={() => onOpenEmulator?.(selectedProjectId)}
-          >
-            <Smartphone size={15} aria-hidden='true' />
-          </button>
-        ) : null}
+        <div className='home-dashboard__agent-project-header-actions'>
+          {headerMacSelect ? (
+            <div className='home-dashboard__header-mac'>{headerMacSelect}</div>
+          ) : null}
+          {hasEmulator && selectedProjectId ? (
+            <button
+              type='button'
+              className='web-emulator-header-btn app-button home-dashboard__agent-project-emulator'
+              aria-label='Abrir emulador'
+              title='Emulador rodando'
+              onClick={() => onOpenEmulator?.(selectedProjectId)}
+            >
+              <Smartphone size={15} aria-hidden='true' />
+            </button>
+          ) : null}
+        </div>
       </div>
       <div className='home-dashboard__project-sections'>
         <section className='home-dashboard__project-section' aria-label='Tasks'>

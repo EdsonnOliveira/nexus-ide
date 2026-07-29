@@ -4,7 +4,10 @@ import { bridge, supabase } from './lib/supabase';
 import { useWebStore } from './store';
 import { AuthView } from './views/AuthView';
 import { WebMaestroHome } from './maestro/WebMaestroHome';
-import { registerWebPushServiceWorker } from './maestro/webPush';
+import {
+  registerWebPushServiceWorker,
+  syncWebPushSubscription,
+} from './maestro/webPush';
 
 export function App() {
   const session = useWebStore((state) => state.session);
@@ -81,10 +84,17 @@ export function App() {
     }
     void refresh();
     void registerWebPushServiceWorker();
+    void syncWebPushSubscription(session.user.id);
     const timer = window.setInterval(() => {
       void refresh();
     }, 12_000);
-    return () => window.clearInterval(timer);
+    const pushTimer = window.setInterval(() => {
+      void syncWebPushSubscription(session.user.id);
+    }, 60_000);
+    return () => {
+      window.clearInterval(timer);
+      window.clearInterval(pushTimer);
+    };
   }, [session]);
 
   if (!session) {

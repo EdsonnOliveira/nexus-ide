@@ -34,6 +34,8 @@ self.addEventListener('push', (event) => {
       icon: '/nexus-icon-192.png',
       badge: '/nexus-icon-192.png',
       data: payload.data,
+      tag: typeof payload.data?.kind === 'string' ? `nexus-${payload.data.kind}` : 'nexus-push',
+      renotify: true,
     }),
   );
 });

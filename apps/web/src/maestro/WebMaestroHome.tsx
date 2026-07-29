@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Bell } from 'lucide-react';
 import {
   closeAgentSession,
   createAgentSession,
@@ -16,10 +17,18 @@ import { WebMacSelect } from './WebMacSelect';
 import { WebMaestroAgents } from './WebMaestroAgents';
 import { WebMaestroAskBar } from './WebMaestroAskBar';
 import { WebPushModal } from './WebPushModal';
+import {
+  dismissWebPushNudge,
+  getWebPushStatus,
+  isIosDevice,
+  isStandaloneDisplay,
+  shouldNudgeWebPush,
+} from './webPush';
 import { WebVercelDeployCard } from './WebVercelDeployCard';
 import { WebVercelTokenModal } from './WebVercelTokenModal';
 import { WebEmulatorPanel } from './WebEmulatorPanel';
 import { useWebEmulatorProjectIds } from './useWebEmulatorProjectIds';
+import { useWebNavHistory, type WebNavHistoryState } from './useWebNavHistory';
 import { useWebVercelDeployments } from './useWebVercelDeployments';
 import { WebMobileReleaseCard } from './WebMobileReleaseCard';
 import { useWebMobileReleases } from './useWebMobileReleases';
@@ -102,12 +111,14 @@ export function WebMaestroHome() {
   const setAgentModeId = useWebStore((state) => state.setAgentModeId);
   const setAgentStatus = useWebStore((state) => state.setAgentStatus);
   const removeAgent = useWebStore((state) => state.removeAgent);
+  const session = useWebStore((state) => state.session);
   const hydratedWorkspaceRef = useRef<string | null>(null);
   const pinnedDesktopAgentIdsRef = useRef(new Set<string>());
   const [submitting, setSubmitting] = useState(false);
   const [pairingOpen, setPairingOpen] = useState(false);
   const [vercelTokenOpen, setVercelTokenOpen] = useState(false);
   const [pushOpen, setPushOpen] = useState(false);
+  const [pushNudgeVisible, setPushNudgeVisible] = useState(false);
   const [emulatorOpen, setEmulatorOpen] = useState(false);
   const [agentFilterProjectId, setAgentFilterProjectId] = useState<string | null>(null);
   const [focusedAgentId, setFocusedAgentId] = useState<string | null>(null);
@@ -154,11 +165,45 @@ export function WebMaestroHome() {
   );
 
   useEffect(() => {
+    if (!session?.user?.id) {
+      setPushNudgeVisible(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const status = await getWebPushStatus(session.user.id);
+        if (cancelled) {
+          return;
+        }
+        if (status.enabled) {
+          setPushNudgeVisible(false);
+          return;
+        }
+        const needsHomeScreen = isIosDevice() && !isStandaloneDisplay();
+        const shouldShow =
+          shouldNudgeWebPush() &&
+          (needsHomeScreen || isStandaloneDisplay() || status.localSubscription);
+        setPushNudgeVisible(shouldShow);
+      } catch {
+        if (!cancelled) {
+          setPushNudgeVisible(shouldNudgeWebPush() && isStandaloneDisplay());
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id]);
+
+  useEffect(() => {
     if (!agentFilterProjectId) {
       return;
     }
     if (!projects.some((project) => project.id === agentFilterProjectId)) {
       setAgentFilterProjectId(null);
+      setOpenAgentId(null);
+      setFocusedAgentId(null);
     }
   }, [agentFilterProjectId, projects]);
 
@@ -174,11 +219,38 @@ export function WebMaestroHome() {
     [projects, setActiveWorkspaceId, setSelectedProjectId],
   );
 
-  const handleBackToProjects = useCallback(() => {
-    setAgentFilterProjectId(null);
+  const navState = useMemo<WebNavHistoryState>(
+    () => ({
+      projectId: agentFilterProjectId,
+      agentId: openAgentId,
+      emulator: emulatorOpen,
+    }),
+    [agentFilterProjectId, emulatorOpen, openAgentId],
+  );
+
+  const applyNavState = useCallback((next: WebNavHistoryState) => {
+    setAgentFilterProjectId(next.projectId);
+    setOpenAgentId(next.agentId);
     setFocusedAgentId(null);
-    setOpenAgentId(null);
+    setEmulatorOpen(next.emulator);
   }, []);
+
+  const { goBack } = useWebNavHistory({
+    state: navState,
+    onPop: applyNavState,
+  });
+
+  const handleBackToProjects = useCallback(() => {
+    goBack();
+  }, [goBack]);
+
+  const handleBackFromAgent = useCallback(() => {
+    goBack();
+  }, [goBack]);
+
+  const handleCloseEmulator = useCallback(() => {
+    goBack();
+  }, [goBack]);
 
   const projectScreenOpen = Boolean(agentFilterProjectId) && !emulatorOpen;
   const agentScreenOpen = Boolean(openAgentId) && projectScreenOpen;
@@ -302,6 +374,7 @@ export function WebMaestroHome() {
             thought: update.thought,
             thoughtStreaming: update.thoughtStreaming,
             response: update.response,
+            activities: update.activities,
           });
           if (update.shellToolEvents.length > 0) {
             handleWebAgentShellToolEvents(agentId, update.shellToolEvents);
@@ -631,6 +704,15 @@ export function WebMaestroHome() {
               thought: '',
               thoughtStreaming: true,
               response: '',
+              activities: [
+                {
+                  id: crypto.randomUUID(),
+                  kind: 'thought',
+                  label: '',
+                  streaming: true,
+                  startedAt: createdAt,
+                },
+              ],
               status: 'running',
               createdAt,
               commandId,
@@ -726,6 +808,15 @@ export function WebMaestroHome() {
           thought: '',
           thoughtStreaming: true,
           response: '',
+          activities: [
+            {
+              id: crypto.randomUUID(),
+              kind: 'thought',
+              label: '',
+              streaming: true,
+              startedAt: Date.now(),
+            },
+          ],
           status: 'running',
           createdAt: Date.now(),
           commandId,
@@ -974,6 +1065,34 @@ export function WebMaestroHome() {
           />
         </div>
       </header>
+      {pushNudgeVisible && !emulatorOpen && !agentScreenOpen ? (
+        <div className='web-push-nudge app-button--enter' role='status'>
+          <Bell size={16} aria-hidden='true' />
+          <span>
+            {isIosDevice() && !isStandaloneDisplay()
+              ? 'Para receber aviso quando o agent terminar, abra o Nexus pela Tela de Início e ative as notificações.'
+              : 'Ative as notificações para saber quando o agent concluir.'}
+          </span>
+          <button
+            type='button'
+            className='app-button web-push-nudge__action'
+            onClick={() => setPushOpen(true)}
+          >
+            Ativar
+          </button>
+          <button
+            type='button'
+            className='app-button web-push-nudge__dismiss'
+            aria-label='Dispensar aviso de notificações'
+            onClick={() => {
+              dismissWebPushNudge();
+              setPushNudgeVisible(false);
+            }}
+          >
+            Agora não
+          </button>
+        </div>
+      ) : null}
       {!emulatorOpen && !agentScreenOpen ? (
         <div className='home-dashboard__hero-ask'>
           <WebMaestroAskBar
@@ -1001,10 +1120,22 @@ export function WebMaestroHome() {
           selectedProjectId={agentFilterProjectId}
           deviceId={resolveDeviceId()}
           focusedAgentId={focusedAgentId}
+          openAgentId={openAgentId}
           emulatorProjectIds={emulatorProjectIds}
+          headerMacSelect={
+            <WebMacSelect
+              devices={devices}
+              deviceId={selectedDeviceId}
+              onDeviceChange={setSelectedDeviceId}
+              disabled={submitting}
+              iconOnly
+              className='web-ask-mac-select--header'
+            />
+          }
           onOpenEmulator={handleOpenEmulator}
           onSelectProject={handleSelectProjectAgents}
           onBackToProjects={handleBackToProjects}
+          onBackFromAgent={handleBackFromAgent}
           onFocusedAgentHandled={() => setFocusedAgentId(null)}
           onOpenAgentChange={setOpenAgentId}
           onRemove={(agentId) => void handleRemove(agentId)}
@@ -1044,13 +1175,35 @@ export function WebMaestroHome() {
         onSave={saveVercelToken}
         onClear={clearVercelToken}
       />
-      <WebPushModal open={pushOpen} onClose={() => setPushOpen(false)} />
+      <WebPushModal
+        open={pushOpen}
+        onClose={() => {
+          setPushOpen(false);
+          if (session?.user?.id) {
+            void getWebPushStatus(session.user.id).then((status) => {
+              if (status.enabled) {
+                setPushNudgeVisible(false);
+              }
+            });
+          }
+        }}
+      />
       <WebEmulatorPanel
         open={emulatorOpen}
-        onClose={() => setEmulatorOpen(false)}
+        onClose={handleCloseEmulator}
         workspaceId={resolveStoreWorkspaceId()}
         projectId={selectedProjectId}
         deviceId={selectedDeviceId}
+        headerMacSelect={
+          <WebMacSelect
+            devices={devices}
+            deviceId={selectedDeviceId}
+            onDeviceChange={setSelectedDeviceId}
+            disabled={submitting}
+            iconOnly
+            className='web-ask-mac-select--header'
+          />
+        }
       />
     </div>
   );
