@@ -552,6 +552,12 @@ svg {
   z-index: 50;
 }
 
+.home-dashboard.nexus-hero > .home-dashboard__ask-bar {
+  position: fixed;
+  z-index: 80;
+  pointer-events: auto;
+}
+
 .home-dashboard.nexus-hero > .web-vercel-deploy-dock {
   position: fixed;
   z-index: 60;
@@ -990,13 +996,21 @@ svg {
   left: 0;
   right: 0;
   bottom: calc(var(--web-ask-bar-offset) + var(--safe-bottom));
-  z-index: 50;
+  z-index: 80;
   display: flex;
   justify-content: center;
   width: min(calc(100% - 40px - var(--safe-left) - var(--safe-right)), 720px);
   margin: 0 auto;
   padding: 0;
   background: transparent;
+  pointer-events: auto;
+}
+
+.home-dashboard__ask-bar .home-dashboard__ask,
+.home-dashboard__ask-bar .home-dashboard__ask-input-wrap,
+.home-dashboard__ask-bar .home-dashboard__ask-input {
+  pointer-events: auto;
+  touch-action: manipulation;
 }
 
 @media (display-mode: standalone), (display-mode: fullscreen) {

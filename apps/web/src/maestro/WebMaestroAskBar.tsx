@@ -783,7 +783,7 @@ export function WebMaestroAskBar({
     });
   }, [ingestFiles]);
 
-  return (
+  return createPortal(
     <div className='home-dashboard__ask-bar'>
       <form
         ref={askFormRef}
@@ -1132,6 +1132,7 @@ export function WebMaestroAskBar({
             document.body,
           )
         : null}
-    </div>
+    </div>,
+    document.body,
   );
 }
