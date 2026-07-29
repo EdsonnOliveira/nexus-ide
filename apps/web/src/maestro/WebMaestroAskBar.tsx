@@ -947,7 +947,21 @@ export function WebMaestroAskBar({
               placeholder='Pergunte algo ao Nexus...'
               disabled={submitting}
               spellCheck={false}
+              enterKeyHint='send'
+              autoComplete='off'
+              autoCorrect='on'
+              autoCapitalize='sentences'
               aria-label='Pergunte algo ao Nexus'
+              onPointerDown={(event) => {
+                if (submitting || event.button > 0) {
+                  return;
+                }
+                const input = inputRef.current;
+                if (!input || document.activeElement === input) {
+                  return;
+                }
+                input.focus();
+              }}
               onChange={(event) => {
                 setPrompt(event.target.value);
                 resizeAskInput(event.target);

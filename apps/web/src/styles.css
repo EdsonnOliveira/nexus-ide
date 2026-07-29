@@ -560,7 +560,7 @@ svg {
 
 .home-dashboard.nexus-hero > .web-vercel-deploy-dock {
   position: fixed;
-  z-index: 60;
+  z-index: 90;
 }
 
 .home-dashboard.nexus-hero > .web-emulator-panel {
@@ -2565,6 +2565,22 @@ html.nexus-standalone .home-dashboard__ask-bar {
   -webkit-text-fill-color: transparent;
 }
 
+@media (hover: none) and (pointer: coarse) {
+  .home-dashboard__ask-input-mirror {
+    display: none;
+  }
+
+  .home-dashboard__ask-input--mirrored {
+    color: #f8fafc;
+    -webkit-text-fill-color: #f8fafc;
+  }
+
+  .home-dashboard__ask-input--mirrored::placeholder {
+    color: rgba(148, 163, 184, 0.78);
+    -webkit-text-fill-color: rgba(148, 163, 184, 0.78);
+  }
+}
+
 .home-dashboard__ask-actions {
   display: inline-flex;
   align-items: center;
@@ -3892,7 +3908,7 @@ html.nexus-standalone .home-dashboard__ask-bar {
   right: calc(16px + var(--safe-right));
   left: auto;
   bottom: auto;
-  z-index: 60;
+  z-index: 90;
   width: min(280px, calc(100vw - 32px));
   max-width: 280px;
   margin-left: 0;

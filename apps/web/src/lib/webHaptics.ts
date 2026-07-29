@@ -18,6 +18,17 @@ function isIosDevice(): boolean {
   return navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
 }
 
+function isTextEntryTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+  return Boolean(
+    target.closest(
+      'textarea, [contenteditable=""], [contenteditable="true"], input:not([type]), input[type="text"], input[type="search"], input[type="email"], input[type="password"], input[type="url"], input[type="tel"], input[type="number"], input[type="date"], input[type="time"], input[type="datetime-local"], input[type="month"], input[type="week"]',
+    ),
+  );
+}
+
 function ensureIosHapticSwitch(): HTMLLabelElement | null {
   if (typeof document === 'undefined') {
     return null;
@@ -55,7 +66,18 @@ export function triggerWebHaptic(): void {
   }
 
   if (isIosDevice()) {
+    const active = document.activeElement;
     ensureIosHapticSwitch()?.click();
+    const switchInput = document.getElementById(HAPTIC_SWITCH_ID) as HTMLInputElement | null;
+    switchInput?.blur();
+    if (
+      active instanceof HTMLElement &&
+      active !== switchInput &&
+      document.activeElement !== active &&
+      typeof active.focus === 'function'
+    ) {
+      active.focus({ preventScroll: true });
+    }
     return;
   }
 
@@ -66,6 +88,9 @@ export function triggerWebHaptic(): void {
 
 function onTrustedClick(event: MouseEvent): void {
   if (!event.isTrusted) {
+    return;
+  }
+  if (isTextEntryTarget(event.target)) {
     return;
   }
   triggerWebHaptic();

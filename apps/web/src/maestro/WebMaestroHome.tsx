@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Bell } from 'lucide-react';
 import {
   closeAgentSession,
@@ -1149,24 +1150,27 @@ export function WebMaestroHome() {
           onScrollChange={setHeroScrolled}
         />
       ) : null}
-      {!emulatorOpen && (mobileActiveRelease || vercelActiveDeployment) ? (
-        <div className='web-vercel-deploy-dock'>
-          {mobileActiveRelease ? (
-            <WebMobileReleaseCard
-              release={mobileActiveRelease}
-              deviceId={mobileReleaseDeviceId ?? resolveDeviceId()}
-              onDismiss={() => dismissMobileReleaseCard(mobileActiveRelease.uid)}
-            />
-          ) : null}
-          {vercelActiveDeployment ? (
-            <WebVercelDeployCard
-              deployment={vercelActiveDeployment}
-              deployments={vercelDeployments}
-              onDismiss={() => dismissVercelDeployCard(vercelActiveDeployment.uid)}
-            />
-          ) : null}
-        </div>
-      ) : null}
+      {!emulatorOpen && (mobileActiveRelease || vercelActiveDeployment)
+        ? createPortal(
+            <div className='web-vercel-deploy-dock'>
+              {mobileActiveRelease ? (
+                <WebMobileReleaseCard
+                  release={mobileActiveRelease}
+                  deviceId={mobileReleaseDeviceId ?? resolveDeviceId()}
+                  onDismiss={() => dismissMobileReleaseCard(mobileActiveRelease.uid)}
+                />
+              ) : null}
+              {vercelActiveDeployment ? (
+                <WebVercelDeployCard
+                  deployment={vercelActiveDeployment}
+                  deployments={vercelDeployments}
+                  onDismiss={() => dismissVercelDeployCard(vercelActiveDeployment.uid)}
+                />
+              ) : null}
+            </div>,
+            document.body,
+          )
+        : null}
       <WebMacPairingModal open={pairingOpen} onClose={() => setPairingOpen(false)} />
       <WebVercelTokenModal
         open={vercelTokenOpen}

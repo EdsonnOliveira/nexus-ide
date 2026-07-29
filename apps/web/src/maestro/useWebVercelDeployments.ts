@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   deleteUserVercelToken,
+  getUserVercelToken,
   getVercelDeploySnapshot,
   upsertUserVercelToken,
   upsertVercelDeploySnapshot,
@@ -48,6 +49,7 @@ export function useWebVercelDeployments(enabled: boolean) {
   const [error, setError] = useState<string | null>(null);
   const [dismissedUid, setDismissedUid] = useState<string | null>(() => readDismissedDeployUid());
   const requestIdRef = useRef(0);
+  const hydrateDoneRef = useRef(false);
 
   const applySnapshot = useCallback((active: unknown, list: unknown) => {
     const parsedList = parseVercelDeployments(list);
@@ -145,12 +147,44 @@ export function useWebVercelDeployments(enabled: boolean) {
   }, []);
 
   useEffect(() => {
+    if (!enabled || hydrateDoneRef.current) {
+      return;
+    }
+    hydrateDoneRef.current = true;
+
+    void (async () => {
+      if (readWebVercelToken()) {
+        setTokenConfigured(true);
+        await refreshFromSnapshot();
+        return;
+      }
+
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (!session?.user?.id) {
+          await refreshFromSnapshot();
+          return;
+        }
+        const remoteToken = await getUserVercelToken(supabase, session.user.id);
+        if (remoteToken) {
+          writeWebVercelToken(remoteToken);
+          setTokenConfigured(true);
+          return;
+        }
+      } catch {
+      }
+      await refreshFromSnapshot();
+    })();
+  }, [enabled, refreshFromSnapshot]);
+
+  useEffect(() => {
     if (!enabled) {
       return;
     }
     void refreshTokenConfigured();
-    void refreshFromSnapshot();
-  }, [enabled, refreshFromSnapshot, refreshTokenConfigured]);
+  }, [enabled, refreshTokenConfigured]);
 
   useEffect(() => {
     if (!enabled) {
@@ -222,6 +256,16 @@ export function useWebVercelDeployments(enabled: boolean) {
       }
     };
   }, [applySnapshot, enabled]);
+
+  useEffect(() => {
+    if (!activeDeployment?.uid) {
+      return;
+    }
+    if (dismissedUid && activeDeployment.uid !== dismissedUid) {
+      setDismissedUid(null);
+      writeDismissedDeployUid(null);
+    }
+  }, [activeDeployment?.uid, dismissedUid]);
 
   const dismiss = useCallback((uid?: string) => {
     const nextUid = uid ?? activeDeployment?.uid;

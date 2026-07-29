@@ -738,6 +738,22 @@ export async function upsertPushPreferences(
   return data as PushPreferencesRow;
 }
 
+export async function getUserVercelToken(
+  client: NexusClient,
+  userId: string,
+): Promise<string | null> {
+  const { data, error } = await client
+    .from('user_vercel_tokens')
+    .select('token')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error) {
+    throw error;
+  }
+  const token = typeof data?.token === 'string' ? data.token.trim() : '';
+  return token || null;
+}
+
 export async function upsertUserVercelToken(
   client: NexusClient,
   userId: string,

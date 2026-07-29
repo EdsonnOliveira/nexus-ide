@@ -77,16 +77,30 @@ async function invokeEdgeProxy(action: string, token: string, deploymentUid?: st
   const { data, error } = await supabase.functions.invoke('vercel-proxy', {
     body: { action, token, deploymentUid },
   });
-  if (error) {
-    throw error;
-  }
-  return data as {
+  const payload = data as {
     ok?: boolean;
     deployment?: VercelActiveDeployment | null;
     deployments?: VercelActiveDeployment[];
     logs?: string;
     error?: string;
-  };
+  } | null;
+  if (error) {
+    const message =
+      (payload && typeof payload.error === 'string' && payload.error.trim()) ||
+      error.message ||
+      'Vercel proxy failed';
+    const statusCode =
+      error && typeof error === 'object' && 'context' in error
+        ? Number((error as { context?: { status?: number } }).context?.status)
+        : undefined;
+    throw Object.assign(new Error(message), {
+      statusCode: Number.isFinite(statusCode) ? statusCode : undefined,
+    });
+  }
+  if (payload?.error) {
+    throw new Error(payload.error);
+  }
+  return payload ?? {};
 }
 
 async function proxyRequestRaw(token: string, path: string): Promise<string> {
@@ -268,14 +282,50 @@ async function mapDeploymentRecord(
   };
 }
 
+async function listTeamIds(token: string): Promise<string[]> {
+  try {
+    const response = await proxyRequestJson<{ teams?: Array<{ id?: string }> }>(
+      token,
+      '/v2/teams?limit=100',
+    );
+    return (response.teams ?? [])
+      .map((team) => team.id?.trim() ?? '')
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 async function listViaProxy(token: string): Promise<VercelActiveDeployment[]> {
-  const response = await proxyRequestJson<{ deployments?: VercelDeploymentRecord[] }>(
-    token,
+  if (!import.meta.env.DEV) {
+    throw new Error('Vercel proxy local indisponível em produção');
+  }
+  const teamIds = await listTeamIds(token);
+  const paths = [
     '/v6/deployments?limit=20',
-  );
-  const deployments = response.deployments ?? [];
+    ...teamIds.map(
+      (teamId) => `/v6/deployments?limit=20&teamId=${encodeURIComponent(teamId)}`,
+    ),
+  ];
+  const records = new Map<string, VercelDeploymentRecord>();
+  for (const path of paths) {
+    try {
+      const response = await proxyRequestJson<{ deployments?: VercelDeploymentRecord[] }>(
+        token,
+        path,
+      );
+      for (const deployment of response.deployments ?? []) {
+        const uid = deployment.uid?.trim();
+        if (uid) {
+          records.set(uid, deployment);
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
   const mapped = await Promise.all(
-    deployments.map((deployment) => mapDeploymentRecord(token, deployment)),
+    [...records.values()].map((deployment) => mapDeploymentRecord(token, deployment)),
   );
   return mapped
     .filter((deployment): deployment is VercelActiveDeployment => deployment !== null)
@@ -308,15 +358,15 @@ export async function fetchWebVercelActive(
   const trimmed = token.trim();
   try {
     const edge = await invokeEdgeProxy('active', trimmed);
-    if (edge?.error) {
-      throw new Error(edge.error);
-    }
     const deployments = parseVercelDeployments(edge?.deployments);
     const deployment = isVercelActiveDeployment(edge?.deployment)
       ? edge.deployment
       : (deployments[0] ?? null);
     return { deployment, deployments };
-  } catch {
+  } catch (edgeError) {
+    if (!import.meta.env.DEV) {
+      throw edgeError;
+    }
   }
   const deployments = await listViaProxy(trimmed);
   return { deployment: deployments[0] ?? null, deployments };
@@ -326,11 +376,11 @@ export async function fetchWebVercelDeployments(token: string): Promise<VercelAc
   const trimmed = token.trim();
   try {
     const edge = await invokeEdgeProxy('list', trimmed);
-    if (edge?.error) {
-      throw new Error(edge.error);
-    }
     return parseVercelDeployments(edge?.deployments);
-  } catch {
+  } catch (edgeError) {
+    if (!import.meta.env.DEV) {
+      throw edgeError;
+    }
   }
   return listViaProxy(trimmed);
 }

@@ -236,6 +236,22 @@
   overflow-y: hidden;
 }
 
+@media (hover: none) and (pointer: coarse) {
+  .agent-view__composer-input-mirror {
+    display: none;
+  }
+
+  .agent-view__composer-input--mirrored {
+    color: var(--text-primary);
+    -webkit-text-fill-color: var(--text-primary);
+  }
+
+  .agent-view__composer-input--mirrored::placeholder {
+    color: var(--text-muted);
+    -webkit-text-fill-color: var(--text-muted);
+  }
+}
+
 .agent-view__composer-input {
   flex: 1;
   min-width: 0;

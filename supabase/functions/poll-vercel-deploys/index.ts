@@ -66,17 +66,55 @@ async function listActive(token: string): Promise<{
   deployment: ActiveDeployment | null;
   deployments: ActiveDeployment[];
 }> {
-  const response = await fetch(`${VERCEL_API_BASE}/v6/deployments?limit=20`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/json',
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`Vercel API ${response.status}`);
+  let teamIds: string[] = [];
+  try {
+    const teamsResponse = await fetch(`${VERCEL_API_BASE}/v2/teams?limit=100`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    });
+    if (teamsResponse.ok) {
+      const teamsJson = (await teamsResponse.json()) as { teams?: Array<{ id?: string }> };
+      teamIds = (teamsJson.teams ?? [])
+        .map((team) => team.id?.trim() ?? '')
+        .filter(Boolean);
+    }
+  } catch {
+    teamIds = [];
   }
-  const json = (await response.json()) as { deployments?: VercelDeploymentRecord[] };
-  const deployments = (json.deployments ?? [])
+
+  const paths = [
+    '/v6/deployments?limit=20',
+    ...teamIds.map(
+      (teamId) => `/v6/deployments?limit=20&teamId=${encodeURIComponent(teamId)}`,
+    ),
+  ];
+  const records = new Map<string, VercelDeploymentRecord>();
+  for (const path of paths) {
+    try {
+      const response = await fetch(`${VERCEL_API_BASE}${path}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+        },
+      });
+      if (!response.ok) {
+        continue;
+      }
+      const json = (await response.json()) as { deployments?: VercelDeploymentRecord[] };
+      for (const deployment of json.deployments ?? []) {
+        const uid = deployment.uid?.trim();
+        if (uid) {
+          records.set(uid, deployment);
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  const deployments = [...records.values()]
     .map((deployment) => {
       const uid = deployment.uid?.trim();
       if (!uid) {
