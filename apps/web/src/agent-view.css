@@ -631,40 +631,51 @@
 }
 
 .agent-view__thought {
-  margin: 6px 0 12px;
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 88%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--surface-2) 76%, transparent);
-  overflow: hidden;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
 }
 
 .agent-view__thought--streaming {
-  border-color: color-mix(in srgb, var(--border-subtle) 72%, var(--text-muted) 28%);
+  border: none;
 }
 
 .agent-view__thought-header,
 .agent-view__thought-header.app-button {
-  width: 100%;
-  display: flex;
-  align-items: center;
+  width: auto;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: baseline;
   gap: 6px;
-  padding: 8px 10px;
-  color: var(--text-muted);
+  padding: 1px 0;
+  color: var(--text-secondary);
   font-size: 12px;
+  line-height: 1.45;
   border: none;
   border-radius: 0;
   background: transparent;
   cursor: pointer;
   text-align: left;
+  box-shadow: none;
+  filter: none;
 }
 
 .agent-view__thought-header:hover:not(:disabled) {
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--surface-3) 42%, transparent);
+  color: var(--text-primary);
+  background: transparent;
+  filter: none;
+}
+
+.agent-view__thought-header:disabled {
+  cursor: default;
+  opacity: 1;
 }
 
 .agent-view__thought-title {
-  font-weight: 500;
+  font-weight: 400;
+  color: inherit;
 }
 
 .agent-view__thought-title--streaming {
@@ -694,7 +705,8 @@
 }
 
 .agent-view__thought-body {
-  padding: 0 12px 12px 30px;
+  margin-top: 4px;
+  padding: 0 0 4px;
   max-height: min(42vh, 320px);
   overflow-y: auto;
 }
@@ -702,7 +714,7 @@
 .agent-view__thought-prose {
   font-size: 12.5px;
   line-height: 1.55;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -775,6 +787,8 @@
 
 .agent-view__thought + .agent-view__file-list,
 .agent-view__thought + .agent-view__tool-batch,
+.agent-view__file-list + .agent-view__thought,
+.agent-view__tool-batch + .agent-view__thought,
 .agent-view__response + .agent-view__file-list,
 .agent-view__response + .agent-view__tool-batch,
 .agent-view__file-list + .agent-view__response,

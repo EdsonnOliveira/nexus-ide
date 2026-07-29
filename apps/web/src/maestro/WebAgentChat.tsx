@@ -11,7 +11,7 @@ import {
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react';
-import { ArrowUp, AtSign, ChevronDown, ChevronRight, FileText, Globe, Paperclip, Square, X } from 'lucide-react';
+import { ArrowUp, AtSign, FileText, Globe, Paperclip, Square, X } from 'lucide-react';
 import type { WebAgentSession, WebAgentTurn, WebAgentActivity } from '../store';
 import { buildWebLiveToolBatchSummary } from './webStreamJson';
 import { renderWebMarkdown } from './webMarkdown';
@@ -73,7 +73,7 @@ function ThoughtBlock({
   endedAt?: number;
   body: string;
 }) {
-  const [expanded, setExpanded] = useState(streaming || !body);
+  const [expanded, setExpanded] = useState(false);
   const [elapsed, setElapsed] = useState(1);
 
   useEffect(() => {
@@ -105,6 +105,8 @@ function ThoughtBlock({
           : null
       : null;
 
+  const canToggle = Boolean(body.trim()) || streaming;
+
   return (
     <div
       className={`agent-view__thought${streaming ? ' agent-view__thought--streaming' : ''}${
@@ -114,11 +116,17 @@ function ThoughtBlock({
       <button
         type='button'
         className='agent-view__thought-header app-button'
-        onClick={() => setExpanded((current) => !current)}
+        aria-expanded={expanded}
+        disabled={!canToggle}
+        onClick={() => {
+          if (!canToggle) {
+            return;
+          }
+          setExpanded((current) => !current);
+        }}
       >
-        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         <span
-          className={`agent-view__thought-title${
+          className={`agent-view__file-verb agent-view__thought-title${
             streaming ? ' agent-view__thought-title--streaming' : ''
           }`}
         >
@@ -126,7 +134,7 @@ function ThoughtBlock({
         </span>
       </button>
       {expanded ? (
-        <div className='agent-view__thought-body'>
+        <div className='agent-view__thought-body app-button--enter'>
           {body.trim() ? <div className='agent-view__thought-prose'>{body}</div> : null}
           {streaming && !body.trim() ? (
             <div className='agent-view__thought-waiting'>
