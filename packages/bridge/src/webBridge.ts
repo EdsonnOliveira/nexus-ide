@@ -49,15 +49,15 @@ export function createWebBridge(config: NexusSupabaseConfig): NexusBridge {
   }
 
   async function resolveCommandWorkspaceId(command: NexusCommand): Promise<string> {
-    if (command.workspace_id) {
-      return command.workspace_id;
-    }
     const devices = await listDevices(client);
     const target = devices.find((device) => device.id === command.target_device_id);
-    if (target?.workspace_id) {
-      return target.workspace_id;
+    if (!target) {
+      throw new Error('Mac não encontrado. Pareie o dispositivo novamente.');
     }
-    return resolveWorkspaceId();
+    if (!target.workspace_id) {
+      throw new Error('Mac sem workspace. Pareie o dispositivo novamente.');
+    }
+    return target.workspace_id;
   }
 
   return {

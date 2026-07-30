@@ -53,9 +53,16 @@ function StatusBarComponent({ onToggleJarvis }: StatusBarProps) {
   const jarvisBusy = useJarvisStore((state) => state.busy);
   const jarvisTranscript = useJarvisStore((state) => state.lastTranscript);
 
+  const jarvisEffectivePhase = useMemo(() => {
+    if (jarvisBusy && (jarvisPhase === 'listening' || jarvisPhase === 'idle')) {
+      return 'processing';
+    }
+    return jarvisPhase;
+  }, [jarvisBusy, jarvisPhase]);
+
   const jarvisButtonClassName = useMemo(() => {
     const classes = ['status-bar__btn', 'app-button', 'app-button--enter'];
-    const phase = jarvisBusy ? 'executing' : jarvisPhase;
+    const phase = jarvisEffectivePhase;
 
     if (jarvisEnabled) {
       classes.push('status-bar__btn--jarvis-on');
@@ -74,7 +81,7 @@ function StatusBarComponent({ onToggleJarvis }: StatusBarProps) {
     }
 
     return classes.join(' ');
-  }, [jarvisBusy, jarvisEnabled, jarvisPhase]);
+  }, [jarvisEffectivePhase, jarvisEnabled]);
 
   const jarvisAriaLabel = useMemo(() => {
     if (jarvisError) {
@@ -83,20 +90,23 @@ function StatusBarComponent({ onToggleJarvis }: StatusBarProps) {
     if (!jarvisEnabled) {
       return 'Ativar Jarvis por voz';
     }
+    if (jarvisEffectivePhase === 'processing') {
+      return 'Jarvis processando a voz';
+    }
     if (jarvisTranscript) {
       return `Jarvis ouviu: ${jarvisTranscript}`;
     }
-    if (jarvisPhase === 'listening') {
+    if (jarvisEffectivePhase === 'listening') {
       return 'Jarvis ouvindo — clique para desativar';
     }
-    if (jarvisPhase === 'executing' || jarvisPhase === 'processing') {
+    if (jarvisEffectivePhase === 'executing') {
       return 'Jarvis executando';
     }
-    if (jarvisPhase === 'speaking') {
+    if (jarvisEffectivePhase === 'speaking') {
       return 'Jarvis falando';
     }
     return 'Desativar Jarvis por voz';
-  }, [jarvisEnabled, jarvisError, jarvisPhase, jarvisTranscript]);
+  }, [jarvisEffectivePhase, jarvisEnabled, jarvisError, jarvisTranscript]);
 
   const jarvisLiveText = useMemo(() => {
     if (!jarvisEnabled) {
@@ -105,25 +115,24 @@ function StatusBarComponent({ onToggleJarvis }: StatusBarProps) {
     if (jarvisError) {
       return jarvisError;
     }
+    if (jarvisEffectivePhase === 'processing') {
+      return 'Processando…';
+    }
+    if (jarvisEffectivePhase === 'speaking') {
+      return 'Falando…';
+    }
+    if (jarvisEffectivePhase === 'executing') {
+      return jarvisTranscript?.trim() ? jarvisTranscript.trim() : 'Executando…';
+    }
     if (jarvisTranscript?.trim()) {
       return jarvisTranscript.trim();
     }
-    const phase = jarvisBusy ? 'executing' : jarvisPhase;
-    if (phase === 'processing') {
-      return 'Processando…';
-    }
-    if (phase === 'speaking') {
-      return 'Falando…';
-    }
-    if (phase === 'executing') {
-      return 'Executando…';
-    }
     return 'Ouvindo…';
-  }, [jarvisBusy, jarvisEnabled, jarvisError, jarvisPhase, jarvisTranscript]);
+  }, [jarvisEffectivePhase, jarvisEnabled, jarvisError, jarvisTranscript]);
 
   const jarvisLiveClassName = useMemo(() => {
     const classes = ['status-bar__jarvis-live', 'app-button--enter'];
-    const phase = jarvisBusy ? 'executing' : jarvisPhase;
+    const phase = jarvisEffectivePhase;
     if (jarvisError) {
       classes.push('status-bar__jarvis-live--error');
     } else if (phase === 'processing' || phase === 'speaking' || phase === 'executing') {
@@ -132,7 +141,7 @@ function StatusBarComponent({ onToggleJarvis }: StatusBarProps) {
       classes.push('status-bar__jarvis-live--heard');
     }
     return classes.join(' ');
-  }, [jarvisBusy, jarvisError, jarvisPhase, jarvisTranscript]);
+  }, [jarvisEffectivePhase, jarvisError, jarvisTranscript]);
 
   const handleBranchClick = useCallback(
     (entry: GitBranchBarEntry, event: MouseEvent<HTMLButtonElement>) => {

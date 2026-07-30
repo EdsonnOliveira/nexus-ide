@@ -47,8 +47,8 @@ export async function downloadWebMobileArtifact(input: {
     null;
 
   const workspaceId =
-    project?.workspace_id ||
     state.devices.find((device) => device.id === deviceId)?.workspace_id ||
+    project?.workspace_id ||
     state.activeWorkspaceId ||
     (await bridge.getWorkspaceId());
 

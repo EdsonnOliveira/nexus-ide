@@ -424,13 +424,18 @@ function registerShortcuts() {
 }
 
 app.whenReady().then(() => {
-  const mediaPermissions = new Set(['media', 'mediaKeySystem']);
+  const allowedPermissions = new Set([
+    'media',
+    'mediaKeySystem',
+    'clipboard-sanitized-write',
+    'clipboard-read',
+  ]);
 
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    callback(mediaPermissions.has(permission));
+    callback(allowedPermissions.has(permission));
   });
   session.defaultSession.setPermissionCheckHandler((_webContents, permission) =>
-    mediaPermissions.has(permission),
+    allowedPermissions.has(permission),
   );
 
   registerLocalFileProtocol();

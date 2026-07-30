@@ -1,6 +1,6 @@
 {
   "name": "nexus-ide",
-  "version": "1.0.33",
+  "version": "1.0.34",
   "private": true,
   "description": "Nexus IDE — AI-powered desktop IDE",
   "engines": {
@@ -110,6 +110,10 @@
       {
         "from": "resources/shell/NotificationHelper.app",
         "to": "Helpers/NotificationHelper.app"
+      },
+      {
+        "from": "resources/shell/SpeechHelper.app",
+        "to": "Helpers/SpeechHelper.app"
       }
     ],
     "mac": {
@@ -123,7 +127,9 @@
         "CFBundleName": "Nexus IDE",
         "CFBundleIconName": "Nexus",
         "NSCalendarsUsageDescription": "O Nexus IDE exibe seus eventos do Calendário na barra lateral.",
-        "NSCalendarsFullAccessUsageDescription": "O Nexus IDE precisa ler seus eventos do Calendário para exibi-los na barra lateral."
+        "NSCalendarsFullAccessUsageDescription": "O Nexus IDE precisa ler seus eventos do Calendário para exibi-los na barra lateral.",
+        "NSMicrophoneUsageDescription": "O Nexus IDE usa o microfone para o Jarvis controlar o app por voz.",
+        "NSSpeechRecognitionUsageDescription": "O Nexus IDE usa reconhecimento de fala para entender comandos do Jarvis."
       },
       "x64ArchFiles": "{**/node-pty/**,**/Contents/Helpers/**,**/macos-calendar/**,**/resources/shell/**,**/@vscode/ripgrep*/**,**/Assets.car}",
       "identity": "-",

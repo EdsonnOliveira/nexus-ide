@@ -22,8 +22,9 @@ run('xattr', ['-cr', appPath]);
 
 const calendarHelperAppPath = path.join(appPath, 'Contents/Helpers/CalendarHelper.app');
 const notificationHelperAppPath = path.join(appPath, 'Contents/Helpers/NotificationHelper.app');
+const speechHelperAppPath = path.join(appPath, 'Contents/Helpers/SpeechHelper.app');
 
-for (const helperAppPath of [calendarHelperAppPath, notificationHelperAppPath]) {
+for (const helperAppPath of [calendarHelperAppPath, notificationHelperAppPath, speechHelperAppPath]) {
   if (existsSync(helperAppPath)) {
     run('codesign', ['--force', '-s', '-', helperAppPath]);
   }

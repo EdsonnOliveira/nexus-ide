@@ -7,6 +7,43 @@ import type {
 import { sanitizeResponseText } from '@/utils/agentTranscriptParser';
 import { normalizeMarkdownSource } from '@/utils/markdownText';
 
+export function buildEditedFilesFromActivities(
+  activities: AgentActivity[],
+): AgentTurnSummaryFileRef[] {
+  const editedPaths = new Map<string, AgentTurnSummaryFileRef>();
+
+  for (const activity of activities) {
+    if (activity.kind !== 'file_edit') {
+      continue;
+    }
+
+    const path = activity.filePath?.trim();
+
+    if (!path) {
+      continue;
+    }
+
+    const key = path.toLowerCase();
+    const existing = editedPaths.get(key);
+    const fileAdditions = activity.additions ?? 0;
+    const fileDeletions = activity.deletions ?? 0;
+
+    if (!existing) {
+      editedPaths.set(key, {
+        path,
+        ...(fileAdditions > 0 ? { additions: fileAdditions } : {}),
+        ...(fileDeletions > 0 ? { deletions: fileDeletions } : {}),
+      });
+      continue;
+    }
+
+    existing.additions = (existing.additions ?? 0) + fileAdditions;
+    existing.deletions = (existing.deletions ?? 0) + fileDeletions;
+  }
+
+  return [...editedPaths.values()];
+}
+
 export function isAgentTurnSummaryVisible(summary: AgentTurnSummary | undefined): boolean {
   if (!summary) {
     return false;
@@ -53,10 +90,23 @@ export function computeAgentTurnSummaryFromActivities(
 
       if (path) {
         const key = path.toLowerCase();
+        const fileAdditions = activity.additions ?? 0;
+        const fileDeletions = activity.deletions ?? 0;
 
         if (!editedPaths.has(key)) {
           editedPaths.add(key);
-          editedFiles.push({ path });
+          editedFiles.push({
+            path,
+            ...(fileAdditions > 0 ? { additions: fileAdditions } : {}),
+            ...(fileDeletions > 0 ? { deletions: fileDeletions } : {}),
+          });
+        } else {
+          const existing = editedFiles.find((entry) => entry.path.toLowerCase() === key);
+
+          if (existing) {
+            existing.additions = (existing.additions ?? 0) + fileAdditions;
+            existing.deletions = (existing.deletions ?? 0) + fileDeletions;
+          }
         }
       }
 
@@ -302,40 +352,247 @@ export function isAgentScrollGroupActivity(activity: AgentActivity, running: boo
   return false;
 }
 
+export function isAgentActionBlockActivity(activity: AgentActivity): boolean {
+  if (activity.kind === 'thought') {
+    return true;
+  }
+
+  if (activity.kind === 'file_edit' || activity.kind === 'file_read') {
+    return Boolean(activity.filePath?.trim());
+  }
+
+  if (activity.kind === 'tool_run') {
+    return Boolean(activity.label.trim() || activity.toolCommand?.trim());
+  }
+
+  if (activity.kind === 'live_status') {
+    return Boolean(activity.label.trim());
+  }
+
+  if (activity.kind === 'status') {
+    return Boolean(/^Ran\b/i.test(activity.label.trim()));
+  }
+
+  return false;
+}
+
+function isSearchToolActivity(activity: AgentActivity): boolean {
+  if (activity.kind !== 'tool_run' && activity.kind !== 'live_status') {
+    return false;
+  }
+
+  return /^(?:Glob|Grep|Grepping|Searching|Searched)/i.test(activity.label.trim());
+}
+
+function isLintToolActivity(activity: AgentActivity): boolean {
+  if (activity.kind !== 'tool_run' && activity.kind !== 'live_status') {
+    return false;
+  }
+
+  const label = activity.label.trim();
+  const command = activity.toolCommand?.trim() ?? '';
+  return /lint/i.test(label) || /lint/i.test(command);
+}
+
+export interface ActionBlockSummary {
+  label: string;
+  additions: number;
+  deletions: number;
+  hasToolProgress: boolean;
+  editedFiles: AgentTurnSummaryFileRef[];
+  exploredFiles: AgentTurnSummaryFileRef[];
+  commands: AgentTurnSummaryCommandRef[];
+}
+
+export function buildActionBlockSummary(activities: AgentActivity[]): ActionBlockSummary {
+  const editedPaths = new Set<string>();
+  const exploredPaths = new Set<string>();
+  const editedFiles: AgentTurnSummaryFileRef[] = [];
+  const exploredFiles: AgentTurnSummaryFileRef[] = [];
+  const commands: AgentTurnSummaryCommandRef[] = [];
+  const commandKeys = new Set<string>();
+  let additions = 0;
+  let deletions = 0;
+  let searchCount = 0;
+  let lintCount = 0;
+
+  for (const activity of activities) {
+    if (activity.kind === 'file_edit') {
+      const path = activity.filePath?.trim();
+      if (path) {
+        const key = path.toLowerCase();
+        if (!editedPaths.has(key)) {
+          editedPaths.add(key);
+          editedFiles.push({ path });
+        }
+      }
+      additions += activity.additions ?? 0;
+      deletions += activity.deletions ?? 0;
+      continue;
+    }
+
+    if (activity.kind === 'file_read') {
+      const path = activity.filePath?.trim();
+      if (path) {
+        const key = path.toLowerCase();
+        if (!exploredPaths.has(key) && !editedPaths.has(key)) {
+          exploredPaths.add(key);
+          exploredFiles.push({ path });
+        }
+      }
+      continue;
+    }
+
+    if (isSearchToolActivity(activity)) {
+      searchCount += 1;
+      continue;
+    }
+
+    if (isLintToolActivity(activity)) {
+      lintCount += 1;
+      continue;
+    }
+
+    if (activity.kind === 'tool_run' && activity.toolCommand?.trim()) {
+      const command = activity.toolCommand.trim();
+      const key = command.toLowerCase();
+      if (!commandKeys.has(key)) {
+        commandKeys.add(key);
+        commands.push({ command });
+      }
+    }
+  }
+
+  const parts: string[] = [];
+
+  if (editedFiles.length > 0) {
+    parts.push(`Editing ${editedFiles.length} file${editedFiles.length === 1 ? '' : 's'}`);
+  }
+
+  if (exploredFiles.length > 0) {
+    parts.push(`explored ${exploredFiles.length} file${exploredFiles.length === 1 ? '' : 's'}`);
+  }
+
+  if (searchCount > 0) {
+    parts.push(`${searchCount} search${searchCount === 1 ? '' : 'es'}`);
+  }
+
+  if (lintCount > 0) {
+    parts.push(lintCount === 1 ? 'lints' : `${lintCount} lints`);
+  }
+
+  if (commands.length > 0) {
+    parts.push(`ran ${commands.length} command${commands.length === 1 ? '' : 's'}`);
+  }
+
+  return {
+    label: parts.join(', '),
+    additions,
+    deletions,
+    hasToolProgress: parts.length > 0,
+    editedFiles,
+    exploredFiles,
+    commands,
+  };
+}
+
+export function isActionBlockChunkLive(
+  chunkIndex: number,
+  chunks: AgentActivityRenderChunk[],
+  running: boolean,
+): boolean {
+  if (!running) {
+    return false;
+  }
+
+  for (let index = chunkIndex + 1; index < chunks.length; index += 1) {
+    const chunk = chunks[index];
+    if (!chunk) {
+      continue;
+    }
+
+    if (chunk.type === 'single' && chunk.activity) {
+      const kind = chunk.activity.kind;
+      if (kind === 'response' || kind === 'question' || kind === 'plan') {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+export function partitionLiveActionBlockActivities(activities: AgentActivity[]): {
+  settled: AgentActivity[];
+  live: AgentActivity[];
+} {
+  let lastStreamingIndex = -1;
+
+  for (let index = 0; index < activities.length; index += 1) {
+    if (activities[index]?.streaming) {
+      lastStreamingIndex = index;
+    }
+  }
+
+  if (lastStreamingIndex < 0) {
+    return { settled: activities, live: [] };
+  }
+
+  let cutIndex = lastStreamingIndex;
+
+  for (let index = lastStreamingIndex; index >= 0; index -= 1) {
+    const entry = activities[index];
+    if (!entry) {
+      continue;
+    }
+
+    if (entry.kind === 'thought') {
+      cutIndex = index;
+      break;
+    }
+
+    cutIndex = index;
+  }
+
+  return {
+    settled: activities.slice(0, cutIndex),
+    live: activities.slice(cutIndex),
+  };
+}
+
 export interface AgentActivityRenderChunk {
   key: string;
-  type: 'single' | 'tool-group';
+  type: 'single' | 'action-group';
   activity?: AgentActivity;
   activities?: AgentActivity[];
 }
 
 export function buildAgentActivityRenderChunks(
   activities: AgentActivity[],
-  running: boolean,
 ): AgentActivityRenderChunk[] {
   const chunks: AgentActivityRenderChunk[] = [];
-  let toolGroup: AgentActivity[] = [];
+  let actionGroup: AgentActivity[] = [];
 
-  const flushToolGroup = () => {
-    if (toolGroup.length === 0) {
+  const flushActionGroup = () => {
+    if (actionGroup.length === 0) {
       return;
     }
 
     chunks.push({
-      key: `tool-group-${toolGroup[0]?.id ?? chunks.length}`,
-      type: 'tool-group',
-      activities: toolGroup,
+      key: `action-group-${actionGroup[0]?.id ?? chunks.length}`,
+      type: 'action-group',
+      activities: actionGroup,
     });
-    toolGroup = [];
+    actionGroup = [];
   };
 
   for (const activity of activities) {
-    if (isAgentScrollGroupActivity(activity, running)) {
-      toolGroup.push(activity);
+    if (isAgentActionBlockActivity(activity)) {
+      actionGroup.push(activity);
       continue;
     }
 
-    flushToolGroup();
+    flushActionGroup();
     chunks.push({
       key: activity.id,
       type: 'single',
@@ -343,7 +600,7 @@ export function buildAgentActivityRenderChunks(
     });
   }
 
-  flushToolGroup();
+  flushActionGroup();
 
   return chunks;
 }

@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { app } from 'electron';
 import { buildCliPathEnv } from '../../utils/cliPathEnv';
 
 const execFileAsync = promisify(execFile);
@@ -26,13 +27,18 @@ const CANDIDATE_MODELS = [
   '/usr/local/share/whisper-cpp/ggml-base.bin',
 ];
 
+const WHISPER_PROMPT =
+  'Nexus. Comandos em português do Brasil para o assistente do IDE.';
+
 export interface WhisperResolveResult {
   binary: string | null;
   model: string | null;
   available: boolean;
   detail: string;
-  engine: 'whisper' | 'none';
+  engine: 'whisper' | 'macos' | 'none';
 }
+
+let macSpeechDisabled = false;
 
 function whisperEnv(): NodeJS.ProcessEnv {
   return {
@@ -84,7 +90,34 @@ function resolveModel(preferred?: string | null): string | null {
   return null;
 }
 
-export async function resolveWhisperTools(
+function resolveMacSpeechBinary(): string | null {
+  if (process.platform !== 'darwin' || macSpeechDisabled) {
+    return null;
+  }
+
+  const candidates = [
+    join(process.cwd(), 'resources/shell/SpeechHelper.app/Contents/MacOS/SpeechHelper'),
+    join(process.cwd(), 'resources/shell/macosSpeechToText'),
+    join(process.cwd(), 'build/Nexus.app/Contents/Helpers/SpeechHelper.app/Contents/MacOS/SpeechHelper'),
+    join(app.getAppPath(), 'Contents/Helpers/SpeechHelper.app/Contents/MacOS/SpeechHelper'),
+    join(process.resourcesPath, '../Helpers/SpeechHelper.app/Contents/MacOS/SpeechHelper'),
+    join(
+      process.resourcesPath,
+      'app.asar.unpacked/resources/shell/SpeechHelper.app/Contents/MacOS/SpeechHelper',
+    ),
+    join(process.resourcesPath, 'app.asar.unpacked/resources/shell/macosSpeechToText'),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+async function resolveWhisperOnly(
   preferredBinary?: string | null,
   preferredModel?: string | null,
 ): Promise<WhisperResolveResult> {
@@ -122,9 +155,62 @@ export async function resolveWhisperTools(
   };
 }
 
+export async function resolveWhisperTools(
+  preferredBinary?: string | null,
+  preferredModel?: string | null,
+): Promise<WhisperResolveResult> {
+  const whisper = await resolveWhisperOnly(preferredBinary, preferredModel);
+  if (whisper.available) {
+    return whisper;
+  }
+
+  const macSpeech = resolveMacSpeechBinary();
+  if (macSpeech) {
+    return {
+      binary: macSpeech,
+      model: null,
+      available: true,
+      detail: 'Reconhecimento de fala do macOS pronto',
+      engine: 'macos',
+    };
+  }
+
+  return whisper;
+}
+
 function decodeBase64Audio(base64: string): Buffer {
   const cleaned = base64.replace(/^data:audio\/\w+;base64,/, '').trim();
   return Buffer.from(cleaned, 'base64');
+}
+
+function cleanTranscript(raw: string): string {
+  return raw
+    .replace(/\[\d{2}:\d{2}[^\]]*\]/g, ' ')
+    .replace(/^\s*\[(?:BLANK_AUDIO|MUSIC|m[uú]sica|Silence|silence)\]\s*$/gim, '')
+    .replace(/^\s*\((?:MUSIC|m[uú]sica|Silence|silence)\)\s*$/gim, '')
+    .replace(/[\[\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function transcribeWithMacSpeech(wavPath: string, binary: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync(binary, [wavPath], {
+      timeout: 45_000,
+      maxBuffer: 1024 * 1024,
+      env: whisperEnv(),
+    });
+    return cleanTranscript(stdout);
+  } catch (error) {
+    const err = error as { stderr?: Buffer | string; message?: string; signal?: string };
+    if (err.signal === 'SIGABRT') {
+      macSpeechDisabled = true;
+      throw new Error('Reconhecimento de fala do macOS indisponível (permissão/TCC)');
+    }
+    const stderr = typeof err.stderr === 'string' ? err.stderr : err.stderr?.toString('utf8');
+    const detail = stderr?.trim().split('\n').pop() || err.message || 'Falha no STT do macOS';
+    throw new Error(detail.slice(0, 180));
+  }
 }
 
 async function transcribeWithWhisper(
@@ -142,14 +228,28 @@ async function transcribeWithWhisper(
       }
       await execFileAsync(
         binary,
-        ['-m', model, '-l', 'pt', '-f', wavPath, '-otxt', '-of', outBase, '-np'],
-        { timeout: 120_000, maxBuffer: 1024 * 1024, env: whisperEnv() },
+        [
+          '-m',
+          model,
+          '-l',
+          'pt',
+          '-f',
+          wavPath,
+          '-otxt',
+          '-of',
+          outBase,
+          '-np',
+          '-nt',
+          '--prompt',
+          WHISPER_PROMPT,
+        ],
+        { timeout: 60_000, maxBuffer: 1024 * 1024, env: whisperEnv() },
       );
       const txtPath = `${outBase}.txt`;
       if (!existsSync(txtPath)) {
         throw new Error('Whisper não gerou transcript');
       }
-      return readFileSync(txtPath, 'utf8').trim();
+      return cleanTranscript(readFileSync(txtPath, 'utf8'));
     }
 
     await execFileAsync(
@@ -164,14 +264,16 @@ async function transcribeWithWhisper(
         'txt',
         '--output_dir',
         tempDir,
+        '--initial_prompt',
+        WHISPER_PROMPT,
       ],
-      { timeout: 180_000, maxBuffer: 1024 * 1024, env: whisperEnv() },
+      { timeout: 90_000, maxBuffer: 1024 * 1024, env: whisperEnv() },
     );
     const txtPath = join(tempDir, 'utterance.txt');
     if (!existsSync(txtPath)) {
       throw new Error('Whisper não gerou transcript');
     }
-    return readFileSync(txtPath, 'utf8').trim();
+    return cleanTranscript(readFileSync(txtPath, 'utf8'));
   } catch (error) {
     const err = error as { stderr?: Buffer | string; message?: string };
     const stderr = typeof err.stderr === 'string' ? err.stderr : err.stderr?.toString('utf8');
@@ -186,9 +288,11 @@ export async function transcribeWavBase64(
   wavBase64: string,
   options?: { binary?: string | null; model?: string | null },
 ): Promise<string> {
-  const tools = await resolveWhisperTools(options?.binary, options?.model);
-  if (!tools.available || !tools.binary) {
-    throw new Error(tools.detail);
+  const whisperTools = await resolveWhisperOnly(options?.binary, options?.model);
+  const macSpeech = resolveMacSpeechBinary();
+
+  if (!macSpeech && (!whisperTools.available || !whisperTools.binary)) {
+    throw new Error(whisperTools.detail);
   }
 
   if (wavBase64.length > 6_000_000) {
@@ -207,7 +311,21 @@ export async function transcribeWavBase64(
       throw new Error('Áudio muito grande');
     }
     writeFileSync(wavPath, audio);
-    return await transcribeWithWhisper(wavPath, tools.binary, tools.model, tempDir);
+
+    if (whisperTools.available && whisperTools.binary) {
+      return await transcribeWithWhisper(
+        wavPath,
+        whisperTools.binary,
+        whisperTools.model,
+        tempDir,
+      );
+    }
+
+    if (macSpeech) {
+      return await transcribeWithMacSpeech(wavPath, macSpeech);
+    }
+
+    throw new Error(whisperTools.detail);
   } finally {
     try {
       rmSync(tempDir, { recursive: true, force: true });

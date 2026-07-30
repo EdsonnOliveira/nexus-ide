@@ -59,6 +59,7 @@ import {
   resolveHostedAgentProjects,
   type PaneAgentSessionSnapshot,
 } from '@/utils/paneAgentSession';
+import { isAgentTurnActivelyRunning } from '@/utils/projectAgentStatus';
 import {
   isOverlayBlockingTerminalHints,
   subscribeOverlayBlockingChange,
@@ -769,6 +770,13 @@ function isPaneRuntimeActive(
     return true;
   }
 
+  if (
+    pane.type === 'agent' &&
+    (pane.turns ?? []).some((turn) => isAgentTurnActivelyRunning(turn))
+  ) {
+    return true;
+  }
+
   if (!isProjectActive) {
     return false;
   }
@@ -795,11 +803,18 @@ function shouldKeepTabAliveForProject(
 
   if (item.type === 'split') {
     return item.panes.some(
-      (pane) => pane.type === 'agent' && isPaneAgentSessionLive(pane.id, agentSession),
+      (pane) =>
+        pane.type === 'agent' &&
+        (isPaneAgentSessionLive(pane.id, agentSession) ||
+          (pane.turns ?? []).some((turn) => isAgentTurnActivelyRunning(turn))),
     );
   }
 
-  return item.type === 'agent' && isPaneAgentSessionLive(item.id, agentSession);
+  return (
+    item.type === 'agent' &&
+    (isPaneAgentSessionLive(item.id, agentSession) ||
+      (item.turns ?? []).some((turn) => isAgentTurnActivelyRunning(turn)))
+  );
 }
 
 function isPaneFocused(project: Project, isProjectActive: boolean, paneId: string): boolean {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Bot, FolderKanban, ListTodo, Play, Smartphone, Trash2 } from 'lucide-react';
+import { ArrowLeft, Bot, FolderKanban, ListTodo, Monitor, Play, Smartphone, Trash2 } from 'lucide-react';
 import type { CloudProject } from '@nexus/protocol';
 import type { WebAgentSession } from '../store';
 import { WebAgentChat } from './WebAgentChat';
@@ -25,8 +25,10 @@ interface WebMaestroAgentsProps {
   focusedAgentId?: string | null;
   openAgentId?: string | null;
   emulatorProjectIds?: Set<string>;
+  previewProjectIds?: Set<string>;
   headerMacSelect?: ReactNode;
   onOpenEmulator?: (projectId: string) => void;
+  onOpenPreview?: (projectId: string) => void;
   onSelectProject: (projectId: string) => void;
   onBackToProjects: () => void;
   onBackFromAgent?: () => void;
@@ -374,8 +376,10 @@ function AgentFullscreen({
   agent,
   deviceId,
   hasEmulator,
+  hasPreview,
   headerMacSelect,
   onOpenEmulator,
+  onOpenPreview,
   onBack,
   onRemove,
   onFollowUp,
@@ -386,8 +390,10 @@ function AgentFullscreen({
   agent: WebAgentSession;
   deviceId: string | null;
   hasEmulator: boolean;
+  hasPreview: boolean;
   headerMacSelect?: ReactNode;
   onOpenEmulator?: (projectId: string) => void;
+  onOpenPreview?: (projectId: string) => void;
   onBack: () => void;
   onRemove: (id: string) => void;
   onFollowUp: (
@@ -456,6 +462,21 @@ function AgentFullscreen({
               <Smartphone size={14} strokeWidth={2.25} aria-hidden='true' />
             </button>
           ) : null}
+          {hasPreview && agent.projectId ? (
+            <button
+              type='button'
+              className='home-dashboard__agent-card-terminal app-button app-button--enter'
+              aria-label='Abrir front web'
+              title='Front web rodando'
+              onClick={() => {
+                if (agent.projectId) {
+                  onOpenPreview?.(agent.projectId);
+                }
+              }}
+            >
+              <Monitor size={14} strokeWidth={2.25} aria-hidden='true' />
+            </button>
+          ) : null}
           <button
             type='button'
             className='home-dashboard__agent-card-close app-button app-button--enter'
@@ -494,14 +515,18 @@ function AgentProjectRow({
   group,
   enterIndex,
   hasEmulator,
+  hasPreview,
   onSelect,
   onOpenEmulator,
+  onOpenPreview,
 }: {
   group: AgentProjectGroup;
   enterIndex: number;
   hasEmulator: boolean;
+  hasPreview: boolean;
   onSelect: (projectId: string) => void;
   onOpenEmulator?: (projectId: string) => void;
+  onOpenPreview?: (projectId: string) => void;
 }) {
   const handleClick = useCallback(() => {
     onSelect(group.projectId);
@@ -514,6 +539,15 @@ function AgentProjectRow({
       onOpenEmulator?.(group.projectId);
     },
     [group.projectId, onOpenEmulator],
+  );
+
+  const handleOpenPreview = useCallback(
+    (event: MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onOpenPreview?.(group.projectId);
+    },
+    [group.projectId, onOpenPreview],
   );
 
   const showRunningBadge = group.agents.length > 0;
@@ -567,6 +601,17 @@ function AgentProjectRow({
             <Smartphone size={13} aria-hidden='true' />
           </button>
         ) : null}
+        {hasPreview ? (
+          <button
+            type='button'
+            className='web-preview-project-icon app-button'
+            aria-label={`Abrir front web de ${group.name}`}
+            title='Front web rodando'
+            onClick={handleOpenPreview}
+          >
+            <Monitor size={13} aria-hidden='true' />
+          </button>
+        ) : null}
         {group.runningCount > 0 ? (
           <span
             className='home-dashboard__agent-project-busy'
@@ -586,8 +631,10 @@ export function WebMaestroAgents({
   focusedAgentId = null,
   openAgentId: openAgentIdProp = null,
   emulatorProjectIds,
+  previewProjectIds,
   headerMacSelect,
   onOpenEmulator,
+  onOpenPreview,
   onSelectProject,
   onBackToProjects,
   onBackFromAgent,
@@ -648,6 +695,9 @@ export function WebMaestroAgents({
   );
   const hasEmulator = Boolean(
     selectedProjectId && emulatorProjectIds?.has(selectedProjectId),
+  );
+  const hasPreview = Boolean(
+    selectedProjectId && previewProjectIds?.has(selectedProjectId),
   );
 
   const handleOpenAgent = useCallback(
@@ -776,8 +826,10 @@ export function WebMaestroAgents({
                 group={group}
                 enterIndex={index}
                 hasEmulator={Boolean(emulatorProjectIds?.has(group.projectId))}
+                hasPreview={Boolean(previewProjectIds?.has(group.projectId))}
                 onSelect={onSelectProject}
                 onOpenEmulator={onOpenEmulator}
+                onOpenPreview={onOpenPreview}
               />
             ))}
           </div>
@@ -798,8 +850,12 @@ export function WebMaestroAgents({
           hasEmulator={Boolean(
             openAgent.projectId && emulatorProjectIds?.has(openAgent.projectId),
           )}
+          hasPreview={Boolean(
+            openAgent.projectId && previewProjectIds?.has(openAgent.projectId),
+          )}
           headerMacSelect={headerMacSelect}
           onOpenEmulator={onOpenEmulator}
+          onOpenPreview={onOpenPreview}
           onBack={handleCloseAgent}
           onRemove={onRemove}
           onFollowUp={onFollowUp}
@@ -856,6 +912,17 @@ export function WebMaestroAgents({
               onClick={() => onOpenEmulator?.(selectedProjectId)}
             >
               <Smartphone size={15} aria-hidden='true' />
+            </button>
+          ) : null}
+          {hasPreview && selectedProjectId ? (
+            <button
+              type='button'
+              className='web-preview-header-btn app-button home-dashboard__agent-project-emulator'
+              aria-label='Abrir front web'
+              title='Front web rodando'
+              onClick={() => onOpenPreview?.(selectedProjectId)}
+            >
+              <Monitor size={15} aria-hidden='true' />
             </button>
           ) : null}
         </div>

@@ -310,6 +310,13 @@ export const useTerminalSessionStore = create<TerminalSessionState>((set, get) =
   disposePaneSession: (paneId) => {
     resetAgentReadyDetectors(paneId);
 
+    void import('@/utils/agentStreamJsonSession').then(({ clearAgentStreamJsonSession }) => {
+      clearAgentStreamJsonSession(paneId);
+    });
+    void import('@/utils/agentPrintBridge').then(({ clearAgentPrintBridgeBuffer }) => {
+      clearAgentPrintBridgeBuffer(paneId);
+    });
+
     set((state) => ({
       lastRestartCommands: omitPaneRecord(state.lastRestartCommands, paneId),
       activeAgentByPane: omitPaneRecord(state.activeAgentByPane, paneId),

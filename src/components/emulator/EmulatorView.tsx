@@ -555,7 +555,7 @@ function EmulatorViewComponent({
       homeClickTimeoutRef.current = setTimeout(() => {
         homeClickTimeoutRef.current = null;
         void pressHome();
-      }, 400);
+      }, 500);
 
       return;
     }

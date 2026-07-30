@@ -53,9 +53,49 @@ const defaultState: AppState = {
   workspaces: [],
   activeProjectId: null,
   activeWorkspaceId: null,
+  activeProjectIdByWorkspace: {},
   sidebarVideoSession: null,
   sidebarVideoLastLink: null,
 };
+
+function workspaceSelectionKey(workspaceId: string | null | undefined): string {
+  return workspaceId ?? '';
+}
+
+function rememberProjectForWorkspace(
+  map: Record<string, string> | undefined,
+  workspaceId: string | null | undefined,
+  projectId: string,
+): Record<string, string> {
+  return {
+    ...(map ?? {}),
+    [workspaceSelectionKey(workspaceId)]: projectId,
+  };
+}
+
+function pruneActiveProjectIdByWorkspace(
+  map: Record<string, string> | undefined,
+  projects: Project[],
+  workspaces: Workspace[],
+): Record<string, string> {
+  const projectIds = new Set(projects.map((project) => project.id));
+  const workspaceIds = new Set(workspaces.map((workspace) => workspace.id));
+  const next: Record<string, string> = {};
+
+  for (const [key, projectId] of Object.entries(map ?? {})) {
+    if (!projectIds.has(projectId)) {
+      continue;
+    }
+
+    if (key !== '' && !workspaceIds.has(key)) {
+      continue;
+    }
+
+    next[key] = projectId;
+  }
+
+  return next;
+}
 
 function resolveAgentPaneRootPath(projectPath: string): string {
   const trimmed = projectPath.trim();
@@ -293,12 +333,20 @@ function ensureWorkspaces(state: AppState): AppState {
 
   const workspaces = rawWorkspaces.map((workspace, index) => normalizeWorkspace(workspace, index));
   const fallbackWorkspaceId = workspaces[0]?.id ?? randomUUID();
+  const normalizedProjects = state.projects.map((project) =>
+    normalizeProject(project, fallbackWorkspaceId),
+  );
 
   return {
-    projects: state.projects.map((project) => normalizeProject(project, fallbackWorkspaceId)),
+    projects: normalizedProjects,
     workspaces,
     activeProjectId: state.activeProjectId,
     activeWorkspaceId: state.activeWorkspaceId ?? null,
+    activeProjectIdByWorkspace: pruneActiveProjectIdByWorkspace(
+      state.activeProjectIdByWorkspace,
+      normalizedProjects,
+      workspaces,
+    ),
     sidebarVideoSession: state.sidebarVideoSession ?? null,
     sidebarVideoLastLink: state.sidebarVideoLastLink ?? null,
   };
@@ -369,6 +417,7 @@ class ProjectStoreService {
         workspaces: store.get('workspaces') ?? [],
         activeProjectId: store.get('activeProjectId'),
         activeWorkspaceId: store.get('activeWorkspaceId') ?? null,
+        activeProjectIdByWorkspace: store.get('activeProjectIdByWorkspace') ?? {},
         sidebarVideoSession: store.get('sidebarVideoSession') ?? null,
         sidebarVideoLastLink: store.get('sidebarVideoLastLink') ?? null,
       }),
@@ -390,6 +439,7 @@ class ProjectStoreService {
       workspaces: normalized.workspaces,
       activeProjectId: normalized.activeProjectId,
       activeWorkspaceId: normalized.activeWorkspaceId,
+      activeProjectIdByWorkspace: normalized.activeProjectIdByWorkspace ?? {},
       sidebarVideoSession: normalized.sidebarVideoSession ?? null,
       sidebarVideoLastLink: normalized.sidebarVideoLastLink ?? null,
     });
@@ -457,6 +507,11 @@ class ProjectStoreService {
       ...state,
       projects: [...projects, project],
       activeProjectId: project.id,
+      activeProjectIdByWorkspace: rememberProjectForWorkspace(
+        state.activeProjectIdByWorkspace,
+        targetWorkspaceId,
+        project.id,
+      ),
     });
 
     void ensureNexusGitignore(projectPath);
@@ -468,11 +523,17 @@ class ProjectStoreService {
     const state = this.readState();
     const projects = state.projects.filter((project) => project.id !== id);
     const activeProjectId = state.activeProjectId;
+    const activeProjectIdByWorkspace = Object.fromEntries(
+      Object.entries(state.activeProjectIdByWorkspace ?? {}).filter(
+        ([, projectId]) => projectId !== id,
+      ),
+    );
 
     this.writeState({
       ...state,
       projects,
       activeProjectId: activeProjectId === id ? (projects[0]?.id ?? null) : activeProjectId,
+      activeProjectIdByWorkspace,
     });
   }
 
@@ -484,9 +545,30 @@ class ProjectStoreService {
       return;
     }
 
+    let activeProjectIdByWorkspace = rememberProjectForWorkspace(
+      state.activeProjectIdByWorkspace,
+      project.workspaceId,
+      id,
+    );
+
+    if (state.activeWorkspaceId === null) {
+      activeProjectIdByWorkspace = rememberProjectForWorkspace(
+        activeProjectIdByWorkspace,
+        null,
+        id,
+      );
+    } else {
+      activeProjectIdByWorkspace = rememberProjectForWorkspace(
+        activeProjectIdByWorkspace,
+        state.activeWorkspaceId,
+        id,
+      );
+    }
+
     this.writeState({
       ...state,
       activeProjectId: id,
+      activeProjectIdByWorkspace,
     });
   }
 
@@ -506,9 +588,30 @@ class ProjectStoreService {
       return;
     }
 
+    let activeProjectIdByWorkspace = state.activeProjectIdByWorkspace ?? {};
+
+    if (state.activeProjectId) {
+      activeProjectIdByWorkspace = rememberProjectForWorkspace(
+        activeProjectIdByWorkspace,
+        state.activeWorkspaceId,
+        state.activeProjectId,
+      );
+
+      const activeProject = state.projects.find((project) => project.id === state.activeProjectId);
+
+      if (activeProject?.workspaceId) {
+        activeProjectIdByWorkspace = rememberProjectForWorkspace(
+          activeProjectIdByWorkspace,
+          activeProject.workspaceId,
+          state.activeProjectId,
+        );
+      }
+    }
+
     this.writeState({
       ...state,
       activeWorkspaceId: id,
+      activeProjectIdByWorkspace,
     });
   }
 
@@ -596,12 +699,15 @@ class ProjectStoreService {
     const workspaces = state.workspaces.filter((workspace) => workspace.id !== id);
     const activeWorkspaceId =
       state.activeWorkspaceId === id ? null : state.activeWorkspaceId;
+    const activeProjectIdByWorkspace = { ...(state.activeProjectIdByWorkspace ?? {}) };
+    delete activeProjectIdByWorkspace[id];
 
     this.writeState({
       ...state,
       projects,
       workspaces,
       activeWorkspaceId,
+      activeProjectIdByWorkspace,
     });
   }
 

@@ -39,6 +39,12 @@ const nexusCalendarHelperBinaryPath = path.join(
   nexusCalendarHelperAppPath,
   'Contents/MacOS/CalendarHelper',
 );
+const speechHelperAppPath = path.join(rootDir, 'resources/shell/SpeechHelper.app');
+const nexusSpeechHelperAppPath = path.join(nexusAppPath, 'Contents/Helpers/SpeechHelper.app');
+const nexusSpeechHelperBinaryPath = path.join(
+  nexusSpeechHelperAppPath,
+  'Contents/MacOS/SpeechHelper',
+);
 const dockName = 'Nexus';
 const bundleIdentifier = 'com.nexus.ide';
 
@@ -136,12 +142,11 @@ function buildSpeechToTextHelper() {
     return;
   }
 
-  const speechHelperAppPath = path.join(rootDir, 'resources/shell/SpeechHelper.app');
   const speechHelperBinaryPath = path.join(speechHelperAppPath, 'Contents/MacOS/SpeechHelper');
   const speechHelperInfoPlistPath = path.join(rootDir, 'resources/shell/SpeechHelper-Info.plist');
 
   run('mkdir', ['-p', path.dirname(speechHelperBinaryPath)]);
-  run('swiftc', [
+  const compileArgs = [
     '-O',
     '-o',
     speechHelperBinaryPath,
@@ -152,7 +157,20 @@ function buildSpeechToTextHelper() {
     'Foundation',
     '-framework',
     'AppKit',
-  ]);
+  ];
+  if (existsSync(speechHelperInfoPlistPath)) {
+    compileArgs.push(
+      '-Xlinker',
+      '-sectcreate',
+      '-Xlinker',
+      '__TEXT',
+      '-Xlinker',
+      '__info_plist',
+      '-Xlinker',
+      speechHelperInfoPlistPath,
+    );
+  }
+  run('swiftc', compileArgs);
   copyFileSync(speechHelperBinaryPath, speechToTextBinaryPath);
   execFileSync('chmod', ['+x', speechHelperBinaryPath]);
   execFileSync('chmod', ['+x', speechToTextBinaryPath]);
@@ -294,6 +312,12 @@ function patchNexusAppBundle() {
     run('mkdir', ['-p', path.dirname(nexusNotificationHelperBinaryPath)]);
     run('cp', ['-R', notificationHelperAppPath, path.dirname(nexusNotificationHelperAppPath)]);
     execFileSync('chmod', ['+x', nexusNotificationHelperBinaryPath]);
+  }
+
+  if (existsSync(speechHelperAppPath)) {
+    run('mkdir', ['-p', path.dirname(nexusSpeechHelperBinaryPath)]);
+    run('cp', ['-R', speechHelperAppPath, path.dirname(nexusSpeechHelperAppPath)]);
+    execFileSync('chmod', ['+x', nexusSpeechHelperBinaryPath]);
   }
 
   try {

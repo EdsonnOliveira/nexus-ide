@@ -10,10 +10,17 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from 'react';
 import { ArrowUp, AtSign, FileText, Globe, Paperclip, Square, X } from 'lucide-react';
 import type { WebAgentSession, WebAgentTurn, WebAgentActivity } from '../store';
-import { buildWebLiveToolBatchSummary } from './webStreamJson';
+import {
+  buildWebActionBlockSummary,
+  buildWebActivityRenderChunks,
+  buildWebLiveToolBatchSummary,
+  isWebActionBlockChunkLive,
+  partitionWebLiveActionBlockActivities,
+} from './webStreamJson';
 import { renderWebMarkdown } from './webMarkdown';
 import { hydrateWebMarkdownImages } from './webHydrateMarkdownImages';
 import { findMarkdownPreviewImage } from './downloadImageSrc';
@@ -73,7 +80,7 @@ function ThoughtBlock({
   endedAt?: number;
   body: string;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(() => streaming || Boolean(body.trim()));
   const [elapsed, setElapsed] = useState(1);
 
   useEffect(() => {
@@ -89,8 +96,15 @@ function ThoughtBlock({
   }, [startedAt, streaming]);
 
   useEffect(() => {
-    setExpanded(streaming);
-  }, [streaming]);
+    if (streaming) {
+      setExpanded(true);
+      return;
+    }
+
+    if (!body.trim()) {
+      setExpanded(false);
+    }
+  }, [body, streaming]);
 
   const title = streaming
     ? `Thinking ${elapsed}s`
@@ -144,6 +158,101 @@ function ThoughtBlock({
               {waitingHint ? (
                 <span className='agent-view__thought-waiting-hint'>{waitingHint}</span>
               ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function WebActionBlockSummary({ activities }: { activities: WebAgentActivity[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const summary = useMemo(() => buildWebActionBlockSummary(activities), [activities]);
+  const thoughts = useMemo(
+    () => activities.filter((entry) => entry.kind === 'thought' && entry.label.trim()),
+    [activities],
+  );
+  const toolActivities = useMemo(
+    () =>
+      activities.filter((entry) => {
+        if (entry.kind === 'file_edit' || entry.kind === 'file_read') {
+          return Boolean(entry.filePath?.trim());
+        }
+        if (entry.kind === 'tool_run') {
+          return Boolean(entry.toolCommand?.trim() || entry.label.trim());
+        }
+        return false;
+      }),
+    [activities],
+  );
+
+  if (!summary.hasToolProgress) {
+    return (
+      <>
+        {thoughts.map((activity) => (
+          <ThoughtBlock
+            key={activity.id}
+            streaming={false}
+            startedAt={activity.startedAt ?? Date.now()}
+            endedAt={
+              activity.durationMs
+                ? (activity.startedAt ?? Date.now()) + activity.durationMs
+                : undefined
+            }
+            body={activity.label}
+          />
+        ))}
+      </>
+    );
+  }
+
+  const hasDiff = summary.additions > 0 || summary.deletions > 0;
+
+  return (
+    <div className='agent-view__turn-summary app-button--enter'>
+      <div className='agent-view__turn-summary-row'>
+        <button
+          type='button'
+          className={`agent-view__turn-summary-segment app-button${
+            expanded ? ' agent-view__turn-summary-segment--open' : ''
+          }`}
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {summary.label}
+        </button>
+        {hasDiff ? (
+          <span className='agent-view__turn-summary-diff'>
+            {summary.additions > 0 ? (
+              <span className='agent-view__turn-summary-additions'>+{summary.additions}</span>
+            ) : null}
+            {summary.deletions > 0 ? (
+              <span className='agent-view__turn-summary-deletions'>-{summary.deletions}</span>
+            ) : null}
+          </span>
+        ) : null}
+      </div>
+      {expanded ? (
+        <div className='agent-view__turn-summary-files app-button--enter'>
+          {thoughts.map((activity) => (
+            <ThoughtBlock
+              key={activity.id}
+              streaming={false}
+              startedAt={activity.startedAt ?? Date.now()}
+              endedAt={
+                activity.durationMs
+                  ? (activity.startedAt ?? Date.now()) + activity.durationMs
+                  : undefined
+              }
+              body={activity.label}
+            />
+          ))}
+          {toolActivities.length > 0 ? (
+            <div className='agent-view__file-list agent-view__file-list--inline'>
+              {toolActivities.map((activity) => (
+                <WebToolActivityRow key={activity.id} activity={activity} />
+              ))}
             </div>
           ) : null}
         </div>
@@ -296,59 +405,96 @@ function TurnView({
       return [];
     }
 
-    type Chunk =
-      | { type: 'single'; activity: WebAgentActivity }
-      | { type: 'tool-group'; activities: WebAgentActivity[]; key: string };
+    return buildWebActivityRenderChunks(activities);
+  }, [activities, hasActivities]);
 
-    const isToolGroupActivity = (activity: WebAgentActivity): boolean => {
-      if (activity.kind === 'file_edit') {
-        return Boolean(activity.filePath?.trim());
-      }
-      if (activity.kind === 'file_read') {
-        return running && Boolean(activity.filePath?.trim());
-      }
-      if (activity.kind === 'tool_run') {
-        return running && Boolean(activity.label.trim() || activity.toolCommand?.trim());
-      }
-      return false;
-    };
-
-    const chunks: Chunk[] = [];
+  const renderLiveActionGroup = (groupActivities: WebAgentActivity[], groupKey: string) => {
+    const nodes: ReactNode[] = [];
     let toolGroup: WebAgentActivity[] = [];
 
-    const flushToolGroup = () => {
+    const flushTools = (suffix: string) => {
       if (toolGroup.length === 0) {
         return;
       }
-      chunks.push({
-        type: 'tool-group',
-        activities: toolGroup,
-        key: `tool-group-${toolGroup[0]?.id ?? chunks.length}`,
-      });
+
+      const summary = buildWebLiveToolBatchSummary(toolGroup, true);
+      const liveDetail = [...toolGroup]
+        .reverse()
+        .find(
+          (entry) =>
+            (entry.kind === 'tool_run' && entry.streaming) ||
+            entry.kind === 'file_read' ||
+            entry.kind === 'file_edit',
+        );
+
+      nodes.push(
+        <div key={`${groupKey}-tools-${suffix}`} className='agent-view__tool-batch'>
+          {summary ? (
+            <div className='agent-view__status-line agent-view__status-line--batch agent-view__status-line--live'>
+              {summary}
+            </div>
+          ) : null}
+          {liveDetail ? <WebToolActivityRow activity={liveDetail} live /> : null}
+        </div>,
+      );
       toolGroup = [];
     };
 
-    for (const activity of activities) {
-      if (isToolGroupActivity(activity)) {
-        toolGroup.push(activity);
+    for (const activity of groupActivities) {
+      if (activity.kind === 'thought') {
+        flushTools(activity.id);
+        nodes.push(
+          <ThoughtBlock
+            key={activity.id}
+            streaming={Boolean(running && activity.streaming)}
+            startedAt={activity.startedAt ?? turn.createdAt}
+            endedAt={
+              activity.durationMs
+                ? (activity.startedAt ?? turn.createdAt) + activity.durationMs
+                : turn.endedAt
+            }
+            body={activity.label}
+          />,
+        );
         continue;
       }
-      flushToolGroup();
-      if (
-        activity.kind === 'tool_run' ||
-        activity.kind === 'file_read' ||
-        activity.kind === 'file_edit'
-      ) {
-        if (activity.kind === 'tool_run' && activity.toolCommand?.trim()) {
-          chunks.push({ type: 'single', activity });
-        }
-        continue;
-      }
-      chunks.push({ type: 'single', activity });
+
+      toolGroup.push(activity);
     }
-    flushToolGroup();
-    return chunks;
-  }, [activities, hasActivities, running]);
+
+    flushTools('tail');
+    return nodes;
+  };
+
+  const renderTrailingActionGroup = (groupActivities: WebAgentActivity[], groupKey: string) => {
+    const { settled, live } = partitionWebLiveActionBlockActivities(groupActivities);
+    const settledSummary = settled.length > 0 ? buildWebActionBlockSummary(settled) : null;
+
+    return (
+      <div key={groupKey}>
+        {settledSummary?.hasToolProgress ? (
+          <WebActionBlockSummary activities={settled} />
+        ) : (
+          settled
+            .filter((entry) => entry.kind === 'thought' && entry.label.trim())
+            .map((activity) => (
+              <ThoughtBlock
+                key={activity.id}
+                streaming={false}
+                startedAt={activity.startedAt ?? turn.createdAt}
+                endedAt={
+                  activity.durationMs
+                    ? (activity.startedAt ?? turn.createdAt) + activity.durationMs
+                    : turn.endedAt
+                }
+                body={activity.label}
+              />
+            ))
+        )}
+        {live.length > 0 ? renderLiveActionGroup(live, groupKey) : null}
+      </div>
+    );
+  };
 
   return (
     <div className='agent-view__turn app-button--enter'>
@@ -362,59 +508,18 @@ function TurnView({
         </div>
       </div>
       {hasActivities
-        ? activityChunks.map((chunk) => {
-            if (chunk.type === 'tool-group') {
-              if (running) {
-                const summary = buildWebLiveToolBatchSummary(chunk.activities, true);
-                const liveDetail = [...chunk.activities]
-                  .reverse()
-                  .find(
-                    (entry) =>
-                      (entry.kind === 'tool_run' && entry.streaming) ||
-                      entry.kind === 'file_read' ||
-                      entry.kind === 'file_edit',
-                  );
-                return (
-                  <div key={chunk.key} className='agent-view__tool-batch'>
-                    {summary ? (
-                      <div className='agent-view__status-line agent-view__status-line--batch agent-view__status-line--live'>
-                        {summary}
-                      </div>
-                    ) : null}
-                    {liveDetail ? <WebToolActivityRow activity={liveDetail} live /> : null}
-                  </div>
-                );
+        ? activityChunks.map((chunk, chunkIndex) => {
+            if (chunk.type === 'action-group') {
+              const live = isWebActionBlockChunkLive(chunkIndex, activityChunks, running);
+
+              if (live) {
+                return renderTrailingActionGroup(chunk.activities, chunk.key);
               }
 
-              return (
-                <div
-                  key={chunk.key}
-                  className='agent-view__file-list agent-view__file-list--inline app-button--enter'
-                >
-                  {chunk.activities.map((activity) => (
-                    <WebToolActivityRow key={activity.id} activity={activity} />
-                  ))}
-                </div>
-              );
+              return <WebActionBlockSummary key={chunk.key} activities={chunk.activities} />;
             }
 
             const activity = chunk.activity;
-            if (activity.kind === 'thought') {
-              return (
-                <ThoughtBlock
-                  key={activity.id}
-                  streaming={Boolean(running && activity.streaming)}
-                  startedAt={activity.startedAt ?? turn.createdAt}
-                  endedAt={
-                    activity.durationMs
-                      ? (activity.startedAt ?? turn.createdAt) + activity.durationMs
-                      : turn.endedAt
-                  }
-                  body={activity.label}
-                />
-              );
-            }
-
             if (activity.kind === 'response') {
               return (
                 <ResponseBody
@@ -425,10 +530,6 @@ function TurnView({
                   projectId={projectId}
                 />
               );
-            }
-
-            if (activity.kind === 'tool_run' && activity.toolCommand?.trim()) {
-              return <WebToolActivityRow key={activity.id} activity={activity} />;
             }
 
             return null;
@@ -462,6 +563,92 @@ function TurnView({
           <div className='agent-view__response-body web-agent-error'>
             Falha ao executar o agent neste Mac.
           </div>
+        </div>
+      ) : null}
+      {!running ? <WebFilesChangedCard activities={activities} /> : null}
+    </div>
+  );
+}
+
+function WebFilesChangedCard({ activities }: { activities: WebAgentActivity[] }) {
+  const [expanded, setExpanded] = useState(true);
+
+  const files = useMemo(() => {
+    const map = new Map<
+      string,
+      { path: string; name: string; additions: number; deletions: number }
+    >();
+
+    for (const activity of activities) {
+      if (activity.kind !== 'file_edit') {
+        continue;
+      }
+
+      const path = activity.filePath?.trim();
+      if (!path) {
+        continue;
+      }
+
+      const key = path.toLowerCase();
+      const name = path.split(/[/\\]/).pop() ?? path;
+      const existing = map.get(key);
+      const additions = activity.additions ?? 0;
+      const deletions = activity.deletions ?? 0;
+
+      if (!existing) {
+        map.set(key, { path, name, additions, deletions });
+        continue;
+      }
+
+      existing.additions += additions;
+      existing.deletions += deletions;
+    }
+
+    return [...map.values()];
+  }, [activities]);
+
+  if (files.length === 0) {
+    return null;
+  }
+
+  const countLabel = `${files.length} File${files.length === 1 ? '' : 's'} Changed`;
+
+  return (
+    <div className='agent-view__files-changed app-button--enter'>
+      <div className='agent-view__files-changed-header'>
+        <span className='agent-view__files-changed-title'>{countLabel}</span>
+        <button
+          type='button'
+          className='agent-view__files-changed-review app-button'
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          Review
+        </button>
+      </div>
+      {expanded ? (
+        <div className='agent-view__files-changed-list app-button--enter'>
+          {files.map((file) => {
+            const ext = file.name.includes('.')
+              ? file.name.slice(file.name.lastIndexOf('.') + 1).toUpperCase()
+              : 'FILE';
+            return (
+              <div key={file.path} className='agent-view__files-changed-row' title={file.path}>
+                <span className='agent-view__files-changed-ext' aria-hidden='true'>
+                  {ext.slice(0, 3)}
+                </span>
+                <span className='agent-view__files-changed-name'>{file.name}</span>
+                <span className='agent-view__files-changed-diff'>
+                  {file.additions > 0 ? (
+                    <span className='agent-view__files-changed-add'>+{file.additions}</span>
+                  ) : null}
+                  {file.deletions > 0 ? (
+                    <span className='agent-view__files-changed-del'>-{file.deletions}</span>
+                  ) : null}
+                </span>
+              </div>
+            );
+          })}
         </div>
       ) : null}
     </div>

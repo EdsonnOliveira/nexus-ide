@@ -28,7 +28,9 @@ import {
 import { WebVercelDeployCard } from './WebVercelDeployCard';
 import { WebVercelTokenModal } from './WebVercelTokenModal';
 import { WebEmulatorPanel } from './WebEmulatorPanel';
+import { WebPreviewPanel } from './WebPreviewPanel';
 import { useWebEmulatorProjectIds } from './useWebEmulatorProjectIds';
+import { useWebPreviewProjectIds } from './useWebPreviewProjectIds';
 import { useWebNavHistory, type WebNavHistoryState } from './useWebNavHistory';
 import { useWebVercelDeployments } from './useWebVercelDeployments';
 import { WebMobileReleaseCard } from './WebMobileReleaseCard';
@@ -46,6 +48,7 @@ import {
   createWebStreamJsonState,
   extractStreamChunk,
   feedWebStreamJson,
+  looksLikeMidProgressWebResponse,
   type WebStreamJsonState,
 } from './webStreamJson';
 
@@ -66,6 +69,23 @@ const WEB_AGENT_STALL_MESSAGE =
   'Agent sem resposta (travou ou ficou sem atividade). Pare e tente de novo.';
 const WEB_AGENT_RECONCILE_MS = 20_000;
 const WEB_AGENT_CLIENT_STALL_MS = 12 * 60 * 1000;
+const WEB_AGENT_MAX_INCOMPLETE_CONTINUES = 3;
+const WEB_AGENT_INCOMPLETE_CONTINUE_PROMPT =
+  'Continue from where you left off. Finish the incomplete response.';
+
+function resolveLastWebAgentResponse(agent: WebAgentSession): string {
+  const lastTurn = agent.turns[agent.turns.length - 1];
+  if (!lastTurn) {
+    return '';
+  }
+
+  const fromActivities = [...(lastTurn.activities ?? [])]
+    .reverse()
+    .find((entry) => entry.kind === 'response' && entry.label.trim())
+    ?.label.trim();
+
+  return fromActivities || lastTurn.response.trim();
+}
 
 function resolveStoreWorkspaceId(): string | null {
   const state = useWebStore.getState();
@@ -79,14 +99,16 @@ function resolveStoreWorkspaceId(): string | null {
 
 async function resolveAgentWorkspaceId(projectId: string | null): Promise<string | null> {
   const state = useWebStore.getState();
+  const device =
+    state.devices.find((item) => item.id === state.selectedDeviceId) ?? null;
+  if (device?.workspace_id) {
+    return device.workspace_id;
+  }
   const project = projectId
     ? state.projects.find((item) => item.id === projectId) ?? null
     : null;
-  const device =
-    state.devices.find((item) => item.id === state.selectedDeviceId) ?? null;
   return (
     project?.workspace_id ||
-    device?.workspace_id ||
     state.activeWorkspaceId ||
     (await bridge.getWorkspaceId())
   );
@@ -121,6 +143,7 @@ export function WebMaestroHome() {
   const [pushOpen, setPushOpen] = useState(false);
   const [pushNudgeVisible, setPushNudgeVisible] = useState(false);
   const [emulatorOpen, setEmulatorOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [agentFilterProjectId, setAgentFilterProjectId] = useState<string | null>(null);
   const [focusedAgentId, setFocusedAgentId] = useState<string | null>(null);
   const [openAgentId, setOpenAgentId] = useState<string | null>(null);
@@ -128,6 +151,11 @@ export function WebMaestroHome() {
   const [heroScrolled, setHeroScrolled] = useState(false);
   const parsersRef = useRef(new Map<string, WebStreamJsonState>());
   const agentActivityRef = useRef(new Map<string, number>());
+  const incompleteContinueCountRef = useRef(new Map<string, number>());
+  const incompleteContinueInFlightRef = useRef(new Set<string>());
+  const tryContinueIncompleteWebAgentRef = useRef<(agentId: string) => Promise<boolean>>(
+    async () => false,
+  );
   const heroRef = useRef<HTMLElement>(null);
   const visibleAgents = useMemo(
     () =>
@@ -151,6 +179,12 @@ export function WebMaestroHome() {
     projects,
     enabled: Boolean(selectedDeviceId),
   });
+  const previewProjectIds = useWebPreviewProjectIds({
+    workspaceId: emulatorWorkspaceId,
+    deviceId: selectedDeviceId,
+    projects,
+    enabled: Boolean(selectedDeviceId),
+  });
 
   const handleOpenEmulator = useCallback(
     (projectId: string) => {
@@ -160,7 +194,22 @@ export function WebMaestroHome() {
       if (project?.workspace_id) {
         setActiveWorkspaceId(project.workspace_id);
       }
+      setPreviewOpen(false);
       setEmulatorOpen(true);
+    },
+    [projects, setActiveWorkspaceId, setSelectedProjectId],
+  );
+
+  const handleOpenPreview = useCallback(
+    (projectId: string) => {
+      setSelectedProjectId(projectId);
+      setAgentFilterProjectId(projectId);
+      const project = projects.find((item) => item.id === projectId);
+      if (project?.workspace_id) {
+        setActiveWorkspaceId(project.workspace_id);
+      }
+      setEmulatorOpen(false);
+      setPreviewOpen(true);
     },
     [projects, setActiveWorkspaceId, setSelectedProjectId],
   );
@@ -225,8 +274,9 @@ export function WebMaestroHome() {
       projectId: agentFilterProjectId,
       agentId: openAgentId,
       emulator: emulatorOpen,
+      preview: previewOpen,
     }),
-    [agentFilterProjectId, emulatorOpen, openAgentId],
+    [agentFilterProjectId, emulatorOpen, openAgentId, previewOpen],
   );
 
   const applyNavState = useCallback((next: WebNavHistoryState) => {
@@ -234,6 +284,7 @@ export function WebMaestroHome() {
     setOpenAgentId(next.agentId);
     setFocusedAgentId(null);
     setEmulatorOpen(next.emulator);
+    setPreviewOpen(next.preview);
   }, []);
 
   const { goBack } = useWebNavHistory({
@@ -253,7 +304,12 @@ export function WebMaestroHome() {
     goBack();
   }, [goBack]);
 
-  const projectScreenOpen = Boolean(agentFilterProjectId) && !emulatorOpen;
+  const handleClosePreview = useCallback(() => {
+    goBack();
+  }, [goBack]);
+
+  const overlayOpen = emulatorOpen || previewOpen;
+  const projectScreenOpen = Boolean(agentFilterProjectId) && !overlayOpen;
   const agentScreenOpen = Boolean(openAgentId) && projectScreenOpen;
 
   const {
@@ -387,8 +443,13 @@ export function WebMaestroHome() {
             });
           }
           if (update.done) {
-            setAgentStatus(agentId, 'done');
-            void updateAgentSessionMeta(supabase, agentId, { status: 'active' });
+            void tryContinueIncompleteWebAgentRef.current(agentId).then((continued) => {
+              if (continued) {
+                return;
+              }
+              setAgentStatus(agentId, 'done');
+              void updateAgentSessionMeta(supabase, agentId, { status: 'active' });
+            });
           }
         }
 
@@ -403,8 +464,18 @@ export function WebMaestroHome() {
           status === 'cancelled'
         ) {
           agentActivityRef.current.set(agentId, Date.now());
-          setAgentStatus(agentId, 'done');
-          void updateAgentSessionMeta(supabase, agentId, { status: 'active' });
+          if (type === 'command.cancelled' || status === 'cancelled') {
+            setAgentStatus(agentId, 'done');
+            void updateAgentSessionMeta(supabase, agentId, { status: 'active' });
+          } else {
+            void tryContinueIncompleteWebAgentRef.current(agentId).then((continued) => {
+              if (continued) {
+                return;
+              }
+              setAgentStatus(agentId, 'done');
+              void updateAgentSessionMeta(supabase, agentId, { status: 'active' });
+            });
+          }
         }
         if (type === 'failed' || type === 'agent.failed' || status === 'failed') {
           agentActivityRef.current.set(agentId, Date.now());
@@ -519,6 +590,12 @@ export function WebMaestroHome() {
             executionStatus === 'completed' ||
             executionStatus === 'cancelled'
           ) {
+            if (
+              executionStatus === 'completed' &&
+              (await tryContinueIncompleteWebAgentRef.current(agent.id))
+            ) {
+              continue;
+            }
             agentActivityRef.current.set(agent.id, Date.now());
             setAgentStatus(agent.id, 'done');
             void updateAgentSessionMeta(supabase, agent.id, { status: 'active' });
@@ -724,6 +801,7 @@ export function WebMaestroHome() {
         setFocusedAgentId(agentId);
 
         agentActivityRef.current.set(agentId, createdAt);
+        incompleteContinueCountRef.current.set(agentId, 0);
         subscribeAgent(agentId, commandId);
         return true;
       } catch (error) {
@@ -823,6 +901,9 @@ export function WebMaestroHome() {
           commandId,
         });
         agentActivityRef.current.set(agentId, Date.now());
+        if (prompt !== WEB_AGENT_INCOMPLETE_CONTINUE_PROMPT) {
+          incompleteContinueCountRef.current.set(agentId, 0);
+        }
         subscribeAgent(agentId, commandId);
         return true;
       } catch (error) {
@@ -832,6 +913,65 @@ export function WebMaestroHome() {
     },
     [addAgentTurn, devices, resolveDeviceId, subscribeAgent],
   );
+
+  tryContinueIncompleteWebAgentRef.current = async (agentId: string) => {
+    const agent = useWebStore.getState().agents.find((item) => item.id === agentId);
+    if (!agent || agent.source === 'desktop_pane') {
+      return false;
+    }
+
+    if (incompleteContinueInFlightRef.current.has(agentId)) {
+      return false;
+    }
+
+    if (!looksLikeMidProgressWebResponse(resolveLastWebAgentResponse(agent))) {
+      return false;
+    }
+
+    const count = incompleteContinueCountRef.current.get(agentId) ?? 0;
+    if (count >= WEB_AGENT_MAX_INCOMPLETE_CONTINUES) {
+      return false;
+    }
+
+    if (!agent.cursorSessionId?.trim()) {
+      return false;
+    }
+
+    incompleteContinueInFlightRef.current.add(agentId);
+    incompleteContinueCountRef.current.set(agentId, count + 1);
+    setAgentStatus(agentId, 'done');
+    try {
+      const continued = await handleFollowUp(agentId, WEB_AGENT_INCOMPLETE_CONTINUE_PROMPT);
+      if (!continued) {
+        incompleteContinueCountRef.current.set(agentId, count);
+        useWebStore.setState((state) => ({
+          agents: state.agents.map((entry) => {
+            if (entry.id !== agentId) {
+              return entry;
+            }
+            const lastIndex = entry.turns.length - 1;
+            return {
+              ...entry,
+              status: 'running',
+              turns: entry.turns.map((turn, index) =>
+                index === lastIndex
+                  ? {
+                      ...turn,
+                      status: 'running',
+                      thoughtStreaming: false,
+                      endedAt: undefined,
+                    }
+                  : turn,
+              ),
+            };
+          }),
+        }));
+      }
+      return continued;
+    } finally {
+      incompleteContinueInFlightRef.current.delete(agentId);
+    }
+  };
 
   const handleStop = useCallback(
     async (agentId: string) => {
@@ -1020,18 +1160,18 @@ export function WebMaestroHome() {
     <div
       className={`home-dashboard nexus-hero home-dashboard--maestro${
         emulatorOpen ? ' home-dashboard--emulator-open' : ''
-      }${projectScreenOpen ? ' home-dashboard--project-open' : ''}${
-        agentScreenOpen ? ' home-dashboard--agent-open' : ''
-      }`}
+      }${previewOpen ? ' home-dashboard--preview-open' : ''}${
+        projectScreenOpen ? ' home-dashboard--project-open' : ''
+      }${agentScreenOpen ? ' home-dashboard--agent-open' : ''}`}
     >
       <header
         ref={heroRef}
         className={`home-dashboard__hero app-button--enter${
           compact ? ' home-dashboard__hero--compact' : ''
         }${heroScrolled ? ' home-dashboard__hero--scrolled' : ''}${
-          emulatorOpen || projectScreenOpen ? ' home-dashboard__hero--exit' : ''
+          overlayOpen || projectScreenOpen ? ' home-dashboard__hero--exit' : ''
         }`}
-        aria-hidden={emulatorOpen || projectScreenOpen}
+        aria-hidden={overlayOpen || projectScreenOpen}
       >
         <div className='home-dashboard__hero-brand'>
           <WebLogoMenu
@@ -1066,7 +1206,7 @@ export function WebMaestroHome() {
           />
         </div>
       </header>
-      {pushNudgeVisible && !emulatorOpen && !agentScreenOpen ? (
+      {pushNudgeVisible && !overlayOpen && !agentScreenOpen ? (
         <div className='web-push-nudge app-button--enter' role='status'>
           <Bell size={16} aria-hidden='true' />
           <span>
@@ -1094,7 +1234,7 @@ export function WebMaestroHome() {
           </button>
         </div>
       ) : null}
-      {!emulatorOpen && !agentScreenOpen ? (
+      {!overlayOpen && !agentScreenOpen ? (
         <div className='home-dashboard__hero-ask'>
           <WebMaestroAskBar
             projects={projects}
@@ -1114,7 +1254,7 @@ export function WebMaestroHome() {
           />
         </div>
       ) : null}
-      {!emulatorOpen ? (
+      {!overlayOpen ? (
         <WebMaestroAgents
           agents={visibleAgents}
           projects={projects}
@@ -1123,6 +1263,7 @@ export function WebMaestroHome() {
           focusedAgentId={focusedAgentId}
           openAgentId={openAgentId}
           emulatorProjectIds={emulatorProjectIds}
+          previewProjectIds={previewProjectIds}
           headerMacSelect={
             <WebMacSelect
               devices={devices}
@@ -1134,6 +1275,7 @@ export function WebMaestroHome() {
             />
           }
           onOpenEmulator={handleOpenEmulator}
+          onOpenPreview={handleOpenPreview}
           onSelectProject={handleSelectProjectAgents}
           onBackToProjects={handleBackToProjects}
           onBackFromAgent={handleBackFromAgent}
@@ -1150,7 +1292,7 @@ export function WebMaestroHome() {
           onScrollChange={setHeroScrolled}
         />
       ) : null}
-      {!emulatorOpen && (mobileActiveRelease || vercelActiveDeployment)
+      {!overlayOpen && (mobileActiveRelease || vercelActiveDeployment)
         ? createPortal(
             <div className='web-vercel-deploy-dock'>
               {mobileActiveRelease ? (
@@ -1195,6 +1337,23 @@ export function WebMaestroHome() {
       <WebEmulatorPanel
         open={emulatorOpen}
         onClose={handleCloseEmulator}
+        workspaceId={resolveStoreWorkspaceId()}
+        projectId={selectedProjectId}
+        deviceId={selectedDeviceId}
+        headerMacSelect={
+          <WebMacSelect
+            devices={devices}
+            deviceId={selectedDeviceId}
+            onDeviceChange={setSelectedDeviceId}
+            disabled={submitting}
+            iconOnly
+            className='web-ask-mac-select--header'
+          />
+        }
+      />
+      <WebPreviewPanel
+        open={previewOpen}
+        onClose={handleClosePreview}
         workspaceId={resolveStoreWorkspaceId()}
         projectId={selectedProjectId}
         deviceId={selectedDeviceId}

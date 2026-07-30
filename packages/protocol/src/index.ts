@@ -47,7 +47,11 @@ export type CommandType =
   | 'emulator_screenshot'
   | 'emulator_list_apps'
   | 'emulator_launch_app'
-  | 'emulator_terminate_app';
+  | 'emulator_terminate_app'
+  | 'preview_list_sessions'
+  | 'preview_start'
+  | 'preview_stop'
+  | 'preview_attach';
 
 export type NexusEventType =
   | 'device.online'

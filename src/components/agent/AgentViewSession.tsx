@@ -299,7 +299,7 @@ function AgentViewSessionComponent({
 
       if (
         target.closest(
-          'button, a, input, textarea, label, [role="menu"], [role="menuitem"], .context-menu',
+          'button, a, input, textarea, label, code, [role="menu"], [role="menuitem"], .context-menu',
         )
       ) {
         return;

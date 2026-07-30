@@ -2,12 +2,13 @@ import { memo, useCallback, useMemo } from 'react';
 import { AgentProjectSkillPills } from '@/components/agent/AgentProjectSkillPills';
 import { AgentResponseCopyPill } from '@/components/agent/AgentResponseCopyPill';
 import { AgentResponseGitCommitPill } from '@/components/agent/AgentResponseGitCommitPill';
+import { AgentFilesChangedCard } from '@/components/agent/AgentFilesChangedCard';
 import { useProjectStore } from '@/stores/useProjectStore';
 import {
   useAgentGitChangeStore,
   useAgentGitGroupsForProject,
 } from '@/stores/useAgentGitChangeStore';
-import type { AgentTurnSummary } from '@/types';
+import type { AgentTurnSummary, AgentTurnSummaryFileRef } from '@/types';
 import type { AgentGitChangeGroup } from '@/types/agentGit';
 
 interface AgentResponseActionsProps {
@@ -16,6 +17,7 @@ interface AgentResponseActionsProps {
   paneId: string;
   content: string;
   summary?: AgentTurnSummary;
+  editedFiles?: AgentTurnSummaryFileRef[];
   showSkillPills?: boolean;
   showCopyPill?: boolean;
 }
@@ -75,8 +77,8 @@ function buildFallbackCommitGroup(
       path: file.path,
       status: 'modified',
       staged: false,
-      additions: 0,
-      deletions: 0,
+      additions: file.additions ?? 0,
+      deletions: file.deletions ?? 0,
     })),
     additions: summary.additions,
     deletions: summary.deletions,
@@ -84,31 +86,28 @@ function buildFallbackCommitGroup(
   };
 }
 
-function AgentResponseChangesPill({
-  additions,
-  deletions,
-  onClick,
-}: {
-  additions: number;
-  deletions: number;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type='button'
-      className='agent-view__response-pill agent-view__response-changes app-button app-button--enter'
-      aria-label={`Ver alterações +${additions} -${deletions}`}
-      onClick={onClick}
-    >
-      <span className='agent-view__response-pill-label'>Alterações</span>
-      {additions > 0 ? (
-        <span className='agent-view__response-changes-add'>+{additions}</span>
-      ) : null}
-      {deletions > 0 ? (
-        <span className='agent-view__response-changes-del'>-{deletions}</span>
-      ) : null}
-    </button>
-  );
+function resolveFilesForCard(
+  summary: AgentTurnSummary | undefined,
+  matchedGroup: AgentGitChangeGroup | null,
+  editedFiles?: AgentTurnSummaryFileRef[],
+): AgentTurnSummaryFileRef[] {
+  if (editedFiles && editedFiles.length > 0) {
+    return editedFiles;
+  }
+
+  if (summary?.editedFiles && summary.editedFiles.length > 0) {
+    return summary.editedFiles;
+  }
+
+  if (matchedGroup && matchedGroup.files.length > 0) {
+    return matchedGroup.files.map((file) => ({
+      path: file.path,
+      ...(file.additions > 0 ? { additions: file.additions } : {}),
+      ...(file.deletions > 0 ? { deletions: file.deletions } : {}),
+    }));
+  }
+
+  return [];
 }
 
 function AgentResponseActionsComponent({
@@ -117,26 +116,36 @@ function AgentResponseActionsComponent({
   paneId,
   content,
   summary,
+  editedFiles,
   showSkillPills = false,
   showCopyPill = true,
 }: AgentResponseActionsProps) {
   const groups = useAgentGitGroupsForProject(projectId);
   const openExplorerGit = useProjectStore((state) => state.openExplorerGit);
   const setFocusedGroupId = useAgentGitChangeStore((state) => state.setFocusedGroupId);
-  const showChangesPill = Boolean(summary && (summary.additions > 0 || summary.deletions > 0));
 
   const matchedGroup = useMemo(
-    () => (showChangesPill ? findGroupForTurn(groups, paneId, summary) : null),
-    [groups, paneId, showChangesPill, summary],
+    () => findGroupForTurn(groups, paneId, summary),
+    [groups, paneId, summary],
+  );
+
+  const filesForCard = useMemo(
+    () => resolveFilesForCard(summary, matchedGroup, editedFiles),
+    [editedFiles, matchedGroup, summary],
+  );
+
+  const showFilesCard = filesForCard.length > 0;
+  const showCommitPill = Boolean(
+    summary && (summary.additions > 0 || summary.deletions > 0 || showFilesCard),
   );
 
   const commitGroup = useMemo(() => {
-    if (!showChangesPill || !summary) {
+    if (!showCommitPill || !summary) {
       return null;
     }
 
     return matchedGroup ?? buildFallbackCommitGroup(projectId, paneId, summary, content);
-  }, [content, matchedGroup, paneId, projectId, showChangesPill, summary]);
+  }, [content, matchedGroup, paneId, projectId, showCommitPill, summary]);
 
   const handleOpenChanges = useCallback(() => {
     if (matchedGroup) {
@@ -146,36 +155,46 @@ function AgentResponseActionsComponent({
     openExplorerGit();
   }, [matchedGroup, openExplorerGit, setFocusedGroupId]);
 
+  if (!showFilesCard && !showCommitPill && !showSkillPills && !showCopyPill) {
+    return null;
+  }
+
   return (
     <div
-      className={`agent-view__response-actions${showSkillPills ? '' : ' agent-view__response-actions--copy-only'}${showChangesPill ? ' agent-view__response-actions--with-changes' : ''}`}
+      className={`agent-view__response-actions-block${showFilesCard ? ' agent-view__response-actions-block--with-files' : ''}`}
     >
-      {showChangesPill && summary && commitGroup ? (
-        <div
-          className={`agent-view__response-actions-leading${showSkillPills ? ' agent-view__response-actions-leading--always-visible' : ''}`}
-        >
-          <AgentResponseChangesPill
-            additions={summary.additions}
-            deletions={summary.deletions}
-            onClick={handleOpenChanges}
-          />
-          <AgentResponseGitCommitPill
-            projectPath={projectPath}
-            paneId={paneId}
-            group={commitGroup}
-          />
-        </div>
+      {showFilesCard ? (
+        <AgentFilesChangedCard
+          files={filesForCard}
+          projectPath={projectPath}
+          onReview={handleOpenChanges}
+        />
       ) : null}
-      <div className='agent-view__response-actions-trailing'>
-        {showSkillPills ? (
-          <AgentProjectSkillPills
-            projectId={projectId}
-            projectPath={projectPath}
-            paneId={paneId}
-            responseContent={content}
-          />
+      <div
+        className={`agent-view__response-actions${showSkillPills ? '' : ' agent-view__response-actions--copy-only'}${showCommitPill ? ' agent-view__response-actions--with-changes' : ''}`}
+      >
+        {showCommitPill && summary && commitGroup ? (
+          <div
+            className={`agent-view__response-actions-leading${showSkillPills ? ' agent-view__response-actions-leading--always-visible' : ''}`}
+          >
+            <AgentResponseGitCommitPill
+              projectPath={projectPath}
+              paneId={paneId}
+              group={commitGroup}
+            />
+          </div>
         ) : null}
-        {showCopyPill ? <AgentResponseCopyPill content={content} /> : null}
+        <div className='agent-view__response-actions-trailing'>
+          {showSkillPills ? (
+            <AgentProjectSkillPills
+              projectId={projectId}
+              projectPath={projectPath}
+              paneId={paneId}
+              responseContent={content}
+            />
+          ) : null}
+          {showCopyPill ? <AgentResponseCopyPill content={content} /> : null}
+        </div>
       </div>
     </div>
   );

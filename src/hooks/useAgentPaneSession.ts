@@ -11,6 +11,10 @@ import type { AutomationAgentMode } from '@/constants/agentModes';
 import type { AgentActivity, AgentFollowUp, AgentPromptAttachment, AgentPromptSubmitOptions, AgentQuestionAnswers, AgentTab, AgentTurn, AgentUserMessage } from '@/types';
 import { registerAgentPaneHandlers } from '@/utils/agentPaneRegistry';
 import { registerAgentPrintPaneHandlers } from '@/utils/agentPrintBridge';
+import {
+  getOrCreateAgentStreamJsonSession,
+  replaceAgentStreamJsonSession,
+} from '@/utils/agentStreamJsonSession';
 import { recordHomeDashboardActivity } from '@/utils/recordHomeDashboardActivity';
 import { cliAgentToTerminalAgent, resolveAgentTabCli } from '@/utils/agentTabHelpers';
 import { revertAgentGitChangesForTurn, trackAgentGitPrompt } from '@/utils/agentGitTurn';
@@ -54,7 +58,6 @@ import {
   sendAgentInterruptSequence,
 } from '@/utils/agentCliSession';
 import {
-  createAgentStreamJsonParserState,
   clearStreamJsonLiveStatus,
   ensureStreamJsonStallProgressUi,
   feedAgentStreamJsonChunk,
@@ -63,6 +66,7 @@ import {
   hasIncompleteStreamJsonTurnEnding,
   hasMeaningfulStreamJsonTurnOutput,
   hasPendingStreamJsonInteraction,
+  hasStreamJsonVisibleProgress,
   isAgentStreamJsonStateAwaitingCompletion,
   resolveStreamJsonStallLiveStatus,
   tryMarkStreamJsonReadyToFinalize,
@@ -109,7 +113,8 @@ const STUCK_TURN_TIMEOUT_MS = 45_000;
 const STUCK_TURN_CHECK_MS = 5_000;
 const STREAM_JSON_ORPHAN_FINALIZE_MS = 2_000;
 const STREAM_JSON_INCOMPLETE_ORPHAN_FINALIZE_MS = 120_000;
-const STREAM_JSON_ABSOLUTE_MAX_MS = 600_000;
+const STREAM_JSON_HUNG_IDLE_MS = 1_800_000;
+const STREAM_JSON_EMPTY_HUNG_IDLE_MS = 300_000;
 const STREAM_JSON_DEAD_PROCESS_FINALIZE_MS = 2_000;
 const STREAM_JSON_IDLE_CHECK_MS = 500;
 const STREAM_JSON_RESPONSE_IDLE_FINALIZE_MS = 700;
@@ -122,6 +127,7 @@ const SUBMIT_SETUP_TIMEOUT_MS = 8_000;
 const COMPOSER_READY_POLL_MS = 250;
 const COMPOSER_READY_MAX_MS = 12_000;
 const STREAM_JSON_AUTO_RETRY_DELAY_MS = 600;
+const STREAM_JSON_MAX_INCOMPLETE_CONTINUES = 12;
 const STREAM_JSON_INCOMPLETE_CONTINUE_PROMPT =
   'Continue from where you left off. Finish the incomplete response.';
 const STREAMING_TURNS_UI_MS = 200;
@@ -227,7 +233,7 @@ export function useAgentPaneSession({
   const creatingRef = useRef(false);
   const turnsRef = useRef<AgentTurn[]>(sanitizeAgentTurnHistory(tab.turns ?? []));
   const parserStateRef = useRef(createAgentTranscriptParserState());
-  const streamJsonStateRef = useRef(createAgentStreamJsonParserState());
+  const streamJsonStateRef = useRef(getOrCreateAgentStreamJsonSession(tab.id));
   const cursorAgentContinueRef = useRef(false);
   const agentPrintRunActiveRef = useRef(false);
   const agentPrintRunTokenRef = useRef('');
@@ -257,6 +263,7 @@ export function useAgentPaneSession({
   const cwdParserRef = useRef(createNexusCwdStreamParser(() => {}));
   const streamJsonAutoRetryRef = useRef(false);
   const streamJsonIncompleteContinueRef = useRef(false);
+  const streamJsonIncompleteContinueCountRef = useRef(0);
   const tryScheduleStreamJsonAutoRetryRef = useRef<(finishAgentPrintRun: () => void) => boolean>(
     () => false,
   );
@@ -280,6 +287,8 @@ export function useAgentPaneSession({
   const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
   const editingTurnIdRef = useRef<string | null>(null);
   const followUpsRef = useRef<AgentFollowUp[]>([]);
+  const consumedFollowUpIdsRef = useRef<Set<string>>(new Set());
+  const followUpFlushInFlightRef = useRef(false);
   const suppressFollowUpFlushRef = useRef(false);
   const promotePendingFollowUpTurnRef = useRef<() => void>(() => {});
   const tryFlushFollowUpQueueRef = useRef<
@@ -294,7 +303,9 @@ export function useAgentPaneSession({
   onPtyLostRef.current = onPtyLost;
   onAppendDraftRef.current = onAppendDraft;
   onRestoreDraftRef.current = onRestoreDraft;
-  followUpsRef.current = followUps;
+  followUpsRef.current = followUps.filter(
+    (item) => !consumedFollowUpIdsRef.current.has(item.id),
+  );
 
   useEffect(() => {
     deferAutoSpawnRef.current =
@@ -506,10 +517,11 @@ export function useAgentPaneSession({
       }
 
       cursorAgentContinueRef.current = false;
-      streamJsonStateRef.current = createAgentStreamJsonParserState();
+      streamJsonStateRef.current = replaceAgentStreamJsonSession(paneIdRef.current);
       turnsRef.current = incoming;
       editingTurnIdRef.current = null;
       setEditingTurnId(null);
+      consumedFollowUpIdsRef.current.clear();
       setFollowUps([]);
       setTurnsRevision((revision) => revision + 1);
       return;
@@ -744,10 +756,10 @@ export function useAgentPaneSession({
 
       window.nexus.agentPrint.stop(paneId);
       nextTurns[resolvedIndex] = finalizeStreamJsonTurn(activeTurn, streamJsonStateRef.current);
-      streamJsonStateRef.current = createAgentStreamJsonParserState();
+      streamJsonStateRef.current = replaceAgentStreamJsonSession(paneIdRef.current);
       turnOutputBufferRef.current = '';
       clearAgentPrintRunToken(paneId);
-      finalizeMobileReleasesForPane(paneId);
+      finalizeMobileReleasesForPane(paneId, { failRemaining: true });
     } else {
       const outputSlice =
         turnOutputBufferRef.current.trim() ||
@@ -781,7 +793,7 @@ export function useAgentPaneSession({
     setIsAgentReady(true);
 
     if (!suppressFollowUpFlushRef.current) {
-      tryFlushFollowUpQueueRef.current({ force: true });
+      tryFlushFollowUpQueueRef.current();
     }
 
     promotePendingFollowUpTurnRef.current();
@@ -842,7 +854,7 @@ export function useAgentPaneSession({
     const resolvedIndex = index === -1 ? -1 : turns.length - 1 - index;
 
     if (resolvedIndex === -1) {
-      tryFlushFollowUpQueueRef.current({ force: true });
+      tryFlushFollowUpQueueRef.current();
       promotePendingFollowUpTurnRef.current();
       return;
     }
@@ -858,10 +870,11 @@ export function useAgentPaneSession({
       useTerminalSessionStore.getState().setResumeChatId(paneId, streamJsonStateRef.current.sessionId);
     }
 
-    streamJsonStateRef.current = createAgentStreamJsonParserState();
+    streamJsonStateRef.current = replaceAgentStreamJsonSession(paneIdRef.current);
     turnOutputBufferRef.current = '';
     streamJsonAutoRetryRef.current = false;
     streamJsonIncompleteContinueRef.current = false;
+    streamJsonIncompleteContinueCountRef.current = 0;
     clearAgentPrintRunToken(paneId);
     persistTurns(nextTurns, { flush: true });
     recordHomeDashboardActivity('agentExecutions');
@@ -878,7 +891,7 @@ export function useAgentPaneSession({
     }
 
     setIsAgentReady(true);
-    tryFlushFollowUpQueueRef.current({ force: true });
+    tryFlushFollowUpQueueRef.current();
     promotePendingFollowUpTurnRef.current();
   }, [clearAgentPrintRunToken, persistTurns]);
 
@@ -1223,7 +1236,7 @@ export function useAgentPaneSession({
 
       const hasCompletedTurn = turnsRef.current.some((turn) => !turn.running && !turn.pendingFollowUp);
 
-      streamJsonStateRef.current = createAgentStreamJsonParserState();
+      streamJsonStateRef.current = replaceAgentStreamJsonSession(paneIdRef.current);
 
       if (resumeChatId) {
         streamJsonStateRef.current.sessionId = resumeChatId;
@@ -1235,6 +1248,7 @@ export function useAgentPaneSession({
       if (!options?.isAutoRetry) {
         streamJsonAutoRetryRef.current = false;
         streamJsonIncompleteContinueRef.current = false;
+        streamJsonIncompleteContinueCountRef.current = 0;
       }
 
       if (shouldMarkAgentAwaiting(paneId, fullPrompt, session.activeAgentByPane)) {
@@ -1302,7 +1316,7 @@ export function useAgentPaneSession({
 
       streamJsonAutoRetryRef.current = true;
       finishAgentPrintRun();
-      streamJsonStateRef.current = createAgentStreamJsonParserState();
+      streamJsonStateRef.current = replaceAgentStreamJsonSession(paneIdRef.current);
       streamJsonStateRef.current.activities = createInitialTurnActivities();
       turnOutputBufferRef.current = '';
 
@@ -1319,6 +1333,10 @@ export function useAgentPaneSession({
   const tryContinueIncompleteStreamJsonTurn = useCallback(
     (finishAgentPrintRun: () => void): boolean => {
       if (streamJsonIncompleteContinueRef.current || streamJsonAutoRetryRef.current) {
+        return false;
+      }
+
+      if (streamJsonIncompleteContinueCountRef.current >= STREAM_JSON_MAX_INCOMPLETE_CONTINUES) {
         return false;
       }
 
@@ -1342,6 +1360,7 @@ export function useAgentPaneSession({
       }
 
       streamJsonIncompleteContinueRef.current = true;
+      streamJsonIncompleteContinueCountRef.current += 1;
       streamJsonStateRef.current.shouldFinalize = false;
       clearStreamJsonLiveStatus(streamJsonStateRef.current);
       forceSettleStreamJsonInFlightWork(streamJsonStateRef.current);
@@ -1369,6 +1388,7 @@ export function useAgentPaneSession({
 
       window.setTimeout(() => {
         if (!turnsRef.current.some((turn) => turn.running)) {
+          streamJsonIncompleteContinueRef.current = false;
           return;
         }
 
@@ -1382,6 +1402,7 @@ export function useAgentPaneSession({
           continueSession: false,
           runToken,
         });
+        streamJsonIncompleteContinueRef.current = false;
       }, STREAM_JSON_AUTO_RETRY_DELAY_MS);
 
       return true;
@@ -1666,7 +1687,7 @@ export function useAgentPaneSession({
     }
 
     parserStateRef.current = createAgentTranscriptParserState();
-    streamJsonStateRef.current = createAgentStreamJsonParserState();
+    streamJsonStateRef.current = replaceAgentStreamJsonSession(paneIdRef.current);
     clearAgentPrintRunToken(paneId);
     session.resetAgentWorkload(paneId);
     setIsAgentReady(true);
@@ -1674,6 +1695,7 @@ export function useAgentPaneSession({
     if (options?.preserveFollowUps) {
       suppressFollowUpFlushRef.current = false;
     } else {
+      consumedFollowUpIdsRef.current.clear();
       setFollowUps([]);
     }
 
@@ -1715,7 +1737,7 @@ export function useAgentPaneSession({
       const truncated = turns.slice(0, index);
       persistTurns(truncated, { flush: true });
       parserStateRef.current = createAgentTranscriptParserState();
-      streamJsonStateRef.current = createAgentStreamJsonParserState();
+      streamJsonStateRef.current = replaceAgentStreamJsonSession(paneIdRef.current);
       cursorAgentContinueRef.current = truncated.length > 0;
 
       return true;
@@ -1726,7 +1748,7 @@ export function useAgentPaneSession({
   const sendPromptToPty = useCallback(
     (trimmed: string, imageRefs: string[]) => {
       if (usesStreamJson) {
-        streamJsonStateRef.current = createAgentStreamJsonParserState();
+        streamJsonStateRef.current = replaceAgentStreamJsonSession(paneIdRef.current);
         startStreamJsonAgentRun(trimmed, imageRefs);
         return;
       }
@@ -1802,7 +1824,7 @@ export function useAgentPaneSession({
     turnOutputStartRef.current = outputTailRef.current.length;
     turnOutputBufferRef.current = '';
     parserStateRef.current = createAgentTranscriptParserState();
-    streamJsonStateRef.current = createAgentStreamJsonParserState();
+    streamJsonStateRef.current = replaceAgentStreamJsonSession(paneIdRef.current);
     if (usesStreamJson) {
       markStreamJsonTurnStarted();
     }
@@ -1908,7 +1930,7 @@ export function useAgentPaneSession({
       turnOutputStartRef.current = outputTailRef.current.length;
       turnOutputBufferRef.current = '';
       parserStateRef.current = createAgentTranscriptParserState();
-      streamJsonStateRef.current = createAgentStreamJsonParserState();
+      streamJsonStateRef.current = replaceAgentStreamJsonSession(paneIdRef.current);
       persistTurns([...turnsRef.current, turn], { flush: true });
       resetAgentReadyDetectors(paneId);
       setIsAgentReady(false);
@@ -1957,7 +1979,13 @@ export function useAgentPaneSession({
 
   const tryFlushFollowUpQueue = useCallback(
     (options?: { force?: boolean; onlyId?: string }): boolean => {
-      const queue = followUpsRef.current;
+      if (followUpFlushInFlightRef.current || suppressFollowUpFlushRef.current) {
+        return false;
+      }
+
+      const queue = followUpsRef.current.filter(
+        (item) => !consumedFollowUpIdsRef.current.has(item.id),
+      );
 
       if (queue.length === 0) {
         return false;
@@ -1975,14 +2003,31 @@ export function useAgentPaneSession({
         return false;
       }
 
-      const dispatched = dispatchFollowUpToPty(target, options?.force ?? false);
-
-      if (!dispatched) {
+      if (consumedFollowUpIdsRef.current.has(target.id)) {
         return false;
       }
 
+      followUpFlushInFlightRef.current = true;
+      consumedFollowUpIdsRef.current.add(target.id);
+      followUpsRef.current = followUpsRef.current.filter((item) => item.id !== target.id);
       setFollowUps((current) => current.filter((item) => item.id !== target.id));
-      return true;
+
+      try {
+        const dispatched = dispatchFollowUpToPty(target, options?.force ?? false);
+
+        if (!dispatched) {
+          consumedFollowUpIdsRef.current.delete(target.id);
+          followUpsRef.current = [target, ...followUpsRef.current];
+          setFollowUps((current) =>
+            current.some((item) => item.id === target.id) ? current : [target, ...current],
+          );
+          return false;
+        }
+
+        return true;
+      } finally {
+        followUpFlushInFlightRef.current = false;
+      }
     },
     [dispatchFollowUpToPty],
   );
@@ -2076,6 +2121,7 @@ export function useAgentPaneSession({
         editingTurnIdRef.current = null;
         setEditingTurnId(null);
         await rollbackAgentFromTurn(editingTurnId);
+        consumedFollowUpIdsRef.current.clear();
         setFollowUps([]);
       }
 
@@ -2118,7 +2164,7 @@ export function useAgentPaneSession({
           parserStateRef.current = createAgentTranscriptParserState();
         }
 
-        streamJsonStateRef.current = createAgentStreamJsonParserState();
+        streamJsonStateRef.current = replaceAgentStreamJsonSession(paneIdRef.current);
 
         const resolvedSkillLabel =
           options?.skillLabel?.trim() ||
@@ -2442,6 +2488,7 @@ export function useAgentPaneSession({
 
       editingTurnIdRef.current = turnId;
       setEditingTurnId(turnId);
+      consumedFollowUpIdsRef.current.clear();
       setFollowUps([]);
 
       onRestoreDraftRef.current?.(target.user.agentPrompt ?? target.user.content);
@@ -2540,6 +2587,25 @@ export function useAgentPaneSession({
   useEffect(() => {
     streamJsonBootstrappedRef.current = false;
     stalePtyClearedRef.current = null;
+    paneIdRef.current = tab.id;
+    const sessionState = getOrCreateAgentStreamJsonSession(tab.id);
+    streamJsonStateRef.current = sessionState;
+
+    if (
+      sessionState.activities.length > 0 ||
+      sessionState.pendingResponseText.trim().length > 0 ||
+      sessionState.jsonBuffer.trim().length > 0
+    ) {
+      hasStreamJsonChunkRef.current = true;
+      lastStreamJsonChunkAtRef.current = Date.now();
+    }
+
+    const storedToken = useTerminalSessionStore.getState().agentPrintRunTokenByPane[tab.id];
+
+    if (storedToken) {
+      agentPrintRunTokenRef.current = storedToken;
+      agentPrintRunActiveRef.current = true;
+    }
   }, [tab.id]);
 
   const bootstrapStreamJsonAgent = useCallback(() => {
@@ -2787,7 +2853,10 @@ export function useAgentPaneSession({
       }
 
       agentDetector.feed(data);
-      feedMobileReleaseOutput(paneId, data);
+
+      if (!usesStreamJson) {
+        feedMobileReleaseOutput(paneId, data);
+      }
 
       const cleaned = cwdParserRef.current(cleanAgentPtyChunk(data)).replace(/\r/g, '\n');
 
@@ -2959,7 +3028,6 @@ export function useAgentPaneSession({
           payload.code === 0 &&
           !payload.error &&
           turnsRef.current.some((turn) => turn.running) &&
-          !streamJsonIncompleteContinueRef.current &&
           tryContinueIncompleteStreamJsonTurnRef.current(finishAgentPrintRun)
         ) {
           return;
@@ -2993,11 +3061,12 @@ export function useAgentPaneSession({
             return;
           }
 
-          if (
-            hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current) &&
-            !streamJsonIncompleteContinueRef.current
-          ) {
+          if (hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current)) {
             streamJsonStateRef.current.shouldFinalize = false;
+
+            if (tryContinueIncompleteStreamJsonTurnRef.current(finishAgentPrintRun)) {
+              return;
+            }
           } else {
             finalizeStreamJsonTurnFromEvent('onDone-shouldFinalize');
             finishAgentPrintRun();
@@ -3012,7 +3081,7 @@ export function useAgentPaneSession({
           useTerminalSessionStore.getState().completeTaskIfAwaiting(activePaneId);
 
           if (followUpsRef.current.length > 0) {
-            tryFlushFollowUpQueueRef.current({ force: true });
+            tryFlushFollowUpQueueRef.current();
           }
 
           finishAgentPrintRun();
@@ -3096,6 +3165,14 @@ export function useAgentPaneSession({
             return;
           }
 
+          if (hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current)) {
+            streamJsonStateRef.current.shouldFinalize = false;
+
+            if (tryContinueIncompleteStreamJsonTurnRef.current(finishAgentPrintRun)) {
+              return;
+            }
+          }
+
           finalizeStreamJsonTurnFromEvent('onDone-shouldFinalize-late');
           finishAgentPrintRun();
           streamJsonIncompleteContinueRef.current = false;
@@ -3139,11 +3216,29 @@ export function useAgentPaneSession({
             return;
           }
 
+          if (tryContinueIncompleteStreamJsonTurnRef.current(finishAgentPrintRun)) {
+            return;
+          }
+
+          if (hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current)) {
+            finishAgentPrintRun();
+            return;
+          }
+
           applyStreamJsonChunk('');
           finalizeActiveTurn(true);
           finishAgentPrintRun();
           streamJsonAutoRetryRef.current = false;
           streamJsonIncompleteContinueRef.current = false;
+          return;
+        }
+
+        if (tryContinueIncompleteStreamJsonTurnRef.current(finishAgentPrintRun)) {
+          return;
+        }
+
+        if (hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current)) {
+          finishAgentPrintRun();
           return;
         }
 
@@ -3190,20 +3285,67 @@ export function useAgentPaneSession({
             agentPrintRunActiveRef.current = true;
           }
 
-          if (Date.now() - turnStartedAt >= STREAM_JSON_ABSOLUTE_MAX_MS) {
+          if (
+            idleMs >= STREAM_JSON_EMPTY_HUNG_IDLE_MS &&
+            !hasStreamJsonVisibleProgress(streamJsonStateRef.current) &&
+            !hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current) &&
+            !hasPendingStreamJsonInteraction(streamJsonStateRef.current)
+          ) {
             forceSettleStreamJsonInFlightWork(streamJsonStateRef.current);
             applyStreamJsonChunk('');
+            agentPrintRunActiveRef.current = false;
+            window.nexus.agentPrint.stop(paneId);
 
-            if (!streamJsonStateRef.current.shouldFinalize) {
-              tryMarkStreamJsonReadyToFinalize(streamJsonStateRef.current);
-            }
+            updateActiveTurn((turn) => ({
+              ...turn,
+              activities: [
+                ...turn.activities.filter(
+                  (entry) =>
+                    entry.kind !== 'response' &&
+                    !(entry.kind === 'thought' && !entry.label.trim()) &&
+                    entry.kind !== 'live_status' &&
+                    entry.kind !== 'tool_run',
+                ),
+                createFailedPromptActivity(
+                  'Agent sem resposta (Thinking vazio). Pare e tente de novo.',
+                ),
+              ],
+            }));
+            finalizeActiveTurn(true);
+            clearAgentPrintRunToken(paneId);
+            return;
+          }
+
+          if (idleMs >= STREAM_JSON_HUNG_IDLE_MS) {
+            forceSettleStreamJsonInFlightWork(streamJsonStateRef.current);
+            applyStreamJsonChunk('');
 
             agentPrintRunActiveRef.current = false;
             window.nexus.agentPrint.stop(paneId);
             clearAgentPrintRunToken(paneId);
 
+            if (
+              tryContinueIncompleteStreamJsonTurnRef.current(() => {
+                clearAgentPrintRunToken(paneId);
+              })
+            ) {
+              return;
+            }
+
+            if (!streamJsonStateRef.current.shouldFinalize) {
+              tryMarkStreamJsonReadyToFinalize(streamJsonStateRef.current);
+            }
+
             if (streamJsonStateRef.current.shouldFinalize) {
-              finalizeStreamJsonTurnFromEvent();
+              if (hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current)) {
+                streamJsonStateRef.current.shouldFinalize = false;
+                lastStreamJsonChunkAtRef.current = Date.now();
+                return;
+              }
+
+              finalizeStreamJsonTurnFromEvent('hungIdle-shouldFinalize');
+            } else if (hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current)) {
+              lastStreamJsonChunkAtRef.current = Date.now();
             } else {
               finalizeActiveTurn(true);
             }
@@ -3242,8 +3384,27 @@ export function useAgentPaneSession({
           clearAgentPrintRunToken(paneId);
           window.nexus.agentPrint.stop(paneId);
 
+          if (
+            tryContinueIncompleteStreamJsonTurnRef.current(() => {
+              clearAgentPrintRunToken(paneId);
+            })
+          ) {
+            return;
+          }
+
           if (streamJsonStateRef.current.shouldFinalize) {
+            if (hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current)) {
+              streamJsonStateRef.current.shouldFinalize = false;
+              lastStreamJsonChunkAtRef.current = Date.now();
+              return;
+            }
+
             finalizeStreamJsonTurnFromEvent();
+            return;
+          }
+
+          if (hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current)) {
+            lastStreamJsonChunkAtRef.current = Date.now();
             return;
           }
 
@@ -3343,6 +3504,7 @@ export function useAgentPaneSession({
     tryFinalizeSettledStreamJsonTurn,
     tryHandoffLongRunningDevShell,
     tryScheduleStreamJsonAutoRetry,
+    updateActiveTurn,
     usesStreamJson,
   ]);
 
@@ -3400,7 +3562,7 @@ export function useAgentPaneSession({
       return;
     }
 
-    tryFlushFollowUpQueue({ force: true });
+    tryFlushFollowUpQueue();
   }, [
     followUps.length,
     hasPendingPlan,

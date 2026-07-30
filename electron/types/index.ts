@@ -442,6 +442,7 @@ export interface AppState {
   workspaces: Workspace[];
   activeProjectId: string | null;
   activeWorkspaceId: string | null;
+  activeProjectIdByWorkspace?: Record<string, string>;
   sidebarVideoSession?: PersistedSidebarVideoSession | null;
   sidebarVideoLastLink?: string | null;
 }

@@ -304,11 +304,25 @@ function extractAssistantImageMarkdown(part: Record<string, unknown>): string {
 }
 
 function extractAssistantText(message: unknown): string {
+  if (typeof message === 'string') {
+    return message;
+  }
+
   if (!message || typeof message !== 'object') {
     return '';
   }
 
-  const content = (message as { content?: unknown }).content;
+  const record = message as { content?: unknown; text?: unknown };
+
+  if (typeof record.text === 'string') {
+    return record.text;
+  }
+
+  const content = record.content;
+
+  if (typeof content === 'string') {
+    return content;
+  }
 
   if (!Array.isArray(content)) {
     return '';
@@ -316,18 +330,22 @@ function extractAssistantText(message: unknown): string {
 
   return content
     .map((part) => {
+      if (typeof part === 'string') {
+        return part;
+      }
+
       if (!part || typeof part !== 'object') {
         return '';
       }
 
-      const record = part as Record<string, unknown>;
-      const text = record.text;
+      const entry = part as Record<string, unknown>;
+      const text = entry.text;
 
       if (typeof text === 'string' && text) {
         return text;
       }
 
-      return extractAssistantImageMarkdown(record);
+      return extractAssistantImageMarkdown(entry);
     })
     .filter(Boolean)
     .join('');
@@ -413,27 +431,6 @@ function upsertThought(state: AgentStreamJsonParserState, delta: string): void {
     return;
   }
 
-  const latestThought = findLatestThoughtActivity(state);
-
-  if (latestThought) {
-    state.thoughtId = latestThought.id;
-    state.thoughtStartedAt = state.thoughtSessionStartedAt ?? latestThought.createdAt;
-    state.thoughtSessionStartedAt = state.thoughtSessionStartedAt ?? latestThought.createdAt;
-    const separator = latestThought.label.trim() ? '\n\n' : '';
-
-    state.activities = state.activities.map((entry) =>
-      entry.id === latestThought.id
-        ? {
-            ...entry,
-            streaming: true,
-            collapsed: false,
-            label: `${entry.label.trim()}${separator}${delta.trim()}`,
-          }
-        : entry,
-    );
-    return;
-  }
-
   const thought = createActivity('thought', delta.trim(), {
     streaming: true,
     collapsed: false,
@@ -447,14 +444,14 @@ function upsertThought(state: AgentStreamJsonParserState, delta: string): void {
 function hasVisibleStreamJsonProgress(state: AgentStreamJsonParserState): boolean {
   return state.activities.some((entry) => {
     if (entry.kind === 'thought') {
-      return true;
+      return Boolean(entry.label.trim());
     }
 
     if (entry.kind === 'file_read' || entry.kind === 'file_edit') {
       return Boolean(entry.filePath?.trim());
     }
 
-    if (entry.kind === 'tool_run' || entry.kind === 'live_status' || entry.kind === 'status') {
+    if (entry.kind === 'tool_run' || entry.kind === 'status') {
       return Boolean(entry.label.trim() || entry.toolCommand?.trim());
     }
 
@@ -468,6 +465,15 @@ function hasVisibleStreamJsonProgress(state: AgentStreamJsonParserState): boolea
 
     return false;
   });
+}
+
+export function hasStreamJsonVisibleProgress(state: AgentStreamJsonParserState): boolean {
+  return hasVisibleStreamJsonProgress(state);
+}
+
+function hasStreamingThoughtContent(state: AgentStreamJsonParserState): boolean {
+  const thought = findStreamingThoughtActivity(state);
+  return Boolean(thought?.streaming && thought.label.trim());
 }
 
 function pruneEmptyThoughtPlaceholders(state: AgentStreamJsonParserState): boolean {
@@ -598,7 +604,7 @@ function settleThought(state: AgentStreamJsonParserState): void {
       ? {
           ...entry,
           streaming: undefined,
-          collapsed: true,
+          collapsed: false,
           durationMs,
           label: entry.label.trim(),
         }
@@ -679,9 +685,29 @@ function trackEditedFile(
     return;
   }
 
+  const displayPath = shortenPath(filePath);
+
   if (!state.editedPaths.has(normalized)) {
     state.editedPaths.add(normalized);
-    state.editedFiles.push({ path: shortenPath(filePath) });
+    state.editedFiles.push({
+      path: displayPath,
+      ...(additions > 0 ? { additions } : {}),
+      ...(deletions > 0 ? { deletions } : {}),
+    });
+  } else {
+    const existing = state.editedFiles.find(
+      (entry) => entry.path.replace(/\\/g, '/').toLowerCase() === displayPath.replace(/\\/g, '/').toLowerCase(),
+    );
+
+    if (existing) {
+      if (additions > 0) {
+        existing.additions = (existing.additions ?? 0) + additions;
+      }
+
+      if (deletions > 0) {
+        existing.deletions = (existing.deletions ?? 0) + deletions;
+      }
+    }
   }
 
   state.lineAdditions += additions;
@@ -1490,42 +1516,13 @@ function handleStreamJsonEvent(state: AgentStreamJsonParserState, event: Record<
     const resultText =
       typeof event.result === 'string' ? event.result.trim() : state.pendingResponseText.trim();
 
-    if (event.subtype === 'success') {
-      if (resultText) {
-        upsertResponse(state, resultText, false);
-      }
-
-      if (
-        !hasPendingStreamJsonInteraction(state) &&
-        hasMeaningfulStreamJsonTurnOutput(state) &&
-        !hasIncompleteStreamJsonEnding(state) &&
-        !findStreamingThoughtActivity(state)?.streaming &&
-        state.runningToolRunStack.length === 0
-      ) {
-        state.shouldFinalize = true;
-        // #region agent log
-        writeDebugSessionLog({
-          location: 'agentStreamJsonParser.ts:result-success',
-          message: 'shouldFinalize set from result success',
-          data: {
-            resultTextLength: resultText.length,
-            activityKinds: state.activities.map((entry) => entry.kind),
-            hasPendingResponse: Boolean(state.pendingResponseText.trim()),
-          },
-          hypothesisId: 'B',
-        });
-        // #endregion
-      }
-
-      return;
-    }
-
-    if (resultText) {
+    if (resultText && !isAggregatedPriorResponseText(resultText, state.activities)) {
       upsertResponse(state, resultText, false);
     }
 
     if (
       !hasPendingStreamJsonInteraction(state) &&
+      hasMeaningfulStreamJsonTurnOutput(state) &&
       !hasIncompleteStreamJsonEnding(state) &&
       !findStreamingThoughtActivity(state)?.streaming &&
       state.runningToolRunStack.length === 0
@@ -1533,12 +1530,13 @@ function handleStreamJsonEvent(state: AgentStreamJsonParserState, event: Record<
       state.shouldFinalize = true;
       // #region agent log
       writeDebugSessionLog({
-        location: 'agentStreamJsonParser.ts:result-non-success',
-        message: 'shouldFinalize set from result non-success',
+        location: 'agentStreamJsonParser.ts:result',
+        message: 'shouldFinalize set from result',
         data: {
           subtype: event.subtype,
           resultTextLength: resultText.length,
           activityKinds: state.activities.map((entry) => entry.kind),
+          hasPendingResponse: Boolean(state.pendingResponseText.trim()),
         },
         hypothesisId: 'B',
       });
@@ -1677,7 +1675,7 @@ export function ensureStreamJsonStallProgressUi(state: AgentStreamJsonParserStat
     changed = true;
   }
 
-  if (findStreamingThoughtActivity(state)?.streaming) {
+  if (hasStreamingThoughtContent(state)) {
     if (clearStreamJsonLiveStatus(state)) {
       changed = true;
     }
@@ -1689,10 +1687,6 @@ export function ensureStreamJsonStallProgressUi(state: AgentStreamJsonParserStat
     changed = true;
   }
 
-  if (clearStreamJsonLiveStatus(state)) {
-    changed = true;
-  }
-
   return changed;
 }
 
@@ -1700,7 +1694,7 @@ export function resolveStreamJsonStallLiveStatus(
   state: AgentStreamJsonParserState,
   idleMs: number,
 ): string | null {
-  if (findStreamingThoughtActivity(state)?.streaming) {
+  if (hasStreamingThoughtContent(state)) {
     return null;
   }
 
@@ -1846,7 +1840,7 @@ export function tryMarkStreamJsonReadyToFinalize(state: AgentStreamJsonParserSta
       return {
         ...entry,
         streaming: undefined,
-        collapsed: true,
+        collapsed: false,
       };
     }
 
@@ -1869,6 +1863,95 @@ export function tryMarkStreamJsonReadyToFinalize(state: AgentStreamJsonParserSta
   settleThought(state);
   state.shouldFinalize = true;
   return true;
+}
+
+export function looksLikeMidProgressAgentResponse(text: string): boolean {
+  const trimmed = text.trim();
+
+  if (!trimmed || trimmed.length < 12) {
+    return false;
+  }
+
+  const tail = trimmed.slice(-320);
+  const hasProgressIntent =
+    /\b(vou |vamos |i'll |i will |let me |i am going to |i'm going to |next[,:]?\s|em seguida|agora vou|seguindo com|continu(?:ar|ando|e)\b)/i.test(
+      tail,
+    ) ||
+    /\b(atualizo|subo|fa[cç]o|verifico|testo|leio|edito|crio|removo|adiciono|implemento|aplico|reinicio|configuro|ajusto|valido|confiro|envio|rodo|executo|abro|fecho|monitoro|acompanho|revogo)\b/i.test(
+      tail,
+    );
+
+  if (!hasProgressIntent) {
+    return false;
+  }
+
+  const hasCompletionClose =
+    /\b(pronto|conclu[ií]do|finalizado|feito|tudo certo|all set|that's all|completed|finished|done)\b[.!…]?\s*$/i.test(
+      trimmed,
+    );
+
+  return !hasCompletionClose;
+}
+
+function findLastResponseLabel(
+  activities: AgentActivity[],
+  fallback = '',
+): string {
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const entry = activities[index];
+
+    if (entry?.kind === 'response' && entry.label.trim()) {
+      return entry.label.trim();
+    }
+  }
+
+  return fallback.trim();
+}
+
+function isAggregatedPriorResponseText(
+  resultText: string,
+  activities: AgentActivity[],
+): boolean {
+  const responses = activities
+    .filter((entry) => entry.kind === 'response' && entry.label.trim())
+    .map((entry) => entry.label.trim());
+
+  if (responses.length === 0) {
+    return false;
+  }
+
+  const compactResult = resultText.replace(/\s+/g, '');
+
+  if (compactResult.length < 48) {
+    return false;
+  }
+
+  const compactJoined = responses.join('').replace(/\s+/g, '');
+  const lastCompact = responses[responses.length - 1]!.replace(/\s+/g, '');
+
+  if (compactResult === lastCompact) {
+    return true;
+  }
+
+  if (lastCompact.length >= 16 && compactResult.includes(lastCompact) && compactResult.length > lastCompact.length + 16) {
+    return true;
+  }
+
+  if (
+    compactJoined.length >= 48 &&
+    (compactResult.startsWith(compactJoined.slice(0, Math.min(96, compactJoined.length))) ||
+      compactJoined.startsWith(compactResult.slice(0, Math.min(96, compactResult.length))) ||
+      compactResult.includes(compactJoined.slice(0, Math.min(96, compactJoined.length))))
+  ) {
+    return true;
+  }
+
+  const matched = responses.filter((entry) => {
+    const compact = entry.replace(/\s+/g, '');
+    return compact.length >= 16 && compactResult.includes(compact.slice(0, Math.min(48, compact.length)));
+  }).length;
+
+  return matched >= Math.min(2, responses.length);
 }
 
 function hasIncompleteStreamJsonEnding(
@@ -1918,11 +2001,13 @@ function hasIncompleteStreamJsonEnding(
     lastThoughtIndex = index;
   }
 
-  if (lastThoughtIndex <= lastResponseIndex || lastThoughtIndex < lastProgressIndex) {
-    return false;
+  if (lastThoughtIndex > lastResponseIndex && lastThoughtIndex >= lastProgressIndex) {
+    return true;
   }
 
-  return true;
+  const lastResponseLabel = findLastResponseLabel(activities, state.pendingResponseText);
+
+  return looksLikeMidProgressAgentResponse(lastResponseLabel);
 }
 
 export function hasIncompleteStreamJsonTurnEnding(
@@ -2011,7 +2096,7 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
         return {
           ...entry,
           streaming: undefined,
-          collapsed: true,
+          collapsed: false,
           durationMs:
             entry.durationMs ?? Math.max(Date.now() - (entry.createdAt || turn.startedAt), 1000),
         };

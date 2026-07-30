@@ -13,6 +13,8 @@ import {
   playJarvisRequestStartSound,
 } from '@/utils/jarvisNotificationSound';
 
+const PROCESS_TIMEOUT_MS = 75_000;
+
 export function useJarvisController(): {
   enabled: boolean;
   phase: string;
@@ -24,10 +26,10 @@ export function useJarvisController(): {
   const enabled = useJarvisStore((state) => state.enabled);
   const phase = useJarvisStore((state) => state.phase);
   const lastError = useJarvisStore((state) => state.lastError);
-  const busy = useJarvisStore((state) => state.busy);
 
   const captureRef = useRef<JarvisMicCapture | null>(null);
   const handlingRef = useRef(false);
+  const intentRunningRef = useRef(false);
   const enabledRef = useRef(false);
   const addAgentTabRef = useRef(addAgentTab);
   const selectPaneRef = useRef(selectPane);
@@ -42,27 +44,52 @@ export function useJarvisController(): {
     captureRef.current = null;
   }, []);
 
+  const resumeListening = useCallback(() => {
+    if (!enabledRef.current) {
+      return;
+    }
+    captureRef.current?.setPaused(false);
+    if (!intentRunningRef.current) {
+      useJarvisStore.getState().setPhase('listening');
+    }
+  }, []);
+
   const handleUtteranceRef = useRef<(wavBase64: string) => Promise<void>>(async () => undefined);
 
   handleUtteranceRef.current = async (wavBase64: string) => {
-    if (handlingRef.current || useJarvisStore.getState().busy) {
+    if (handlingRef.current || intentRunningRef.current || useJarvisStore.getState().busy) {
       return;
     }
 
     handlingRef.current = true;
     useJarvisStore.getState().setBusy(true);
+    useJarvisStore.getState().setPhase('processing');
+    useJarvisStore.getState().setLastError(null);
     captureRef.current?.setPaused(true);
+
+    let processTimer: number | undefined;
 
     try {
       const projectNames = useProjectStore
         .getState()
         .projects.map((project) => project.name)
         .filter(Boolean);
-      const result = await window.nexus.jarvis.processUtterance(wavBase64, projectNames);
-      useJarvisStore.getState().setLastTranscript(result.transcript || null);
+
+      const result = await Promise.race([
+        window.nexus.jarvis.processUtterance(wavBase64, projectNames),
+        new Promise<never>((_, reject) => {
+          processTimer = window.setTimeout(() => {
+            reject(new Error('Tempo esgotado ao transcrever a voz'));
+          }, PROCESS_TIMEOUT_MS);
+        }),
+      ]);
+
+      const transcript = result.transcript?.trim() || '';
+      useJarvisStore.getState().setLastTranscript(transcript || null);
 
       if (!result.accepted || !result.intent) {
         if (result.error) {
+          useJarvisStore.getState().setLastError(result.error);
           playJarvisRequestFinishSound();
         }
         return;
@@ -75,29 +102,39 @@ export function useJarvisController(): {
         return;
       }
 
-      await runJarvisIntent(result.intent, {
-        addAgentTab: addAgentTabRef.current,
-        selectPane: selectPaneRef.current,
-      });
+      intentRunningRef.current = true;
+      useJarvisStore.getState().setPhase('executing');
+      useJarvisStore.getState().setBusy(false);
+      handlingRef.current = false;
+      resumeListening();
+
+      try {
+        await runJarvisIntent(result.intent, {
+          addAgentTab: addAgentTabRef.current,
+          selectPane: selectPaneRef.current,
+        });
+      } finally {
+        intentRunningRef.current = false;
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro no Jarvis';
       useJarvisStore.getState().setLastError(message);
+      useJarvisStore.getState().setPhase('error');
       playJarvisRequestFinishSound();
       try {
         await window.nexus.jarvis.notifyFinished(false, message);
       } catch {
       }
     } finally {
+      if (processTimer !== undefined) {
+        window.clearTimeout(processTimer);
+      }
       handlingRef.current = false;
       useJarvisStore.getState().setBusy(false);
       if (enabledRef.current) {
         window.setTimeout(() => {
-          if (!enabledRef.current) {
-            return;
-          }
-          captureRef.current?.setPaused(false);
-          useJarvisStore.getState().setPhase('listening');
-        }, 900);
+          resumeListening();
+        }, 350);
       }
     }
   };
@@ -119,6 +156,7 @@ export function useJarvisController(): {
       captureRef.current = capture;
       useJarvisStore.getState().setPhase('listening');
       useJarvisStore.getState().setLastError(null);
+      useJarvisStore.getState().setBusy(false);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Permissão de microfone negada';
@@ -133,7 +171,7 @@ export function useJarvisController(): {
     } finally {
       startingCaptureRef.current = false;
     }
-  }, []);
+  }, [resumeListening]);
 
   const toggle = useCallback(async () => {
     if (!nexusReady) {
@@ -142,6 +180,9 @@ export function useJarvisController(): {
 
     if (useJarvisStore.getState().enabled) {
       enabledRef.current = false;
+      intentRunningRef.current = false;
+      handlingRef.current = false;
+      useJarvisStore.getState().setBusy(false);
       stopCapture();
       const status = await window.nexus.jarvis.stop();
       useJarvisStore.getState().setEnabled(false);
@@ -159,6 +200,8 @@ export function useJarvisController(): {
     useJarvisStore.getState().setEnabled(nextEnabled);
     useJarvisStore.getState().setPhase(status.phase);
     useJarvisStore.getState().setLastError(status.lastError);
+    useJarvisStore.getState().setBusy(false);
+    intentRunningRef.current = false;
 
     if (nextEnabled) {
       await startCapture();
@@ -189,8 +232,9 @@ export function useJarvisController(): {
       useJarvisStore.getState().setStatus(status);
       useJarvisStore.getState().setEnabled(status.enabled);
       enabledRef.current = status.enabled;
-      useJarvisStore.getState().setPhase(status.phase);
+      useJarvisStore.getState().setPhase(status.phase === 'executing' ? 'listening' : status.phase);
       useJarvisStore.getState().setLastError(status.lastError);
+      useJarvisStore.getState().setBusy(false);
       if (status.enabled && status.phase !== 'error') {
         await startCapture();
       }
@@ -198,6 +242,9 @@ export function useJarvisController(): {
 
     const unsubs = [
       window.nexus.jarvis.onPhase((nextPhase) => {
+        if (handlingRef.current && (nextPhase === 'listening' || nextPhase === 'idle')) {
+          return;
+        }
         useJarvisStore.getState().setPhase(nextPhase);
       }),
       window.nexus.jarvis.onHeard((transcript) => {
@@ -206,6 +253,9 @@ export function useJarvisController(): {
       window.nexus.jarvis.onError((message) => {
         useJarvisStore.getState().setLastError(message);
         useJarvisStore.getState().setPhase('error');
+        useJarvisStore.getState().setBusy(false);
+        handlingRef.current = false;
+        intentRunningRef.current = false;
       }),
     ];
 
@@ -218,7 +268,7 @@ export function useJarvisController(): {
 
   return {
     enabled,
-    phase: busy ? 'executing' : phase,
+    phase,
     lastError,
     toggle,
   };

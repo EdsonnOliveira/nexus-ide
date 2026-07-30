@@ -115,17 +115,35 @@ export const useMobileReleaseStore = create<MobileReleaseStoreState>((set, get) 
   historyByProject: readHistoryByProject(),
   startRelease: (release) => {
     set((state) => {
-      const paneUids = state.activeUidsByPane[release.paneId] ?? [];
+      const nextReleases = { ...state.releases };
+      const nextActiveUidsByPane = { ...state.activeUidsByPane };
+
+      for (const [uid, existing] of Object.entries(nextReleases)) {
+        if (
+          uid === release.uid ||
+          existing.projectId !== release.projectId ||
+          existing.kind !== release.kind ||
+          existing.state !== 'BUILDING'
+        ) {
+          continue;
+        }
+
+        delete nextReleases[uid];
+        const paneUids = nextActiveUidsByPane[existing.paneId] ?? [];
+        nextActiveUidsByPane[existing.paneId] = paneUids.filter((entry) => entry !== uid);
+      }
+
+      const paneUids = nextActiveUidsByPane[release.paneId] ?? [];
       const nextDismissed = new Set(state.dismissedUids);
       nextDismissed.delete(release.uid);
 
       return {
         releases: {
-          ...state.releases,
+          ...nextReleases,
           [release.uid]: release,
         },
         activeUidsByPane: {
-          ...state.activeUidsByPane,
+          ...nextActiveUidsByPane,
           [release.paneId]: [...paneUids.filter((uid) => uid !== release.uid), release.uid],
         },
         dismissedUids: nextDismissed,

@@ -756,6 +756,92 @@ function settleAllStreaming(state: WebStreamJsonState): void {
   );
 }
 
+export function looksLikeMidProgressWebResponse(text: string): boolean {
+  const trimmed = text.trim();
+
+  if (!trimmed || trimmed.length < 12) {
+    return false;
+  }
+
+  const tail = trimmed.slice(-320);
+  const hasProgressIntent =
+    /\b(vou |vamos |i'll |i will |let me |i am going to |i'm going to |next[,:]?\s|em seguida|agora vou|seguindo com|continu(?:ar|ando|e)\b)/i.test(
+      tail,
+    ) ||
+    /\b(atualizo|subo|fa[cç]o|verifico|testo|leio|edito|crio|removo|adiciono|implemento|aplico|reinicio|configuro|ajusto|valido|confiro|envio|rodo|executo|abro|fecho|monitoro|acompanho|revogo)\b/i.test(
+      tail,
+    );
+
+  if (!hasProgressIntent) {
+    return false;
+  }
+
+  const hasCompletionClose =
+    /\b(pronto|conclu[ií]do|finalizado|feito|tudo certo|all set|that's all|completed|finished|done)\b[.!…]?\s*$/i.test(
+      trimmed,
+    );
+
+  return !hasCompletionClose;
+}
+
+function findLastWebResponseLabel(state: WebStreamJsonState): string {
+  for (let index = state.activities.length - 1; index >= 0; index -= 1) {
+    const entry = state.activities[index];
+    if (entry?.kind === 'response' && entry.label.trim()) {
+      return entry.label.trim();
+    }
+  }
+  return state.response.trim();
+}
+
+function isAggregatedPriorWebResponseText(
+  resultText: string,
+  activities: WebAgentActivity[],
+): boolean {
+  const responses = activities
+    .filter((entry) => entry.kind === 'response' && entry.label.trim())
+    .map((entry) => entry.label.trim());
+
+  if (responses.length === 0) {
+    return false;
+  }
+
+  const compactResult = resultText.replace(/\s+/g, '');
+
+  if (compactResult.length < 48) {
+    return false;
+  }
+
+  const compactJoined = responses.join('').replace(/\s+/g, '');
+  const lastCompact = responses[responses.length - 1]!.replace(/\s+/g, '');
+
+  if (compactResult === lastCompact) {
+    return true;
+  }
+
+  if (
+    lastCompact.length >= 16 &&
+    compactResult.includes(lastCompact) &&
+    compactResult.length > lastCompact.length
+  ) {
+    return false;
+  }
+
+  if (
+    compactJoined.length >= 48 &&
+    compactResult === compactJoined
+  ) {
+    return true;
+  }
+
+  const matched = responses.filter((entry) => {
+    const compact = entry.replace(/\s+/g, '');
+    return compact.length >= 16 && compactResult.includes(compact.slice(0, Math.min(48, compact.length)));
+  }).length;
+
+  return matched >= Math.min(2, responses.length);
+}
+
 function handleEvent(state: WebStreamJsonState, event: Record<string, unknown>): void {
   const type = typeof event.type === 'string' ? event.type : '';
 
@@ -799,11 +885,14 @@ function handleEvent(state: WebStreamJsonState, event: Record<string, unknown>):
     }
     const resultText =
       typeof event.result === 'string' ? event.result.trim() : state.response.trim();
-    if (resultText) {
+    if (resultText && !isAggregatedPriorWebResponseText(resultText, state.activities)) {
       upsertResponse(state, resultText, false);
     }
     settleAllStreaming(state);
-    state.done = true;
+    const lastResponse = findLastWebResponseLabel(state);
+    if (!looksLikeMidProgressWebResponse(lastResponse)) {
+      state.done = true;
+    }
   }
 }
 
@@ -914,4 +1003,214 @@ export function buildWebLiveToolBatchSummary(
   }
 
   return null;
+}
+
+export function isWebActionBlockActivity(activity: WebAgentActivity): boolean {
+  if (activity.kind === 'thought') {
+    return true;
+  }
+
+  if (activity.kind === 'file_edit' || activity.kind === 'file_read') {
+    return Boolean(activity.filePath?.trim());
+  }
+
+  if (activity.kind === 'tool_run') {
+    return Boolean(activity.label.trim() || activity.toolCommand?.trim());
+  }
+
+  return false;
+}
+
+export interface WebActionBlockSummary {
+  label: string;
+  additions: number;
+  deletions: number;
+  hasToolProgress: boolean;
+}
+
+export function buildWebActionBlockSummary(activities: WebAgentActivity[]): WebActionBlockSummary {
+  const editedPaths = new Set<string>();
+  const exploredPaths = new Set<string>();
+  let editedCount = 0;
+  let exploredCount = 0;
+  let searchCount = 0;
+  let lintCount = 0;
+  let commandCount = 0;
+  let additions = 0;
+  let deletions = 0;
+  const commandKeys = new Set<string>();
+
+  for (const activity of activities) {
+    if (activity.kind === 'file_edit') {
+      const path = activity.filePath?.trim();
+      if (path) {
+        const key = path.toLowerCase();
+        if (!editedPaths.has(key)) {
+          editedPaths.add(key);
+          editedCount += 1;
+        }
+      }
+      additions += activity.additions ?? 0;
+      deletions += activity.deletions ?? 0;
+      continue;
+    }
+
+    if (activity.kind === 'file_read') {
+      const path = activity.filePath?.trim();
+      if (path) {
+        const key = path.toLowerCase();
+        if (!exploredPaths.has(key) && !editedPaths.has(key)) {
+          exploredPaths.add(key);
+          exploredCount += 1;
+        }
+      }
+      continue;
+    }
+
+    if (activity.kind === 'tool_run') {
+      const label = activity.label.trim();
+      const command = activity.toolCommand?.trim() ?? '';
+
+      if (/^(?:Glob|Grep|Grepping|Searching|Searched)/i.test(label)) {
+        searchCount += 1;
+        continue;
+      }
+
+      if (/lint/i.test(label) || /lint/i.test(command)) {
+        lintCount += 1;
+        continue;
+      }
+
+      if (command) {
+        const key = command.toLowerCase();
+        if (!commandKeys.has(key)) {
+          commandKeys.add(key);
+          commandCount += 1;
+        }
+      }
+    }
+  }
+
+  const parts: string[] = [];
+
+  if (editedCount > 0) {
+    parts.push(`Editing ${editedCount} file${editedCount === 1 ? '' : 's'}`);
+  }
+
+  if (exploredCount > 0) {
+    parts.push(`explored ${exploredCount} file${exploredCount === 1 ? '' : 's'}`);
+  }
+
+  if (searchCount > 0) {
+    parts.push(`${searchCount} search${searchCount === 1 ? '' : 'es'}`);
+  }
+
+  if (lintCount > 0) {
+    parts.push(lintCount === 1 ? 'lints' : `${lintCount} lints`);
+  }
+
+  if (commandCount > 0) {
+    parts.push(`ran ${commandCount} command${commandCount === 1 ? '' : 's'}`);
+  }
+
+  return {
+    label: parts.join(', '),
+    additions,
+    deletions,
+    hasToolProgress: parts.length > 0,
+  };
+}
+
+export type WebActivityRenderChunk =
+  | { type: 'single'; activity: WebAgentActivity; key: string }
+  | { type: 'action-group'; activities: WebAgentActivity[]; key: string };
+
+export function buildWebActivityRenderChunks(
+  activities: WebAgentActivity[],
+): WebActivityRenderChunk[] {
+  const chunks: WebActivityRenderChunk[] = [];
+  let actionGroup: WebAgentActivity[] = [];
+
+  const flushActionGroup = () => {
+    if (actionGroup.length === 0) {
+      return;
+    }
+
+    chunks.push({
+      type: 'action-group',
+      activities: actionGroup,
+      key: `action-group-${actionGroup[0]?.id ?? chunks.length}`,
+    });
+    actionGroup = [];
+  };
+
+  for (const activity of activities) {
+    if (isWebActionBlockActivity(activity)) {
+      actionGroup.push(activity);
+      continue;
+    }
+
+    flushActionGroup();
+    chunks.push({ type: 'single', activity, key: activity.id });
+  }
+
+  flushActionGroup();
+  return chunks;
+}
+
+export function isWebActionBlockChunkLive(
+  chunkIndex: number,
+  chunks: WebActivityRenderChunk[],
+  running: boolean,
+): boolean {
+  if (!running) {
+    return false;
+  }
+
+  for (let index = chunkIndex + 1; index < chunks.length; index += 1) {
+    const chunk = chunks[index];
+    if (chunk?.type === 'single' && chunk.activity.kind === 'response') {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+export function partitionWebLiveActionBlockActivities(activities: WebAgentActivity[]): {
+  settled: WebAgentActivity[];
+  live: WebAgentActivity[];
+} {
+  let lastStreamingIndex = -1;
+
+  for (let index = 0; index < activities.length; index += 1) {
+    if (activities[index]?.streaming) {
+      lastStreamingIndex = index;
+    }
+  }
+
+  if (lastStreamingIndex < 0) {
+    return { settled: activities, live: [] };
+  }
+
+  let cutIndex = lastStreamingIndex;
+
+  for (let index = lastStreamingIndex; index >= 0; index -= 1) {
+    const entry = activities[index];
+    if (!entry) {
+      continue;
+    }
+
+    if (entry.kind === 'thought') {
+      cutIndex = index;
+      break;
+    }
+
+    cutIndex = index;
+  }
+
+  return {
+    settled: activities.slice(0, cutIndex),
+    live: activities.slice(cutIndex),
+  };
 }

@@ -1549,16 +1549,55 @@ export async function createIosSimulatorSession(
   };
 
   const pressAppSwitcherWithFallback = async () => {
+    const previousAppResult = await runCommand('osascript', [
+      '-e',
+      'tell application "System Events" to get name of first process whose frontmost is true',
+    ]);
+    const previousApp = previousAppResult.stdout.trim();
+
+    const restorePreviousApp = async () => {
+      if (
+        !previousApp ||
+        previousApp === 'Simulator' ||
+        previousApp === 'SimulatorTrampoline'
+      ) {
+        return;
+      }
+
+      await runCommand('osascript', [
+        '-e',
+        'tell application "System Events"',
+        '-e',
+        `  set frontmost of process ${JSON.stringify(previousApp)} to true`,
+        '-e',
+        'end tell',
+      ]);
+    };
+
     const shortcutResult = await runCommand('osascript', [
       '-e',
       'tell application "Simulator" to activate',
       '-e',
-      'delay 0.15',
+      'delay 0.35',
       '-e',
-      'tell application "System Events" to keystroke "h" using {control down, shift down, command down}',
+      'tell application "System Events"',
+      '-e',
+      '  repeat 12 times',
+      '-e',
+      '    if (name of first process whose frontmost is true) is "Simulator" then exit repeat',
+      '-e',
+      '    delay 0.05',
+      '-e',
+      '  end repeat',
+      '-e',
+      '  keystroke "h" using {control down, shift down, command down}',
+      '-e',
+      'end tell',
     ]);
 
     if (shortcutResult.code === 0) {
+      await delay(120);
+      await restorePreviousApp();
       return;
     }
 
@@ -1566,12 +1605,14 @@ export async function createIosSimulatorSession(
       '-e',
       'tell application "Simulator" to activate',
       '-e',
-      'delay 0.15',
+      'delay 0.25',
       '-e',
       'tell application "System Events" to tell process "Simulator" to click menu item "App Switcher" of menu "Device" of menu bar 1',
     ]);
 
     if (menuResult.code === 0) {
+      await delay(120);
+      await restorePreviousApp();
       return;
     }
 

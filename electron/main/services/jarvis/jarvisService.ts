@@ -60,6 +60,18 @@ let lastTranscript: string | null = null;
 let lastError: string | null = null;
 let busy = false;
 
+function cleanHeardTranscript(transcriptRaw: string): string {
+  return transcriptRaw
+    .trim()
+    .replace(/\[\d{2}:\d{2}[^\]]*\]/g, ' ')
+    .replace(/^\s*\[(?:BLANK_AUDIO|MUSIC|m[uú]sica|Silence|silence)\]\s*$/gim, '')
+    .replace(/^\s*\((?:MUSIC|m[uú]sica|Silence|silence)\)\s*$/gim, '')
+    .replace(/^\[|\]$/g, '')
+    .replace(/[\[\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function broadcast(channel: string, payload?: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (win.isDestroyed()) {
@@ -231,11 +243,11 @@ async function finishFromTranscript(
   transcriptRaw: string,
   projectNames: string[] = [],
 ): Promise<JarvisProcessResult> {
-  const transcript = transcriptRaw.trim().replace(/^\[|\]$/g, '').trim();
+  const transcript = cleanHeardTranscript(transcriptRaw);
   lastTranscript = transcript;
   broadcast('jarvis:heard', { transcript });
 
-  if (!transcript || /^\[.*\]$/.test(transcript)) {
+  if (!transcript) {
     setPhase(getJarvisEnabled() ? 'listening' : 'idle');
     return { accepted: false, transcript, intent: null };
   }

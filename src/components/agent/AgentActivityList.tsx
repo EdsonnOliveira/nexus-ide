@@ -6,12 +6,17 @@ import { AgentThoughtBlock } from '@/components/agent/AgentThoughtBlock';
 import { AgentQuestionCard } from '@/components/agent/AgentQuestionCard';
 import { AgentPlanReviewDock } from '@/components/agent/AgentPlanReviewDock';
 import { AgentResponseActions } from '@/components/agent/AgentResponseActions';
+import { AgentActionBlockSummary } from '@/components/agent/AgentActionBlockSummary';
 import { AgentTurnSummaryLine } from '@/components/agent/AgentTurnSummaryLine';
 import { MarkdownImageLightbox } from '@/components/overlay/MarkdownImageLightbox';
 import {
+  buildActionBlockSummary,
   buildAgentActivityRenderChunks,
+  buildEditedFilesFromActivities,
   extractAgentFinalResponseText,
+  isActionBlockChunkLive,
   isAgentTurnSummaryVisible,
+  partitionLiveActionBlockActivities,
   splitAgentResponseForSummary,
 } from '@/utils/agentTurnSummary';
 import {
@@ -53,7 +58,7 @@ function isRenderableActivity(activity: AgentActivity, running: boolean): boolea
   }
 
   if (activity.kind === 'tool_run') {
-    return running && Boolean(activity.label.trim() || activity.toolCommand?.trim());
+    return Boolean(activity.label.trim() || activity.toolCommand?.trim());
   }
 
   if (activity.kind === 'status') {
@@ -64,10 +69,6 @@ function isRenderableActivity(activity: AgentActivity, running: boolean): boolea
     const target = activity.filePath?.trim() ?? '';
 
     if (!target) {
-      return false;
-    }
-
-    if (!running) {
       return false;
     }
 
@@ -300,18 +301,45 @@ function AgentActivityListComponent({
   );
 
   const showCopyPill = !running && finalResponseText.length > 0;
-  const showChangesPill = !running && Boolean(summary && (summary.additions > 0 || summary.deletions > 0));
+  const editedFilesForCard = useMemo(
+    () => (!running ? buildEditedFilesFromActivities(activities) : []),
+    [activities, running],
+  );
+  const showChangesPill =
+    !running &&
+    Boolean(
+      editedFilesForCard.length > 0 ||
+        (summary &&
+          ((summary.editedFiles?.length ?? 0) > 0 ||
+            summary.editedFileCount > 0 ||
+            summary.additions > 0 ||
+            summary.deletions > 0)),
+    );
   const showResponseActions = showCopyPill || showChangesPill;
   const activityChunks = useMemo(
-    () => buildAgentActivityRenderChunks(visibleActivities, running),
-    [visibleActivities, running],
+    () => buildAgentActivityRenderChunks(visibleActivities),
+    [visibleActivities],
+  );
+  const hasSettledActionSummaries = useMemo(
+    () =>
+      activityChunks.some((chunk, index) => {
+        if (chunk.type !== 'action-group' || !chunk.activities) {
+          return false;
+        }
+
+        if (isActionBlockChunkLive(index, activityChunks, running)) {
+          return false;
+        }
+
+        return buildActionBlockSummary(chunk.activities).hasToolProgress;
+      }),
+    [activityChunks, running],
   );
 
   const renderSingleActivity = (activity: AgentActivity): ReactNode => {
         if (activity.kind === 'thought') {
           const thoughtIndex = visibleActivities.findIndex((entry) => entry.id === activity.id);
           const following = thoughtIndex >= 0 ? visibleActivities.slice(thoughtIndex + 1) : [];
-          const hasResponseAfter = following.some((entry) => entry.kind === 'response');
           const hasProgressAfter = following.some((entry) => {
             if (entry.kind === 'response') {
               return true;
@@ -327,15 +355,15 @@ function AgentActivityListComponent({
 
             return false;
           });
-          const collapseThought =
-            hasResponseAfter || (hasProgressAfter && !activity.label.trim());
+          const collapseEmptyPlaceholder =
+            !activity.streaming && !activity.label.trim() && hasProgressAfter;
 
           return (
             <AgentThoughtBlock
               key={activity.id}
               activity={activity}
-              defaultExpanded={!collapseThought && !activity.collapsed}
-              forceCollapsed={collapseThought}
+              defaultExpanded={Boolean(activity.streaming)}
+              forceCollapsed={collapseEmptyPlaceholder}
             />
           );
         }
@@ -377,7 +405,7 @@ function AgentActivityListComponent({
 
           const isLastResponse = activity.id === lastResponseId;
           const split =
-            isLastResponse && showSummary && summary
+            isLastResponse && showSummary && summary && !hasSettledActionSummaries
               ? splitAgentResponseForSummary(label, summary.responseLead)
               : null;
 
@@ -439,16 +467,87 @@ function AgentActivityListComponent({
     [...visibleActivities].reverse().find((entry) => entry.kind === 'response')?.label.trim() !==
       incompleteClosingMessage;
 
+  const renderLiveActionGroup = (activities: AgentActivity[]): ReactNode => {
+    const nodes: ReactNode[] = [];
+    let toolGroup: AgentActivity[] = [];
+
+    const flushTools = (keySuffix: string) => {
+      if (toolGroup.length === 0) {
+        return;
+      }
+
+      nodes.push(
+        <AgentToolActivityScrollList
+          key={`live-tools-${keySuffix}`}
+          activities={toolGroup}
+          projectPath={projectPath}
+          running
+        />,
+      );
+      toolGroup = [];
+    };
+
+    for (const activity of activities) {
+      if (activity.kind === 'thought') {
+        flushTools(activity.id);
+        nodes.push(
+          <AgentThoughtBlock
+            key={activity.id}
+            activity={activity}
+            defaultExpanded={Boolean(activity.streaming || activity.label.trim())}
+            forceCollapsed={!activity.streaming && !activity.label.trim()}
+          />,
+        );
+        continue;
+      }
+
+      toolGroup.push(activity);
+    }
+
+    flushTools('tail');
+    return nodes;
+  };
+
+  const renderTrailingActionGroup = (activities: AgentActivity[], chunkKey: string): ReactNode => {
+    const { settled, live } = partitionLiveActionBlockActivities(activities);
+    const settledSummary = settled.length > 0 ? buildActionBlockSummary(settled) : null;
+
+    return (
+      <Fragment key={chunkKey}>
+        {settledSummary?.hasToolProgress ? (
+          <AgentActionBlockSummary activities={settled} projectPath={projectPath} />
+        ) : (
+          settled
+            .filter((entry) => entry.kind === 'thought' && entry.label.trim())
+            .map((activity) => (
+              <AgentThoughtBlock
+                key={activity.id}
+                activity={activity}
+                defaultExpanded
+                forceCollapsed={false}
+              />
+            ))
+        )}
+        {live.length > 0 ? renderLiveActionGroup(live) : null}
+      </Fragment>
+    );
+  };
+
   return (
     <div className='agent-view__activities'>
-      {activityChunks.map((chunk) => {
-        if (chunk.type === 'tool-group' && chunk.activities) {
+      {activityChunks.map((chunk, chunkIndex) => {
+        if (chunk.type === 'action-group' && chunk.activities) {
+          const live = isActionBlockChunkLive(chunkIndex, activityChunks, running);
+
+          if (live) {
+            return renderTrailingActionGroup(chunk.activities, chunk.key);
+          }
+
           return (
-            <AgentToolActivityScrollList
+            <AgentActionBlockSummary
               key={chunk.key}
               activities={chunk.activities}
               projectPath={projectPath}
-              running={running}
             />
           );
         }
@@ -466,7 +565,7 @@ function AgentActivityListComponent({
           {incompleteClosingMessage}
         </div>
       ) : null}
-      {showSummary && summary && !hasVisibleResponse ? (
+      {showSummary && summary && !hasVisibleResponse && !hasSettledActionSummaries ? (
         <>
           <div className='agent-view__response agent-view__response--settled app-button--enter'>
             {emptyResponseFallback}
@@ -486,6 +585,7 @@ function AgentActivityListComponent({
           paneId={paneId}
           content={finalResponseText}
           summary={summary}
+          editedFiles={editedFilesForCard}
           showSkillPills={isLatestTurn}
           showCopyPill={showCopyPill}
         />

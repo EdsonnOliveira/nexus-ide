@@ -1,5 +1,4 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { AgentActivity } from '@/types';
 import { useMarkdownCodeHighlight, useDeferredMarkdownHtml } from '@/hooks/useMarkdownCodeHighlight';
 
@@ -36,20 +35,19 @@ function getElapsedSeconds(startedAt: number): number {
 
 function AgentThoughtBlockComponent({
   activity,
-  defaultExpanded = true,
+  defaultExpanded = false,
   forceCollapsed = false,
 }: AgentThoughtBlockProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const programmaticScrollRef = useRef(false);
   const scrollRafRef = useRef<number | null>(null);
-  const contentHeightRef = useRef(0);
   const [expanded, setExpanded] = useState(() => {
-    if (activity.collapsed) {
+    if (forceCollapsed) {
       return false;
     }
 
-    return activity.streaming || Boolean(activity.label.trim()) || defaultExpanded;
+    return Boolean(activity.streaming) || defaultExpanded;
   });
   const [elapsedSeconds, setElapsedSeconds] = useState(() =>
     activity.streaming ? getElapsedSeconds(activity.createdAt) : 1,
@@ -58,17 +56,23 @@ function AgentThoughtBlockComponent({
   const bodyText = activity.label.trim();
   const bodyHtml = useDeferredMarkdownHtml(bodyText);
   const proseRef = useMarkdownCodeHighlight<HTMLDivElement>(bodyHtml);
+  const canToggle = Boolean(bodyText) || Boolean(activity.streaming);
 
   useEffect(() => {
-    if (forceCollapsed || activity.collapsed) {
+    if (forceCollapsed) {
       setExpanded(false);
       return;
     }
 
-    if (activity.streaming || bodyText) {
+    if (activity.streaming) {
+      setExpanded(true);
+      return;
+    }
+
+    if (defaultExpanded && bodyText) {
       setExpanded(true);
     }
-  }, [activity.collapsed, activity.streaming, bodyText, forceCollapsed]);
+  }, [activity.streaming, bodyText, defaultExpanded, forceCollapsed]);
 
   useEffect(() => {
     if (!activity.streaming) {
@@ -88,13 +92,11 @@ function AgentThoughtBlockComponent({
 
   useEffect(() => {
     stickToBottomRef.current = true;
-    contentHeightRef.current = 0;
 
     const body = bodyRef.current;
 
     if (body) {
       body.scrollTop = getThoughtBodyTargetTop(body);
-      contentHeightRef.current = body.scrollHeight;
     }
   }, [activity.id]);
 
@@ -137,8 +139,6 @@ function AgentThoughtBlockComponent({
       const targetTop = getThoughtBodyTargetTop(body);
       const distanceFromBottom = targetTop - body.scrollTop;
 
-      contentHeightRef.current = body.scrollHeight;
-
       if (distanceFromBottom <= 1) {
         return;
       }
@@ -161,11 +161,8 @@ function AgentThoughtBlockComponent({
       scrollRafRef.current = window.requestAnimationFrame(flushScrollToBottom);
     };
 
-    contentHeightRef.current = body.scrollHeight;
-
     const observer = new ResizeObserver(scheduleScrollToBottom);
     observer.observe(body);
-
     scheduleScrollToBottom();
 
     return () => {
@@ -179,8 +176,12 @@ function AgentThoughtBlockComponent({
   }, [activity.id, activity.streaming, bodyHtml, bodyText, expanded]);
 
   const handleToggle = useCallback(() => {
+    if (!canToggle) {
+      return;
+    }
+
     setExpanded((prev) => !prev);
-  }, []);
+  }, [canToggle]);
 
   const isBriefThought = !activity.streaming && !bodyText;
   const titleLabel = activity.streaming
@@ -190,21 +191,33 @@ function AgentThoughtBlockComponent({
       : `Thought for ${formatDuration(activity.durationMs)}`;
 
   const showWaitingState = activity.streaming && !bodyText;
+  const waitingHint = showWaitingState
+    ? elapsedSeconds >= 300
+      ? 'Demorando demais. Pare o agent e tente de novo.'
+      : elapsedSeconds >= 90
+        ? 'Ainda sem resposta do agent...'
+        : null
+    : null;
 
   return (
     <div
       className={`agent-view__thought${activity.streaming ? ' agent-view__thought--streaming' : ''}${expanded ? ' agent-view__thought--expanded' : ''}`}
     >
-      <button type='button' className='agent-view__thought-header app-button' onClick={handleToggle}>
-        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+      <button
+        type='button'
+        className='agent-view__thought-header app-button'
+        aria-expanded={expanded}
+        disabled={!canToggle}
+        onClick={handleToggle}
+      >
         <span
-          className={`agent-view__thought-title${activity.streaming ? ' agent-view__thought-title--streaming' : ''}`}
+          className={`agent-view__file-verb agent-view__thought-title${activity.streaming ? ' agent-view__thought-title--streaming' : ''}`}
         >
           {titleLabel}
         </span>
       </button>
       {expanded ? (
-        <div ref={bodyRef} className='agent-view__thought-body'>
+        <div ref={bodyRef} className='agent-view__thought-body app-button--enter'>
           {bodyText ? (
             <div
               ref={proseRef}
@@ -217,6 +230,9 @@ function AgentThoughtBlockComponent({
               <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
               <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
               <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
+              {waitingHint ? (
+                <span className='agent-view__thought-waiting-hint'>{waitingHint}</span>
+              ) : null}
             </div>
           ) : null}
         </div>

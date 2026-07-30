@@ -466,13 +466,38 @@ export async function listRecentVercelDeployments(token: string): Promise<Vercel
     return [];
   }
 
-  const response = await requestJson<{ deployments?: VercelDeploymentRecord[] }>(
-    trimmed,
-    '/v6/deployments?limit=20',
-  );
+  let teamIds: string[] = [];
+  try {
+    const teams = await requestJson<{ teams?: Array<{ id?: string }> }>(trimmed, '/v2/teams?limit=100');
+    teamIds = (teams.teams ?? [])
+      .map((team) => team.id?.trim() ?? '')
+      .filter(Boolean);
+  } catch {
+    teamIds = [];
+  }
 
-  const deployments = response.deployments ?? [];
-  const mapped = await Promise.all(deployments.map((deployment) => mapDeploymentRecord(trimmed, deployment)));
+  const paths = [
+    '/v6/deployments?limit=20',
+    ...teamIds.map((teamId) => `/v6/deployments?limit=20&teamId=${encodeURIComponent(teamId)}`),
+  ];
+  const records = new Map<string, VercelDeploymentRecord>();
+  for (const path of paths) {
+    try {
+      const response = await requestJson<{ deployments?: VercelDeploymentRecord[] }>(trimmed, path);
+      for (const deployment of response.deployments ?? []) {
+        const uid = deployment.uid?.trim();
+        if (uid) {
+          records.set(uid, deployment);
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  const mapped = await Promise.all(
+    [...records.values()].map((deployment) => mapDeploymentRecord(trimmed, deployment)),
+  );
 
   return mapped
     .filter((deployment): deployment is VercelActiveDeployment => deployment !== null)

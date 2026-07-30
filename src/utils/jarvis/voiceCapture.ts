@@ -1,9 +1,10 @@
 const TARGET_SAMPLE_RATE = 16_000;
-const SPEECH_THRESHOLD = 0.01;
-const SILENCE_MS = 1_000;
-const MIN_SPEECH_MS = 400;
-const MAX_UTTERANCE_MS = 20_000;
-const PRE_ROLL_MS = 320;
+const SPEECH_START_THRESHOLD = 0.018;
+const SPEECH_CONTINUE_THRESHOLD = 0.008;
+const SILENCE_MS = 700;
+const MIN_SPEECH_MS = 350;
+const MAX_UTTERANCE_MS = 12_000;
+const PRE_ROLL_MS = 280;
 const WORKLET_NAME = 'jarvis-capture-processor';
 
 export interface JarvisMicCapture {
@@ -172,7 +173,7 @@ export async function startJarvisMicCapture(
     preRollFrames = 0;
 
     const downsampled = downsampleTo16k(merged, audioContext.sampleRate);
-    if (downsampled.length < TARGET_SAMPLE_RATE * 0.3) {
+    if (downsampled.length < TARGET_SAMPLE_RATE * 0.25) {
       return;
     }
 
@@ -193,26 +194,27 @@ export async function startJarvisMicCapture(
     const level = rms(copy);
     const now = performance.now();
 
-    if (level >= SPEECH_THRESHOLD) {
-      if (!speaking) {
-        speaking = true;
-        speechStartedAt = now;
-        chunks = [...preRoll, copy];
-        preRoll = [];
-        preRollFrames = 0;
-      } else {
-        chunks.push(copy);
-      }
+    if (!speaking && level >= SPEECH_START_THRESHOLD) {
+      speaking = true;
+      speechStartedAt = now;
       lastVoiceAt = now;
-
-      if (now - speechStartedAt >= MAX_UTTERANCE_MS) {
-        flushUtterance();
-      }
+      chunks = [...preRoll, copy];
+      preRoll = [];
+      preRollFrames = 0;
       return;
     }
 
     if (speaking) {
       chunks.push(copy);
+      if (level >= SPEECH_CONTINUE_THRESHOLD) {
+        lastVoiceAt = now;
+      }
+
+      if (now - speechStartedAt >= MAX_UTTERANCE_MS) {
+        flushUtterance();
+        return;
+      }
+
       if (now - lastVoiceAt >= SILENCE_MS && now - speechStartedAt >= MIN_SPEECH_MS) {
         flushUtterance();
       }

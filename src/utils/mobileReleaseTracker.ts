@@ -55,22 +55,54 @@ const PHASE_PATTERNS_BY_KIND: Record<MobileReleaseKind, Array<{ pattern: RegExp;
 
 const IOS_TESTFLIGHT_SUCCESS_PATTERNS = [/TestFlight upload submitted successfully/i];
 
-function detectKindsFromCommand(command: string): MobileReleaseKind[] {
-  const normalized = command.toLowerCase().replace(/\s+/g, ' ');
+const pendingStartKeys = new Set<string>();
 
-  if (/ios:archive:app-store|ios-archive-app-store/.test(normalized)) {
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isPackageScriptInvocation(command: string, scriptName: string): boolean {
+  const escaped = escapeRegExp(scriptName.toLowerCase());
+
+  return new RegExp(
+    `(?:npm\\s+run|pnpm(?:\\s+run)?|yarn(?:\\s+run)?|bun(?:\\s+run)?)\\s+${escaped}\\b`,
+  ).test(command);
+}
+
+function isDirectScriptInvocation(command: string, scriptBaseName: string): boolean {
+  const escaped = escapeRegExp(scriptBaseName.toLowerCase());
+
+  return new RegExp(
+    `(?:^|[;&|]\\s*)(?:bash\\s+|sh\\s+)?(?:\\.\\/)?(?:scripts\\/)?${escaped}(?:\\.sh)?(?:\\s|$)`,
+  ).test(command);
+}
+
+function detectKindsFromCommand(command: string): MobileReleaseKind[] {
+  const normalized = command.toLowerCase().replace(/\s+/g, ' ').trim();
+
+  if (
+    isPackageScriptInvocation(normalized, 'ios:archive:app-store') ||
+    isDirectScriptInvocation(normalized, 'ios-archive-app-store')
+  ) {
     return ['ios-testflight'];
   }
 
-  if (/android:bundle|android-bundle-release|\bbundlerelease\b|\bbundle-release\b/.test(normalized)) {
+  if (
+    isPackageScriptInvocation(normalized, 'android:bundle') ||
+    isPackageScriptInvocation(normalized, 'android-bundle-release') ||
+    isDirectScriptInvocation(normalized, 'android-bundle-release') ||
+    /(?:^|[;&|]\s*).*\bgradlew\s+bundlerelease\b/.test(normalized)
+  ) {
     return ['android-aab'];
   }
 
-  if (/android:apk|android-apk-release/.test(normalized)) {
-    return ['android-apk'];
-  }
-
-  if (/\bassemblerelease\b|\bassemble-release\b/.test(normalized) && !/\bbundlerelease\b/.test(normalized)) {
+  if (
+    isPackageScriptInvocation(normalized, 'android:apk') ||
+    isPackageScriptInvocation(normalized, 'android-apk-release') ||
+    isDirectScriptInvocation(normalized, 'android-apk-release') ||
+    (/(?:^|[;&|]\s*).*\bgradlew\s+assemblerelease\b/.test(normalized) &&
+      !/\bbundlerelease\b/.test(normalized))
+  ) {
     return ['android-apk'];
   }
 
@@ -80,19 +112,28 @@ function detectKindsFromCommand(command: string): MobileReleaseKind[] {
 function detectKindsFromOutput(plain: string): MobileReleaseKind[] {
   const normalized = plain.toLowerCase();
 
-  if (/syncing capacitor ios|archiving ios app|uploading to testflight|ios-archive-app-store/.test(normalized)) {
+  if (
+    /archiving ios app|uploading to testflight|xcodebuild\s+archive|exporting ipa/.test(normalized)
+  ) {
     return ['ios-testflight'];
   }
 
-  if (/syncing capacitor android|android-bundle-release|gradlew bundleRelease|\bbundlerelease\b/.test(normalized)) {
+  if (/gradlew\s+bundlerelease|aab pronto para a play store|\baab:\s*\S+/.test(normalized)) {
     return ['android-aab'];
   }
 
-  if (/android-apk-release|gradlew assembleRelease|\bassemblerelease\b/.test(normalized) && !/\bbundlerelease\b/.test(normalized)) {
+  if (
+    /gradlew\s+assemblerelease|apk pronto|\bapk:\s*\S+/.test(normalized) &&
+    !/bundlerelease|\baab:\s*\S+/.test(normalized)
+  ) {
     return ['android-apk'];
   }
 
   return [];
+}
+
+function pendingStartKey(paneId: string, kind: MobileReleaseKind): string {
+  return `${paneId}:${kind}`;
 }
 
 function normalizeProjectPath(projectPath: string, referencePath: string): string {
@@ -419,37 +460,56 @@ async function startMobileReleaseKinds(
   kinds: MobileReleaseKind[],
   command?: string,
 ): Promise<void> {
-  const uniqueKinds = [...new Set(kinds)].filter((kind) => !hasActiveReleaseOfKind(paneId, kind));
+  const uniqueKinds = [...new Set(kinds)].filter((kind) => {
+    const key = pendingStartKey(paneId, kind);
+
+    if (hasActiveReleaseOfKind(paneId, kind) || pendingStartKeys.has(key)) {
+      return false;
+    }
+
+    pendingStartKeys.add(key);
+    return true;
+  });
 
   if (!uniqueKinds.length) {
     return;
   }
 
-  const projectId = findProjectIdByPaneId(paneId);
+  try {
+    const projectId = findProjectIdByPaneId(paneId);
 
-  if (!projectId) {
-    return;
-  }
+    if (!projectId) {
+      return;
+    }
 
-  const project = useProjectStore.getState().projects.find((entry) => entry.id === projectId);
+    const project = useProjectStore.getState().projects.find((entry) => entry.id === projectId);
 
-  if (!project) {
-    return;
-  }
+    if (!project) {
+      return;
+    }
 
-  const projectPath = resolveProjectPathForPane(paneId, command) ?? project.path;
-  const versionMeta = await readProjectVersionMeta(projectPath);
-  const store = useMobileReleaseStore.getState();
+    const projectPath = resolveProjectPathForPane(paneId, command) ?? project.path;
+    const versionMeta = await readProjectVersionMeta(projectPath);
+    const store = useMobileReleaseStore.getState();
 
-  for (const kind of uniqueKinds) {
-    store.startRelease(
-      createRelease(paneId, kind, {
-        projectId,
-        projectName: project.name,
-        version: versionMeta.version,
-        versionCode: versionMeta.versionCode,
-      }),
-    );
+    for (const kind of uniqueKinds) {
+      if (hasActiveReleaseOfKind(paneId, kind)) {
+        continue;
+      }
+
+      store.startRelease(
+        createRelease(paneId, kind, {
+          projectId,
+          projectName: project.name,
+          version: versionMeta.version,
+          versionCode: versionMeta.versionCode,
+        }),
+      );
+    }
+  } finally {
+    for (const kind of uniqueKinds) {
+      pendingStartKeys.delete(pendingStartKey(paneId, kind));
+    }
   }
 }
 
@@ -513,6 +573,34 @@ function shouldCompleteReleaseFromShell(
   }
 
   return { complete: false, artifactPath: null };
+}
+
+function shouldFailReleaseAfterShellExit(
+  release: MobileActiveRelease,
+  command: string,
+  plain: string,
+  exitCode: number | null,
+): boolean {
+  if (exitCode === null) {
+    return false;
+  }
+
+  const commandMatched = commandMatchesReleaseKind(command, release.kind);
+  const outputMatched = detectKindsFromOutput(plain).includes(release.kind);
+
+  if (!commandMatched && !outputMatched) {
+    return false;
+  }
+
+  if (exitCode !== 0) {
+    return true;
+  }
+
+  if (release.kind !== 'ios-testflight') {
+    return false;
+  }
+
+  return !isIosTestFlightSuccess(plain);
 }
 
 function resolveLatestPhase(kind: MobileReleaseKind, plain: string): string | null {
@@ -686,14 +774,6 @@ async function handleMobileReleaseShellToolCompletedEvent(
 
   const store = useMobileReleaseStore.getState();
 
-  if (event.exitCode !== null && event.exitCode !== 0) {
-    for (const release of building) {
-      store.completeRelease(release.uid, 'ERROR');
-    }
-
-    return;
-  }
-
   for (const release of building) {
     const current = store.releases[release.uid];
 
@@ -707,6 +787,11 @@ async function handleMobileReleaseShellToolCompletedEvent(
     const refreshed = store.releases[release.uid];
 
     if (!refreshed || refreshed.state !== 'BUILDING') {
+      continue;
+    }
+
+    if (shouldFailReleaseAfterShellExit(refreshed, event.command, fullPlain, event.exitCode)) {
+      store.completeRelease(release.uid, 'ERROR');
       continue;
     }
 
@@ -733,7 +818,10 @@ async function handleMobileReleaseShellToolCompletedEvent(
   }
 }
 
-export function finalizeMobileReleasesForPane(paneId: string): void {
+export function finalizeMobileReleasesForPane(
+  paneId: string,
+  options: { failRemaining?: boolean } = {},
+): void {
   const store = useMobileReleaseStore.getState();
   const building = getActiveBuildingReleases(paneId);
 
@@ -746,6 +834,16 @@ export function finalizeMobileReleasesForPane(paneId: string): void {
 
     const fullPlain = stripAnsi(current.logTail);
     applyReleaseProgress(current, fullPlain);
+
+    const refreshed = store.releases[release.uid];
+
+    if (!refreshed || refreshed.state !== 'BUILDING') {
+      continue;
+    }
+
+    if (options.failRemaining) {
+      store.completeRelease(release.uid, 'ERROR');
+    }
   }
 }
 

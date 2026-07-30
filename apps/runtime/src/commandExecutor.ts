@@ -31,6 +31,14 @@ import {
   detachEmulatorViewer,
 } from './emulatorRelay';
 import { rememberWebAgentChatId } from './webAgentChatIds';
+import {
+  attachPreviewSession,
+  findPreviewSessionForProject,
+  listActivePreviewSessions,
+  listDetectedPreviewSessions,
+  startPreviewSession,
+  stopPreviewSession,
+} from './previewTunnel';
 
 const execFileAsync = promisify(execFile);
 
@@ -54,10 +62,20 @@ function registerActiveAgent(entry: ActiveAgentProcess): void {
   }
 }
 
-function unregisterActiveAgent(commandId: string, sessionId: string): void {
-  activeAgentProcesses.delete(commandId);
+function unregisterActiveAgent(
+  commandId: string,
+  sessionId: string,
+  child?: ChildProcess,
+): void {
+  const byCommand = activeAgentProcesses.get(commandId);
+  if (byCommand && (!child || byCommand.child === child)) {
+    activeAgentProcesses.delete(commandId);
+  }
   if (sessionId) {
-    activeAgentProcesses.delete(`session:${sessionId}`);
+    const bySession = activeAgentProcesses.get(`session:${sessionId}`);
+    if (bySession && (!child || bySession.child === child)) {
+      activeAgentProcesses.delete(`session:${sessionId}`);
+    }
   }
 }
 
@@ -310,6 +328,101 @@ async function handleEmulatorCommand(
       });
     default:
       throw new Error(`Unsupported emulator command: ${command.type}`);
+  }
+}
+
+async function handlePreviewCommand(
+  client: NexusClient,
+  command: CommandRow,
+  deviceId: string,
+): Promise<Record<string, unknown>> {
+  const payload = (command.payload ?? {}) as Record<string, unknown>;
+  const sessionId = String(payload.session_id ?? payload.sessionId ?? '').trim();
+
+  switch (command.type) {
+    case 'preview_list_sessions': {
+      const { data: deviceProjects } = await client
+        .from('device_projects')
+        .select('project_id, local_path')
+        .eq('device_id', deviceId);
+      const projectIds = (deviceProjects ?? [])
+        .map((row) => String(row.project_id ?? '').trim())
+        .filter(Boolean);
+      const projectById = new Map<string, { local_id: string | null }>();
+      if (projectIds.length > 0) {
+        const { data: projects } = await client
+          .from('projects')
+          .select('id, local_id')
+          .in('id', projectIds);
+        for (const project of projects ?? []) {
+          projectById.set(project.id, {
+            local_id: typeof project.local_id === 'string' ? project.local_id : null,
+          });
+        }
+      }
+
+      const active = listActivePreviewSessions();
+      const activeProjectIds = new Set(
+        active.map((item) => item.project_id).filter((value): value is string => Boolean(value)),
+      );
+      const detected = await listDetectedPreviewSessions(
+        (deviceProjects ?? []).map((row) => {
+          const projectId = String(row.project_id ?? '').trim();
+          return {
+            projectId,
+            localId: projectById.get(projectId)?.local_id ?? null,
+            localPath: typeof row.local_path === 'string' ? row.local_path : null,
+          };
+        }),
+      );
+      const sessions = [
+        ...active,
+        ...detected.filter((item) => !item.project_id || !activeProjectIds.has(item.project_id)),
+      ];
+      return { sessions };
+    }
+    case 'preview_start': {
+      const localProjectId = await resolveLocalProjectId(client, command.project_id);
+      const projectPath = await getProjectRoot(client, deviceId, command.project_id);
+      const localUrl =
+        typeof payload.local_url === 'string'
+          ? payload.local_url
+          : typeof payload.localUrl === 'string'
+            ? payload.localUrl
+            : null;
+      const started = await startPreviewSession({
+        projectId: command.project_id,
+        localProjectId,
+        localUrl,
+        projectPath,
+      });
+      return { ...started };
+    }
+    case 'preview_attach': {
+      if (sessionId) {
+        return { ...attachPreviewSession(sessionId) };
+      }
+      const existing = findPreviewSessionForProject(command.project_id);
+      if (existing) {
+        return { ...attachPreviewSession(existing.session_id) };
+      }
+      const localProjectId = await resolveLocalProjectId(client, command.project_id);
+      const projectPath = await getProjectRoot(client, deviceId, command.project_id);
+      const started = await startPreviewSession({
+        projectId: command.project_id,
+        localProjectId,
+        projectPath,
+      });
+      return { ...started };
+    }
+    case 'preview_stop': {
+      if (!sessionId) {
+        throw new Error('session_id is required');
+      }
+      return stopPreviewSession(sessionId);
+    }
+    default:
+      throw new Error(`Unsupported preview command: ${command.type}`);
   }
 }
 
@@ -859,13 +972,13 @@ async function runAgentPrompt(
     });
     child.on('error', (error) => {
       clearIdleWatch();
-      unregisterActiveAgent(command.id, session!.id);
+      unregisterActiveAgent(command.id, session!.id, child);
       reject(error);
     });
     child.on('close', (code) => {
       const wasCancelled = active.cancelled;
       clearIdleWatch();
-      unregisterActiveAgent(command.id, session!.id);
+      unregisterActiveAgent(command.id, session!.id, child);
       if (stalled && !wasCancelled) {
         resolve(AGENT_STALL_EXIT_CODE);
         return;
@@ -1577,6 +1690,12 @@ export async function executeCommand(
       case 'emulator_launch_app':
       case 'emulator_terminate_app':
         result = await handleEmulatorCommand(client, command, deviceId);
+        break;
+      case 'preview_list_sessions':
+      case 'preview_start':
+      case 'preview_stop':
+      case 'preview_attach':
+        result = await handlePreviewCommand(client, command, deviceId);
         break;
       default:
         throw new Error(`Unsupported command type: ${command.type}`);

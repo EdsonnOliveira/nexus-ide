@@ -48,8 +48,8 @@ export async function resolveWebMarkdownImage(
     const project = state.projects.find((item) => item.id === projectId) ?? null;
     const device = state.devices.find((item) => item.id === deviceId) ?? null;
     const workspaceId =
-      project?.workspace_id ||
       device?.workspace_id ||
+      project?.workspace_id ||
       state.activeWorkspaceId ||
       (await bridge.getWorkspaceId());
 

@@ -138,15 +138,6 @@ function AppShellComponent() {
       return false;
     }
 
-    const hasBusyPane =
-      Object.values(agentBusyByPane).some(Boolean) ||
-      Object.values(awaitingResponseByPane).some(Boolean) ||
-      Object.values(agentPrintRunTokenByPane).some(Boolean);
-
-    if (!hasBusyPane) {
-      return false;
-    }
-
     const session = {
       agentPrintRunTokenByPane,
       agentBusyByPane,

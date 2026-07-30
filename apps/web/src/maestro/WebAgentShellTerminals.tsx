@@ -35,14 +35,16 @@ function formatElapsed(startedAt: number, now: number): string {
 
 async function resolveAgentWorkspaceId(projectId: string | null): Promise<string | null> {
   const state = useWebStore.getState();
+  const device =
+    state.devices.find((item) => item.id === state.selectedDeviceId) ?? null;
+  if (device?.workspace_id) {
+    return device.workspace_id;
+  }
   const project = projectId
     ? state.projects.find((item) => item.id === projectId) ?? null
     : null;
-  const device =
-    state.devices.find((item) => item.id === state.selectedDeviceId) ?? null;
   return (
     project?.workspace_id ||
-    device?.workspace_id ||
     state.activeWorkspaceId ||
     (await bridge.getWorkspaceId())
   );

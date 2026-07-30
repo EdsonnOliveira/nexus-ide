@@ -52,6 +52,7 @@ interface ProjectStoreState {
   workspaces: Workspace[];
   activeProjectId: string | null;
   activeWorkspaceId: string | null;
+  activeProjectIdByWorkspace: Record<string, string>;
   selectingProjectId: string | null;
   sidebarCollapsed: boolean;
   sidePanel: SidePanel;
@@ -267,6 +268,7 @@ function applyState(
     workspaces: appState.workspaces,
     activeProjectId,
     activeWorkspaceId: appState.activeWorkspaceId,
+    activeProjectIdByWorkspace: appState.activeProjectIdByWorkspace ?? {},
   });
 }
 
@@ -298,6 +300,7 @@ function scheduleProjectMigration(
         workspaces: appState.workspaces,
         activeWorkspaceId: appState.activeWorkspaceId ?? null,
         activeProjectId: preservedActiveProjectId,
+        activeProjectIdByWorkspace: appState.activeProjectIdByWorkspace ?? {},
         projectsMigrated: true,
         sidebarCollapsed: activeProject?.sidebarCollapsed ?? false,
       });
@@ -662,6 +665,36 @@ function getWorkspaceProjects(projects: Project[], workspaceId: string | null): 
   return projects.filter((project) => project.workspaceId === workspaceId);
 }
 
+function workspaceSelectionKey(workspaceId: string | null | undefined): string {
+  return workspaceId ?? '';
+}
+
+function rememberProjectForWorkspace(
+  map: Record<string, string>,
+  workspaceId: string | null | undefined,
+  projectId: string,
+): Record<string, string> {
+  return {
+    ...map,
+    [workspaceSelectionKey(workspaceId)]: projectId,
+  };
+}
+
+function resolveWorkspaceProjectId(
+  projects: Project[],
+  workspaceId: string | null,
+  activeProjectIdByWorkspace: Record<string, string>,
+): string | null {
+  const filteredProjects = getWorkspaceProjects(projects, workspaceId);
+  const rememberedId = activeProjectIdByWorkspace[workspaceSelectionKey(workspaceId)];
+
+  if (rememberedId && filteredProjects.some((project) => project.id === rememberedId)) {
+    return rememberedId;
+  }
+
+  return filteredProjects[0]?.id ?? null;
+}
+
 async function performSelectProject(
   set: (state: Partial<ProjectStoreState>) => void,
   get: () => ProjectStoreState,
@@ -695,8 +728,29 @@ async function performSelectProject(
 
     await window.nexus.projects.select(id);
 
+    let activeProjectIdByWorkspace = rememberProjectForWorkspace(
+      prevState.activeProjectIdByWorkspace,
+      selectedProject?.workspaceId,
+      id,
+    );
+
+    if (prevState.activeWorkspaceId === null) {
+      activeProjectIdByWorkspace = rememberProjectForWorkspace(
+        activeProjectIdByWorkspace,
+        null,
+        id,
+      );
+    } else {
+      activeProjectIdByWorkspace = rememberProjectForWorkspace(
+        activeProjectIdByWorkspace,
+        prevState.activeWorkspaceId,
+        id,
+      );
+    }
+
     set({
       activeProjectId: id,
+      activeProjectIdByWorkspace,
       sidePanel: null,
       explorerView: 'tree',
       selectingProjectId: null,
@@ -727,6 +781,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   workspaces: [],
   activeProjectId: null,
   activeWorkspaceId: null,
+  activeProjectIdByWorkspace: {},
   selectingProjectId: null,
   sidebarCollapsed: false,
   sidePanel: null,
@@ -758,6 +813,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
         workspaces,
         activeProjectId: null,
         activeWorkspaceId: appState.activeWorkspaceId ?? null,
+        activeProjectIdByWorkspace: appState.activeProjectIdByWorkspace ?? {},
         initialized: true,
         projectsMigrated: false,
         sidebarCollapsed: false,
@@ -976,12 +1032,40 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     }
 
     try {
-      const filteredProjects = getWorkspaceProjects(prevState.projects, id);
-      const targetProjectId = filteredProjects[0]?.id ?? null;
+      let activeProjectIdByWorkspace = prevState.activeProjectIdByWorkspace;
+
+      if (prevState.activeProjectId) {
+        activeProjectIdByWorkspace = rememberProjectForWorkspace(
+          activeProjectIdByWorkspace,
+          prevState.activeWorkspaceId,
+          prevState.activeProjectId,
+        );
+
+        const leavingProject = prevState.projects.find(
+          (project) => project.id === prevState.activeProjectId,
+        );
+
+        if (leavingProject?.workspaceId) {
+          activeProjectIdByWorkspace = rememberProjectForWorkspace(
+            activeProjectIdByWorkspace,
+            leavingProject.workspaceId,
+            prevState.activeProjectId,
+          );
+        }
+      }
+
+      const targetProjectId = resolveWorkspaceProjectId(
+        prevState.projects,
+        id,
+        activeProjectIdByWorkspace,
+      );
       const leavingProjectId = prevState.activeProjectId;
 
       await window.nexus.projects.selectWorkspace(id);
-      set({ activeWorkspaceId: id });
+      set({
+        activeWorkspaceId: id,
+        activeProjectIdByWorkspace,
+      });
 
       if (targetProjectId) {
         await performSelectProject(set, get, targetProjectId, { syncWorkspace: false });

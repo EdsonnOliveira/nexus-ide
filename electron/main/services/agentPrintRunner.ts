@@ -228,10 +228,6 @@ class AgentPrintRunner {
     });
     // #endregion
 
-    if (this.processes.get(paneId) === child) {
-      this.processes.delete(paneId);
-    }
-
     child.kill('SIGTERM');
     setTimeout(() => {
       if (!child.killed) {

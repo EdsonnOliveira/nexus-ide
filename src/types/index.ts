@@ -185,6 +185,8 @@ export interface AgentFollowUp {
 
 export interface AgentTurnSummaryFileRef {
   path: string;
+  additions?: number;
+  deletions?: number;
 }
 
 export interface AgentTurnSummaryCommandRef {
@@ -449,6 +451,7 @@ export interface AppState {
   workspaces: Workspace[];
   activeProjectId: string | null;
   activeWorkspaceId: string | null;
+  activeProjectIdByWorkspace?: Record<string, string>;
   sidebarVideoSession?: PersistedSidebarVideoSession | null;
   sidebarVideoLastLink?: string | null;
 }

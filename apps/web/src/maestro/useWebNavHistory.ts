@@ -4,6 +4,7 @@ export interface WebNavHistoryState {
   projectId: string | null;
   agentId: string | null;
   emulator: boolean;
+  preview: boolean;
 }
 
 const NEXUS_NAV_KEY = '__nexusWebNav';
@@ -14,7 +15,10 @@ type StoredNavState = WebNavHistoryState & { [NEXUS_NAV_KEY]: true; depth: numbe
 
 function navDepth(state: WebNavHistoryState): number {
   return (
-    (state.projectId ? 1 : 0) + (state.agentId ? 1 : 0) + (state.emulator ? 1 : 0)
+    (state.projectId ? 1 : 0) +
+    (state.agentId ? 1 : 0) +
+    (state.emulator ? 1 : 0) +
+    (state.preview ? 1 : 0)
   );
 }
 
@@ -35,11 +39,20 @@ function isStoredNavState(value: unknown): value is StoredNavState {
 }
 
 function peelNavState(state: WebNavHistoryState): WebNavHistoryState {
+  if (state.preview) {
+    return {
+      projectId: state.projectId,
+      agentId: state.agentId,
+      emulator: state.emulator,
+      preview: false,
+    };
+  }
   if (state.emulator) {
     return {
       projectId: state.projectId,
       agentId: state.agentId,
       emulator: false,
+      preview: false,
     };
   }
   if (state.agentId) {
@@ -47,6 +60,7 @@ function peelNavState(state: WebNavHistoryState): WebNavHistoryState {
       projectId: state.projectId,
       agentId: null,
       emulator: false,
+      preview: false,
     };
   }
   if (state.projectId) {
@@ -54,6 +68,7 @@ function peelNavState(state: WebNavHistoryState): WebNavHistoryState {
       projectId: null,
       agentId: null,
       emulator: false,
+      preview: false,
     };
   }
   return state;
@@ -206,14 +221,15 @@ export function useWebNavHistory(options: {
       if (
         stored.projectId !== state.projectId ||
         stored.agentId !== state.agentId ||
-        stored.emulator !== state.emulator
+        stored.emulator !== state.emulator ||
+        stored.preview !== state.preview
       ) {
         window.history.replaceState(createStoredState(state), '');
       }
     }
 
     depthRef.current = nextDepth;
-  }, [state.projectId, state.agentId, state.emulator]);
+  }, [state.projectId, state.agentId, state.emulator, state.preview]);
 
   const goBack = useCallback(() => {
     if (navDepth(stateRef.current) === 0) {
