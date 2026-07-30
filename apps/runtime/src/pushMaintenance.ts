@@ -1,7 +1,7 @@
 import { notifyPush } from './notifyPush';
 import { getServiceSupabaseClient } from './webPushSend';
 
-const OFFLINE_AFTER_MS = 45_000;
+const OFFLINE_AFTER_MS = 90_000;
 const VERCEL_API_BASE = 'https://api.vercel.com';
 
 type DeployState = 'READY' | 'ERROR' | string;

@@ -507,11 +507,15 @@ export async function touchHeartbeat(
   return data as DeviceRow;
 }
 
-export function isDeviceOnline(lastSeenAt: string | null, offlineAfterMs = 45_000): boolean {
+export function isDeviceOnline(lastSeenAt: string | null, offlineAfterMs = 90_000): boolean {
   if (!lastSeenAt) {
     return false;
   }
-  return Date.now() - new Date(lastSeenAt).getTime() < offlineAfterMs;
+  const lastSeenMs = new Date(lastSeenAt).getTime();
+  if (!Number.isFinite(lastSeenMs)) {
+    return false;
+  }
+  return Date.now() - lastSeenMs < offlineAfterMs;
 }
 
 export interface VercelDeploySnapshotRow {

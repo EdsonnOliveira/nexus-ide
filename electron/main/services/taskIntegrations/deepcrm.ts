@@ -19,6 +19,7 @@ const PROJECTS_PAGE_SIZE = 100;
 interface DeepcrmRequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   query?: Record<string, string>;
+  body?: Record<string, unknown>;
 }
 
 interface DeepcrmStageInfo {
@@ -132,9 +133,16 @@ function deepcrmRequestOnce<T>(
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     const url = buildRequestUrl(requestPath, options.query ?? {});
-    const headers = {
+    const payload = options.body ? JSON.stringify(options.body) : undefined;
+    const headers: Record<string, string> = {
       Accept: 'application/json',
       ...buildAuthHeaders(apiToken),
+      ...(payload
+        ? {
+            'Content-Type': 'application/json',
+            'Content-Length': String(Buffer.byteLength(payload)),
+          }
+        : {}),
     };
 
     const request = https.request(
@@ -178,6 +186,11 @@ function deepcrmRequestOnce<T>(
     });
 
     request.on('error', reject);
+
+    if (payload) {
+      request.write(payload);
+    }
+
     request.end();
   });
 }
@@ -708,6 +721,146 @@ export async function listDeepcrmPipelines(
   );
 
   return entries.sort((left, right) => left.name.localeCompare(right.name, 'pt-BR'));
+}
+
+function isDeepcrmDoneStageName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+
+  return (
+    normalized === 'done' ||
+    normalized === 'concluído' ||
+    normalized === 'concluido' ||
+    normalized === 'concluída' ||
+    normalized === 'concluida' ||
+    normalized === 'finalizado' ||
+    normalized === 'fechado' ||
+    normalized === 'ganho' ||
+    normalized === 'won'
+  );
+}
+
+function isDeepcrmProgressStageName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+
+  return (
+    normalized === 'in progress' ||
+    normalized === 'em andamento' ||
+    normalized === 'em progresso' ||
+    normalized.includes('andamento') ||
+    normalized.includes('progress') ||
+    normalized === 'doing'
+  );
+}
+
+export async function listDeepcrmPipelineStages(
+  apiToken: string,
+  pipelineId: string,
+): Promise<Array<{ id: string; name: string; isDone: boolean; isProgress: boolean }>> {
+  const stages = await fetchPipelineStages(apiToken, pipelineId);
+
+  return Array.from(stages.entries()).map(([id, name]) => ({
+    id,
+    name,
+    isDone: isDeepcrmDoneStageName(name),
+    isProgress: isDeepcrmProgressStageName(name),
+  }));
+}
+
+export async function updateDeepcrmProjectStage(
+  apiToken: string,
+  externalId: string,
+  stageId: string,
+): Promise<{ status: string; stageId: string; stageName: string }> {
+  const projectId = parseDeepcrmProjectId(externalId);
+
+  if (!projectId) {
+    throw new Error('Projeto DeepCRM inválido');
+  }
+
+  const detail = await fetchProjectDetail(apiToken, projectId);
+  const pipelineId = detail ? readPipelineId(detail) : undefined;
+
+  if (!pipelineId) {
+    throw new Error('Pipeline do projeto DeepCRM não encontrado');
+  }
+
+  const stages = await fetchPipelineStages(apiToken, pipelineId);
+  const stageName = stages.get(stageId);
+
+  if (!stageName) {
+    throw new Error('Estágio indisponível neste kanban');
+  }
+
+  await deepcrmRequest(apiToken, `/projects/${projectId}`, {
+    method: 'PATCH',
+    body: {
+      stage_id: stageId,
+    },
+  });
+
+  return {
+    status: stageName,
+    stageId,
+    stageName,
+  };
+}
+
+export async function completeDeepcrmProject(
+  apiToken: string,
+  externalId: string,
+): Promise<{ status: string; stageId: string; stageName: string }> {
+  const projectId = parseDeepcrmProjectId(externalId);
+
+  if (!projectId) {
+    throw new Error('Projeto DeepCRM inválido');
+  }
+
+  const detail = await fetchProjectDetail(apiToken, projectId);
+  const pipelineId = detail ? readPipelineId(detail) : undefined;
+
+  if (!pipelineId) {
+    throw new Error('Pipeline do projeto DeepCRM não encontrado');
+  }
+
+  const stages = await listDeepcrmPipelineStages(apiToken, pipelineId);
+  const doneStage =
+    stages.find((item) => item.isDone) ??
+    stages.find((item) => /done|conclu|finaliz|fechad|ganho|won/i.test(item.name));
+
+  if (!doneStage) {
+    throw new Error('Nenhum estágio de conclusão encontrado neste kanban');
+  }
+
+  return updateDeepcrmProjectStage(apiToken, externalId, doneStage.id);
+}
+
+export async function startDeepcrmProject(
+  apiToken: string,
+  externalId: string,
+): Promise<{ status: string; stageId: string; stageName: string }> {
+  const projectId = parseDeepcrmProjectId(externalId);
+
+  if (!projectId) {
+    throw new Error('Projeto DeepCRM inválido');
+  }
+
+  const detail = await fetchProjectDetail(apiToken, projectId);
+  const pipelineId = detail ? readPipelineId(detail) : undefined;
+
+  if (!pipelineId) {
+    throw new Error('Pipeline do projeto DeepCRM não encontrado');
+  }
+
+  const stages = await listDeepcrmPipelineStages(apiToken, pipelineId);
+  const progressStage =
+    stages.find((item) => item.isProgress) ??
+    stages.find((item) => /andamento|progress|doing/i.test(item.name));
+
+  if (!progressStage) {
+    throw new Error('Nenhum estágio de andamento encontrado neste kanban');
+  }
+
+  return updateDeepcrmProjectStage(apiToken, externalId, progressStage.id);
 }
 
 export async function syncDeepcrmTasks(

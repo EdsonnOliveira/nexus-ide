@@ -8,6 +8,7 @@ import {
   resolveTaskCoverAttachment,
   resolveTaskDescriptionFirstLine,
   resolveTaskPriorityVisual,
+  resolveTaskStatusBadge,
 } from '@/utils/taskLabels';
 import { isLocalTaskCompleted } from '@/utils/taskJson';
 
@@ -30,6 +31,7 @@ function TaskListItemComponent({ task, onView, onExecute, onContextMenu }: TaskL
     () => task.jira?.labels ?? task.deepcrm?.labels ?? task.local?.labels ?? [],
     [task.deepcrm?.labels, task.jira?.labels, task.local?.labels],
   );
+  const statusBadge = useMemo(() => resolveTaskStatusBadge(task.status), [task.status]);
   const coverAttachment = useMemo(() => resolveTaskCoverAttachment(task), [task]);
   const [coverVisible, setCoverVisible] = useState(false);
 
@@ -126,7 +128,7 @@ function TaskListItemComponent({ task, onView, onExecute, onContextMenu }: TaskL
               ))}
             </div>
           ) : null}
-          {task.externalId || task.source !== 'local' || priority ? (
+          {task.externalId || task.source !== 'local' || priority || statusBadge ? (
             <div className='tasks-drawer__card-footer'>
               <div className='tasks-drawer__card-meta'>
                 {task.externalId ? (
@@ -136,6 +138,14 @@ function TaskListItemComponent({ task, onView, onExecute, onContextMenu }: TaskL
                     {formatTaskSource(task.source)}
                   </span>
                 )}
+                {statusBadge ? (
+                  <span
+                    className={`tasks-drawer__status-badge ${statusBadge.className}`}
+                    title={statusBadge.label}
+                  >
+                    {statusBadge.label}
+                  </span>
+                ) : null}
                 {priority && PriorityIcon ? (
                   <span
                     className={`tasks-drawer__priority ${priority.className}`}

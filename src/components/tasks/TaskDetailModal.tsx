@@ -1,9 +1,16 @@
-import { ExternalLink, History, ListTodo, Loader2, Pencil, Play, Send, User } from 'lucide-react';
+import { CheckCircle2, ExternalLink, History, ListTodo, Loader2, Pencil, Play, Send, User } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import { TaskAttachmentImage } from '@/components/tasks/TaskAttachmentImage';
-import type { ProjectTask, TaskComment, TaskDetailData, TaskHistoryEntry } from '@/types/task';
+import type {
+  ProjectTask,
+  TaskBoardColumnOption,
+  TaskComment,
+  TaskDetailData,
+  TaskHistoryEntry,
+} from '@/types/task';
 import {
   buildDeepcrmTaskUrl,
   formatDeepcrmHealthLabel,
@@ -27,10 +34,52 @@ import {
   resolveTaskCoverAttachment,
   resolveTaskPriorityVisual,
 } from '@/utils/taskLabels';
+import {
+  isLocalTaskCompleted,
+  LOCAL_TASK_STATUS_DONE,
+  LOCAL_TASK_STATUS_IN_PROGRESS,
+  LOCAL_TASK_STATUS_PENDING,
+} from '@/utils/taskJson';
 
 type ActivityTab = 'all' | 'comments' | 'history';
 type AttachmentTab = 'all' | 'images' | 'documents';
 type DeepcrmDetailTab = 'tasks' | 'timeline';
+
+const LOCAL_BOARD_COLUMNS: TaskBoardColumnOption[] = [
+  { id: LOCAL_TASK_STATUS_PENDING, name: LOCAL_TASK_STATUS_PENDING, isDone: false, isProgress: false },
+  {
+    id: LOCAL_TASK_STATUS_IN_PROGRESS,
+    name: LOCAL_TASK_STATUS_IN_PROGRESS,
+    isDone: false,
+    isProgress: true,
+  },
+  { id: LOCAL_TASK_STATUS_DONE, name: LOCAL_TASK_STATUS_DONE, isDone: true, isProgress: false },
+];
+
+const CURRENT_BOARD_VALUE_PREFIX = '__current__:';
+
+function isDoneStatusName(status?: string): boolean {
+  const normalized = status?.trim().toLowerCase() ?? '';
+
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    normalized === 'done' ||
+    normalized === 'concluído' ||
+    normalized === 'concluido' ||
+    normalized === 'concluída' ||
+    normalized === 'concluida' ||
+    normalized === 'resolved' ||
+    normalized === 'closed' ||
+    normalized === 'fechado' ||
+    normalized === 'fechada' ||
+    normalized === 'complete' ||
+    normalized === 'completed' ||
+    normalized === 'finalizado'
+  );
+}
 
 interface TaskDetailModalProps {
   projectId: string;
@@ -39,6 +88,7 @@ interface TaskDetailModalProps {
   onClose: () => void;
   onEdit?: () => void;
   onExecute: () => void;
+  onTaskUpdated?: (task: ProjectTask) => void;
 }
 
 interface TaskAvatarProps {
@@ -106,11 +156,15 @@ function TaskDetailModalComponent({
   onClose,
   onEdit,
   onExecute,
+  onTaskUpdated,
 }: TaskDetailModalProps) {
   const isJiraTask = task.source === 'jira' && Boolean(task.externalId);
   const isDeepcrmTask =
     task.source === 'deepcrm' && Boolean(task.externalId?.startsWith('DC-P-'));
+  const isTrelloTask = task.source === 'trello' && Boolean(task.externalId);
+  const isLocalTask = task.source === 'local';
   const isRichDetailTask = isJiraTask || isDeepcrmTask;
+  const canMoveBoard = isLocalTask || isJiraTask || isTrelloTask || isDeepcrmTask;
   const [detail, setDetail] = useState<TaskDetailData | null>(null);
   const [isLoading, setIsLoading] = useState(isRichDetailTask);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -120,10 +174,23 @@ function TaskDetailModalComponent({
   const [commentDraft, setCommentDraft] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [commentError, setCommentError] = useState<string | null>(null);
+  const [boardColumns, setBoardColumns] = useState<TaskBoardColumnOption[]>(
+    isLocalTask ? LOCAL_BOARD_COLUMNS : [],
+  );
+  const [isLoadingBoardColumns, setIsLoadingBoardColumns] = useState(
+    !isLocalTask && canMoveBoard,
+  );
+  const [boardError, setBoardError] = useState<string | null>(null);
+  const [isMovingBoard, setIsMovingBoard] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
 
   const activeTask = detail?.task ?? task;
   const comments = detail?.comments ?? [];
   const history = detail?.history ?? [];
+  const isCompleted = isLocalTask
+    ? isLocalTaskCompleted(activeTask)
+    : isDoneStatusName(activeTask.status) ||
+      Boolean(activeTask.deepcrm?.stageName && isDoneStatusName(activeTask.deepcrm.stageName));
 
   const jiraIssueUrl = useMemo(() => {
     if (!isJiraTask || !task.externalId || !jiraSiteUrl) {
@@ -255,6 +322,277 @@ function TaskDetailModalComponent({
 
     void loadDetail();
   }, [isRichDetailTask, loadDetail]);
+
+  const loadBoardColumns = useCallback(async () => {
+    if (isLocalTask) {
+      setBoardColumns(LOCAL_BOARD_COLUMNS);
+      setIsLoadingBoardColumns(false);
+      setBoardError(null);
+      return;
+    }
+
+    if (!canMoveBoard || !task.externalId) {
+      setBoardColumns([]);
+      setIsLoadingBoardColumns(false);
+      return;
+    }
+
+    setIsLoadingBoardColumns(true);
+    setBoardError(null);
+
+    try {
+      const columns = await window.nexus.tasks.listBoardColumns(projectId, task.externalId);
+      setBoardColumns(columns);
+    } catch (error) {
+      setBoardColumns([]);
+      setBoardError(
+        isDeepcrmTask
+          ? formatDeepcrmIntegrationError(error)
+          : formatTaskIntegrationError(error),
+      );
+    } finally {
+      setIsLoadingBoardColumns(false);
+    }
+  }, [canMoveBoard, isDeepcrmTask, isLocalTask, projectId, task.externalId]);
+
+  useEffect(() => {
+    void loadBoardColumns();
+  }, [loadBoardColumns]);
+
+  const currentBoardStatus = useMemo(() => {
+    if (isDeepcrmTask) {
+      return activeTask.deepcrm?.stageName ?? activeTask.status ?? '';
+    }
+
+    return activeTask.status ?? '';
+  }, [activeTask.deepcrm?.stageName, activeTask.status, isDeepcrmTask]);
+
+  const boardSelectOptions = useMemo(() => {
+    const options = boardColumns.map((column) => ({
+      value: column.id,
+      label: column.name,
+    }));
+
+    if (
+      currentBoardStatus &&
+      !options.some((option) => option.label === currentBoardStatus)
+    ) {
+      options.unshift({
+        value: `${CURRENT_BOARD_VALUE_PREFIX}${currentBoardStatus}`,
+        label: currentBoardStatus,
+      });
+    }
+
+    return options;
+  }, [boardColumns, currentBoardStatus]);
+
+  const selectedBoardValue = useMemo(() => {
+    const matched = boardSelectOptions.find((option) => option.label === currentBoardStatus);
+    return matched?.value ?? '';
+  }, [boardSelectOptions, currentBoardStatus]);
+
+  const applyTaskStatusUpdate = useCallback(
+    (status: string, stage?: { stageId?: string; stageName?: string }) => {
+      const nextTask: ProjectTask = {
+        ...activeTask,
+        status,
+        updatedAt: Date.now(),
+        deepcrm:
+          activeTask.deepcrm || stage
+            ? {
+                ...activeTask.deepcrm,
+                ...(stage?.stageId ? { stageId: stage.stageId } : {}),
+                ...(stage?.stageName ? { stageName: stage.stageName } : {}),
+              }
+            : activeTask.deepcrm,
+      };
+
+      setDetail((current) =>
+        current
+          ? {
+              ...current,
+              task: nextTask,
+            }
+          : current,
+      );
+      onTaskUpdated?.(nextTask);
+      return nextTask;
+    },
+    [activeTask, onTaskUpdated],
+  );
+
+  const handleBoardChange = useCallback(
+    async (value: string) => {
+      if (!value || value.startsWith(CURRENT_BOARD_VALUE_PREFIX) || isMovingBoard) {
+        return;
+      }
+
+      const selected = boardColumns.find((column) => column.id === value);
+
+      if (!selected) {
+        return;
+      }
+
+      if (selected.name === currentBoardStatus) {
+        return;
+      }
+
+      setIsMovingBoard(true);
+      setBoardError(null);
+
+      try {
+        if (isLocalTask) {
+          applyTaskStatusUpdate(selected.name);
+          return;
+        }
+
+        if (!task.externalId) {
+          return;
+        }
+
+        const result = await window.nexus.tasks.moveBoardColumn(
+          projectId,
+          task.externalId,
+          selected.id,
+        );
+        applyTaskStatusUpdate(result.status, {
+          stageId: result.stageId,
+          stageName: result.stageName,
+        });
+        await loadBoardColumns();
+
+        if (isRichDetailTask) {
+          await loadDetail();
+        }
+      } catch (error) {
+        setBoardError(
+          isDeepcrmTask
+            ? formatDeepcrmIntegrationError(error)
+            : formatTaskIntegrationError(error),
+        );
+      } finally {
+        setIsMovingBoard(false);
+      }
+    },
+    [
+      applyTaskStatusUpdate,
+      boardColumns,
+      currentBoardStatus,
+      isDeepcrmTask,
+      isLocalTask,
+      isMovingBoard,
+      isRichDetailTask,
+      loadBoardColumns,
+      loadDetail,
+      projectId,
+      task.externalId,
+    ],
+  );
+
+  const handleComplete = useCallback(
+    async (requestClose: () => void) => {
+      if (isCompleting || isCompleted) {
+        return;
+      }
+
+      setIsCompleting(true);
+      setBoardError(null);
+
+      try {
+        if (isLocalTask) {
+          applyTaskStatusUpdate(LOCAL_TASK_STATUS_DONE);
+          requestClose();
+          return;
+        }
+
+        if (!task.externalId) {
+          return;
+        }
+
+        const result = await window.nexus.tasks.completeExternal(projectId, task.externalId);
+        applyTaskStatusUpdate(result.status, {
+          stageId: result.stageId,
+          stageName: result.stageName,
+        });
+        requestClose();
+      } catch (error) {
+        setBoardError(
+          isDeepcrmTask
+            ? formatDeepcrmIntegrationError(error)
+            : formatTaskIntegrationError(error),
+        );
+      } finally {
+        setIsCompleting(false);
+      }
+    },
+    [
+      applyTaskStatusUpdate,
+      isCompleted,
+      isCompleting,
+      isDeepcrmTask,
+      isLocalTask,
+      projectId,
+      task.externalId,
+    ],
+  );
+
+  const renderBoardSelect = () => {
+    if (!canMoveBoard) {
+      return null;
+    }
+
+    return (
+      <div className='task-detail-modal__info-row'>
+        <span className='task-detail-modal__info-label'>Quadro</span>
+        <AnchoredSelect
+          value={selectedBoardValue}
+          options={boardSelectOptions}
+          placeholder={isLoadingBoardColumns ? 'Carregando...' : 'Selecionar quadro'}
+          disabled={isLoadingBoardColumns || isMovingBoard || boardSelectOptions.length === 0}
+          triggerClassName='task-detail-modal__select'
+          onChange={(value) => {
+            void handleBoardChange(value);
+          }}
+        />
+        {boardError ? <span className='task-detail-modal__board-error'>{boardError}</span> : null}
+      </div>
+    );
+  };
+
+  const renderFooterActions = (requestClose: () => void) => (
+    <div className='project-dialog__actions task-detail-modal__footer'>
+      <button
+        type='button'
+        className='project-dialog__btn project-dialog__btn--ghost app-button'
+        onClick={requestClose}
+      >
+        Fechar
+      </button>
+      {!isCompleted ? (
+        <button
+          type='button'
+          className='project-dialog__btn project-dialog__btn--success app-button'
+          disabled={isCompleting || isMovingBoard}
+          onClick={() => void handleComplete(requestClose)}
+        >
+          {isCompleting ? (
+            <Loader2 size={14} className='task-detail-modal__loading-icon' strokeWidth={2} />
+          ) : (
+            <CheckCircle2 size={14} strokeWidth={2} />
+          )}
+          <span className='app-button__label'>Concluir</span>
+        </button>
+      ) : null}
+      <button
+        type='button'
+        className='project-dialog__btn project-dialog__btn--play app-button'
+        onClick={() => handleExecute(requestClose)}
+      >
+        <Play size={14} strokeWidth={2} />
+        <span className='app-button__label'>Executar</span>
+      </button>
+    </div>
+  );
 
   const handleEdit = useCallback(
     (requestClose: () => void) => {
@@ -391,7 +729,7 @@ function TaskDetailModalComponent({
       {activeTask.externalId ? (
         <span className='task-detail-modal__meta'>{activeTask.externalId}</span>
       ) : null}
-      {activeTask.status ? <span className='task-detail-modal__status'>{activeTask.status}</span> : null}
+      {renderBoardSelect()}
       <div className='task-detail-modal__local-meta'>
         <div className='task-detail-modal__local-meta-item'>
           <span className='task-detail-modal__local-meta-label'>Data e hora</span>
@@ -469,6 +807,21 @@ function TaskDetailModalComponent({
           >
             <Pencil size={14} strokeWidth={2} />
             <span className='app-button__label'>Editar</span>
+          </button>
+        ) : null}
+        {!isCompleted ? (
+          <button
+            type='button'
+            className='project-dialog__btn project-dialog__btn--success app-button'
+            disabled={isCompleting || isMovingBoard}
+            onClick={() => void handleComplete(requestClose)}
+          >
+            {isCompleting ? (
+              <Loader2 size={14} className='task-detail-modal__loading-icon' strokeWidth={2} />
+            ) : (
+              <CheckCircle2 size={14} strokeWidth={2} />
+            )}
+            <span className='app-button__label'>Concluir</span>
           </button>
         ) : null}
         <button
@@ -650,12 +1003,7 @@ function TaskDetailModalComponent({
         <aside className='task-detail-modal__sidebar'>
           <h3 className='task-detail-modal__sidebar-title'>Informações</h3>
 
-          <div className='task-detail-modal__info-row'>
-            <span className='task-detail-modal__info-label'>Status</span>
-            <span className='task-detail-modal__info-value'>
-              {activeTask.status ?? '—'}
-            </span>
-          </div>
+          {renderBoardSelect()}
 
           <div className='task-detail-modal__info-row'>
             <span className='task-detail-modal__info-label'>Responsável</span>
@@ -757,23 +1105,7 @@ function TaskDetailModalComponent({
         </aside>
       </div>
 
-      <div className='project-dialog__actions task-detail-modal__footer'>
-        <button
-          type='button'
-          className='project-dialog__btn project-dialog__btn--ghost app-button'
-          onClick={requestClose}
-        >
-          Fechar
-        </button>
-        <button
-          type='button'
-          className='project-dialog__btn project-dialog__btn--play app-button'
-          onClick={() => handleExecute(requestClose)}
-        >
-          <Play size={14} strokeWidth={2} />
-          <span className='app-button__label'>Executar</span>
-        </button>
-      </div>
+      {renderFooterActions(requestClose)}
     </>
   );
 
@@ -940,12 +1272,7 @@ function TaskDetailModalComponent({
             </div>
           ) : null}
 
-          {activeTask.deepcrm?.stageName ? (
-            <div className='task-detail-modal__info-row'>
-              <span className='task-detail-modal__info-label'>Estágio</span>
-              <span className='task-detail-modal__info-value'>{activeTask.deepcrm.stageName}</span>
-            </div>
-          ) : null}
+          {renderBoardSelect()}
 
           {projectStatusLabel ? (
             <div className='task-detail-modal__info-row'>
@@ -1045,23 +1372,7 @@ function TaskDetailModalComponent({
         </aside>
       </div>
 
-      <div className='project-dialog__actions task-detail-modal__footer'>
-        <button
-          type='button'
-          className='project-dialog__btn project-dialog__btn--ghost app-button'
-          onClick={requestClose}
-        >
-          Fechar
-        </button>
-        <button
-          type='button'
-          className='project-dialog__btn project-dialog__btn--play app-button'
-          onClick={() => handleExecute(requestClose)}
-        >
-          <Play size={14} strokeWidth={2} />
-          <span className='app-button__label'>Executar</span>
-        </button>
-      </div>
+      {renderFooterActions(requestClose)}
     </>
   );
 

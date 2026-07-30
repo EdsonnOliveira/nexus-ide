@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CloudProject } from '@nexus/protocol';
 import { bridge } from '../lib/supabase';
 import { waitForCommandResult } from './webCommandResult';
+
+const POLL_MS = 45_000;
 
 export function useWebPreviewProjectIds(input: {
   workspaceId: string | null;
@@ -12,6 +14,7 @@ export function useWebPreviewProjectIds(input: {
   const { workspaceId, deviceId, projects, enabled = true } = input;
   const [cloudProjectIds, setCloudProjectIds] = useState<string[]>([]);
   const [localProjectIds, setLocalProjectIds] = useState<string[]>([]);
+  const inFlightRef = useRef(false);
 
   const refresh = useCallback(async () => {
     if (!enabled || !workspaceId || !deviceId) {
@@ -19,6 +22,10 @@ export function useWebPreviewProjectIds(input: {
       setLocalProjectIds([]);
       return;
     }
+    if (inFlightRef.current) {
+      return;
+    }
+    inFlightRef.current = true;
     try {
       const commandId = await bridge.executeCommand({
         workspace_id: workspaceId,
@@ -46,6 +53,8 @@ export function useWebPreviewProjectIds(input: {
     } catch {
       setCloudProjectIds([]);
       setLocalProjectIds([]);
+    } finally {
+      inFlightRef.current = false;
     }
   }, [deviceId, enabled, workspaceId]);
 
@@ -58,7 +67,7 @@ export function useWebPreviewProjectIds(input: {
     void refresh();
     const timer = window.setInterval(() => {
       void refresh();
-    }, 12000);
+    }, POLL_MS);
     return () => window.clearInterval(timer);
   }, [deviceId, enabled, refresh, workspaceId]);
 

@@ -639,6 +639,14 @@ const nexusApi = {
       ipcRenderer.invoke('tasks:getDetail', projectId, externalId),
     addComment: (projectId, externalId, body) =>
       ipcRenderer.invoke('tasks:addComment', projectId, externalId, body),
+    listBoardColumns: (projectId, externalId) =>
+      ipcRenderer.invoke('tasks:listBoardColumns', projectId, externalId),
+    moveBoardColumn: (projectId, externalId, columnId) =>
+      ipcRenderer.invoke('tasks:moveBoardColumn', projectId, externalId, columnId),
+    completeExternal: (projectId, externalId) =>
+      ipcRenderer.invoke('tasks:completeExternal', projectId, externalId),
+    startExternal: (projectId, externalId) =>
+      ipcRenderer.invoke('tasks:startExternal', projectId, externalId),
   },
   tests: {
     discover: (projectPath, kind) => ipcRenderer.invoke('tests:discover', projectPath, kind),

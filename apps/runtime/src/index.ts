@@ -270,7 +270,6 @@ async function main(): Promise<void> {
 
   const heartbeat = async () => {
     try {
-      await publishDesktopAgentPanes(client, deviceId, session.user.id);
       await touchHeartbeat(client, deviceId, {
         capabilities: detectCapabilities(),
         active_terminals: listActiveTerminalIds().length,
@@ -278,14 +277,32 @@ async function main(): Promise<void> {
     } catch (error) {
       console.error('[nexus-runtime] heartbeat failed', error);
     }
+    try {
+      await publishDesktopAgentPanes(client, deviceId, session.user.id);
+    } catch (error) {
+      console.error('[nexus-runtime] publish panes failed', error);
+    }
   };
 
-  await heartbeat();
+  let heartbeatInFlight = false;
+  const runHeartbeat = async () => {
+    if (heartbeatInFlight) {
+      return;
+    }
+    heartbeatInFlight = true;
+    try {
+      await heartbeat();
+    } finally {
+      heartbeatInFlight = false;
+    }
+  };
+
+  void runHeartbeat();
   setInterval(() => {
-    void heartbeat();
+    void runHeartbeat();
   }, HEARTBEAT_MS);
 
-  const FAST_EMULATOR_TYPES = new Set([
+  const FAST_INPUT_TYPES = new Set([
     'emulator_tap',
     'emulator_swipe',
     'emulator_press_home',
@@ -295,7 +312,23 @@ async function main(): Promise<void> {
     'emulator_type',
   ]);
 
+  let pollInFlight = 0;
+  const MAX_POLL_IN_FLIGHT = 3;
+
   const poll = async () => {
+    if (pollInFlight >= MAX_POLL_IN_FLIGHT) {
+      return;
+    }
+    pollInFlight += 1;
+    let released = false;
+    let deferRelease = false;
+    const release = () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      pollInFlight -= 1;
+    };
     try {
       const claimed = await claimCommand(client, deviceId, 90);
       if (!claimed?.id) {
@@ -305,15 +338,26 @@ async function main(): Promise<void> {
       const run = executeCommand(client, claimed, deviceId).then(() => {
         console.log(`[nexus-runtime] completed ${claimed.id}`);
       });
-      if (FAST_EMULATOR_TYPES.has(String(claimed.type))) {
-        void run.catch((error) => {
-          console.error('[nexus-runtime] fast command failed', error);
-        });
+      if (FAST_INPUT_TYPES.has(String(claimed.type))) {
+        deferRelease = true;
+        void run
+          .catch((error) => {
+            console.error('[nexus-runtime] fast command failed', error);
+          })
+          .finally(release);
         return;
       }
-      await run;
+      try {
+        await run;
+      } catch (error) {
+        console.error('[nexus-runtime] command failed', claimed.id, error);
+      }
     } catch (error) {
       console.error('[nexus-runtime] poll/execute failed', error);
+    } finally {
+      if (!deferRelease) {
+        release();
+      }
     }
   };
 

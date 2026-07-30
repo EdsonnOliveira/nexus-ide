@@ -4,6 +4,7 @@ import { toProjectRelativePath } from '@/utils/explorerRelativePath';
 const PROMPT_VERSION = 1;
 
 export const LOCAL_TASK_STATUS_PENDING = 'Pendente';
+export const LOCAL_TASK_STATUS_IN_PROGRESS = 'Em andamento';
 export const LOCAL_TASK_STATUS_DONE = 'Concluído';
 
 export interface TaskJsonAttachmentV1 {
@@ -50,6 +51,15 @@ function normalizeStatusValue(value: string | undefined): string | undefined {
 
   if (normalized === 'pendente' || normalized === 'pending' || normalized === 'open') {
     return LOCAL_TASK_STATUS_PENDING;
+  }
+
+  if (
+    normalized === 'em andamento' ||
+    normalized === 'in progress' ||
+    normalized === 'em progresso' ||
+    normalized === 'doing'
+  ) {
+    return LOCAL_TASK_STATUS_IN_PROGRESS;
   }
 
   return value.trim();

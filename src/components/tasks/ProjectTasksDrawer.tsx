@@ -257,6 +257,13 @@ function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
               : undefined
           }
           onExecute={() => executeTask(detailTask)}
+          onTaskUpdated={(updated) => {
+            setDetailTask(updated);
+            void updateLocalTask(updated.id, {
+              status: updated.status,
+              deepcrm: updated.deepcrm,
+            });
+          }}
         />
       ) : null}
       {formTask !== undefined ? (

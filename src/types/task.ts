@@ -194,3 +194,16 @@ export interface DeepcrmPipelineOption {
   id: string;
   name: string;
 }
+
+export interface TaskBoardColumnOption {
+  id: string;
+  name: string;
+  isDone?: boolean;
+  isProgress?: boolean;
+}
+
+export interface TaskMoveResult {
+  status: string;
+  stageId?: string;
+  stageName?: string;
+}

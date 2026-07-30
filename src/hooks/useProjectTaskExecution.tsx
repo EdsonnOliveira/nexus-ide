@@ -8,6 +8,7 @@ import type { Project } from '@/types';
 import type { ProjectTask } from '@/types/task';
 import { collectOpenAgentPanes } from '@/utils/collectOpenAgentPanes';
 import { executeTaskInAgent } from '@/utils/executeTaskInAgent';
+import { moveTaskToInProgress } from '@/utils/moveTaskToInProgress';
 import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
 
 export function useProjectTaskExecution(_projectId: string | null): {
@@ -71,6 +72,7 @@ export function useProjectTaskExecution(_projectId: string | null): {
 
       const targetTask = executeTarget;
       const paneId = selectedPaneId;
+      const projectId = executeProject.id;
       const freshProject =
         useProjectStore.getState().projects.find((item) => item.id === executeProject.id) ?? executeProject;
 
@@ -78,13 +80,16 @@ export function useProjectTaskExecution(_projectId: string | null): {
       setExecuteProject(null);
       setSelectedPaneId(null);
 
-      void executeTaskInAgent({
-        project: freshProject,
-        task: targetTask,
-        paneId,
-        agentMode: mode,
-        selectPane,
-      });
+      void (async () => {
+        await moveTaskToInProgress(projectId, targetTask);
+        await executeTaskInAgent({
+          project: freshProject,
+          task: targetTask,
+          paneId,
+          agentMode: mode,
+          selectPane,
+        });
+      })();
     },
     [executeProject, executeTarget, selectPane, selectedPaneId],
   );

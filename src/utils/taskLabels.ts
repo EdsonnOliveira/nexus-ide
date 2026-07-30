@@ -321,31 +321,19 @@ export interface HistoryStatusBadge {
   className: string;
 }
 
-export function resolveHistoryStatusBadge(value: string): HistoryStatusBadge | null {
-  const normalized = value.trim().toLowerCase();
+export type TaskStatusKind = 'pending' | 'progress' | 'done';
 
-  if (
-    normalized === 'to do' ||
-    normalized === 'pendente' ||
-    normalized === 'a fazer' ||
-    normalized === 'open' ||
-    normalized === 'aberto'
-  ) {
-    return {
-      label: value,
-      className: 'task-detail-modal__history-badge--todo',
-    };
-  }
+export interface TaskStatusBadge {
+  label: string;
+  kind: TaskStatusKind;
+  className: string;
+}
 
-  if (
-    normalized === 'in progress' ||
-    normalized === 'em progresso' ||
-    normalized.includes('progress')
-  ) {
-    return {
-      label: value,
-      className: 'task-detail-modal__history-badge--progress',
-    };
+export function classifyTaskStatus(status: string): TaskStatusKind | null {
+  const normalized = status.trim().toLowerCase();
+
+  if (!normalized) {
+    return null;
   }
 
   if (
@@ -355,15 +343,103 @@ export function resolveHistoryStatusBadge(value: string): HistoryStatusBadge | n
     normalized === 'concluída' ||
     normalized === 'concluida' ||
     normalized === 'resolved' ||
-    normalized === 'resolvido'
+    normalized === 'resolvido' ||
+    normalized === 'closed' ||
+    normalized === 'fechado' ||
+    normalized === 'fechada' ||
+    normalized === 'complete' ||
+    normalized === 'completed' ||
+    normalized === 'finalizado' ||
+    normalized.includes('conclu')
   ) {
+    return 'done';
+  }
+
+  if (
+    normalized === 'in progress' ||
+    normalized === 'em progresso' ||
+    normalized === 'em andamento' ||
+    normalized.includes('andamento') ||
+    normalized.includes('progress') ||
+    normalized === 'doing'
+  ) {
+    return 'progress';
+  }
+
+  if (
+    normalized === 'to do' ||
+    normalized === 'todo' ||
+    normalized === 'pendente' ||
+    normalized === 'a fazer' ||
+    normalized === 'open' ||
+    normalized === 'aberto' ||
+    normalized === 'backlog' ||
+    normalized === 'tarefas pendentes' ||
+    normalized.includes('pendente')
+  ) {
+    return 'pending';
+  }
+
+  return null;
+}
+
+export function resolveTaskStatusBadge(status?: string): TaskStatusBadge | null {
+  const trimmed = status?.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const kind = classifyTaskStatus(trimmed) ?? 'pending';
+
+  if (kind === 'done') {
+    return {
+      label: trimmed,
+      kind,
+      className: 'tasks-drawer__status-badge--done',
+    };
+  }
+
+  if (kind === 'progress') {
+    return {
+      label: trimmed,
+      kind,
+      className: 'tasks-drawer__status-badge--progress',
+    };
+  }
+
+  return {
+    label: trimmed,
+    kind: 'pending',
+    className: 'tasks-drawer__status-badge--pending',
+  };
+}
+
+export function resolveHistoryStatusBadge(value: string): HistoryStatusBadge | null {
+  const kind = classifyTaskStatus(value);
+
+  if (!kind) {
+    return null;
+  }
+
+  if (kind === 'done') {
     return {
       label: value,
       className: 'task-detail-modal__history-badge--done',
     };
   }
 
-  return null;
+  if (kind === 'progress') {
+    return {
+      label: value,
+      className: 'task-detail-modal__history-badge--progress',
+    };
+  }
+
+  return {
+    label: value,
+    className: 'task-detail-modal__history-badge--todo',
+  };
 }
 
 export function getTaskInitials(name?: string): string {

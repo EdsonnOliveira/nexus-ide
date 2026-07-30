@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Monitor } from 'lucide-react';
 import { isDeviceOnline } from '@nexus/supabase';
 import { sanitizeDeviceName, type DeviceRecord } from '@nexus/protocol';
@@ -38,12 +38,23 @@ export function WebMacSelect({
   className = '',
   iconOnly = false,
 }: WebMacSelectProps) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const selectedDevice =
     devices.find((device) => device.id === deviceId) ??
     devices.find((device) => device.is_default) ??
     devices[0] ??
     null;
-  const selectedOnline = selectedDevice ? isDeviceOnline(selectedDevice.last_seen_at) : false;
+  const selectedOnline = useMemo(
+    () => (selectedDevice ? isDeviceOnline(selectedDevice.last_seen_at) : false),
+    [nowMs, selectedDevice],
+  );
 
   const deviceOptions = useMemo(
     () =>
@@ -56,7 +67,7 @@ export function WebMacSelect({
           disabled: !device.is_enabled,
         };
       }),
-    [devices],
+    [devices, nowMs],
   );
 
   const triggerLabel = selectedDevice

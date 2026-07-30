@@ -373,6 +373,11 @@ function jiraRequest<T>(
             return;
           }
 
+          if (!body.trim()) {
+            resolve({} as T);
+            return;
+          }
+
           try {
             resolve(JSON.parse(body) as T);
           } catch {
@@ -394,6 +399,152 @@ function jiraRequest<T>(
 
     request.end();
   });
+}
+
+interface JiraTransitionStatus {
+  id?: string;
+  name?: string;
+  statusCategory?: { key?: string; name?: string };
+}
+
+interface JiraTransition {
+  id: string;
+  name?: string;
+  to?: JiraTransitionStatus;
+}
+
+interface JiraTransitionsResponse {
+  transitions?: JiraTransition[];
+}
+
+function isJiraDoneStatus(status?: JiraTransitionStatus): boolean {
+  const categoryKey = status?.statusCategory?.key?.trim().toLowerCase();
+
+  if (categoryKey === 'done') {
+    return true;
+  }
+
+  const name = status?.name?.trim().toLowerCase() ?? '';
+
+  return (
+    name === 'done' ||
+    name === 'concluído' ||
+    name === 'concluido' ||
+    name === 'concluída' ||
+    name === 'concluida' ||
+    name === 'resolved' ||
+    name === 'closed' ||
+    name === 'fechado' ||
+    name === 'fechada'
+  );
+}
+
+function isJiraProgressStatus(status?: JiraTransitionStatus): boolean {
+  const categoryKey = status?.statusCategory?.key?.trim().toLowerCase();
+
+  if (categoryKey === 'indeterminate') {
+    return true;
+  }
+
+  const name = status?.name?.trim().toLowerCase() ?? '';
+
+  return (
+    name === 'in progress' ||
+    name === 'em andamento' ||
+    name === 'em progresso' ||
+    name.includes('andamento') ||
+    name.includes('progress') ||
+    name === 'doing'
+  );
+}
+
+export async function listJiraIssueTransitions(
+  siteUrl: string,
+  email: string,
+  apiToken: string,
+  issueKey: string,
+): Promise<Array<{ id: string; name: string; isDone: boolean; isProgress: boolean }>> {
+  const response = await jiraRequest<JiraTransitionsResponse>(
+    siteUrl,
+    email,
+    apiToken,
+    `/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`,
+  );
+
+  return (response.transitions ?? [])
+    .filter((transition) => Boolean(transition.id))
+    .map((transition) => ({
+      id: transition.id,
+      name: transition.to?.name?.trim() || transition.name?.trim() || transition.id,
+      isDone: isJiraDoneStatus(transition.to),
+      isProgress: isJiraProgressStatus(transition.to),
+    }));
+}
+
+export async function transitionJiraIssue(
+  siteUrl: string,
+  email: string,
+  apiToken: string,
+  issueKey: string,
+  transitionId: string,
+): Promise<string> {
+  const transitions = await listJiraIssueTransitions(siteUrl, email, apiToken, issueKey);
+  const selected = transitions.find((item) => item.id === transitionId);
+
+  if (!selected) {
+    throw new Error('Transição indisponível para esta tarefa');
+  }
+
+  await jiraRequest(
+    siteUrl,
+    email,
+    apiToken,
+    `/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`,
+    {
+      method: 'POST',
+      body: {
+        transition: { id: transitionId },
+      },
+    },
+  );
+
+  return selected.name;
+}
+
+export async function completeJiraIssue(
+  siteUrl: string,
+  email: string,
+  apiToken: string,
+  issueKey: string,
+): Promise<string> {
+  const transitions = await listJiraIssueTransitions(siteUrl, email, apiToken, issueKey);
+  const doneTransition =
+    transitions.find((item) => item.isDone) ??
+    transitions.find((item) => /done|conclu|resolv|fechad|closed/i.test(item.name));
+
+  if (!doneTransition) {
+    throw new Error('Nenhuma transição de conclusão disponível para esta tarefa');
+  }
+
+  return transitionJiraIssue(siteUrl, email, apiToken, issueKey, doneTransition.id);
+}
+
+export async function startJiraIssue(
+  siteUrl: string,
+  email: string,
+  apiToken: string,
+  issueKey: string,
+): Promise<string> {
+  const transitions = await listJiraIssueTransitions(siteUrl, email, apiToken, issueKey);
+  const progressTransition =
+    transitions.find((item) => item.isProgress) ??
+    transitions.find((item) => /andamento|progress|doing/i.test(item.name));
+
+  if (!progressTransition) {
+    throw new Error('Nenhuma transição de andamento disponível para esta tarefa');
+  }
+
+  return transitionJiraIssue(siteUrl, email, apiToken, issueKey, progressTransition.id);
 }
 
 function isLikelyImageBuffer(buffer: Buffer): boolean {

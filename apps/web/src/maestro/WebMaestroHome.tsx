@@ -173,17 +173,33 @@ export function WebMaestroHome() {
     devices,
     selectedDeviceId,
   ]);
+  const [deviceOnlineNowMs, setDeviceOnlineNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setDeviceOnlineNowMs(Date.now());
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const selectedDeviceOnline = useMemo(() => {
+    const device =
+      devices.find((item) => item.id === selectedDeviceId) ??
+      devices.find((item) => item.is_default) ??
+      devices[0] ??
+      null;
+    void deviceOnlineNowMs;
+    return device ? isDeviceOnline(device.last_seen_at) : false;
+  }, [deviceOnlineNowMs, devices, selectedDeviceId]);
   const emulatorProjectIds = useWebEmulatorProjectIds({
     workspaceId: emulatorWorkspaceId,
     deviceId: selectedDeviceId,
     projects,
-    enabled: Boolean(selectedDeviceId),
+    enabled: Boolean(selectedDeviceId) && selectedDeviceOnline,
   });
   const previewProjectIds = useWebPreviewProjectIds({
     workspaceId: emulatorWorkspaceId,
     deviceId: selectedDeviceId,
     projects,
-    enabled: Boolean(selectedDeviceId),
+    enabled: Boolean(selectedDeviceId) && selectedDeviceOnline,
   });
 
   const handleOpenEmulator = useCallback(

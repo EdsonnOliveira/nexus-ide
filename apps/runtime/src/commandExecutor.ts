@@ -217,7 +217,7 @@ async function handleEmulatorCommand(
 
   switch (command.type) {
     case 'emulator_list_sessions': {
-      const listed = await requestDesktopJson('emulator.list_sessions');
+      const listed = await requestDesktopJson('emulator.list_sessions', {}, 8000);
       const sessions = Array.isArray(listed.sessions) ? listed.sessions : [];
       const localIds = sessions
         .map((item) => {

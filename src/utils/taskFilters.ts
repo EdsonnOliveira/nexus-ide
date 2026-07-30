@@ -69,19 +69,17 @@ export function buildDefaultTaskFilters(
     assignee.unshift(jiraAccountName.trim());
   }
 
-  const pendingStatus = resolveDefaultPendingStatus(tasks);
-
   return {
     parent: [],
     assignee,
     issueType: [],
     categories: [],
-    status: pendingStatus ? [pendingStatus] : [],
+    status: resolveDefaultStatuses(tasks),
     priority: [],
   };
 }
 
-function resolveDefaultPendingStatus(tasks: ProjectTask[]): string | null {
+function resolveDefaultStatuses(tasks: ProjectTask[]): string[] {
   const statuses = new Set<string>();
 
   for (const task of tasks) {
@@ -90,17 +88,31 @@ function resolveDefaultPendingStatus(tasks: ProjectTask[]): string | null {
     }
   }
 
-  if (statuses.has('Tarefas pendentes')) {
-    return 'Tarefas pendentes';
-  }
+  const defaults: string[] = [];
 
-  for (const status of statuses) {
-    if (/pendente/i.test(status)) {
-      return status;
+  if (statuses.has('Tarefas pendentes')) {
+    defaults.push('Tarefas pendentes');
+  } else {
+    for (const status of statuses) {
+      if (/pendente/i.test(status)) {
+        defaults.push(status);
+        break;
+      }
     }
   }
 
-  return null;
+  if (statuses.has('Em andamento')) {
+    defaults.push('Em andamento');
+  } else {
+    for (const status of statuses) {
+      if (/em andamento|in progress/i.test(status) && !defaults.includes(status)) {
+        defaults.push(status);
+        break;
+      }
+    }
+  }
+
+  return defaults;
 }
 
 export function areTaskFiltersEqual(left: TaskListFilters, right: TaskListFilters): boolean {

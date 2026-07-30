@@ -942,6 +942,23 @@ export interface NexusAPI {
     readAttachment: (filePath: string) => Promise<string>;
     getDetail: (projectId: string, externalId: string) => Promise<TaskDetailData>;
     addComment: (projectId: string, externalId: string, body: string) => Promise<TaskComment>;
+    listBoardColumns: (
+      projectId: string,
+      externalId: string,
+    ) => Promise<import('@/types/task').TaskBoardColumnOption[]>;
+    moveBoardColumn: (
+      projectId: string,
+      externalId: string,
+      columnId: string,
+    ) => Promise<import('@/types/task').TaskMoveResult>;
+    completeExternal: (
+      projectId: string,
+      externalId: string,
+    ) => Promise<import('@/types/task').TaskMoveResult>;
+    startExternal: (
+      projectId: string,
+      externalId: string,
+    ) => Promise<import('@/types/task').TaskMoveResult>;
   };
   tests: {
     discover: (

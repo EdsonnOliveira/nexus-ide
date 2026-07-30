@@ -4,28 +4,42 @@ import { taskCredentialStore } from '../services/taskCredentialStore';
 import { saveTaskAttachment, saveTaskAttachmentFromDataUrl, readTaskAttachment } from '../services/taskAttachments';
 import {
   addJiraIssueComment,
+  completeJiraIssue,
   fetchJiraIssueDetail,
   getJiraAccountName,
+  listJiraIssueTransitions,
   listJiraProjects,
+  startJiraIssue,
   syncJiraTasks,
   testJiraConnection,
+  transitionJiraIssue,
 } from '../services/taskIntegrations/jira';
 import {
+  completeTrelloCard,
+  listTrelloBoardLists,
   listTrelloBoards,
+  moveTrelloCardToList,
+  startTrelloCard,
   syncTrelloTasks,
   testTrelloConnection,
 } from '../services/taskIntegrations/trello';
 import {
+  completeDeepcrmProject,
   fetchDeepcrmProjectDetail,
   getDeepcrmAccountName,
+  listDeepcrmPipelineStages,
   listDeepcrmPipelines,
+  startDeepcrmProject,
   syncDeepcrmTasks,
   testDeepcrmConnection,
+  updateDeepcrmProjectStage,
 } from '../services/taskIntegrations/deepcrm';
 import type {
+  TaskBoardColumnOption,
   TaskCredentialsPayload,
   TaskDetailData,
   TaskIntegrationConfig,
+  TaskMoveResult,
   TaskSyncResult,
 } from '../../types/task';
 
@@ -270,6 +284,224 @@ export function registerTaskHandlers(): void {
         key,
         body,
       );
+    },
+  );
+
+  ipcMain.handle(
+    'tasks:listBoardColumns',
+    async (_event, projectId: string, externalId: string): Promise<TaskBoardColumnOption[]> => {
+      const project = getProjectOrThrow(projectId);
+      const config = project.taskIntegration;
+      const secrets = taskCredentialStore.getSecrets(projectId);
+      const key = externalId.trim();
+
+      if (!config?.platform || !key) {
+        throw new Error('Integração de tarefas não configurada');
+      }
+
+      if (config.platform === 'jira') {
+        return listJiraIssueTransitions(
+          config.jiraSiteUrl ?? '',
+          config.jiraEmail ?? '',
+          secrets.jiraApiToken ?? '',
+          key,
+        );
+      }
+
+      if (config.platform === 'trello') {
+        const boardId = config.trelloBoardId?.trim() ?? '';
+
+        if (!boardId) {
+          throw new Error('Board do Trello não configurado');
+        }
+
+        return listTrelloBoardLists(
+          secrets.trelloApiKey ?? '',
+          secrets.trelloToken ?? '',
+          boardId,
+        );
+      }
+
+      if (config.platform === 'deepcrm') {
+        const localTask = project.tasks?.find((item) => item.externalId === key);
+        const pipelineId =
+          localTask?.deepcrm?.pipelineId?.trim() || config.deepcrmPipelineId?.trim() || '';
+
+        if (!pipelineId) {
+          throw new Error('Kanban do DeepCRM não configurado');
+        }
+
+        return listDeepcrmPipelineStages(secrets.deepcrmApiToken ?? '', pipelineId);
+      }
+
+      throw new Error('Plataforma de tarefas não suportada');
+    },
+  );
+
+  ipcMain.handle(
+    'tasks:moveBoardColumn',
+    async (
+      _event,
+      projectId: string,
+      externalId: string,
+      columnId: string,
+    ): Promise<TaskMoveResult> => {
+      const project = getProjectOrThrow(projectId);
+      const config = project.taskIntegration;
+      const secrets = taskCredentialStore.getSecrets(projectId);
+      const key = externalId.trim();
+      const targetColumnId = columnId.trim();
+
+      if (!config?.platform || !key || !targetColumnId) {
+        throw new Error('Não foi possível mover a tarefa');
+      }
+
+      if (config.platform === 'jira') {
+        const status = await transitionJiraIssue(
+          config.jiraSiteUrl ?? '',
+          config.jiraEmail ?? '',
+          secrets.jiraApiToken ?? '',
+          key,
+          targetColumnId,
+        );
+
+        return { status };
+      }
+
+      if (config.platform === 'trello') {
+        const status = await moveTrelloCardToList(
+          secrets.trelloApiKey ?? '',
+          secrets.trelloToken ?? '',
+          key,
+          targetColumnId,
+        );
+
+        return { status };
+      }
+
+      if (config.platform === 'deepcrm') {
+        const result = await updateDeepcrmProjectStage(
+          secrets.deepcrmApiToken ?? '',
+          key,
+          targetColumnId,
+        );
+
+        return {
+          status: result.status,
+          stageId: result.stageId,
+          stageName: result.stageName,
+        };
+      }
+
+      throw new Error('Plataforma de tarefas não suportada');
+    },
+  );
+
+  ipcMain.handle(
+    'tasks:completeExternal',
+    async (_event, projectId: string, externalId: string): Promise<TaskMoveResult> => {
+      const project = getProjectOrThrow(projectId);
+      const config = project.taskIntegration;
+      const secrets = taskCredentialStore.getSecrets(projectId);
+      const key = externalId.trim();
+
+      if (!config?.platform || !key) {
+        throw new Error('Não foi possível concluir a tarefa');
+      }
+
+      if (config.platform === 'jira') {
+        const status = await completeJiraIssue(
+          config.jiraSiteUrl ?? '',
+          config.jiraEmail ?? '',
+          secrets.jiraApiToken ?? '',
+          key,
+        );
+
+        return { status };
+      }
+
+      if (config.platform === 'trello') {
+        const boardId = config.trelloBoardId?.trim() ?? '';
+
+        if (!boardId) {
+          throw new Error('Board do Trello não configurado');
+        }
+
+        const status = await completeTrelloCard(
+          secrets.trelloApiKey ?? '',
+          secrets.trelloToken ?? '',
+          key,
+          boardId,
+        );
+
+        return { status };
+      }
+
+      if (config.platform === 'deepcrm') {
+        const result = await completeDeepcrmProject(secrets.deepcrmApiToken ?? '', key);
+
+        return {
+          status: result.status,
+          stageId: result.stageId,
+          stageName: result.stageName,
+        };
+      }
+
+      throw new Error('Plataforma de tarefas não suportada');
+    },
+  );
+
+  ipcMain.handle(
+    'tasks:startExternal',
+    async (_event, projectId: string, externalId: string): Promise<TaskMoveResult> => {
+      const project = getProjectOrThrow(projectId);
+      const config = project.taskIntegration;
+      const secrets = taskCredentialStore.getSecrets(projectId);
+      const key = externalId.trim();
+
+      if (!config?.platform || !key) {
+        throw new Error('Não foi possível iniciar a tarefa');
+      }
+
+      if (config.platform === 'jira') {
+        const status = await startJiraIssue(
+          config.jiraSiteUrl ?? '',
+          config.jiraEmail ?? '',
+          secrets.jiraApiToken ?? '',
+          key,
+        );
+
+        return { status };
+      }
+
+      if (config.platform === 'trello') {
+        const boardId = config.trelloBoardId?.trim() ?? '';
+
+        if (!boardId) {
+          throw new Error('Board do Trello não configurado');
+        }
+
+        const status = await startTrelloCard(
+          secrets.trelloApiKey ?? '',
+          secrets.trelloToken ?? '',
+          key,
+          boardId,
+        );
+
+        return { status };
+      }
+
+      if (config.platform === 'deepcrm') {
+        const result = await startDeepcrmProject(secrets.deepcrmApiToken ?? '', key);
+
+        return {
+          status: result.status,
+          stageId: result.stageId,
+          stageName: result.stageName,
+        };
+      }
+
+      throw new Error('Plataforma de tarefas não suportada');
     },
   );
 }

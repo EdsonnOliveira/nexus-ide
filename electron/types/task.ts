@@ -153,6 +153,19 @@ export interface TaskCredentialsPayload {
   deepcrmApiToken?: string;
 }
 
+export interface TaskBoardColumnOption {
+  id: string;
+  name: string;
+  isDone?: boolean;
+  isProgress?: boolean;
+}
+
+export interface TaskMoveResult {
+  status: string;
+  stageId?: string;
+  stageName?: string;
+}
+
 export function isImageAttachmentName(name: string): boolean {
   return /\.(png|jpe?g|gif|webp|svg|bmp|avif|heic|heif)$/i.test(name);
 }

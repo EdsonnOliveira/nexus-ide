@@ -34,14 +34,17 @@ interface TrelloList {
   name: string;
 }
 
-function trelloRequest<T>(requestPath: string): Promise<T> {
+function trelloRequest<T>(
+  requestPath: string,
+  method: 'GET' | 'PUT' | 'POST' = 'GET',
+): Promise<T> {
   return new Promise((resolve, reject) => {
     const url = new URL(requestPath);
 
     const request = https.request(
       url,
       {
-        method: 'GET',
+        method,
         timeout: REQUEST_TIMEOUT_MS,
       },
       (response) => {
@@ -54,6 +57,11 @@ function trelloRequest<T>(requestPath: string): Promise<T> {
         response.on('end', () => {
           if ((response.statusCode ?? 500) >= 400) {
             reject(new Error(`Trello respondeu com status ${response.statusCode ?? 'desconhecido'}`));
+            return;
+          }
+
+          if (!body.trim()) {
+            resolve({} as T);
             return;
           }
 
@@ -73,6 +81,35 @@ function trelloRequest<T>(requestPath: string): Promise<T> {
     request.on('error', reject);
     request.end();
   });
+}
+
+function isTrelloDoneListName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+
+  return (
+    normalized === 'done' ||
+    normalized === 'concluído' ||
+    normalized === 'concluido' ||
+    normalized === 'concluída' ||
+    normalized === 'concluida' ||
+    normalized === 'complete' ||
+    normalized === 'completed' ||
+    normalized === 'fechado' ||
+    normalized === 'finalizado'
+  );
+}
+
+function isTrelloProgressListName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+
+  return (
+    normalized === 'in progress' ||
+    normalized === 'em andamento' ||
+    normalized === 'em progresso' ||
+    normalized.includes('andamento') ||
+    normalized.includes('progress') ||
+    normalized === 'doing'
+  );
 }
 
 function downloadBinary(url: string): Promise<Buffer> {
@@ -167,6 +204,75 @@ export async function listTrelloBoards(
   );
 
   return boards.map((board) => ({ id: board.id, name: board.name }));
+}
+
+export async function listTrelloBoardLists(
+  apiKey: string,
+  token: string,
+  boardId: string,
+): Promise<Array<{ id: string; name: string; isDone: boolean; isProgress: boolean }>> {
+  const lists = await trelloRequest<TrelloList[]>(
+    buildTrelloUrl(`/boards/${boardId}/lists`, apiKey, token, { filter: 'open' }),
+  );
+
+  return lists.map((list) => ({
+    id: list.id,
+    name: list.name,
+    isDone: isTrelloDoneListName(list.name),
+    isProgress: isTrelloProgressListName(list.name),
+  }));
+}
+
+export async function moveTrelloCardToList(
+  apiKey: string,
+  token: string,
+  cardId: string,
+  listId: string,
+): Promise<string> {
+  await trelloRequest<TrelloCard>(
+    buildTrelloUrl(`/cards/${cardId}`, apiKey, token, { idList: listId }),
+    'PUT',
+  );
+
+  const list = await trelloRequest<TrelloList>(buildTrelloUrl(`/lists/${listId}`, apiKey, token));
+
+  return list.name.trim() || listId;
+}
+
+export async function completeTrelloCard(
+  apiKey: string,
+  token: string,
+  cardId: string,
+  boardId: string,
+): Promise<string> {
+  const lists = await listTrelloBoardLists(apiKey, token, boardId);
+  const doneList =
+    lists.find((item) => item.isDone) ??
+    lists.find((item) => /done|conclu|complete|fechad|finaliz/i.test(item.name));
+
+  if (!doneList) {
+    throw new Error('Nenhuma lista de conclusão encontrada neste board');
+  }
+
+  return moveTrelloCardToList(apiKey, token, cardId, doneList.id);
+}
+
+export async function startTrelloCard(
+  apiKey: string,
+  token: string,
+  cardId: string,
+  boardId: string,
+): Promise<string> {
+  const lists = await listTrelloBoardLists(apiKey, token, boardId);
+  const progressList =
+    lists.find((item) => item.isProgress) ??
+    lists.find((item) => /andamento|progress|doing/i.test(item.name));
+
+  if (!progressList) {
+    throw new Error('Nenhuma lista de andamento encontrada neste board');
+  }
+
+  return moveTrelloCardToList(apiKey, token, cardId, progressList.id);
 }
 
 export async function syncTrelloTasks(
