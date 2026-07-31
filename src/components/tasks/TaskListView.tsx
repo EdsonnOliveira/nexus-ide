@@ -9,11 +9,12 @@ import type { ProjectTask, TaskListFilters } from '@/types/task';
 import {
   areTaskFiltersEqual,
   buildDefaultTaskFilters,
+  buildTaskAssigneeAvatars,
   countActiveTaskFilters,
   EMPTY_TASK_FILTERS,
   filterProjectTasks,
 } from '@/utils/taskFilters';
-import { formatTaskSource } from '@/utils/taskLabels';
+import { formatTaskSource, getTaskInitials } from '@/utils/taskLabels';
 
 interface TaskListViewProps {
   projectId: string;
@@ -89,6 +90,11 @@ function TaskListViewComponent({
     [filters, deferredSearchQuery, tasks],
   );
 
+  const assigneeAvatars = useMemo(
+    () => buildTaskAssigneeAvatars(tasks, jiraAccountName),
+    [jiraAccountName, tasks],
+  );
+
   const activeFilterCount = useMemo(() => countActiveTaskFilters(filters), [filters]);
 
   const handleApplyFilters = useCallback(
@@ -96,6 +102,26 @@ function TaskListViewComponent({
       setFilters(nextFilters);
       setFiltersCustomized(!areTaskFiltersEqual(nextFilters, defaultFilters));
       setFilterOpen(false);
+    },
+    [defaultFilters],
+  );
+
+  const handleAssigneeAvatarClick = useCallback(
+    (assigneeName: string) => {
+      setFilters((current) => {
+        const isSelected = current.assignee.includes(assigneeName);
+        const nextAssignee = isSelected
+          ? current.assignee.filter((item) => item !== assigneeName)
+          : [assigneeName];
+
+        const nextFilters = {
+          ...current,
+          assignee: nextAssignee,
+        };
+
+        setFiltersCustomized(!areTaskFiltersEqual(nextFilters, defaultFilters));
+        return nextFilters;
+      });
     },
     [defaultFilters],
   );
@@ -211,6 +237,48 @@ function TaskListViewComponent({
           </button>
         </div>
       </div>
+      {assigneeAvatars.length > 0 ? (
+        <div className='tasks-drawer__assignee-bar' role='group' aria-label='Filtrar por responsável'>
+          {assigneeAvatars.map((assignee, index) => {
+            const selected = filters.assignee.includes(assignee.name);
+            const initials = getTaskInitials(assignee.name);
+
+            return (
+              <button
+                key={assignee.name}
+                type='button'
+                className={`tasks-drawer__assignee-chip app-button app-button--enter${selected ? ' tasks-drawer__assignee-chip--selected' : ''}`}
+                style={{ zIndex: selected ? assigneeAvatars.length + 1 : index + 1 }}
+                title={assignee.name}
+                aria-pressed={selected}
+                aria-label={
+                  selected
+                    ? `Remover filtro de ${assignee.name}`
+                    : `Filtrar tarefas de ${assignee.name}`
+                }
+                onClick={() => handleAssigneeAvatarClick(assignee.name)}
+              >
+                {assignee.avatarUrl ? (
+                  <img
+                    className='tasks-drawer__assignee-chip-image'
+                    src={assignee.avatarUrl}
+                    alt=''
+                  />
+                ) : (
+                  <span className='tasks-drawer__assignee-chip-fallback' aria-hidden>
+                    {initials}
+                  </span>
+                )}
+                {selected ? (
+                  <span className='tasks-drawer__assignee-chip-badge' aria-hidden>
+                    {initials.slice(0, 1)}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
       <div className='tasks-drawer__toolbar'>
         <label className='tasks-drawer__search-field'>
           <Search size={14} strokeWidth={2} aria-hidden />
@@ -250,6 +318,7 @@ function TaskListViewComponent({
             <TaskListItem
               key={task.externalId ?? task.id}
               task={task}
+              relatedTasks={tasks}
               onView={onView}
               onExecute={onExecute}
               onContextMenu={handleContextMenu}

@@ -288,7 +288,7 @@ function EmulatorViewComponent({
     pressBack,
     rotate,
     takeScreenshot,
-  } = useEmulatorSession({ tab, isRuntimeActive, isFocused, onUpdateTab });
+  } = useEmulatorSession({ tab, isRuntimeActive, isFocused, isVisible, onUpdateTab });
 
   const { addAgentTab } = useTabActions();
   const [screenshotCopied, setScreenshotCopied] = useState(false);

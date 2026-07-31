@@ -42,6 +42,13 @@ export function registerEmulatorHandlers(getWindow: WindowGetter): void {
     return emulatorSessionManager.attachTab(tabId);
   });
 
+  ipcMain.handle(
+    'emulator:setCapturePaused',
+    async (_event, sessionId: string, paused: boolean) => {
+      await emulatorSessionManager.setCapturePaused(sessionId, paused);
+    },
+  );
+
   ipcMain.handle('emulator:tap', async (_event, sessionId: string, x: number, y: number) => {
     await emulatorSessionManager.tap(sessionId, x, y);
   });

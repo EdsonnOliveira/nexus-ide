@@ -32,6 +32,7 @@ export interface EmulatorAppInfo {
 
 export interface EmulatorSessionHandle {
   stop(): Promise<void>;
+  setCapturePaused(paused: boolean): Promise<void>;
   tap(x: number, y: number): Promise<void>;
   swipe(x1: number, y1: number, x2: number, y2: number, durationMs: number): Promise<void>;
   pressHome(): Promise<void>;
@@ -1134,6 +1135,19 @@ export async function createAndroidEmulatorSession(
   startPollingCapture(true);
 
   return {
+    async setCapturePaused(paused: boolean) {
+      if (stopped) {
+        return;
+      }
+
+      if (paused) {
+        await pauseCapture();
+        return;
+      }
+
+      capturePaused = false;
+      resumeCapture();
+    },
     async stop() {
       stopped = true;
 

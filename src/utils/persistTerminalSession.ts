@@ -139,6 +139,10 @@ export async function saveScrollbackForPane(paneId: string, ptyId: string): Prom
   const scrollback = await window.nexus.terminal.getScrollback(ptyId);
 
   if (!scrollback) {
+    if (!(await window.nexus.terminal.has(ptyId))) {
+      await window.nexus.session.removePane(paneId);
+    }
+
     return;
   }
 
@@ -148,13 +152,17 @@ export async function saveScrollbackForPane(paneId: string, ptyId: string): Prom
 export async function saveScrollbacksForProject(project: Project): Promise<void> {
   const entries = await Promise.all(
     collectProjectPanes(project.tabs).map(async (pane) => {
-      if (pane.type !== 'terminal' || !pane.ptyId) {
+      if ((pane.type !== 'terminal' && pane.type !== 'agent') || !pane.ptyId) {
         return null;
       }
 
       const scrollback = await window.nexus.terminal.getScrollback(pane.ptyId);
 
       if (!scrollback) {
+        if (!(await window.nexus.terminal.has(pane.ptyId))) {
+          await window.nexus.session.removePane(pane.id);
+        }
+
         return null;
       }
 
@@ -172,7 +180,40 @@ export async function saveScrollbacksForProject(project: Project): Promise<void>
 }
 
 export async function saveScrollbacksFromProjects(projects: Project[]): Promise<void> {
-  await Promise.all(projects.map((project) => saveScrollbacksForProject(project)));
+  const alivePaneIds: string[] = [];
+  const scrollbacks: Record<string, string> = {};
+
+  for (const project of projects) {
+    for (const pane of collectProjectPanes(project.tabs)) {
+      if (pane.type !== 'terminal' && pane.type !== 'agent') {
+        continue;
+      }
+
+      alivePaneIds.push(pane.id);
+
+      if (!pane.ptyId) {
+        continue;
+      }
+
+      const scrollback = await window.nexus.terminal.getScrollback(pane.ptyId);
+
+      if (!scrollback) {
+        continue;
+      }
+
+      scrollbacks[pane.id] = scrollback;
+    }
+  }
+
+  if (alivePaneIds.length === 0) {
+    if (Object.keys(scrollbacks).length > 0) {
+      await window.nexus.session.saveScrollbacks(scrollbacks);
+    }
+
+    return;
+  }
+
+  await window.nexus.session.saveScrollbacks(scrollbacks, alivePaneIds);
 }
 
 export async function flushTerminalSessionsForProjectSwitch(projects: Project[]): Promise<void> {

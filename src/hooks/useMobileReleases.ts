@@ -10,6 +10,9 @@ export function useMobileReleases() {
   const getVisibleReleases = useMobileReleaseStore((state) => state.getVisibleReleases);
 
   useEffect(() => {
+    let timer: number | null = null;
+    let cancelled = false;
+
     const refresh = () => {
       if (document.visibilityState === 'hidden') {
         return;
@@ -18,21 +21,43 @@ export function useMobileReleases() {
       setVisibleReleases(getVisibleReleases());
     };
 
-    refresh();
+    const schedule = () => {
+      if (cancelled) {
+        return;
+      }
 
-    const intervalId = window.setInterval(refresh, 2000);
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+
+      const delayMs = document.visibilityState === 'hidden' ? 60_000 : 15_000;
+
+      timer = window.setTimeout(() => {
+        refresh();
+        schedule();
+      }, delayMs);
+    };
+
+    refresh();
+    schedule();
 
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
-        setVisibleReleases(getVisibleReleases());
+        refresh();
       }
+
+      schedule();
     };
 
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
-      window.clearInterval(intervalId);
+      cancelled = true;
       document.removeEventListener('visibilitychange', handleVisibility);
+
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
     };
   }, [getVisibleReleases, releases, dismissedUids]);
 

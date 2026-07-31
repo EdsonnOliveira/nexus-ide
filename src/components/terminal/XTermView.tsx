@@ -307,7 +307,7 @@ function canUseTerminal(terminal: Terminal | null, disposedRef: { current: boole
   return Boolean(terminal && !disposedRef.current);
 }
 
-const MAX_SCROLLBACK_REPLAY_BYTES = 262_144;
+const MAX_SCROLLBACK_REPLAY_BYTES = 128 * 1024;
 
 function trimScrollbackTail(scrollback: string): string {
   if (scrollback.length <= MAX_SCROLLBACK_REPLAY_BYTES) {

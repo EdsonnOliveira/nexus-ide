@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type {
   ProjectTask,
+  ProjectTaskJiraSubtask,
   TaskAttachment,
   TaskComment,
   TaskDetailData,
@@ -21,6 +22,20 @@ interface JiraSearchResponse {
   issues?: JiraIssue[];
 }
 
+interface JiraIssueType {
+  name?: string;
+  subtask?: boolean;
+}
+
+interface JiraSubtaskIssue {
+  key?: string;
+  fields?: {
+    summary?: string;
+    status?: { name?: string };
+    assignee?: { displayName?: string; avatarUrls?: Record<string, string> } | null;
+  };
+}
+
 interface JiraIssue {
   id: string;
   key: string;
@@ -34,7 +49,8 @@ interface JiraIssue {
       fields?: { summary?: string };
     };
     assignee?: { displayName?: string; avatarUrls?: Record<string, string> } | null;
-    issuetype?: { name?: string };
+    issuetype?: JiraIssueType;
+    subtasks?: JiraSubtaskIssue[];
     labels?: string[];
     priority?: { name?: string };
   };
@@ -94,7 +110,8 @@ interface JiraIssueDetailResponse {
     };
     assignee?: JiraUser | null;
     reporter?: JiraUser | null;
-    issuetype?: { name?: string };
+    issuetype?: JiraIssueType;
+    subtasks?: JiraSubtaskIssue[];
     labels?: string[];
     priority?: { name?: string };
     created?: string;
@@ -209,7 +226,113 @@ function mapJiraHistory(histories: JiraChangelogHistory[] | undefined): TaskHist
   return entries.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
+function mapJiraSubtasks(subtasks: JiraSubtaskIssue[] | undefined): ProjectTaskJiraSubtask[] {
+  const mapped: ProjectTaskJiraSubtask[] = [];
+
+  for (const subtask of subtasks ?? []) {
+    const key = subtask.key?.trim();
+
+    if (!key) {
+      continue;
+    }
+
+    const assignee = subtask.fields?.assignee?.displayName?.trim();
+    const assigneeAvatarUrl = pickJiraAssigneeAvatarUrl(subtask.fields?.assignee?.avatarUrls);
+    const status = subtask.fields?.status?.name?.trim();
+
+    mapped.push({
+      key,
+      title: subtask.fields?.summary?.trim() || key,
+      ...(status ? { status } : {}),
+      ...(assignee ? { assignee } : {}),
+      ...(assigneeAvatarUrl ? { assigneeAvatarUrl } : {}),
+    });
+  }
+
+  return mapped;
+}
+
+function mergeJiraSubtaskLists(
+  remoteSubtasks: ProjectTaskJiraSubtask[] | undefined,
+  localSubtasks: ProjectTaskJiraSubtask[] | undefined,
+): ProjectTaskJiraSubtask[] | undefined {
+  if (!remoteSubtasks || remoteSubtasks.length === 0) {
+    return localSubtasks && localSubtasks.length > 0 ? localSubtasks : remoteSubtasks;
+  }
+
+  const localByKey = new Map((localSubtasks ?? []).map((subtask) => [subtask.key, subtask]));
+
+  return remoteSubtasks.map((subtask) => {
+    const local = localByKey.get(subtask.key);
+
+    return {
+      ...subtask,
+      title: subtask.title || local?.title || subtask.key,
+      status: subtask.status ?? local?.status,
+      assignee: subtask.assignee ?? local?.assignee,
+      assigneeAvatarUrl: subtask.assigneeAvatarUrl ?? local?.assigneeAvatarUrl,
+    };
+  });
+}
+
+function enrichJiraSubtasksWithAssignees(tasks: ProjectTask[]): ProjectTask[] {
+  const byKey = new Map(
+    tasks
+      .filter((task) => Boolean(task.externalId))
+      .map((task) => [task.externalId!, task] as const),
+  );
+
+  return tasks.map((task) => {
+    const subtasks = task.jira?.subtasks;
+
+    if (!subtasks || subtasks.length === 0) {
+      return task;
+    }
+
+    return {
+      ...task,
+      jira: {
+        ...task.jira,
+        subtasks: subtasks.map((subtask) => {
+          const related = byKey.get(subtask.key);
+
+          return {
+            ...subtask,
+            title: related?.title ?? subtask.title,
+            status: related?.status ?? subtask.status,
+            assignee: related?.jira?.assignee ?? subtask.assignee,
+            assigneeAvatarUrl: related?.jira?.assigneeAvatarUrl ?? subtask.assigneeAvatarUrl,
+          };
+        }),
+      },
+    };
+  });
+}
+
+function isJiraIssueTypeSubtask(issueType?: JiraIssueType): boolean {
+  if (issueType?.subtask === true) {
+    return true;
+  }
+
+  const name = issueType?.name?.trim().toLowerCase() ?? '';
+
+  if (!name) {
+    return false;
+  }
+
+  return (
+    name === 'sub-task' ||
+    name === 'subtask' ||
+    name === 'subtarefa' ||
+    name.includes('sub-task') ||
+    name.includes('subtask') ||
+    name.includes('subtarefa')
+  );
+}
+
 function mapJiraIssueToTask(issue: JiraIssueDetailResponse, attachments: TaskAttachment[]): ProjectTask {
+  const mappedSubtasks = mapJiraSubtasks(issue.fields?.subtasks);
+
   return {
     id: issue.key,
     source: 'jira',
@@ -224,6 +347,8 @@ function mapJiraIssueToTask(issue: JiraIssueDetailResponse, attachments: TaskAtt
       assignee: issue.fields?.assignee?.displayName,
       assigneeAvatarUrl: pickJiraUserAvatarUrl(issue.fields?.assignee),
       issueType: issue.fields?.issuetype?.name,
+      isSubtask: isJiraIssueTypeSubtask(issue.fields?.issuetype),
+      subtasks: mappedSubtasks.length > 0 ? mappedSubtasks : undefined,
       labels: issue.fields?.labels ?? [],
       priority: issue.fields?.priority?.name,
       reporter: issue.fields?.reporter?.displayName,
@@ -838,6 +963,7 @@ export async function syncJiraTasks(
           'parent',
           'assignee',
           'issuetype',
+          'subtasks',
           'labels',
           'priority',
         ],
@@ -857,6 +983,7 @@ export async function syncJiraTasks(
       apiToken,
       issue.fields?.attachment ?? [],
     );
+    const mappedSubtasks = mapJiraSubtasks(issue.fields?.subtasks);
 
     tasks.push({
       id: issue.key,
@@ -872,6 +999,8 @@ export async function syncJiraTasks(
         assignee: issue.fields?.assignee?.displayName,
         assigneeAvatarUrl: pickJiraAssigneeAvatarUrl(issue.fields?.assignee?.avatarUrls),
         issueType: issue.fields?.issuetype?.name,
+        isSubtask: isJiraIssueTypeSubtask(issue.fields?.issuetype),
+        subtasks: mappedSubtasks.length > 0 ? mappedSubtasks : undefined,
         labels: issue.fields?.labels ?? [],
         priority: issue.fields?.priority?.name,
       },
@@ -879,7 +1008,83 @@ export async function syncJiraTasks(
     });
   }
 
-  return tasks;
+  const enrichedTasks = enrichJiraSubtasksWithAssignees(tasks);
+  const missingSubtaskKeys = Array.from(
+    new Set(
+      enrichedTasks.flatMap((task) =>
+        (task.jira?.subtasks ?? [])
+          .filter((subtask) => !subtask.assignee)
+          .map((subtask) => subtask.key),
+      ),
+    ),
+  ).slice(0, 50);
+
+  if (missingSubtaskKeys.length === 0) {
+    return enrichedTasks;
+  }
+
+  const subtaskDetails = await jiraRequest<JiraSearchResponse>(
+    siteUrl,
+    email,
+    apiToken,
+    '/rest/api/3/search/jql',
+    {
+      method: 'POST',
+      body: {
+        jql: `key in (${missingSubtaskKeys.map((key) => `"${key.replace(/"/g, '\\"')}"`).join(', ')})`,
+        maxResults: missingSubtaskKeys.length,
+        fields: ['summary', 'status', 'assignee', 'parent', 'issuetype'],
+      },
+    },
+  );
+
+  const detailByKey = new Map<string, ProjectTaskJiraSubtask>();
+
+  for (const issue of subtaskDetails.issues ?? []) {
+    const key = issue.key?.trim();
+
+    if (!key) {
+      continue;
+    }
+
+    detailByKey.set(key, {
+      key,
+      title: issue.fields?.summary?.trim() || key,
+      status: issue.fields?.status?.name?.trim() || undefined,
+      assignee: issue.fields?.assignee?.displayName?.trim() || undefined,
+      assigneeAvatarUrl: pickJiraAssigneeAvatarUrl(issue.fields?.assignee?.avatarUrls),
+    });
+  }
+
+  return enrichedTasks.map((task) => {
+    const subtasks = task.jira?.subtasks;
+
+    if (!subtasks || subtasks.length === 0) {
+      return task;
+    }
+
+    return {
+      ...task,
+      jira: {
+        ...task.jira,
+        subtasks: subtasks.map((subtask) => {
+          const detail = detailByKey.get(subtask.key);
+
+          if (!detail) {
+            return subtask;
+          }
+
+          return {
+            ...subtask,
+            title: detail.title || subtask.title,
+            status: detail.status ?? subtask.status,
+            assignee: detail.assignee ?? subtask.assignee,
+            assigneeAvatarUrl: detail.assigneeAvatarUrl ?? subtask.assigneeAvatarUrl,
+          };
+        }),
+      },
+    };
+  });
 }
 
 export async function fetchJiraIssueComments(
@@ -971,6 +1176,7 @@ export async function fetchJiraIssueDetail(
       'assignee',
       'reporter',
       'issuetype',
+      'subtasks',
       'labels',
       'priority',
       'created',
@@ -1001,6 +1207,7 @@ export async function fetchJiraIssueDetail(
         jira: {
           ...localTask.jira,
           ...remoteTask.jira,
+          subtasks: mergeJiraSubtaskLists(remoteTask.jira?.subtasks, localTask.jira?.subtasks),
         },
         updatedAt: Date.now(),
       }

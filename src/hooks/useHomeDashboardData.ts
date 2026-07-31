@@ -5,6 +5,7 @@ import { useAppleCalendarEvents } from '@/hooks/useAppleCalendarEvents';
 import { useSystemNotifications } from '@/hooks/useSystemNotifications';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { isProjectSurfaceNotification } from '@/utils/homeDashboardAgents';
+import { classifyTaskStatus } from '@/utils/taskLabels';
 import { buildDefaultTaskFilters, filterProjectTasks } from '@/utils/taskFilters';
 import { isLocalTaskCompleted } from '@/utils/taskJson';
 
@@ -49,6 +50,13 @@ function resolvePendingTasksForProject(project: Project): ProjectTask[] {
 }
 
 function compareTasks(left: ProjectTask, right: ProjectTask): number {
+  const leftProgress = classifyTaskStatus(left.status ?? '') === 'progress';
+  const rightProgress = classifyTaskStatus(right.status ?? '') === 'progress';
+
+  if (leftProgress !== rightProgress) {
+    return leftProgress ? -1 : 1;
+  }
+
   const leftDue = left.local?.dueDate?.trim() ?? '';
   const rightDue = right.local?.dueDate?.trim() ?? '';
 

@@ -1,5 +1,5 @@
 import { CheckCircle2, ExternalLink, History, ListTodo, Loader2, Pencil, Play, Send, User } from 'lucide-react';
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { EmptyState } from '@/components/overlay/EmptyState';
@@ -24,6 +24,10 @@ import {
 import { renderMarkdownPreview } from '@/utils/markdownPreview';
 import { buildJiraIssueUrl, formatTaskIntegrationError } from '@/utils/jiraIntegration';
 import {
+  getTaskSubtaskProgress,
+  resolveTaskSubtasks,
+} from '@/utils/taskFilters';
+import {
   formatHistoryEmptyValue,
   formatTaskDate,
   formatTaskHistoryDate,
@@ -33,6 +37,7 @@ import {
   resolveHistoryStatusBadge,
   resolveTaskCoverAttachment,
   resolveTaskPriorityVisual,
+  resolveTaskStatusBadge,
 } from '@/utils/taskLabels';
 import {
   isLocalTaskCompleted,
@@ -84,10 +89,12 @@ function isDoneStatusName(status?: string): boolean {
 interface TaskDetailModalProps {
   projectId: string;
   task: ProjectTask;
+  relatedTasks?: ProjectTask[];
   jiraSiteUrl?: string;
   onClose: () => void;
   onEdit?: () => void;
-  onExecute: () => void;
+  onExecute: (task?: ProjectTask) => void;
+  onOpenTask?: (task: ProjectTask) => void;
   onTaskUpdated?: (task: ProjectTask) => void;
 }
 
@@ -152,10 +159,12 @@ function TaskDescriptionContent({
 function TaskDetailModalComponent({
   projectId,
   task,
+  relatedTasks = [],
   jiraSiteUrl,
   onClose,
   onEdit,
   onExecute,
+  onOpenTask,
   onTaskUpdated,
 }: TaskDetailModalProps) {
   const isJiraTask = task.source === 'jira' && Boolean(task.externalId);
@@ -253,6 +262,44 @@ function TaskDetailModalComponent({
 
   const coverAttachment = useMemo(() => resolveTaskCoverAttachment(activeTask), [activeTask]);
 
+  const jiraSubtasks = useMemo(
+    () => resolveTaskSubtasks(activeTask, relatedTasks),
+    [activeTask, relatedTasks],
+  );
+  const jiraSubtaskProgress = useMemo(
+    () => getTaskSubtaskProgress(activeTask, relatedTasks),
+    [activeTask, relatedTasks],
+  );
+  const jiraSubtaskProgressPercent = useMemo(() => {
+    if (!jiraSubtaskProgress || jiraSubtaskProgress.total === 0) {
+      return 0;
+    }
+
+    return Math.round((jiraSubtaskProgress.completed / jiraSubtaskProgress.total) * 100);
+  }, [jiraSubtaskProgress]);
+
+  const hasParentSubtasks = jiraSubtasks.length > 0 || deepcrmSubtasks.length > 0;
+  const allParentSubtasksCompleted = useMemo(() => {
+    if (jiraSubtasks.length > 0) {
+      return (
+        Boolean(jiraSubtaskProgress) &&
+        jiraSubtaskProgress!.completed === jiraSubtaskProgress!.total
+      );
+    }
+
+    if (deepcrmSubtasks.length > 0) {
+      return completedSubtaskCount === deepcrmSubtasks.length;
+    }
+
+    return true;
+  }, [
+    completedSubtaskCount,
+    deepcrmSubtasks.length,
+    jiraSubtaskProgress,
+    jiraSubtasks.length,
+  ]);
+  const canCompleteParent = !hasParentSubtasks || allParentSubtasksCompleted;
+
   const filteredAttachments = useMemo(() => {
     if (attachmentTab === 'images') {
       return activeTask.attachments.filter((attachment) => attachment.kind === 'image');
@@ -293,6 +340,20 @@ function TaskDetailModalComponent({
     );
   }, [activityTab, comments, history]);
 
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const notifyTaskUpdated = useEffectEvent((nextTask: ProjectTask) => {
+    onTaskUpdated?.(nextTask);
+  });
+
   const loadDetail = useCallback(async () => {
     if (!isRichDetailTask || !task.externalId) {
       return;
@@ -303,25 +364,71 @@ function TaskDetailModalComponent({
 
     try {
       const nextDetail = await window.nexus.tasks.getDetail(projectId, task.externalId);
+
+      if (!isMountedRef.current) {
+        return;
+      }
+
       setDetail(nextDetail);
+      notifyTaskUpdated(nextDetail.task);
     } catch (error) {
+      if (!isMountedRef.current) {
+        return;
+      }
+
       setLoadError(
         isDeepcrmTask
           ? formatDeepcrmIntegrationError(error)
           : formatTaskIntegrationError(error),
       );
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
     }
   }, [isDeepcrmTask, isRichDetailTask, projectId, task.externalId]);
 
   useEffect(() => {
-    if (!isRichDetailTask) {
+    if (!isRichDetailTask || !task.externalId) {
       return;
     }
 
-    void loadDetail();
-  }, [isRichDetailTask, loadDetail]);
+    let cancelled = false;
+
+    setIsLoading(true);
+    setLoadError(null);
+
+    void window.nexus.tasks
+      .getDetail(projectId, task.externalId)
+      .then((nextDetail) => {
+        if (cancelled || !isMountedRef.current) {
+          return;
+        }
+
+        setDetail(nextDetail);
+        notifyTaskUpdated(nextDetail.task);
+      })
+      .catch((error: unknown) => {
+        if (cancelled || !isMountedRef.current) {
+          return;
+        }
+
+        setLoadError(
+          isDeepcrmTask
+            ? formatDeepcrmIntegrationError(error)
+            : formatTaskIntegrationError(error),
+        );
+      })
+      .finally(() => {
+        if (!cancelled && isMountedRef.current) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isDeepcrmTask, isRichDetailTask, projectId, task.externalId]);
 
   const loadBoardColumns = useCallback(async () => {
     if (isLocalTask) {
@@ -572,7 +679,12 @@ function TaskDetailModalComponent({
         <button
           type='button'
           className='project-dialog__btn project-dialog__btn--success app-button'
-          disabled={isCompleting || isMovingBoard}
+          disabled={isCompleting || isMovingBoard || !canCompleteParent}
+          title={
+            !canCompleteParent
+              ? 'Conclua todas as subtarefas antes de concluir esta tarefa'
+              : undefined
+          }
           onClick={() => void handleComplete(requestClose)}
         >
           {isCompleting ? (
@@ -583,14 +695,16 @@ function TaskDetailModalComponent({
           <span className='app-button__label'>Concluir</span>
         </button>
       ) : null}
-      <button
-        type='button'
-        className='project-dialog__btn project-dialog__btn--play app-button'
-        onClick={() => handleExecute(requestClose)}
-      >
-        <Play size={14} strokeWidth={2} />
-        <span className='app-button__label'>Executar</span>
-      </button>
+      {!hasParentSubtasks ? (
+        <button
+          type='button'
+          className='project-dialog__btn project-dialog__btn--play app-button'
+          onClick={() => handleExecute(requestClose)}
+        >
+          <Play size={14} strokeWidth={2} />
+          <span className='app-button__label'>Executar</span>
+        </button>
+      ) : null}
     </div>
   );
 
@@ -603,11 +717,60 @@ function TaskDetailModalComponent({
   );
 
   const handleExecute = useCallback(
-    (requestClose: () => void) => {
-      onExecute();
+    (requestClose: () => void, taskToExecute?: ProjectTask) => {
+      onExecute(taskToExecute);
       requestClose();
     },
     [onExecute],
+  );
+
+  const resolveSubtaskForExecute = useCallback(
+    (subtaskKey: string, title: string, status?: string, assignee?: string, assigneeAvatarUrl?: string) => {
+      const fullTask = relatedTasks.find(
+        (item) => item.externalId === subtaskKey || item.id === subtaskKey,
+      );
+
+      if (fullTask) {
+        return fullTask;
+      }
+
+      return {
+        id: subtaskKey,
+        source: 'jira' as const,
+        externalId: subtaskKey,
+        title,
+        description: '',
+        attachments: [],
+        status,
+        jira: {
+          parentKey: activeTask.externalId ?? activeTask.id,
+          assignee,
+          assigneeAvatarUrl,
+          isSubtask: true,
+        },
+        updatedAt: Date.now(),
+      };
+    },
+    [activeTask.externalId, activeTask.id, relatedTasks],
+  );
+
+  const handleSubtaskExecute = useCallback(
+    (
+      event: React.MouseEvent,
+      requestClose: () => void,
+      subtaskKey: string,
+      title: string,
+      status?: string,
+      assignee?: string,
+      assigneeAvatarUrl?: string,
+    ) => {
+      event.stopPropagation();
+      handleExecute(
+        requestClose,
+        resolveSubtaskForExecute(subtaskKey, title, status, assignee, assigneeAvatarUrl),
+      );
+    },
+    [handleExecute, resolveSubtaskForExecute],
   );
 
   const handleOpenJira = useCallback(() => {
@@ -886,6 +1049,112 @@ function TaskDetailModalComponent({
               className='task-detail-modal__description'
             />
           </section>
+
+          {jiraSubtasks.length > 0 ? (
+            <section className='task-detail-modal__section'>
+              <h3 className='task-detail-modal__section-label'>Subtarefas</h3>
+              {jiraSubtaskProgress ? (
+                <div className='task-detail-modal__deepcrm-progress'>
+                  <div className='task-detail-modal__deepcrm-progress-header'>
+                    <span className='task-detail-modal__deepcrm-progress-label'>
+                      {jiraSubtaskProgress.completed}/{jiraSubtaskProgress.total} concluídas
+                    </span>
+                    <span className='task-detail-modal__deepcrm-progress-percent'>
+                      {jiraSubtaskProgressPercent}%
+                    </span>
+                  </div>
+                  <div className='task-detail-modal__deepcrm-progress-track'>
+                    <div
+                      className='task-detail-modal__deepcrm-progress-fill'
+                      style={{ width: `${jiraSubtaskProgressPercent}%` }}
+                    />
+                  </div>
+                </div>
+              ) : null}
+              <div className='task-detail-modal__deepcrm-subtask-list'>
+                {jiraSubtasks.map((subtask) => {
+                  const statusBadge = resolveTaskStatusBadge(subtask.status);
+                  const fullTask = relatedTasks.find(
+                    (item) => item.externalId === subtask.key || item.id === subtask.key,
+                  );
+                  const assigneeName =
+                    fullTask?.jira?.assignee ?? subtask.assignee;
+                  const assigneeAvatar =
+                    fullTask?.jira?.assigneeAvatarUrl ?? subtask.assigneeAvatarUrl;
+                  return (
+                    <article
+                      key={subtask.key}
+                      className={`task-detail-modal__deepcrm-subtask${fullTask && onOpenTask ? ' task-detail-modal__deepcrm-subtask--clickable' : ''}`}
+                      role={fullTask && onOpenTask ? 'button' : undefined}
+                      tabIndex={fullTask && onOpenTask ? 0 : undefined}
+                      onClick={() => {
+                        if (fullTask && onOpenTask) {
+                          onOpenTask(fullTask);
+                        }
+                      }}
+                      onKeyDown={(event) => {
+                        if (!fullTask || !onOpenTask) {
+                          return;
+                        }
+
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          onOpenTask(fullTask);
+                        }
+                      }}
+                    >
+                      <div className='task-detail-modal__deepcrm-subtask-main'>
+                        <span className='task-detail-modal__deepcrm-subtask-title'>
+                          {subtask.key} · {subtask.title}
+                        </span>
+                      </div>
+                      <div className='task-detail-modal__deepcrm-subtask-meta'>
+                        {statusBadge ? (
+                          <span className={`tasks-drawer__status-badge ${statusBadge.className}`}>
+                            {statusBadge.label}
+                          </span>
+                        ) : null}
+                        {assigneeAvatar ? (
+                          <img
+                            className='tasks-drawer__assignee tasks-drawer__assignee--sm'
+                            src={assigneeAvatar}
+                            alt={assigneeName ?? 'Responsável'}
+                            title={assigneeName}
+                          />
+                        ) : assigneeName ? (
+                          <span
+                            className='tasks-drawer__assignee tasks-drawer__assignee--sm tasks-drawer__assignee--fallback'
+                            title={assigneeName}
+                            aria-label={assigneeName}
+                          >
+                            {getTaskInitials(assigneeName)}
+                          </span>
+                        ) : null}
+                        <button
+                          type='button'
+                          className='tasks-drawer__action tasks-drawer__action--play app-button app-button--enter'
+                          aria-label={`Executar ${subtask.title}`}
+                          onClick={(event) =>
+                            handleSubtaskExecute(
+                              event,
+                              requestClose,
+                              subtask.key,
+                              subtask.title,
+                              fullTask?.status ?? subtask.status,
+                              assigneeName,
+                              assigneeAvatar,
+                            )
+                          }
+                        >
+                          <Play size={12} strokeWidth={2.25} />
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
 
           {activeTask.attachments.length > 0 ? (
             <section className='task-detail-modal__section'>

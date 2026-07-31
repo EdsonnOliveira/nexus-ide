@@ -52,6 +52,7 @@ interface UseEmulatorSessionOptions {
   tab: EmulatorTab;
   isRuntimeActive: boolean;
   isFocused: boolean;
+  isVisible: boolean;
   onUpdateTab: (
     tabId: string,
     patch: Partial<Pick<EmulatorTab, 'platform' | 'deviceId' | 'sessionId' | 'title'>>,
@@ -201,6 +202,7 @@ export function useEmulatorSession({
   tab,
   isRuntimeActive,
   isFocused,
+  isVisible,
   onUpdateTab,
 }: UseEmulatorSessionOptions): UseEmulatorSessionResult {
   const onUpdateTabRef = useRef(onUpdateTab);
@@ -251,6 +253,8 @@ export function useEmulatorSession({
     [tab.platform],
   );
   const sessionIdRef = useRef<string | null>(tab.sessionId);
+  const isVisibleRef = useRef(isVisible);
+  isVisibleRef.current = isVisible;
   const startGenerationRef = useRef(0);
   const intentionalStopRef = useRef(false);
   const pendingImageFrameRef = useRef<{
@@ -351,6 +355,34 @@ export function useEmulatorSession({
       applyFrameSize(result.frameWidth, result.frameHeight);
     }
   }, [applyFrameSize]);
+
+  useEffect(() => {
+    const sessionId = sessionIdRef.current ?? tab.sessionId;
+
+    if (!sessionId || !window.nexus?.emulator?.setCapturePaused) {
+      return;
+    }
+
+    const shouldPause = !isVisible || !isRuntimeActive || document.visibilityState === 'hidden';
+    void window.nexus.emulator.setCapturePaused(sessionId, shouldPause);
+
+    const handleVisibility = () => {
+      const activeSessionId = sessionIdRef.current ?? tab.sessionId;
+
+      if (!activeSessionId) {
+        return;
+      }
+
+      const paused = !isVisible || !isRuntimeActive || document.visibilityState === 'hidden';
+      void window.nexus.emulator.setCapturePaused(activeSessionId, paused);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [isRuntimeActive, isVisible, sessionState, tab.sessionId]);
 
   useEffect(() => {
     if (!isRuntimeActive) {
@@ -616,11 +648,47 @@ export function useEmulatorSession({
 
     refreshSetupStatus();
 
-    const intervalId = window.setInterval(refreshSetupStatus, 1000);
+    let timer: number | null = null;
+
+    const schedule = () => {
+      if (cancelled) {
+        return;
+      }
+
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+
+      const delayMs =
+        document.visibilityState === 'hidden' || !isVisibleRef.current
+          ? 30_000
+          : 5_000;
+
+      timer = window.setTimeout(() => {
+        refreshSetupStatus();
+        schedule();
+      }, delayMs);
+    };
+
+    schedule();
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && isVisibleRef.current) {
+        refreshSetupStatus();
+      }
+
+      schedule();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibility);
+
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
     };
   }, [isRuntimeActive]);
 

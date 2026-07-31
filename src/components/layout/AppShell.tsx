@@ -155,7 +155,7 @@ function AppShellComponent() {
   const gitChangeCount = useGitChangeCount(
     projectsMigrated ? (activeProject?.path ?? null) : null,
   );
-  const projectPaths = useMemo(() => projects.map((project) => project.path), [projects]);
+  const activeProjectPath = activeProject?.path ?? null;
   const { openFileTab, openFilePreviewTab, openFileCodeTab, openDiffTab, openBrowserTab, selectPane } =
     useTabActions();
   const { toggle: toggleJarvis } = useJarvisController();
@@ -197,11 +197,50 @@ function AppShellComponent() {
   useRemoteEmulatorTabSync();
 
   useEffect(() => {
-    void refreshCloud();
-    const timer = window.setInterval(() => {
-      void refreshCloud();
-    }, 15_000);
-    return () => window.clearInterval(timer);
+    let timer: number | null = null;
+    let cancelled = false;
+
+    const schedule = () => {
+      if (cancelled) {
+        return;
+      }
+
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+
+      const delayMs =
+        document.visibilityState === 'hidden' ? 120_000 : 60_000;
+
+      timer = window.setTimeout(() => {
+        void refreshCloud().finally(() => {
+          schedule();
+        });
+      }, delayMs);
+    };
+
+    void refreshCloud().finally(() => {
+      schedule();
+    });
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshCloud();
+      }
+
+      schedule();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', handleVisibility);
+
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+    };
   }, [refreshCloud]);
 
   const isMac = useMemo(
@@ -312,13 +351,11 @@ function AppShellComponent() {
   }, [gitChangeCount, nexusReady, toggleExplorerEntry]);
 
   useEffect(() => {
-    if (!nexusReady || !projectsMigrated || projectPaths.length === 0) {
+    if (!nexusReady || !projectsMigrated || !activeProjectPath) {
       return;
     }
 
-    projectPaths.forEach((projectPath) => {
-      void window.nexus.files.watchProject(projectPath);
-    });
+    void window.nexus.files.watchProject(activeProjectPath);
 
     const unsubscribe = window.nexus.files.onProjectChange((payload) => {
       if (payload.changedPath) {
@@ -328,12 +365,9 @@ function AppShellComponent() {
 
     return () => {
       unsubscribe();
-
-      projectPaths.forEach((projectPath) => {
-        void window.nexus.files.unwatchProject(projectPath);
-      });
+      void window.nexus.files.unwatchProject(activeProjectPath);
     };
-  }, [nexusReady, projectPaths, projectsMigrated]);
+  }, [activeProjectPath, nexusReady, projectsMigrated]);
 
   if (!nexusReady) {
     return (
@@ -371,7 +405,9 @@ function AppShellComponent() {
         ) : null}
         {!activeProject ? (
           <div className='glass-panel glass-panel--empty glass-panel--home'>
-            {projects.length === 0 ? (
+            {!initialized ? (
+              <div className='empty-state'>Carregando...</div>
+            ) : projects.length === 0 ? (
               <EmptyWorkspace />
             ) : (
               <Suspense fallback={<div className='empty-state'>Carregando...</div>}>

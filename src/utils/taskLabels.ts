@@ -409,7 +409,7 @@ export function resolveTaskStatusBadge(status?: string): TaskStatusBadge | null 
   }
 
   return {
-    label: trimmed,
+    label: 'Pendente',
     kind: 'pending',
     className: 'tasks-drawer__status-badge--pending',
   };

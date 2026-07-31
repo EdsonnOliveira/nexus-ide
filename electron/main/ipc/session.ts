@@ -6,9 +6,15 @@ export function registerSessionHandlers(onFlushComplete: () => void): void {
     return sessionStore.getScrollback(paneId);
   });
 
-  ipcMain.handle('session:saveScrollbacks', (_, entries: Record<string, string>) => {
-    sessionStore.saveScrollbacks(entries);
-  });
+  ipcMain.handle(
+    'session:saveScrollbacks',
+    (_, entries: Record<string, string>, pruneToPaneIds?: string[]) => {
+      sessionStore.saveScrollbacks(
+        entries,
+        pruneToPaneIds ? { pruneToPaneIds } : undefined,
+      );
+    },
+  );
 
   ipcMain.handle('session:removePane', (_, paneId: string) => {
     sessionStore.removePane(paneId);

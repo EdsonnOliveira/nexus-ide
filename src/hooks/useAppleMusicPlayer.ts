@@ -28,16 +28,27 @@ export function useAppleMusicPlayer(enabled: boolean) {
   const [nowPlayingHydrated, setNowPlayingHydrated] = useState(false);
   const [displayPosition, setDisplayPosition] = useState(0);
   const requestIdRef = useRef(0);
+  const enabledRef = useRef(enabled);
   const syncAnchorRef = useRef({ at: Date.now(), position: 0 });
 
+  enabledRef.current = enabled;
+
   const refreshNowPlaying = useCallback(async () => {
-    if (!window.nexus?.music) {
-      setNowPlayingHydrated(true);
+    if (!enabledRef.current || !window.nexus?.music) {
+      if (enabledRef.current) {
+        setNowPlayingHydrated(true);
+      }
+
       return EMPTY_STATE;
     }
 
     try {
       const snapshot = await window.nexus.music.getNowPlaying();
+
+      if (!enabledRef.current) {
+        return EMPTY_STATE;
+      }
+
       setNowPlaying(snapshot);
       syncAnchorRef.current = {
         at: Date.now(),
@@ -46,13 +57,23 @@ export function useAppleMusicPlayer(enabled: boolean) {
       setDisplayPosition(snapshot.positionSeconds);
       return snapshot;
     } finally {
-      setNowPlayingHydrated(true);
+      if (enabledRef.current) {
+        setNowPlayingHydrated(true);
+      }
     }
   }, []);
 
   useEffect(() => {
     if (!enabled) {
+      requestIdRef.current += 1;
+      setNowPlaying(EMPTY_STATE);
+      setPlaylists([]);
+      setPlaylistsLoading(false);
+      setQueueLoading(false);
+      setIsBusy(false);
       setNowPlayingHydrated(false);
+      setDisplayPosition(0);
+      syncAnchorRef.current = { at: Date.now(), position: 0 };
       return;
     }
 
@@ -63,7 +84,7 @@ export function useAppleMusicPlayer(enabled: boolean) {
       nowPlaying.state === 'playing' ? POLL_INTERVAL_PLAYING_MS : POLL_INTERVAL_IDLE_MS;
 
     const tick = () => {
-      if (document.visibilityState === 'hidden') {
+      if (!enabledRef.current || document.visibilityState === 'hidden') {
         return;
       }
 
@@ -73,6 +94,10 @@ export function useAppleMusicPlayer(enabled: boolean) {
     const intervalId = window.setInterval(tick, pollMs);
 
     const handleVisibility = () => {
+      if (!enabledRef.current) {
+        return;
+      }
+
       if (document.visibilityState === 'visible') {
         void refreshNowPlaying();
       }
@@ -87,12 +112,16 @@ export function useAppleMusicPlayer(enabled: boolean) {
   }, [enabled, nowPlaying.state, refreshNowPlaying]);
 
   useEffect(() => {
-    if (nowPlaying.state !== 'playing' || nowPlaying.durationSeconds <= 0) {
+    if (!enabled || nowPlaying.state !== 'playing' || nowPlaying.durationSeconds <= 0) {
       setDisplayPosition(nowPlaying.positionSeconds);
       return;
     }
 
     const tickId = window.setInterval(() => {
+      if (!enabledRef.current) {
+        return;
+      }
+
       const elapsed = (Date.now() - syncAnchorRef.current.at) / 1000;
       const nextPosition = Math.min(
         syncAnchorRef.current.position + elapsed,
@@ -104,15 +133,11 @@ export function useAppleMusicPlayer(enabled: boolean) {
     return () => {
       window.clearInterval(tickId);
     };
-  }, [
-    nowPlaying.durationSeconds,
-    nowPlaying.positionSeconds,
-    nowPlaying.state,
-  ]);
+  }, [enabled, nowPlaying.durationSeconds, nowPlaying.positionSeconds, nowPlaying.state]);
 
   const runControl = useCallback(
     async (action: () => Promise<void>) => {
-      if (isBusy) {
+      if (!enabledRef.current || isBusy || !window.nexus?.music) {
         return;
       }
 
@@ -122,7 +147,10 @@ export function useAppleMusicPlayer(enabled: boolean) {
 
       try {
         await action();
-        await refreshNowPlaying();
+
+        if (enabledRef.current) {
+          await refreshNowPlaying();
+        }
       } finally {
         if (requestIdRef.current === requestId) {
           setIsBusy(false);
@@ -146,6 +174,10 @@ export function useAppleMusicPlayer(enabled: boolean) {
 
   const seek = useCallback(
     async (seconds: number) => {
+      if (!enabledRef.current) {
+        return;
+      }
+
       const clamped = Math.max(0, Math.min(seconds, nowPlaying.durationSeconds || seconds));
       setDisplayPosition(clamped);
       syncAnchorRef.current = { at: Date.now(), position: clamped };
@@ -174,7 +206,7 @@ export function useAppleMusicPlayer(enabled: boolean) {
   );
 
   const loadPlaylists = useCallback(async () => {
-    if (!window.nexus?.music) {
+    if (!enabledRef.current || !window.nexus?.music) {
       return [];
     }
 
@@ -182,16 +214,23 @@ export function useAppleMusicPlayer(enabled: boolean) {
 
     try {
       const nextPlaylists = await window.nexus.music.getPlaylists();
+
+      if (!enabledRef.current) {
+        return [];
+      }
+
       setPlaylists(nextPlaylists);
       return nextPlaylists;
     } finally {
-      setPlaylistsLoading(false);
+      if (enabledRef.current) {
+        setPlaylistsLoading(false);
+      }
     }
   }, []);
 
   const playPlaylist = useCallback(
     async (playlistId: string) => {
-      if (!playlistId.trim()) {
+      if (!playlistId.trim() || !enabledRef.current) {
         return;
       }
 
@@ -202,7 +241,7 @@ export function useAppleMusicPlayer(enabled: boolean) {
 
         const deadline = Date.now() + 6000;
 
-        while (Date.now() < deadline) {
+        while (Date.now() < deadline && enabledRef.current) {
           const snapshot = await refreshNowPlaying();
 
           if (
@@ -217,7 +256,9 @@ export function useAppleMusicPlayer(enabled: boolean) {
           });
         }
       } finally {
-        setQueueLoading(false);
+        if (enabledRef.current) {
+          setQueueLoading(false);
+        }
       }
     },
     [refreshNowPlaying, runControl],

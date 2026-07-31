@@ -280,8 +280,10 @@ const nexusApi = {
   session: {
     getScrollback: (paneId: string): Promise<string> =>
       ipcRenderer.invoke('session:getScrollback', paneId),
-    saveScrollbacks: (entries: Record<string, string>): Promise<void> =>
-      ipcRenderer.invoke('session:saveScrollbacks', entries),
+    saveScrollbacks: (
+      entries: Record<string, string>,
+      pruneToPaneIds?: string[],
+    ): Promise<void> => ipcRenderer.invoke('session:saveScrollbacks', entries, pruneToPaneIds),
     removePane: (paneId: string): Promise<void> =>
       ipcRenderer.invoke('session:removePane', paneId),
     flushComplete: (): Promise<void> => ipcRenderer.invoke('session:flush-complete'),
@@ -470,6 +472,8 @@ const nexusApi = {
     stop: (sessionId) => ipcRenderer.invoke('emulator:stop', sessionId),
     stopByTabId: (tabId) => ipcRenderer.invoke('emulator:stopByTabId', tabId),
     attachTab: (tabId) => ipcRenderer.invoke('emulator:attachTab', tabId),
+    setCapturePaused: (sessionId, paused) =>
+      ipcRenderer.invoke('emulator:setCapturePaused', sessionId, paused),
     tap: (sessionId, x, y) => ipcRenderer.invoke('emulator:tap', sessionId, x, y),
     swipe: (sessionId, x1, y1, x2, y2, durationMs) =>
       ipcRenderer.invoke('emulator:swipe', sessionId, x1, y1, x2, y2, durationMs),

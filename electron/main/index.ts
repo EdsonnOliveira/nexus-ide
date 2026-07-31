@@ -50,6 +50,7 @@ import { registerYouTubeSidebarWebviewSession } from './services/youtubeSidebarW
 import { ptyManager } from './services/ptyManager';
 import { agentPrintRunner } from './services/agentPrintRunner';
 import { testRunnerSession } from './services/testRunnerSession';
+import { pruneSessionScrollbacksOnBoot } from './services/pruneSessionScrollbacks';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -439,6 +440,7 @@ app.whenReady().then(() => {
   );
 
   registerLocalFileProtocol();
+  pruneSessionScrollbacksOnBoot();
   registerProjectHandlers();
   registerCloudHandlers();
   registerFileHandlers(() => win);

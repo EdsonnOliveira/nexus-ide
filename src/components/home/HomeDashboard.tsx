@@ -223,19 +223,23 @@ function HomeDashboardComponent() {
     setDetailEntry(null);
   }, []);
 
-  const handleExecuteFromDetail = useCallback(() => {
-    if (!detailEntry) {
-      return;
-    }
+  const handleExecuteFromDetail = useCallback(
+    (task?: ProjectTask) => {
+      if (!detailEntry) {
+        return;
+      }
 
-    const entry = detailEntry;
-    setDetailEntry(null);
+      const entry = detailEntry;
+      const target = task ?? entry.task;
+      setDetailEntry(null);
 
-    void (async () => {
-      await selectProject(entry.project.id);
-      executeTask(entry.task, entry.project.id);
-    })();
-  }, [detailEntry, executeTask, selectProject]);
+      void (async () => {
+        await selectProject(entry.project.id);
+        executeTask(target, entry.project.id);
+      })();
+    },
+    [detailEntry, executeTask, selectProject],
+  );
 
   const handleEditTaskDetail = useCallback(() => {
     if (!detailEntry || detailEntry.task.source !== 'local') {

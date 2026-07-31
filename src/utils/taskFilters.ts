@@ -1,8 +1,161 @@
-import type { ProjectTask, TaskFilterCategory, TaskListFilters } from '@/types/task';
+import type {
+  ProjectTask,
+  ProjectTaskJiraSubtask,
+  TaskFilterCategory,
+  TaskListFilters,
+} from '@/types/task';
+import { classifyTaskStatus } from '@/utils/taskLabels';
 import { isLocalTaskCompleted, LOCAL_TASK_STATUS_DONE } from '@/utils/taskJson';
 
 export const TASK_FILTER_NONE_PARENT = '__none__';
 export const TASK_FILTER_UNASSIGNED = '__unassigned__';
+
+export interface TaskSubtaskProgress {
+  completed: number;
+  total: number;
+}
+
+export interface TaskAssigneeAvatar {
+  name: string;
+  avatarUrl?: string;
+}
+
+export function buildTaskAssigneeAvatars(
+  tasks: ProjectTask[],
+  preferredName?: string,
+): TaskAssigneeAvatar[] {
+  const byName = new Map<string, string | undefined>();
+
+  for (const task of tasks) {
+    const name = task.jira?.assignee?.trim() || task.deepcrm?.assignee?.trim();
+
+    if (!name) {
+      continue;
+    }
+
+    const avatarUrl =
+      task.jira?.assigneeAvatarUrl?.trim() || task.deepcrm?.assigneeAvatarUrl?.trim() || undefined;
+    const current = byName.get(name);
+
+    if (!byName.has(name) || (!current && avatarUrl)) {
+      byName.set(name, avatarUrl);
+    }
+  }
+
+  const preferred = preferredName?.trim();
+
+  return Array.from(byName.entries())
+    .map(([name, avatarUrl]) => ({ name, avatarUrl }))
+    .sort((left, right) => {
+      if (preferred) {
+        if (left.name === preferred && right.name !== preferred) {
+          return -1;
+        }
+
+        if (right.name === preferred && left.name !== preferred) {
+          return 1;
+        }
+      }
+
+      return left.name.localeCompare(right.name, 'pt-BR');
+    });
+}
+
+export function isJiraSubtaskTask(task: ProjectTask): boolean {
+  if (task.source !== 'jira') {
+    return false;
+  }
+
+  if (task.jira?.isSubtask === true) {
+    return true;
+  }
+
+  const issueType = task.jira?.issueType?.trim().toLowerCase() ?? '';
+
+  if (!issueType) {
+    return false;
+  }
+
+  return (
+    issueType === 'sub-task' ||
+    issueType === 'subtask' ||
+    issueType === 'subtarefa' ||
+    issueType.includes('sub-task') ||
+    issueType.includes('subtask') ||
+    issueType.includes('subtarefa')
+  );
+}
+
+export function resolveTaskSubtasks(
+  task: ProjectTask,
+  relatedTasks: ProjectTask[] = [],
+): ProjectTaskJiraSubtask[] {
+  if (task.source !== 'jira') {
+    return [];
+  }
+
+  const parentKey = task.externalId ?? task.id;
+  const fromRelated = relatedTasks.filter(
+    (item) => item.jira?.parentKey === parentKey && isJiraSubtaskTask(item),
+  );
+  const fromMeta = task.jira?.subtasks ?? [];
+
+  if (fromMeta.length > 0) {
+    return fromMeta.map((subtask) => {
+      const related = fromRelated.find((item) => item.externalId === subtask.key);
+
+      return {
+        key: subtask.key,
+        title: related?.title ?? subtask.title,
+        status: related?.status ?? subtask.status,
+        assignee: related?.jira?.assignee ?? subtask.assignee,
+        assigneeAvatarUrl: related?.jira?.assigneeAvatarUrl ?? subtask.assigneeAvatarUrl,
+      };
+    });
+  }
+
+  return fromRelated.map((item) => ({
+    key: item.externalId ?? item.id,
+    title: item.title,
+    status: item.status,
+    assignee: item.jira?.assignee,
+    assigneeAvatarUrl: item.jira?.assigneeAvatarUrl,
+  }));
+}
+
+export function getTaskSubtaskProgress(
+  task: ProjectTask,
+  relatedTasks: ProjectTask[] = [],
+): TaskSubtaskProgress | null {
+  if (task.source === 'deepcrm') {
+    const total = task.deepcrm?.totalTaskCount;
+    const pending = task.deepcrm?.pendingTaskCount;
+
+    if (typeof total !== 'number' || total <= 0 || typeof pending !== 'number') {
+      return null;
+    }
+
+    return {
+      completed: Math.max(0, total - pending),
+      total,
+    };
+  }
+
+  const subtasks = resolveTaskSubtasks(task, relatedTasks);
+
+  if (subtasks.length === 0) {
+    return null;
+  }
+
+  const completed = subtasks.filter(
+    (subtask) => classifyTaskStatus(subtask.status ?? '') === 'done',
+  ).length;
+
+  return {
+    completed,
+    total: subtasks.length,
+  };
+}
 
 export const EMPTY_TASK_FILTERS: TaskListFilters = {
   parent: [],
@@ -241,14 +394,34 @@ function collectUniqueValues(
     .map((value) => ({ value, label: value }));
 }
 
+function collectJiraSubtaskKeys(tasks: ProjectTask[]): Set<string> {
+  const keys = new Set<string>();
+
+  for (const task of tasks) {
+    for (const subtask of task.jira?.subtasks ?? []) {
+      keys.add(subtask.key);
+    }
+  }
+
+  return keys;
+}
+
 export function filterProjectTasks(
   tasks: ProjectTask[],
   query: string,
   filters: TaskListFilters,
 ): ProjectTask[] {
   const normalizedQuery = query.trim().toLowerCase();
+  const jiraSubtaskKeys = collectJiraSubtaskKeys(tasks);
 
   const filtered = tasks.filter((task) => {
+    if (
+      isJiraSubtaskTask(task) ||
+      (task.externalId ? jiraSubtaskKeys.has(task.externalId) : false)
+    ) {
+      return false;
+    }
+
     if (normalizedQuery) {
       const haystack = [
         task.title,
@@ -277,11 +450,39 @@ export function filterProjectTasks(
     return matchesTaskFilters(task, filters);
   });
 
-  if (filters.status.includes(LOCAL_TASK_STATUS_DONE)) {
-    return filtered;
+  const result = filters.status.includes(LOCAL_TASK_STATUS_DONE)
+    ? filtered
+    : filtered.filter((task) => !isLocalTaskCompleted(task));
+
+  return [...result].sort(compareProjectTasksByStatus);
+}
+
+function taskStatusSortRank(status?: string): number {
+  const kind = status ? classifyTaskStatus(status) : null;
+
+  if (kind === 'progress') {
+    return 0;
   }
 
-  return filtered.filter((task) => !isLocalTaskCompleted(task));
+  if (kind === 'pending') {
+    return 1;
+  }
+
+  if (kind === 'done') {
+    return 3;
+  }
+
+  return 2;
+}
+
+function compareProjectTasksByStatus(left: ProjectTask, right: ProjectTask): number {
+  const rankDiff = taskStatusSortRank(left.status) - taskStatusSortRank(right.status);
+
+  if (rankDiff !== 0) {
+    return rankDiff;
+  }
+
+  return right.updatedAt - left.updatedAt;
 }
 
 function matchesTaskFilters(task: ProjectTask, filters: TaskListFilters): boolean {

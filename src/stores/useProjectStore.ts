@@ -797,34 +797,51 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
 
     resetProjectSwitchState();
 
-    try {      const rawState = await window.nexus.projects.list();
-      const appState = migrateAppState(rawState);
-      await window.nexus.projects.clearActiveProject();
+    const hydrateFromRaw = async (rawState: AppState) => {
       const workspaces =
-        appState.workspaces.length > 0
-          ? appState.workspaces
+        rawState.workspaces.length > 0
+          ? rawState.workspaces.map((workspace, index) => migrateWorkspace(workspace, index))
           : [createDefaultWorkspace()];
-      const restoredVideoSession = appState.sidebarVideoSession
-        ? restoreSidebarVideoSession(appState.sidebarVideoSession)
+      const restoredVideoSession = rawState.sidebarVideoSession
+        ? restoreSidebarVideoSession(rawState.sidebarVideoSession)
         : null;
 
       set({
-        projects: appState.projects,
+        projects: rawState.projects,
         workspaces,
         activeProjectId: null,
-        activeWorkspaceId: appState.activeWorkspaceId ?? null,
-        activeProjectIdByWorkspace: appState.activeProjectIdByWorkspace ?? {},
+        activeWorkspaceId: rawState.activeWorkspaceId ?? workspaces[0]?.id ?? null,
+        activeProjectIdByWorkspace: rawState.activeProjectIdByWorkspace ?? {},
         initialized: true,
         projectsMigrated: false,
         sidebarCollapsed: false,
         sidebarVideoSession: restoredVideoSession,
         sidebarVideoLastLink:
-          appState.sidebarVideoLastLink ?? appState.sidebarVideoSession?.sourceUrl ?? null,
+          rawState.sidebarVideoLastLink ?? rawState.sidebarVideoSession?.sourceUrl ?? null,
       });
+
+      try {
+        await window.nexus.projects.clearActiveProject();
+      } catch (error) {
+        console.warn('[project-store] clearActiveProject failed', error);
+      }
+
       scheduleProjectMigration(set, get, rawState);
+    };
+
+    try {
+      const rawState = await window.nexus.projects.list();
+      await hydrateFromRaw(rawState);
     } catch (error) {
       console.error('[project-store] initialize failed', error);
-      set({ initialized: true, projectsMigrated: true });
+
+      try {
+        const rawState = await window.nexus.projects.list();
+        await hydrateFromRaw(rawState);
+      } catch (retryError) {
+        console.error('[project-store] initialize retry failed', retryError);
+        set({ initialized: true, projectsMigrated: true });
+      }
     }
   },
   addProject: async () => {

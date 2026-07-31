@@ -942,8 +942,13 @@ function BrowserViewComponent({
     }
 
     let cancelled = false;
+    let timer: number | null = null;
 
     const checkServer = async () => {
+      if (document.visibilityState === 'hidden') {
+        return;
+      }
+
       if (siteStatusRef.current === 'online' && pageReadyRef.current) {
         return;
       }
@@ -968,15 +973,52 @@ function BrowserViewComponent({
       }
     };
 
-    void checkServer();
+    const schedule = () => {
+      if (cancelled) {
+        return;
+      }
 
-    const intervalId = window.setInterval(() => {
-      void checkServer();
-    }, 2500);
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+
+      const onlineReady =
+        siteStatusRef.current === 'online' && pageReadyRef.current;
+      const delayMs =
+        document.visibilityState === 'hidden'
+          ? 60_000
+          : onlineReady
+            ? 15_000
+            : 5_000;
+
+      timer = window.setTimeout(() => {
+        void checkServer().finally(() => {
+          schedule();
+        });
+      }, delayMs);
+    };
+
+    void checkServer().finally(() => {
+      schedule();
+    });
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void checkServer();
+      }
+
+      schedule();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibility);
+
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
     };
   }, [applyLocalProbeResult, handleServerBecameReachable, isRuntimeActive, normalizedUrl]);
 

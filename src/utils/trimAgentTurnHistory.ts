@@ -1,10 +1,25 @@
-import type { AgentTab, AgentTurn, Tab, TabBarItem } from '@/types';
+import type {
+  AgentActivity,
+  AgentTab,
+  AgentTurn,
+  AgentTurnSummary,
+  Tab,
+  TabBarItem,
+} from '@/types';
 
-export const MAX_AGENT_TURN_HISTORY_COUNT = 30;
-export const MAX_AGENT_TURN_HISTORY_BYTES = 2 * 1024 * 1024;
-export const MAX_RUNNING_TURN_HISTORY_BYTES = 8 * 1024 * 1024;
-export const HEAVY_AGENT_TURN_THRESHOLD = 20;
-export const HEAVY_AGENT_ACTIVITY_THRESHOLD = 120;
+export const MAX_AGENT_TURN_HISTORY_COUNT = 15;
+export const MAX_AGENT_TURN_HISTORY_BYTES = 512 * 1024;
+export const MAX_RUNNING_TURN_HISTORY_BYTES = 2 * 1024 * 1024;
+export const HEAVY_AGENT_TURN_THRESHOLD = 12;
+export const HEAVY_AGENT_ACTIVITY_THRESHOLD = 80;
+
+const MAX_USER_CONTENT_CHARS = 16_000;
+const MAX_AGENT_PROMPT_CHARS = 16_000;
+const MAX_ACTIVITY_LABEL_CHARS = 4_000;
+const MAX_TOOL_OUTPUT_CHARS = 8_000;
+const MAX_PLAN_BODY_CHARS = 16_000;
+const MAX_PLAN_OVERVIEW_CHARS = 4_000;
+const MAX_SUMMARY_LEAD_CHARS = 2_000;
 
 export function countAgentTranscriptActivities(turns: AgentTurn[]): number {
   return turns.reduce((total, turn) => total + turn.activities.length, 0);
@@ -67,6 +82,88 @@ export function rawAgentTurnHistoryNeedsTrim(items: TabBarItem[]): boolean {
   return false;
 }
 
+function truncateText(value: string | undefined, maxChars: number): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  return value.slice(0, maxChars);
+}
+
+function compactActivity(activity: AgentActivity): AgentActivity {
+  const label = truncateText(activity.label, MAX_ACTIVITY_LABEL_CHARS) ?? activity.label;
+  const toolOutput = truncateText(activity.toolOutput, MAX_TOOL_OUTPUT_CHARS);
+  const planBody = truncateText(activity.planBody, MAX_PLAN_BODY_CHARS);
+  const planOverview = truncateText(activity.planOverview, MAX_PLAN_OVERVIEW_CHARS);
+
+  if (
+    label === activity.label &&
+    toolOutput === activity.toolOutput &&
+    planBody === activity.planBody &&
+    planOverview === activity.planOverview
+  ) {
+    return activity;
+  }
+
+  return {
+    ...activity,
+    label,
+    ...(toolOutput !== undefined ? { toolOutput } : {}),
+    ...(planBody !== undefined ? { planBody } : {}),
+    ...(planOverview !== undefined ? { planOverview } : {}),
+  };
+}
+
+function compactSummary(summary: AgentTurnSummary | undefined): AgentTurnSummary | undefined {
+  if (!summary) {
+    return undefined;
+  }
+
+  const responseLead = truncateText(summary.responseLead, MAX_SUMMARY_LEAD_CHARS);
+
+  if (responseLead === summary.responseLead) {
+    return summary;
+  }
+
+  return { ...summary, responseLead };
+}
+
+function compactTurnFields(turn: AgentTurn): AgentTurn {
+  const content = truncateText(turn.user.content, MAX_USER_CONTENT_CHARS) ?? turn.user.content;
+  const agentPrompt =
+    turn.user.agentPrompt !== undefined
+      ? truncateText(turn.user.agentPrompt, MAX_AGENT_PROMPT_CHARS)
+      : undefined;
+  const activities = turn.activities.map(compactActivity);
+  const summary = compactSummary(turn.summary);
+  const userChanged = content !== turn.user.content || agentPrompt !== turn.user.agentPrompt;
+  const activitiesChanged = activities.some(
+    (activity, index) => activity !== turn.activities[index],
+  );
+  const summaryChanged = summary !== turn.summary;
+
+  if (!userChanged && !activitiesChanged && !summaryChanged) {
+    return turn;
+  }
+
+  return {
+    ...turn,
+    user: userChanged
+      ? {
+          ...turn.user,
+          content,
+          ...(agentPrompt !== undefined ? { agentPrompt } : {}),
+        }
+      : turn.user,
+    activities: activitiesChanged ? activities : turn.activities,
+    summary: summaryChanged ? summary : turn.summary,
+  };
+}
+
 function trimTurnActivities(turn: AgentTurn, maxBytes: number): AgentTurn {
   const { activities } = turn;
 
@@ -118,15 +215,16 @@ function stripAttachmentDataUrls(turn: AgentTurn): AgentTurn {
   };
 }
 
-function stripOlderAttachments(turns: AgentTurn[]): AgentTurn[] {
+function stripPersistedAttachments(turns: AgentTurn[]): AgentTurn[] {
   if (turns.length <= 1) {
     return turns;
   }
 
-  const last = turns[turns.length - 1]!;
-  const older = turns.slice(0, -1).map((t) => (t.running ? t : stripAttachmentDataUrls(t)));
+  const lastIndex = turns.length - 1;
 
-  return [...older, last];
+  return turns.map((turn, index) =>
+    turn.running || index === lastIndex ? turn : stripAttachmentDataUrls(turn),
+  );
 }
 
 const trimResultCache = new WeakMap<AgentTurn[], AgentTurn[]>();
@@ -172,16 +270,17 @@ function enforceByteBudget(turns: AgentTurn[], maxBytes: number): AgentTurn[] {
 }
 
 function computeTrimmedAgentTurnHistory(turns: AgentTurn[]): AgentTurn[] {
-  const hasRunningTurn = turns.some((turn) => turn.running);
+  const compacted = turns.map(compactTurnFields);
+  const hasRunningTurn = compacted.some((turn) => turn.running);
 
-  if (hasRunningTurn && turns.length <= MAX_AGENT_TURN_HISTORY_COUNT) {
-    return enforceByteBudget(stripOlderAttachments(turns), MAX_RUNNING_TURN_HISTORY_BYTES);
+  if (hasRunningTurn && compacted.length <= MAX_AGENT_TURN_HISTORY_COUNT) {
+    return enforceByteBudget(stripPersistedAttachments(compacted), MAX_RUNNING_TURN_HISTORY_BYTES);
   }
 
-  const next = stripOlderAttachments(
-    turns.length > MAX_AGENT_TURN_HISTORY_COUNT
-      ? turns.slice(-MAX_AGENT_TURN_HISTORY_COUNT)
-      : [...turns],
+  const next = stripPersistedAttachments(
+    compacted.length > MAX_AGENT_TURN_HISTORY_COUNT
+      ? compacted.slice(-MAX_AGENT_TURN_HISTORY_COUNT)
+      : compacted,
   );
 
   return enforceByteBudget(next, MAX_AGENT_TURN_HISTORY_BYTES);

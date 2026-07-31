@@ -722,20 +722,6 @@ const WorkspaceSplit = memo(function WorkspaceSplitComponent({
   );
 });
 
-const KEEP_ALIVE_PANE_TYPES = new Set<Tab['type']>([
-  'terminal',
-  'agent',
-  'emulator',
-]);
-
-function shouldKeepTabAlive(item: TabBarItem): boolean {
-  if (item.type === 'split') {
-    return item.panes.some((pane) => KEEP_ALIVE_PANE_TYPES.has(pane.type));
-  }
-
-  return KEEP_ALIVE_PANE_TYPES.has(item.type);
-}
-
 function isPaneInActiveLayout(project: Project, isProjectActive: boolean, paneId: string): boolean {
   if (!isProjectActive) {
     return false;
@@ -754,6 +740,28 @@ function isPaneInActiveLayout(project: Project, isProjectActive: boolean, paneId
   return activeItem.id === paneId;
 }
 
+function paneNeedsBackgroundKeepAlive(
+  pane: Tab,
+  agentSession: PaneAgentSessionSnapshot,
+): boolean {
+  if (isPaneAgentSessionLive(pane.id, agentSession)) {
+    return true;
+  }
+
+  if (
+    pane.type === 'agent' &&
+    (pane.turns ?? []).some((turn) => isAgentTurnActivelyRunning(turn))
+  ) {
+    return true;
+  }
+
+  if (pane.type === 'terminal' && pane.ptyId) {
+    return true;
+  }
+
+  return false;
+}
+
 function isPaneRuntimeActive(
   project: Project,
   isProjectActive: boolean,
@@ -766,14 +774,7 @@ function isPaneRuntimeActive(
     return false;
   }
 
-  if (isPaneAgentSessionLive(paneId, agentSession)) {
-    return true;
-  }
-
-  if (
-    pane.type === 'agent' &&
-    (pane.turns ?? []).some((turn) => isAgentTurnActivelyRunning(turn))
-  ) {
+  if (paneNeedsBackgroundKeepAlive(pane, agentSession)) {
     return true;
   }
 
@@ -781,40 +782,19 @@ function isPaneRuntimeActive(
     return false;
   }
 
-  if (pane.type === 'agent') {
-    return true;
-  }
-
-  if (pane.type === 'terminal' && pane.ptyId) {
-    return true;
-  }
-
   return isPaneInActiveLayout(project, true, paneId);
 }
 
 function shouldKeepTabAliveForProject(
   item: TabBarItem,
-  isProjectActive: boolean,
+  _isProjectActive: boolean,
   agentSession: PaneAgentSessionSnapshot,
 ): boolean {
-  if (isProjectActive) {
-    return shouldKeepTabAlive(item);
-  }
-
   if (item.type === 'split') {
-    return item.panes.some(
-      (pane) =>
-        pane.type === 'agent' &&
-        (isPaneAgentSessionLive(pane.id, agentSession) ||
-          (pane.turns ?? []).some((turn) => isAgentTurnActivelyRunning(turn))),
-    );
+    return item.panes.some((pane) => paneNeedsBackgroundKeepAlive(pane, agentSession));
   }
 
-  return (
-    item.type === 'agent' &&
-    (isPaneAgentSessionLive(item.id, agentSession) ||
-      (item.turns ?? []).some((turn) => isAgentTurnActivelyRunning(turn)))
-  );
+  return paneNeedsBackgroundKeepAlive(item, agentSession);
 }
 
 function isPaneFocused(project: Project, isProjectActive: boolean, paneId: string): boolean {

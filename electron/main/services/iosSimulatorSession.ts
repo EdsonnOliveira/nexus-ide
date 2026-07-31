@@ -51,6 +51,7 @@ export interface EmulatorAppInfo {
 
 export interface EmulatorSessionHandle {
   stop(): Promise<void>;
+  setCapturePaused(paused: boolean): Promise<void>;
   tap(x: number, y: number): Promise<void>;
   swipe(x1: number, y1: number, x2: number, y2: number, durationMs: number): Promise<void>;
   pressHome(): Promise<void>;
@@ -968,6 +969,7 @@ export async function createIosSimulatorSession(
   ];
 
   let stopped = false;
+  let streamPaused = false;
   let bootStatusProcess: ChildProcess | null = null;
   let orientationLogProcess: ChildProcess | null = null;
   let simulatorServerController: SimulatorServerStreamController | null = null;
@@ -1053,7 +1055,7 @@ export async function createIosSimulatorSession(
     simulatorServerController = await createSimulatorServerStream({
       binaryPath: simServerTool.path,
       udid,
-      isStopped: () => stopped || isCancelled(),
+      isStopped: () => stopped || streamPaused || isCancelled(),
     });
 
     if (simulatorServerController) {
@@ -1113,7 +1115,7 @@ export async function createIosSimulatorSession(
   };
 
   const emitFrame = (screenshot: Buffer) => {
-    if (stopped) {
+    if (stopped || streamPaused) {
       return;
     }
 
@@ -1172,7 +1174,7 @@ export async function createIosSimulatorSession(
         companionPath: sharedCompanion ? null : companionPath,
         companionEndpoint: sharedCompanion?.endpoint ?? null,
         inputSize,
-        isStopped: () => stopped || isCancelled(),
+        isStopped: () => stopped || streamPaused || isCancelled(),
         onFrame: emitFrame,
       });
 
@@ -1200,7 +1202,7 @@ export async function createIosSimulatorSession(
         companionPath: sharedCompanion ? null : idbCompanion.path,
         companionEndpoint: sharedCompanion?.endpoint ?? null,
         inputSize,
-        isStopped: () => stopped || isCancelled(),
+        isStopped: () => stopped || streamPaused || isCancelled(),
         onFrame: emitFrame,
       });
 
@@ -1314,11 +1316,11 @@ export async function createIosSimulatorSession(
   };
 
   const scheduleCapture = () => {
-    if (stopped) {
+    if (stopped || streamPaused) {
       return;
     }
 
-    while (activeCaptures < SIMCTL_PARALLEL_CAPTURES && !stopped) {
+    while (activeCaptures < SIMCTL_PARALLEL_CAPTURES && !stopped && !streamPaused) {
       void runCapture();
     }
   };
@@ -1846,7 +1848,7 @@ export async function createIosSimulatorSession(
   };
 
   const runCapture = async () => {
-    if (stopped) {
+    if (stopped || streamPaused) {
       return;
     }
 
@@ -1865,13 +1867,13 @@ export async function createIosSimulatorSession(
         jpegPath,
       ]);
 
-      if (result.code === 0 && !stopped) {
+      if (result.code === 0 && !stopped && !streamPaused) {
         enqueueProcess(jpegPath);
       }
     } finally {
       activeCaptures -= 1;
 
-      if (!stopped) {
+      if (!stopped && !streamPaused) {
         scheduleCapture();
       }
     }
@@ -1926,8 +1928,32 @@ export async function createIosSimulatorSession(
   }
 
   return {
+    async setCapturePaused(paused: boolean) {
+      if (stopped) {
+        return;
+      }
+
+      streamPaused = paused;
+
+      if (paused) {
+        if (pendingEmitTimer) {
+          clearTimeout(pendingEmitTimer);
+          pendingEmitTimer = null;
+        }
+
+        pendingFrame = null;
+        return;
+      }
+
+      lastFrameHash = 0;
+
+      if (!useSimulatorServer && !useIdbCapture) {
+        scheduleCapture();
+      }
+    },
     async stop() {
       stopped = true;
+      streamPaused = false;
       stopProcess(bootStatusProcess);
       bootStatusProcess = null;
       await stopAndWait(orientationLogProcess, 'SIGTERM');

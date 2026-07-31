@@ -12,7 +12,9 @@ import {
   type CloudAgentStreamState,
 } from '@/utils/cloudAgentStreamParser';
 
-const POLL_INTERVAL_MS = 4000;
+const ACTIVE_POLL_MS = 4000;
+const IDLE_POLL_MS = 30_000;
+const HIDDEN_POLL_MS = 120_000;
 
 async function fetchOpenAgentSessionBundles(
   authenticated: boolean,
@@ -55,6 +57,8 @@ export function useCloudAgentSessionsSync(active: boolean): void {
     }
 
     let cancelled = false;
+    let timer: number | null = null;
+    let lastHasRunning = false;
     const bridge = cloudBridge;
 
     const unsubscribeSession = (sessionId: string) => {
@@ -113,7 +117,33 @@ export function useCloudAgentSessionsSync(active: boolean): void {
       subscriptionsRef.current.set(sessionId, unsubscribe);
     };
 
+    const resolvePollDelay = (hasRunning: boolean) => {
+      if (document.visibilityState === 'hidden') {
+        return hasRunning ? IDLE_POLL_MS : HIDDEN_POLL_MS;
+      }
+
+      return hasRunning ? ACTIVE_POLL_MS : IDLE_POLL_MS;
+    };
+
+    const scheduleNext = (hasRunning: boolean) => {
+      if (cancelled) {
+        return;
+      }
+
+      lastHasRunning = hasRunning;
+
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+
+      timer = window.setTimeout(() => {
+        void poll();
+      }, resolvePollDelay(hasRunning));
+    };
+
     const poll = async () => {
+      let hasRunning = false;
+
       try {
         const bundles = await fetchOpenAgentSessionBundles(authenticated);
 
@@ -136,6 +166,7 @@ export function useCloudAgentSessionsSync(active: boolean): void {
 
         for (const session of hydrated) {
           if (session.status === 'running') {
+            hasRunning = true;
             subscribeRunningSession(session.id, session.commandId);
           } else {
             unsubscribeSession(session.id);
@@ -144,14 +175,29 @@ export function useCloudAgentSessionsSync(active: boolean): void {
       } catch (error) {
         console.warn('[cloud-agents] falha ao sincronizar agents da web', error);
       }
+
+      scheduleNext(hasRunning);
     };
 
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void poll();
+        return;
+      }
+
+      scheduleNext(lastHasRunning);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
     void poll();
-    const timer = window.setInterval(() => void poll(), POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', handleVisibility);
+
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
 
       for (const sessionId of Array.from(subscriptionsRef.current.keys())) {
         unsubscribeSession(sessionId);

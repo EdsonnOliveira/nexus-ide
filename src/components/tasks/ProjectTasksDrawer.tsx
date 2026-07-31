@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TaskDetailModal } from '@/components/tasks/TaskDetailModal';
 import { TaskFormModal } from '@/components/tasks/TaskFormModal';
 import { TaskIntegrationModal } from '@/components/tasks/TaskIntegrationModal';
@@ -26,10 +26,13 @@ function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
   const { isSyncing, syncError } = useTaskSync(projectId);
   const [formTask, setFormTask] = useState<ProjectTask | null | undefined>(undefined);
   const [detailTask, setDetailTask] = useState<ProjectTask | null>(null);
+  const detailTaskRef = useRef<ProjectTask | null>(null);
   const [integrationOpen, setIntegrationOpen] = useState(false);
   const [importJsonOpen, setImportJsonOpen] = useState(false);
   const pendingTaskView = usePendingTaskViewStore((state) => state.pending);
   const clearPendingTaskView = usePendingTaskViewStore((state) => state.clearPending);
+
+  detailTaskRef.current = detailTask;
 
   const tasks = useMemo(() => project?.tasks ?? [], [project?.tasks]);
 
@@ -105,6 +108,28 @@ function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
       await persistTasks(nextTasks);
     },
     [persistTasks, tasks],
+  );
+
+  const handleTaskDetailUpdated = useCallback(
+    (updated: ProjectTask) => {
+      const current = detailTaskRef.current;
+
+      if (!current) {
+        return;
+      }
+
+      if (current.id !== updated.id && current.externalId !== updated.externalId) {
+        return;
+      }
+
+      setDetailTask(updated);
+      void updateLocalTask(updated.id, {
+        status: updated.status,
+        jira: updated.jira,
+        deepcrm: updated.deepcrm,
+      });
+    },
+    [updateLocalTask],
   );
 
   const handleCompleteTask = useCallback(
@@ -245,6 +270,7 @@ function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
         <TaskDetailModal
           projectId={project.id}
           task={detailTask}
+          relatedTasks={tasks}
           jiraSiteUrl={project.taskIntegration?.jiraSiteUrl}
           onClose={() => setDetailTask(null)}
           onEdit={
@@ -256,14 +282,9 @@ function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
                 }
               : undefined
           }
-          onExecute={() => executeTask(detailTask)}
-          onTaskUpdated={(updated) => {
-            setDetailTask(updated);
-            void updateLocalTask(updated.id, {
-              status: updated.status,
-              deepcrm: updated.deepcrm,
-            });
-          }}
+          onExecute={(task) => executeTask(task ?? detailTask)}
+          onOpenTask={setDetailTask}
+          onTaskUpdated={handleTaskDetailUpdated}
         />
       ) : null}
       {formTask !== undefined ? (

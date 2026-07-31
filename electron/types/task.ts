@@ -18,12 +18,22 @@ export interface ProjectTaskLocalMeta {
   labels?: string[];
 }
 
+export interface ProjectTaskJiraSubtask {
+  key: string;
+  title: string;
+  status?: string;
+  assignee?: string;
+  assigneeAvatarUrl?: string;
+}
+
 export interface ProjectTaskJiraMeta {
   parentKey?: string;
   parentSummary?: string;
   assignee?: string;
   assigneeAvatarUrl?: string;
   issueType?: string;
+  isSubtask?: boolean;
+  subtasks?: ProjectTaskJiraSubtask[];
   labels?: string[];
   priority?: string;
   reporter?: string;

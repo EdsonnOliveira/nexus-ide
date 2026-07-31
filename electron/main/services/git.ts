@@ -11,7 +11,6 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { BrowserWindow } from 'electron';
-import { shouldIgnoreWatchPath } from './watchIgnorePaths';
 import { bufferToDataUrlIfWithinLimit, MAX_IMAGE_DATA_URL_BYTES } from './imageLoader';
 import { resolveDirectoryPath } from './directoryListing';
 
@@ -163,7 +162,6 @@ const GIT_STATUS_EXCLUDED_BASENAME_PATTERNS = [
 ];
 
 interface WatchState {
-  watcher: FSWatcher;
   metaWatchers: FSWatcher[];
   debounceTimer: NodeJS.Timeout | null;
   repoPath: string;
@@ -1441,6 +1439,43 @@ function notifyRepoChanged(repoPath: string): void {
   }
 }
 
+function scheduleRepoNotify(resolved: string): void {
+  const state = watchStates.get(resolved);
+
+  if (!state) {
+    return;
+  }
+
+  if (state.debounceTimer) {
+    clearTimeout(state.debounceTimer);
+  }
+
+  state.debounceTimer = setTimeout(() => {
+    invalidateCache(resolved);
+    discoveryCache.delete(resolved);
+    notifyRepoChanged(resolved);
+  }, WATCH_DEBOUNCE_MS);
+}
+
+export function notifyGitWatchersOfProjectChange(projectPath: string, changedPath?: string): void {
+  const resolvedProject = resolveRepo(projectPath);
+  const resolvedChanged = changedPath ? path.resolve(changedPath) : null;
+
+  for (const repoPath of watchStates.keys()) {
+    const underProject =
+      repoPath === resolvedProject || repoPath.startsWith(`${resolvedProject}${path.sep}`);
+    const underChanged =
+      resolvedChanged !== null &&
+      (resolvedChanged === repoPath ||
+        resolvedChanged.startsWith(`${repoPath}${path.sep}`) ||
+        repoPath.startsWith(`${resolvedChanged}${path.sep}`));
+
+    if (underProject || underChanged) {
+      scheduleRepoNotify(repoPath);
+    }
+  }
+}
+
 export function watchGitRepo(dirPath: string): void {
   const resolved = resolveRepo(dirPath);
 
@@ -1455,24 +1490,6 @@ export function watchGitRepo(dirPath: string): void {
     return;
   }
 
-  const scheduleNotify = () => {
-    const state = watchStates.get(resolved);
-
-    if (!state) {
-      return;
-    }
-
-    if (state.debounceTimer) {
-      clearTimeout(state.debounceTimer);
-    }
-
-    state.debounceTimer = setTimeout(() => {
-      invalidateCache(resolved);
-      discoveryCache.delete(resolved);
-      notifyRepoChanged(resolved);
-    }, WATCH_DEBOUNCE_MS);
-  };
-
   const metaWatchers: FSWatcher[] = [];
   const gitDir = path.join(resolved, '.git');
 
@@ -1485,38 +1502,14 @@ export function watchGitRepo(dirPath: string): void {
       }
 
       try {
-        metaWatchers.push(watch(metaPath, scheduleNotify));
+        metaWatchers.push(watch(metaPath, () => scheduleRepoNotify(resolved)));
       } catch {
         // ignore metadata watch failures
       }
     }
   }
 
-  try {
-    const watcher = watch(resolved, { recursive: true }, (_event, filename) => {
-      if (typeof filename !== 'string' || filename.length === 0) {
-        return;
-      }
-
-      const changedPath = path.join(resolved, filename);
-
-      if (shouldIgnoreWatchPath(resolved, changedPath)) {
-        return;
-      }
-
-      scheduleNotify();
-    });
-    watchStates.set(resolved, { watcher, metaWatchers, debounceTimer: null, repoPath: resolved });
-  } catch {
-    for (const metaWatcher of metaWatchers) {
-      metaWatcher.close();
-    }
-    watchRefCounts.set(resolved, Math.max(0, (watchRefCounts.get(resolved) ?? 1) - 1));
-
-    if ((watchRefCounts.get(resolved) ?? 0) === 0) {
-      watchRefCounts.delete(resolved);
-    }
-  }
+  watchStates.set(resolved, { metaWatchers, debounceTimer: null, repoPath: resolved });
 }
 
 export function unwatchGitRepo(dirPath: string): void {
@@ -1539,8 +1532,6 @@ export function unwatchGitRepo(dirPath: string): void {
   if (state.debounceTimer) {
     clearTimeout(state.debounceTimer);
   }
-
-  state.watcher.close();
 
   for (const metaWatcher of state.metaWatchers) {
     metaWatcher.close();

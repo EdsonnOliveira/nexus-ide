@@ -2,6 +2,7 @@ import { watch, type FSWatcher } from 'node:fs';
 import path from 'node:path';
 import type { BrowserWindow } from 'electron';
 import { resolveDirectoryPath } from './directoryListing';
+import { notifyGitWatchersOfProjectChange } from './git';
 import { shouldIgnoreWatchPath } from './watchIgnorePaths';
 
 interface WatchState {
@@ -49,6 +50,7 @@ export function watchProjectFiles(dirPath: string): void {
 
     state.debounceTimer = setTimeout(() => {
       notifyProjectChanged(resolved, changedPath, structural);
+      notifyGitWatchersOfProjectChange(resolved, changedPath);
     }, 1500);
   };
 

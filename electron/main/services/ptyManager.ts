@@ -15,7 +15,7 @@ interface PtySession {
   scrollback: string;
 }
 
-const SCROLLBACK_LIMIT = 512 * 1024;
+const SCROLLBACK_LIMIT = 128 * 1024;
 
 const ASAR_SEGMENT = `app.asar${path.sep}`;
 const ASAR_UNPACKED_SEGMENT = `app.asar.unpacked${path.sep}`;

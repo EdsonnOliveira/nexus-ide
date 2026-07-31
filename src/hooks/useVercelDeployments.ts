@@ -3,7 +3,9 @@ import { upsertUserVercelToken, upsertVercelDeploySnapshot } from '@nexus/supaba
 import { cloudSupabase } from '@/lib/nexusCloud';
 import type { VercelActiveDeployment } from '@/types';
 
-const POLL_INTERVAL_MS = 5_000;
+const ACTIVE_POLL_MS = 5_000;
+const IDLE_POLL_MS = 30_000;
+const HIDDEN_POLL_MS = 120_000;
 const DISMISSED_DEPLOY_UID_STORAGE_KEY = 'nexus-vercel-dismissed-deploy-uid';
 
 async function syncVercelDeploySnapshot(
@@ -155,14 +157,59 @@ export function useVercelDeployments(enabled: boolean) {
       return;
     }
 
-    void refresh();
+    let cancelled = false;
+    let timer: number | null = null;
+    let lastHasActive = false;
 
-    const intervalId = window.setInterval(() => {
-      void refresh();
-    }, POLL_INTERVAL_MS);
+    const schedule = (hasActive: boolean) => {
+      if (cancelled) {
+        return;
+      }
+
+      lastHasActive = hasActive;
+
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+
+      const delayMs =
+        document.visibilityState === 'hidden'
+          ? HIDDEN_POLL_MS
+          : hasActive
+            ? ACTIVE_POLL_MS
+            : IDLE_POLL_MS;
+
+      timer = window.setTimeout(() => {
+        void refresh().then((deployment) => {
+          schedule(Boolean(deployment));
+        });
+      }, delayMs);
+    };
+
+    void refresh().then((deployment) => {
+      schedule(Boolean(deployment));
+    });
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void refresh().then((deployment) => {
+          schedule(Boolean(deployment));
+        });
+        return;
+      }
+
+      schedule(lastHasActive);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
-      window.clearInterval(intervalId);
+      cancelled = true;
+      document.removeEventListener('visibilitychange', handleVisibility);
+
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
     };
   }, [enabled, refresh, tokenConfigured]);
 

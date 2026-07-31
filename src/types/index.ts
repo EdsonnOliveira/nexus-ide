@@ -1107,7 +1107,10 @@ export interface NexusAPI {
   };
   session: {
     getScrollback: (paneId: string) => Promise<string>;
-    saveScrollbacks: (entries: Record<string, string>) => Promise<void>;
+    saveScrollbacks: (
+      entries: Record<string, string>,
+      pruneToPaneIds?: string[],
+    ) => Promise<void>;
     removePane: (paneId: string) => Promise<void>;
     flushComplete: () => Promise<void>;
   };
@@ -1261,6 +1264,7 @@ export interface NexusAPI {
     stop: (sessionId: string) => Promise<void>;
     stopByTabId: (tabId: string) => Promise<void>;
     attachTab: (tabId: string) => Promise<EmulatorAttachResult | null>;
+    setCapturePaused: (sessionId: string, paused: boolean) => Promise<void>;
     tap: (sessionId: string, x: number, y: number) => Promise<void>;
     swipe: (
       sessionId: string,

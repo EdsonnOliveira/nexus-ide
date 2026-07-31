@@ -91,6 +91,7 @@ interface ActiveEmulatorSession {
   deviceId: string;
   localProjectId: string | null;
   handle: EmulatorSessionHandle;
+  capturePaused: boolean;
 }
 
 interface PendingEmulatorStart {
@@ -384,6 +385,10 @@ class EmulatorSessionManager {
       orientation?: EmulatorDeviceOrientation;
     },
   ): void {
+    if (this.#sessions.get(sessionId)?.capturePaused) {
+      return;
+    }
+
     const window = this.#getWindow();
 
     if (window && !window.isDestroyed()) {
@@ -499,6 +504,7 @@ class EmulatorSessionManager {
         deviceId,
         localProjectId: localProjectId ?? findLocalProjectIdByTabId(tabId),
         handle,
+        capturePaused: false,
       });
 
       return sessionId;
@@ -532,6 +538,17 @@ class EmulatorSessionManager {
     this.#snapshots.delete(sessionId);
     this.#lastRemoteFrameAt.delete(sessionId);
     this.#emitState(sessionId, session.tabId, 'stopped');
+  }
+
+  async setCapturePaused(sessionId: string, paused: boolean): Promise<void> {
+    const session = this.#sessions.get(sessionId);
+
+    if (!session) {
+      return;
+    }
+
+    session.capturePaused = paused;
+    await session.handle.setCapturePaused(paused);
   }
 
   attachTab(tabId: string): EmulatorAttachResult | null {
