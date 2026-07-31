@@ -30,6 +30,7 @@ export type CommandType =
   | 'git_push'
   | 'scan_projects'
   | 'sync_local_state'
+  | 'list_agent_skills'
   | 'emulator_list_sessions'
   | 'emulator_list_devices'
   | 'emulator_setup_status'

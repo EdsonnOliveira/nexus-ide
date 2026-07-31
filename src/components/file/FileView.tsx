@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExterna
 import { CodeEditor } from '@/components/file/CodeEditor';
 import { GitDiffView } from '@/components/file/GitDiffView';
 import type { FileTab } from '@/types';
+import { useFileDirtyStore } from '@/stores/useFileDirtyStore';
 import { resolveAgentGitPromptsForFile } from '@/utils/resolveAgentGitPromptsForFile';
 import {
   getFileExternalRevision,
@@ -24,12 +25,14 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
   const [isSaving, setIsSaving] = useState(false);
   const savedContentRef = useRef('');
   const contentRef = useRef('');
+  const isSavingRef = useRef(false);
   const fileExternalRevision = useSyncExternalStore(
     subscribeFileExternalRevisions,
     () => getFileExternalRevision(tab.filePath),
   );
 
   contentRef.current = content;
+  isSavingRef.current = isSaving;
 
   const diffAgentPromptTurns = useMemo(() => {
     if (tab.viewMode !== 'diff') {
@@ -72,6 +75,7 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
         setMediaSrc(null);
         setContent('');
         savedContentRef.current = '';
+        useFileDirtyStore.getState().setDirty(tab.id, false);
         return;
       }
 
@@ -93,12 +97,14 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
             setError(result.error);
             setContent('');
             savedContentRef.current = '';
+            useFileDirtyStore.getState().setDirty(tab.id, false);
             setLoading(false);
             return;
           }
 
           setContent(result.content);
           savedContentRef.current = result.content;
+          useFileDirtyStore.getState().setDirty(tab.id, false);
           setError(null);
           setLoading(false);
         });
@@ -113,6 +119,7 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
 
         setError(null);
         setContent('');
+        useFileDirtyStore.getState().setDirty(tab.id, false);
 
         void window.nexus.files.readImageAsDataUrl(tab.filePath).then((dataUrl) => {
           if (isCancelled()) {
@@ -136,7 +143,7 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
 
       setLoading(false);
     },
-    [tab.filePath, tab.viewMode],
+    [tab.filePath, tab.id, tab.viewMode],
   );
 
   useEffect(() => {
@@ -168,6 +175,7 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
   }, [fileExternalRevision, loadFile, tab.viewMode]);
 
   const isReadOnly = tab.viewMode === 'preview';
+  const canEdit = tab.viewMode === 'code' && !isReadOnly;
   const fileDirPath = useMemo(
     () => tab.filePath.replace(/\\/g, '/').replace(/\/[^/]*$/, ''),
     [tab.filePath],
@@ -177,30 +185,65 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
     [content, fileDirPath, tab.viewMode],
   );
 
-  const handleContentChange = useCallback((value: string) => {
-    setContent(value);
-    setSaveError(null);
-  }, []);
+  const persistContent = useCallback(async (): Promise<boolean> => {
+    if (!canEdit || isSavingRef.current) {
+      return false;
+    }
 
-  const handleSave = useCallback(async () => {
-    if (isSaving || content === savedContentRef.current) {
-      return;
+    const nextContent = contentRef.current;
+
+    if (nextContent === savedContentRef.current) {
+      useFileDirtyStore.getState().setDirty(tab.id, false);
+      return true;
     }
 
     setIsSaving(true);
     setSaveError(null);
 
-    const result = await window.nexus.files.writeTextFile(tab.filePath, content);
+    const result = await window.nexus.files.writeTextFile(tab.filePath, nextContent);
 
     setIsSaving(false);
 
     if (!result.ok) {
       setSaveError(result.error);
+      return false;
+    }
+
+    savedContentRef.current = nextContent;
+    useFileDirtyStore.getState().setDirty(tab.id, false);
+    return true;
+  }, [canEdit, tab.filePath, tab.id]);
+
+  useEffect(() => {
+    if (!canEdit) {
+      useFileDirtyStore.getState().setDirty(tab.id, false);
+      useFileDirtyStore.getState().registerSaveHandler(tab.id, null);
       return;
     }
 
-    savedContentRef.current = content;
-  }, [content, isSaving, tab.filePath]);
+    useFileDirtyStore.getState().setDirty(tab.id, content !== savedContentRef.current);
+  }, [canEdit, content, tab.id]);
+
+  useEffect(() => {
+    if (!canEdit) {
+      return;
+    }
+
+    useFileDirtyStore.getState().registerSaveHandler(tab.id, persistContent);
+
+    return () => {
+      useFileDirtyStore.getState().registerSaveHandler(tab.id, null);
+    };
+  }, [canEdit, persistContent, tab.id]);
+
+  const handleContentChange = useCallback((value: string) => {
+    setContent(value);
+    setSaveError(null);
+  }, []);
+
+  const handleSave = useCallback(() => {
+    void persistContent();
+  }, [persistContent]);
 
   if (tab.viewMode === 'diff') {
     return (

@@ -5,7 +5,11 @@ import type {
   TaskListFilters,
 } from '@/types/task';
 import { classifyTaskStatus } from '@/utils/taskLabels';
-import { isLocalTaskCompleted, LOCAL_TASK_STATUS_DONE } from '@/utils/taskJson';
+import {
+  isLocalTaskCompleted,
+  LOCAL_TASK_STATUS_DONE,
+  LOCAL_TASK_STATUS_PENDING,
+} from '@/utils/taskJson';
 
 export const TASK_FILTER_NONE_PARENT = '__none__';
 export const TASK_FILTER_UNASSIGNED = '__unassigned__';
@@ -486,12 +490,7 @@ function compareProjectTasksByStatus(left: ProjectTask, right: ProjectTask): num
 }
 
 function matchesTaskFilters(task: ProjectTask, filters: TaskListFilters): boolean {
-  const hasJiraOnlyFilters =
-    filters.parent.length > 0 ||
-    filters.assignee.length > 0 ||
-    filters.issueType.length > 0;
-
-  if (filters.status.length > 0 && (!task.status || !filters.status.includes(task.status))) {
+  if (!matchesStatusFilter(task, filters.status)) {
     return false;
   }
 
@@ -512,7 +511,7 @@ function matchesTaskFilters(task: ProjectTask, filters: TaskListFilters): boolea
   }
 
   if (task.source !== 'jira') {
-    return !hasJiraOnlyFilters;
+    return true;
   }
 
   if (filters.parent.length > 0) {
@@ -540,6 +539,31 @@ function matchesTaskFilters(task: ProjectTask, filters: TaskListFilters): boolea
   }
 
   return true;
+}
+
+function matchesStatusFilter(task: ProjectTask, statuses: string[]): boolean {
+  if (statuses.length === 0) {
+    return true;
+  }
+
+  const taskStatus =
+    task.status?.trim() || (task.source === 'local' ? LOCAL_TASK_STATUS_PENDING : '');
+
+  if (!taskStatus) {
+    return false;
+  }
+
+  if (statuses.includes(taskStatus)) {
+    return true;
+  }
+
+  const taskKind = classifyTaskStatus(taskStatus);
+
+  if (!taskKind) {
+    return false;
+  }
+
+  return statuses.some((status) => classifyTaskStatus(status) === taskKind);
 }
 
 export function countProjectTasksForToolbarBadge(

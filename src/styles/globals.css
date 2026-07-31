@@ -9191,6 +9191,44 @@ input {
   transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 
+.tab-item__dirty-dot {
+  display: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.tab-item__close-icon {
+  display: block;
+  flex-shrink: 0;
+}
+
+.tab-item__close--dirty {
+  opacity: 1;
+  pointer-events: auto;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.tab-item__close--dirty .tab-item__dirty-dot {
+  display: block;
+}
+
+.tab-item__close--dirty .tab-item__close-icon {
+  display: none;
+}
+
+.tab-item:hover .tab-item__close--dirty .tab-item__dirty-dot,
+.tab-item__close--dirty:focus-visible .tab-item__dirty-dot {
+  display: none;
+}
+
+.tab-item:hover .tab-item__close--dirty .tab-item__close-icon,
+.tab-item__close--dirty:focus-visible .tab-item__close-icon {
+  display: block;
+}
+
 .tab-item--active .tab-item__close {
   opacity: 1;
   pointer-events: auto;
@@ -14210,6 +14248,63 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   pointer-events: none;
 }
 
+.delayed-hover-hint--image {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(304px, calc(100vw - 16px));
+  padding: 8px;
+}
+
+.delayed-hover-hint__preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  max-height: 220px;
+  overflow: hidden;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: color-mix(in srgb, var(--bg-primary) 70%, transparent);
+}
+
+.delayed-hover-hint__image {
+  display: block;
+  max-width: 280px;
+  max-height: 220px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+.delayed-hover-hint__loading {
+  width: 72px;
+  height: 48px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+  animation: delayed-hover-hint-pulse 1s ease-in-out infinite;
+}
+
+.delayed-hover-hint__text {
+  word-break: break-all;
+}
+
+@keyframes delayed-hover-hint-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+
+  50% {
+    opacity: 0.9;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .delayed-hover-hint__loading {
+    animation: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .overlay-popup--in,
   .overlay-popup--out,
@@ -15443,12 +15538,22 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   color: rgba(255, 255, 255, 0.55);
   transition:
     background 0.15s ease,
-    color 0.15s ease;
+    color 0.15s ease,
+    filter 0.15s ease,
+    transform 0.15s ease;
 }
 
 .emulator-view__device-action:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.92);
+}
+
+.emulator-view__device-action.app-button:active:not(:disabled),
+.emulator-view__device-action:active:not(:disabled) {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  filter: brightness(1.35);
+  transform: scale(0.96);
 }
 
 .emulator-view__device-action:disabled {
@@ -15555,8 +15660,22 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   color: #fca5a5;
 }
 
+.emulator-view__action--stop.app-button:active:not(:disabled),
+.emulator-view__action--stop:active:not(:disabled) {
+  background: rgba(239, 68, 68, 0.5);
+  color: #fecaca;
+  filter: brightness(1.3);
+  transform: scale(0.96);
+}
+
 .emulator-view__action:hover:not(:disabled) {
   filter: brightness(1.08);
+}
+
+.emulator-view__action.app-button:active:not(:disabled),
+.emulator-view__action:active:not(:disabled) {
+  filter: brightness(1.25);
+  transform: scale(0.96);
 }
 
 .emulator-view__status {
@@ -22784,12 +22903,41 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   border-color: var(--border-strong);
 }
 
-.tasks-drawer__row--with-subtasks:hover {
-  background: rgba(255, 255, 255, 0.02);
+.tasks-drawer__row--menu-open,
+.tasks-drawer__row--menu-open:hover {
+  background: color-mix(in srgb, var(--accent-primary) 16%, rgba(255, 255, 255, 0.06));
+  border-color: color-mix(in srgb, var(--accent-primary) 48%, var(--border-strong));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 28%, transparent);
 }
 
+.tasks-drawer__row--with-subtasks.tasks-drawer__row--menu-open,
+.tasks-drawer__row--with-subtasks.tasks-drawer__row--menu-open:hover {
+  background: color-mix(in srgb, var(--accent-primary) 16%, rgba(255, 255, 255, 0.06));
+}
+
+.tasks-drawer__row--with-subtasks.tasks-drawer__row--menu-open .tasks-drawer__row-body,
+.tasks-drawer__row--with-subtasks.tasks-drawer__row--menu-open .tasks-drawer__row-body:hover {
+  background: transparent;
+}
+
+.tasks-drawer__row--completed.tasks-drawer__row--menu-open {
+  opacity: 1;
+}
+
+.tasks-drawer__row--with-subtasks:hover,
 .tasks-drawer__row--with-subtasks .tasks-drawer__row-body:hover {
-  background: var(--bg-tab-hover);
+  background: rgba(255, 255, 255, 0.02);
+  border-color: var(--border-subtle);
+  box-shadow: none;
+}
+
+.tasks-drawer__row--with-subtasks.tasks-drawer__row--progress:hover {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(135deg, rgba(14, 165, 233, 0.1), rgba(139, 92, 246, 0.08)) padding-box,
+    linear-gradient(135deg, rgba(34, 211, 238, 0.65), rgba(139, 92, 246, 0.65), rgba(59, 130, 246, 0.65))
+      border-box;
+  box-shadow: 0 2px 14px rgba(34, 211, 238, 0.12);
 }
 
 .tasks-drawer__row--completed {
@@ -22985,15 +23133,26 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   border-radius: 6px;
   border: 1px solid var(--border-subtle);
   background: rgba(255, 255, 255, 0.03);
+  transition:
+    background var(--motion-out) var(--motion-ease-out),
+    border-color var(--motion-out) var(--motion-ease-out),
+    box-shadow var(--motion-out) var(--motion-ease-out);
 }
 
 .tasks-drawer__subtask-card--clickable {
   cursor: pointer;
 }
 
-.tasks-drawer__subtask-card--clickable:hover:not(:disabled) {
+.tasks-drawer__subtask-card:hover {
   background: var(--bg-tab-hover);
   border-color: var(--border-strong);
+}
+
+.tasks-drawer__subtask-card--menu-open,
+.tasks-drawer__subtask-card--menu-open:hover {
+  background: color-mix(in srgb, var(--accent-primary) 16%, rgba(255, 255, 255, 0.06));
+  border-color: color-mix(in srgb, var(--accent-primary) 48%, var(--border-strong));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 28%, transparent);
 }
 
 .tasks-drawer__subtask-card-header {
@@ -23092,8 +23251,7 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   box-shadow: 0 2px 14px rgba(34, 211, 238, 0.12);
 }
 
-.tasks-drawer__row--progress:hover,
-.tasks-drawer__row--progress.tasks-drawer__row--with-subtasks:hover {
+.tasks-drawer__row--progress:hover {
   background:
     linear-gradient(135deg, rgba(14, 165, 233, 0.16), rgba(139, 92, 246, 0.12)) padding-box,
     linear-gradient(135deg, rgba(56, 189, 248, 0.85), rgba(192, 132, 252, 0.85), rgba(96, 165, 250, 0.85))
@@ -23214,7 +23372,6 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 .task-detail-modal:not(.task-detail-modal--jira):not(.task-detail-modal--deepcrm):not(.task-detail-modal--local),
 .task-filter-modal,
 .task-agent-picker-modal,
-.task-agent-mode-modal,
 .task-project-picker-modal {
   width: min(420px, calc(100vw - 40px));
 }
@@ -23538,6 +23695,20 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 }
 
 .task-detail-modal__description p:last-child {
+  margin-bottom: 0;
+}
+
+.task-detail-modal__description ul,
+.task-detail-modal__description ol {
+  margin: 0 0 10px;
+  padding-left: 1.35em;
+}
+
+.task-detail-modal__description li {
+  margin: 0 0 4px;
+}
+
+.task-detail-modal__description li:last-child {
   margin-bottom: 0;
 }
 
@@ -24545,7 +24716,6 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 }
 
 .task-agent-picker-modal__list,
-.task-agent-mode-modal__list,
 .task-project-picker-modal__list {
   display: flex;
   flex-direction: column;
@@ -24554,7 +24724,6 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 }
 
 .task-agent-picker-modal__item,
-.task-agent-mode-modal__item,
 .task-project-picker-modal__item {
   display: flex;
   align-items: center;
@@ -24567,12 +24736,28 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 }
 
 .task-agent-picker-modal__item:hover:not(:disabled),
-.task-agent-mode-modal__item:hover:not(:disabled),
 .task-project-picker-modal__item:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.08);
 }
 
-.task-agent-mode-modal__badge {
+.task-agent-mode-menu {
+  min-width: 168px;
+}
+
+.task-agent-mode-menu .context-menu__item {
+  gap: 10px;
+}
+
+.task-agent-mode-menu .context-menu__item > span:first-of-type {
+  flex: 0 0 auto;
+}
+
+.task-agent-mode-menu .context-menu__item > span:last-of-type {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-agent-mode-menu__badge {
   width: 18px;
   height: 18px;
   border-radius: 5px;
@@ -24582,7 +24767,7 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   flex-shrink: 0;
 }
 
-.task-agent-mode-modal__badge-icon {
+.task-agent-mode-menu__badge-icon {
   width: 14px;
   height: 14px;
   display: block;

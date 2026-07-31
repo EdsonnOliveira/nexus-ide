@@ -21,6 +21,7 @@ import {
   type ProjectDirectoryEntry,
   type ProjectKind,
 } from '@/types';
+import { isImageFileName } from '@/utils/fileViewMode';
 import {
   DEFAULT_EXPLORER_SEARCH_OPTIONS,
   buildSearchHighlightParts,
@@ -249,8 +250,12 @@ const ExplorerTreeNode = memo(function ExplorerTreeNodeComponent({
     () => (isDirectory ? '' : toProjectRelativePath(rootPath, entry.path)),
     [entry.path, isDirectory, rootPath],
   );
+  const imageHintPath = useMemo(
+    () => (!isDirectory && isImageFileName(entry.name) ? entry.path : null),
+    [entry.name, entry.path, isDirectory],
+  );
   const { onMouseEnter: onFileHintEnter, onMouseLeave: onFileHintLeave, hintNode } =
-    useDelayedHoverHint(fileHintText);
+    useDelayedHoverHint(fileHintText, undefined, { imagePath: imageHintPath });
   const isDropTarget = isDirectory && dropTargetPath === entry.path;
   const rowDropClass = getDropTargetClasses(
     isDropTarget,

@@ -114,7 +114,7 @@ const STUCK_TURN_CHECK_MS = 5_000;
 const STREAM_JSON_ORPHAN_FINALIZE_MS = 2_000;
 const STREAM_JSON_INCOMPLETE_ORPHAN_FINALIZE_MS = 120_000;
 const STREAM_JSON_HUNG_IDLE_MS = 1_800_000;
-const STREAM_JSON_EMPTY_HUNG_IDLE_MS = 300_000;
+const STREAM_JSON_EMPTY_HUNG_IDLE_MS = 90_000;
 const STREAM_JSON_DEAD_PROCESS_FINALIZE_MS = 2_000;
 const STREAM_JSON_IDLE_CHECK_MS = 500;
 const STREAM_JSON_RESPONSE_IDLE_FINALIZE_MS = 700;
@@ -2197,6 +2197,23 @@ export function useAgentPaneSession({
         await delay(PROMPT_CLEAR_DELAY_MS);
 
         if (shouldAbort()) {
+          if (usesStreamJson && turnsRef.current.some((turn) => turn.running)) {
+            updateActiveTurn((turn) => ({
+              ...turn,
+              activities: [
+                ...turn.activities.filter(
+                  (entry) =>
+                    entry.kind !== 'response' &&
+                    !(entry.kind === 'thought' && !entry.label.trim()) &&
+                    entry.kind !== 'live_status',
+                ),
+                createFailedPromptActivity('Envio cancelado antes de iniciar o agent.'),
+              ],
+            }));
+            finalizeActiveTurn(true, { force: true });
+          }
+
+          useTerminalPasteImageStore.getState().clearPaneImages(paneIdRef.current);
           return false;
         }
 
@@ -2229,6 +2246,7 @@ export function useAgentPaneSession({
       rollbackAgentFromTurn,
       sendPromptToPty,
       stopAgent,
+      updateActiveTurn,
       waitForComposerAgentReady,
       usesStreamJson,
     ],
@@ -2966,7 +2984,17 @@ export function useAgentPaneSession({
           return;
         }
 
-        const expectedToken = resolveAgentPrintRunToken(paneIdRef.current);
+        let expectedToken = resolveAgentPrintRunToken(paneIdRef.current);
+
+        if (
+          !expectedToken &&
+          turnsRef.current.some((turn) => turn.running) &&
+          !streamJsonAutoRetryRef.current &&
+          !streamJsonIncompleteContinueRef.current
+        ) {
+          bindAgentPrintRunToken(paneIdRef.current, runToken);
+          expectedToken = runToken;
+        }
 
         if (!expectedToken || runToken !== expectedToken) {
           return;
@@ -2993,7 +3021,17 @@ export function useAgentPaneSession({
           return;
         }
 
-        const expectedToken = resolveAgentPrintRunToken(paneIdRef.current);
+        let expectedToken = resolveAgentPrintRunToken(paneIdRef.current);
+
+        if (
+          !expectedToken &&
+          turnsRef.current.some((turn) => turn.running) &&
+          !streamJsonAutoRetryRef.current &&
+          !streamJsonIncompleteContinueRef.current
+        ) {
+          bindAgentPrintRunToken(paneIdRef.current, payload.runToken);
+          expectedToken = payload.runToken;
+        }
 
         if (!expectedToken || payload.runToken !== expectedToken) {
           return;
@@ -3089,6 +3127,12 @@ export function useAgentPaneSession({
         }
 
         if (payload.error && !streamJsonStateRef.current.shouldFinalize) {
+          if (!hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current)) {
+            if (tryScheduleStreamJsonAutoRetry(finishAgentPrintRun)) {
+              return;
+            }
+          }
+
           updateActiveTurn((turn) => ({
             ...turn,
             activities: [
@@ -3250,10 +3294,12 @@ export function useAgentPaneSession({
     });
   }, [
     applyStreamJsonChunk,
+    bindAgentPrintRunToken,
     clearAgentPrintRunToken,
     finalizeActiveTurn,
     finalizeStreamJsonTurnFromEvent,
     resolveAgentPrintRunToken,
+    scheduleStreamJsonSettleCheck,
     startStreamJsonAgentRun,
     tab.id,
     tryScheduleStreamJsonAutoRetry,
@@ -3283,6 +3329,25 @@ export function useAgentPaneSession({
           if (!agentPrintRunTokenRef.current && storedToken) {
             agentPrintRunTokenRef.current = storedToken;
             agentPrintRunActiveRef.current = true;
+          }
+
+          if (
+            idleMs >= STREAM_JSON_STARTUP_GRACE_MS &&
+            !hasStreamJsonChunkRef.current &&
+            !hasStreamJsonVisibleProgress(streamJsonStateRef.current) &&
+            !hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current) &&
+            !hasPendingStreamJsonInteraction(streamJsonStateRef.current) &&
+            !streamJsonAutoRetryRef.current
+          ) {
+            if (
+              tryScheduleStreamJsonAutoRetry(() => {
+                agentPrintRunActiveRef.current = false;
+                window.nexus.agentPrint.stop(paneId);
+                clearAgentPrintRunToken(paneId);
+              })
+            ) {
+              return;
+            }
           }
 
           if (

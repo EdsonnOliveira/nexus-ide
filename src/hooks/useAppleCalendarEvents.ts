@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CalendarEventsSnapshot } from '@/types';
 
-const POLL_INTERVAL_MS = 5 * 60_000;
+const POLL_INTERVAL_MS = 60_000;
 
 const EMPTY_SNAPSHOT: CalendarEventsSnapshot = {
   platformSupported: true,

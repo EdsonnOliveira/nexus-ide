@@ -8,7 +8,12 @@ import { useProjectTaskExecution } from '@/hooks/useProjectTaskExecution';
 import { useTaskSync } from '@/hooks/useTaskSync';
 import { usePendingTaskViewStore } from '@/stores/usePendingTaskViewStore';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { useToastStore } from '@/stores/useToastStore';
 import type { ProjectTask, TaskCredentialsPayload, TaskIntegrationConfig } from '@/types/task';
+import {
+  formatDeepcrmIntegrationError,
+} from '@/utils/deepcrmIntegration';
+import { formatTaskIntegrationError } from '@/utils/jiraIntegration';
 import {
   LOCAL_TASK_STATUS_DONE,
   LOCAL_TASK_STATUS_PENDING,
@@ -134,9 +139,41 @@ function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
 
   const handleCompleteTask = useCallback(
     (task: ProjectTask) => {
-      void updateLocalTask(task.id, { status: LOCAL_TASK_STATUS_DONE });
+      void (async () => {
+        if (task.source === 'local') {
+          await updateLocalTask(task.id, { status: LOCAL_TASK_STATUS_DONE });
+          return;
+        }
+
+        const externalId = task.externalId?.trim();
+
+        if (!externalId) {
+          return;
+        }
+
+        try {
+          const result = await window.nexus.tasks.completeExternal(projectId, externalId);
+          await updateLocalTask(task.id, {
+            status: result.status,
+            deepcrm:
+              task.deepcrm || result.stageId || result.stageName
+                ? {
+                    ...task.deepcrm,
+                    ...(result.stageId ? { stageId: result.stageId } : {}),
+                    ...(result.stageName ? { stageName: result.stageName } : {}),
+                  }
+                : task.deepcrm,
+          });
+        } catch (error) {
+          useToastStore.getState().showToast(
+            task.source === 'deepcrm'
+              ? formatDeepcrmIntegrationError(error)
+              : formatTaskIntegrationError(error),
+          );
+        }
+      })();
     },
-    [updateLocalTask],
+    [projectId, updateLocalTask],
   );
 
   const handleReopenTask = useCallback(
@@ -259,7 +296,7 @@ function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
         onCreate={handleCreate}
         onImportJson={handleImportJson}
         onView={handleViewTask}
-        onExecute={executeTask}
+        onExecute={(task, anchor) => executeTask(task, undefined, anchor)}
         onCopyJson={handleCopyJson}
         onCompleteTask={handleCompleteTask}
         onReopenTask={handleReopenTask}
@@ -282,7 +319,7 @@ function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
                 }
               : undefined
           }
-          onExecute={(task) => executeTask(task ?? detailTask)}
+          onExecute={(task, anchor) => executeTask(task ?? detailTask, undefined, anchor)}
           onOpenTask={setDetailTask}
           onTaskUpdated={handleTaskDetailUpdated}
         />

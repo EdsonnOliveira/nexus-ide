@@ -17,8 +17,10 @@ export async function waitForCommandResult(
       throw error;
     }
 
-    if (data?.status === 'completed' && data.result && typeof data.result === 'object') {
-      return data.result as Record<string, unknown>;
+    if (data?.status === 'completed') {
+      if (data.result && typeof data.result === 'object') {
+        return data.result as Record<string, unknown>;
+      }
     }
 
     if (data?.status === 'failed' || data?.status === 'cancelled') {

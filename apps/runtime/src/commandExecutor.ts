@@ -39,6 +39,7 @@ import {
   startPreviewSession,
   stopPreviewSession,
 } from './previewTunnel';
+import { getAgentSkillHints } from './agentSkills';
 
 const execFileAsync = promisify(execFile);
 
@@ -807,6 +808,7 @@ async function runAgentPrompt(
     '-p',
     '--output-format',
     'stream-json',
+    '--stream-partial-output',
     '--trust',
     '--force',
     '--workspace',
@@ -1671,6 +1673,11 @@ export async function executeCommand(
       case 'sync_local_state':
         result = await syncLocalState(client, deviceId, command.created_by);
         break;
+      case 'list_agent_skills': {
+        const projectRoot = await getProjectRoot(client, deviceId, command.project_id);
+        result = { skills: getAgentSkillHints(projectRoot) };
+        break;
+      }
       case 'emulator_list_sessions':
       case 'emulator_list_devices':
       case 'emulator_setup_status':

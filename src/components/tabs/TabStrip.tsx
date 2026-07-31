@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useMemo, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { Brain } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { TAB_DRAG_MIME } from '@/constants/tabDrag';
@@ -8,17 +8,19 @@ import { useTabIndexShortcuts } from '@/hooks/useTabIndexShortcuts';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
+import { useFileDirtyStore, resolveDirtyFileTabTitle } from '@/stores/useFileDirtyStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useTabActions } from '@/stores/useTabStore';
 import { ProjectPromptDialog } from '@/components/sidebar/ProjectPromptDialog';
 import { TabContextMenu } from '@/components/tabs/TabContextMenu';
 import { TabItem } from '@/components/tabs/TabItem';
 import { TabToolbar } from '@/components/tabs/TabToolbar';
+import { UnsavedFileCloseDialog } from '@/components/tabs/UnsavedFileCloseDialog';
 import type { TabBarItem } from '@/types';
 import { getPanesFromItem, resolveActiveTabBarItem } from '@/utils/tabGroups';
 import { isAgentPaneTabLoading, isPaneAgentLoading } from '@/utils/projectAgentStatus';
 import { getProjectPingTone } from '@/utils/projectPingTone';
-import { countPinnedTabs } from '@/utils/tabOrder';
+import { countPinnedTabs, isTabPinned } from '@/utils/tabOrder';
 
 interface TabContextMenuState {
   tabId: string;
@@ -43,6 +45,12 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
   const setSidePanel = useProjectStore((state) => state.setSidePanel);
   const { selectTab, closeTab, closeAllTabs, renameTab, unsplitTab, reorderTab, togglePinTab } =
     useTabActions();
+  const dirtyByTabId = useFileDirtyStore((state) => state.dirtyByTabId);
+  const pendingClose = useFileDirtyStore((state) => state.pendingClose);
+  const findDirtyFileTabs = useFileDirtyStore((state) => state.findDirtyFileTabs);
+  const setPendingClose = useFileDirtyStore((state) => state.setPendingClose);
+  const saveTab = useFileDirtyStore((state) => state.saveTab);
+  const clearDirtyTab = useFileDirtyStore((state) => state.clearTab);
   const [contextMenu, setContextMenu] = useState<TabContextMenuState | null>(null);
   const [renameTabId, setRenameTabId] = useState<string | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
@@ -203,10 +211,185 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
 
   const handleCloseTab = useCallback(
     (tabId: string) => {
-      void closeTab(tabId);
+      const closingTab = tabs.find((item) => item.id === tabId);
+
+      if (!closingTab || isTabPinned(closingTab)) {
+        return;
+      }
+
+      const dirtyFiles = findDirtyFileTabs(closingTab);
+
+      if (dirtyFiles.length === 0) {
+        void closeTab(tabId);
+        return;
+      }
+
+      const firstDirty = dirtyFiles[0]!;
+
+      setPendingClose({
+        tabId,
+        title: resolveDirtyFileTabTitle(firstDirty),
+        filePath: firstDirty.filePath,
+      });
     },
-    [closeTab],
+    [closeTab, findDirtyFileTabs, setPendingClose, tabs],
   );
+
+  const promptNextDirtyCloseAll = useCallback((): 'continue' | true => {
+    const project = useProjectStore.getState().projects.find(
+      (entry) => entry.id === useProjectStore.getState().activeProjectId,
+    );
+    const remainingTabs = project?.tabs ?? [];
+    const nextDirty = remainingTabs.find(
+      (item) => !isTabPinned(item) && findDirtyFileTabs(item).length > 0,
+    );
+
+    if (!nextDirty) {
+      setPendingClose(null);
+      void closeAllTabs();
+      return true;
+    }
+
+    const firstDirty = findDirtyFileTabs(nextDirty)[0]!;
+
+    setPendingClose({
+      tabId: nextDirty.id,
+      title: resolveDirtyFileTabTitle(firstDirty),
+      filePath: firstDirty.filePath,
+      closeAll: true,
+    });
+    return 'continue';
+  }, [closeAllTabs, findDirtyFileTabs, setPendingClose]);
+
+  const handleCancelUnsavedClose = useCallback(() => {
+    setPendingClose(null);
+  }, [setPendingClose]);
+
+  const handleDiscardUnsavedClose = useCallback((): boolean | 'continue' => {
+    if (!pendingClose) {
+      return true;
+    }
+
+    const closingTab = tabs.find((item) => item.id === pendingClose.tabId);
+    const dirtyFiles = closingTab ? findDirtyFileTabs(closingTab) : [];
+    const tabId = pendingClose.tabId;
+    const closeAll = Boolean(pendingClose.closeAll);
+
+    for (const fileTab of dirtyFiles) {
+      clearDirtyTab(fileTab.id);
+    }
+
+    clearDirtyTab(tabId);
+
+    if (!closeAll) {
+      void closeTab(tabId);
+      setPendingClose(null);
+      return true;
+    }
+
+    void closeTab(tabId).then(() => {
+      const result = promptNextDirtyCloseAll();
+
+      if (result === true) {
+        setPendingClose(null);
+      }
+    });
+
+    return 'continue';
+  }, [
+    clearDirtyTab,
+    closeTab,
+    findDirtyFileTabs,
+    pendingClose,
+    promptNextDirtyCloseAll,
+    setPendingClose,
+    tabs,
+  ]);
+
+  const handleSaveUnsavedClose = useCallback(async (): Promise<boolean | 'continue'> => {
+    if (!pendingClose) {
+      return false;
+    }
+
+    const requestTabId = pendingClose.tabId;
+    const closeAll = Boolean(pendingClose.closeAll);
+    const closingTab = tabs.find((item) => item.id === requestTabId);
+
+    if (!closingTab) {
+      setPendingClose(null);
+      return false;
+    }
+
+    const dirtyFiles = findDirtyFileTabs(closingTab);
+
+    for (const fileTab of dirtyFiles) {
+      const saved = await saveTab(fileTab.id);
+
+      if (!saved) {
+        return false;
+      }
+
+      if (useFileDirtyStore.getState().pendingClose?.tabId !== requestTabId) {
+        return false;
+      }
+    }
+
+    if (useFileDirtyStore.getState().pendingClose?.tabId !== requestTabId) {
+      return false;
+    }
+
+    await closeTab(requestTabId);
+
+    for (const fileTab of dirtyFiles) {
+      clearDirtyTab(fileTab.id);
+    }
+
+    clearDirtyTab(requestTabId);
+
+    if (closeAll) {
+      return promptNextDirtyCloseAll();
+    }
+
+    setPendingClose(null);
+    return true;
+  }, [
+    clearDirtyTab,
+    closeTab,
+    findDirtyFileTabs,
+    pendingClose,
+    promptNextDirtyCloseAll,
+    saveTab,
+    setPendingClose,
+    tabs,
+  ]);
+
+  const tabDirtyMap = useMemo(() => {
+    const map = new Map<string, boolean>();
+
+    for (const tab of tabs) {
+      map.set(tab.id, findDirtyFileTabs(tab).length > 0);
+    }
+
+    return map;
+  }, [dirtyByTabId, findDirtyFileTabs, tabs]);
+
+  useEffect(() => {
+    const openPaneIds = new Set<string>();
+
+    for (const tab of tabs) {
+      openPaneIds.add(tab.id);
+
+      for (const pane of getPanesFromItem(tab)) {
+        openPaneIds.add(pane.id);
+      }
+    }
+
+    for (const tabId of Object.keys(dirtyByTabId)) {
+      if (!openPaneIds.has(tabId)) {
+        clearDirtyTab(tabId);
+      }
+    }
+  }, [clearDirtyTab, dirtyByTabId, tabs]);
 
   const handleContextMenu = useCallback((tab: TabBarItem, x: number, y: number) => {
     setContextMenu({ tabId: tab.id, x, y });
@@ -267,8 +450,23 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
   );
 
   const handleCloseAllTabs = useCallback(() => {
-    void closeAllTabs();
-  }, [closeAllTabs]);
+    const closeableTabs = tabs.filter((item) => !isTabPinned(item));
+    const firstDirtyTab = closeableTabs.find((item) => findDirtyFileTabs(item).length > 0);
+
+    if (!firstDirtyTab) {
+      void closeAllTabs();
+      return;
+    }
+
+    const firstDirty = findDirtyFileTabs(firstDirtyTab)[0]!;
+
+    setPendingClose({
+      tabId: firstDirtyTab.id,
+      title: resolveDirtyFileTabTitle(firstDirty),
+      filePath: firstDirty.filePath,
+      closeAll: true,
+    });
+  }, [closeAllTabs, findDirtyFileTabs, setPendingClose, tabs]);
 
   const handleTabsDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     if (!event.currentTarget.contains(event.relatedTarget as Node)) {
@@ -333,6 +531,7 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
                 index={index}
                 isFocused={sidePanel !== 'brain' && tab.id === activeTabItem?.id}
                 isRestarting={tabRestartingMap.get(tab.id) ?? false}
+                isDirty={tabDirtyMap.get(tab.id) ?? false}
                 hasNotification={tabNotificationMap.get(tab.id) ?? false}
                 pingTone={pingTone}
                 isDropTarget={dropTargetIndex === index}
@@ -382,6 +581,15 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
           dialogLabel='Nome da aba'
           onConfirm={handleRenameConfirm}
           onClose={handleRenameClose}
+        />
+      ) : null}
+
+      {pendingClose ? (
+        <UnsavedFileCloseDialog
+          fileName={pendingClose.title}
+          onSave={handleSaveUnsavedClose}
+          onDiscard={handleDiscardUnsavedClose}
+          onClose={handleCancelUnsavedClose}
         />
       ) : null}
     </>

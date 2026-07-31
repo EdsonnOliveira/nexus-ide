@@ -40,3 +40,8 @@ yarn.lock
 /playwright/.cache/
 
 test/screenshots
+
+resources/shell/zsh/.zsh_history
+resources/shell/zsh/.zsh_sessions/
+resources/shell/zsh/.zcompdump
+supabase/.temp/

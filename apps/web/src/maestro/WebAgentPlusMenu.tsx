@@ -13,6 +13,7 @@ import {
   ListTodo,
   MessageCircleQuestion,
 } from 'lucide-react';
+import type { WebAgentSkillHint } from './useWebAgentSkills';
 
 export type WebAgentMode = 'agent' | 'plan' | 'debug' | 'multitask' | 'ask';
 
@@ -39,19 +40,31 @@ interface WebAgentPlusMenuProps {
   mode: WebAgentMode;
   modelId: string;
   models: ModelOption[];
+  skills: WebAgentSkillHint[];
+  skillsLoading?: boolean;
+  showSkills?: boolean;
   onModeChange: (mode: WebAgentMode) => void;
   onModelChange: (modelId: string) => void;
+  onSelectSkill: (skill: WebAgentSkillHint) => void;
   onAttachImage: () => void;
   onAttachFile: () => void;
   attachDisabled?: boolean;
+}
+
+function shortenSkillLabel(label: string): string {
+  return label.length > 28 ? `${label.slice(0, 27)}…` : label;
 }
 
 export function WebAgentPlusMenu({
   mode,
   modelId,
   models,
+  skills,
+  skillsLoading = false,
+  showSkills = true,
   onModeChange,
   onModelChange,
+  onSelectSkill,
   onAttachImage,
   onAttachFile,
   attachDisabled = false,
@@ -60,6 +73,7 @@ export function WebAgentPlusMenu({
   const [phase, setPhase] = useState<'in' | 'out'>('in');
   const [query, setQuery] = useState('');
   const [modelsOpen, setModelsOpen] = useState(false);
+  const [skillsOpen, setSkillsOpen] = useState(false);
   const [rect, setRect] = useState<DOMRect | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -82,6 +96,14 @@ export function WebAgentPlusMenu({
     [models, normalizedQuery],
   );
 
+  const filteredSkills = useMemo(
+    () =>
+      skills.filter((item) =>
+        normalizedQuery ? item.label.toLowerCase().includes(normalizedQuery) : true,
+      ),
+    [normalizedQuery, skills],
+  );
+
   const close = useCallback(() => {
     setPhase('out');
   }, []);
@@ -91,6 +113,7 @@ export function WebAgentPlusMenu({
     setRect(next);
     setQuery('');
     setModelsOpen(false);
+    setSkillsOpen(false);
     setPhase('in');
     setOpen(true);
   }, []);
@@ -220,7 +243,10 @@ export function WebAgentPlusMenu({
                 className={`context-menu__item app-button${
                   modelsOpen ? ' context-menu__item--active' : ''
                 }`}
-                onClick={() => setModelsOpen((current) => !current)}
+                onClick={() => {
+                  setModelsOpen((current) => !current);
+                  setSkillsOpen(false);
+                }}
               >
                 <Hexagon size={14} strokeWidth={2} aria-hidden='true' />
                 <span className='agent-view__composer-plus-item-label'>Modelos</span>
@@ -250,16 +276,49 @@ export function WebAgentPlusMenu({
                 </div>
               ) : null}
             </div>
-            <button
-              type='button'
-              className='context-menu__item app-button'
-              disabled
-              title='Em breve'
-            >
-              <BookOpen size={14} strokeWidth={2} aria-hidden='true' />
-              <span className='agent-view__composer-plus-item-label'>Skills</span>
-              <ChevronRight size={14} aria-hidden='true' />
-            </button>
+            {showSkills ? (
+              <div className='web-agent-plus-submenu'>
+                <button
+                  type='button'
+                  className={`context-menu__item app-button${
+                    skillsOpen ? ' context-menu__item--active' : ''
+                  }`}
+                  onClick={() => {
+                    setSkillsOpen((current) => !current);
+                    setModelsOpen(false);
+                  }}
+                >
+                  <BookOpen size={14} strokeWidth={2} aria-hidden='true' />
+                  <span className='agent-view__composer-plus-item-label'>Skills</span>
+                  <ChevronRight size={14} aria-hidden='true' />
+                </button>
+                {skillsOpen ? (
+                  <div className='web-agent-plus-submenu__panel'>
+                    {skillsLoading && filteredSkills.length === 0 ? (
+                      <div className='context-menu__submenu-state'>Carregando skills…</div>
+                    ) : filteredSkills.length === 0 ? (
+                      <div className='context-menu__submenu-state'>Nenhuma skill disponível</div>
+                    ) : (
+                      filteredSkills.map((item) => (
+                        <button
+                          key={item.id}
+                          type='button'
+                          className='context-menu__item app-button'
+                          onClick={() => {
+                            onSelectSkill(item);
+                            close();
+                          }}
+                        >
+                          <span className='agent-view__composer-plus-item-label'>
+                            {shortenSkillLabel(item.label)}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>,
           document.body,
         )

@@ -1,5 +1,9 @@
 import { useEffect } from 'react';
 import { useProjectStore } from '@/stores/useProjectStore';
+import {
+  resolveDirtyFileTabTitle,
+  useFileDirtyStore,
+} from '@/stores/useFileDirtyStore';
 import { useTabActions } from '@/stores/useTabStore';
 import { isOverlayBlockingTerminalHints } from '@/utils/overlayBlocking';
 import { isTabPinned } from '@/utils/tabOrder';
@@ -66,7 +70,22 @@ export function useTabCloseShortcut(): void {
 
       event.preventDefault();
       event.stopPropagation();
-      void closeTab(project.activeTabId);
+
+      const dirtyStore = useFileDirtyStore.getState();
+      const dirtyFiles = dirtyStore.findDirtyFileTabs(activeTab);
+
+      if (dirtyFiles.length === 0) {
+        void closeTab(project.activeTabId);
+        return;
+      }
+
+      const firstDirty = dirtyFiles[0]!;
+
+      dirtyStore.setPendingClose({
+        tabId: project.activeTabId,
+        title: resolveDirtyFileTabTitle(firstDirty),
+        filePath: firstDirty.filePath,
+      });
     };
 
     window.addEventListener('keydown', handleKeyDown, { capture: true });

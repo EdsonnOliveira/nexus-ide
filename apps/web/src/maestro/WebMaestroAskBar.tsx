@@ -12,13 +12,20 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowUp, AtSign, Bot, FileText, FolderKanban, Globe, Image, Paperclip, X } from 'lucide-react';
+import { ArrowUp, Bot, FileText, FolderKanban, Image, Paperclip, X } from 'lucide-react';
 import type { CloudProject, DeviceRecord } from '@nexus/protocol';
-import type { WebAgentSession } from '../store';
+import { useWebStore, type WebAgentSession } from '../store';
 import { WebAskMenuSelect } from './WebAskMenuSelect';
 import { WebMacSelect } from './WebMacSelect';
 import { WebAgentPromptImageMentionText } from './WebAgentPromptImageMentionText';
 import { WebMarkdownImageLightbox } from './WebMarkdownImageLightbox';
+import { WebAgentSkillSlashMenu } from './WebAgentSkillSlashMenu';
+import { useWebAgentSkills } from './useWebAgentSkills';
+import { useWebAgentSkillSlash } from './useWebAgentSkillSlash';
+import {
+  applyWebSkillSlashMention,
+  type WebSkillSlashMatch,
+} from './webAgentSkillSlash';
 import {
   buildWebAgentPromptFileMentionInsertion,
   buildWebAgentPromptImageMention,
@@ -102,7 +109,8 @@ export function WebMaestroAskBar({
   const [prompt, setPrompt] = useState('');
   const [pendingImages, setPendingImages] = useState<WebPendingAskImage[]>([]);
   const [pendingFiles, setPendingFiles] = useState<WebPendingAskFile[]>([]);
-  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const [caretIndex, setCaretIndex] = useState(0);
+  const [skillMenuRect, setSkillMenuRect] = useState<DOMRect | null>(null);
   const [dropActive, setDropActive] = useState(false);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [attachMenuPhase, setAttachMenuPhase] = useState<'in' | 'out'>('in');
@@ -141,6 +149,39 @@ export function WebMaestroAskBar({
     !submitting &&
     Boolean(selectedProject);
   const imageActionsDisabled = submitting;
+  const activeWorkspaceId = useWebStore((state) => state.activeWorkspaceId);
+  const skillWorkspaceId = useMemo(() => {
+    if (!deviceId) {
+      return activeWorkspaceId;
+    }
+    return devices.find((device) => device.id === deviceId)?.workspace_id ?? activeWorkspaceId;
+  }, [activeWorkspaceId, deviceId, devices]);
+  const { skills, loading: skillsLoading, error: skillsError, refresh: refreshSkills } =
+    useWebAgentSkills({
+    workspaceId: skillWorkspaceId,
+    deviceId,
+    projectId,
+    enabled: Boolean(deviceId),
+  });
+  const skillSlash = useWebAgentSkillSlash({
+    value: prompt,
+    caretIndex,
+    skills,
+    enabled: Boolean(deviceId) && !submitting,
+  });
+  const skillSlashOpenedRef = useRef(false);
+
+  useEffect(() => {
+    if (!skillSlash.isOpen) {
+      skillSlashOpenedRef.current = false;
+      return;
+    }
+    if (skillSlashOpenedRef.current || skillsLoading || skills.length > 0) {
+      return;
+    }
+    skillSlashOpenedRef.current = true;
+    void refreshSkills();
+  }, [refreshSkills, skillSlash.isOpen, skills.length, skillsLoading]);
 
   const imagePreviewByNumber = useMemo(() => {
     const map = new Map<number, string>();
@@ -163,6 +204,61 @@ export function WebMaestroAskBar({
     element.style.height = 'auto';
     element.style.height = `${Math.min(element.scrollHeight, 96)}px`;
   }, []);
+
+  const syncCaretIndex = useCallback(() => {
+    const input = inputRef.current;
+    if (!input) {
+      return;
+    }
+    setCaretIndex(input.selectionStart ?? 0);
+  }, []);
+
+  const setPromptWithCaret = useCallback(
+    (nextValue: string, nextCaret: number) => {
+      setPrompt(nextValue);
+      promptRef.current = nextValue;
+      setCaretIndex(nextCaret);
+      window.requestAnimationFrame(() => {
+        const input = inputRef.current;
+        if (!input) {
+          return;
+        }
+        input.focus();
+        input.setSelectionRange(nextCaret, nextCaret);
+        resizeAskInput(input);
+      });
+    },
+    [resizeAskInput],
+  );
+
+  useEffect(() => {
+    if (!skillSlash.isOpen) {
+      setSkillMenuRect(null);
+      return;
+    }
+    const rect = askFormRef.current?.getBoundingClientRect() ?? inputRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+    setSkillMenuRect(rect);
+  }, [caretIndex, prompt, skillSlash.isOpen]);
+
+  const handleSkillSelect = useCallback(
+    (match: WebSkillSlashMatch) => {
+      if (!skillSlash.context) {
+        return;
+      }
+      const { nextValue, nextCaret } = applyWebSkillSlashMention(
+        prompt,
+        skillSlash.context.startIndex,
+        skillSlash.context.endIndex,
+        match.insertText,
+      );
+      skillSlash.dismiss();
+      setPromptWithCaret(nextValue, nextCaret);
+    },
+    [prompt, setPromptWithCaret, skillSlash],
+  );
 
   const removePendingImage = useCallback(
     (imageId: string) => {
@@ -212,23 +308,6 @@ export function WebMaestroAskBar({
       });
     },
     [previewImageSrc, resizeAskInput],
-  );
-
-  const setPromptWithCaret = useCallback(
-    (nextPrompt: string, nextCaret: number) => {
-      setPrompt(nextPrompt);
-      promptRef.current = nextPrompt;
-      window.requestAnimationFrame(() => {
-        const input = inputRef.current;
-        if (!input) {
-          return;
-        }
-        input.focus();
-        input.setSelectionRange(nextCaret, nextCaret);
-        resizeAskInput(input);
-      });
-    },
-    [resizeAskInput],
   );
 
   const attachImagesWithMentions = useCallback(
@@ -576,15 +655,8 @@ export function WebMaestroAskBar({
       prompt,
       pendingImages,
       pendingFiles,
-      webSearchEnabled,
     };
     let nextPrompt = trimmed;
-
-    if (webSearchEnabled) {
-      nextPrompt = nextPrompt
-        ? `Pesquise na web quando necessário.\n\n${nextPrompt}`
-        : 'Pesquise na web quando necessário.';
-    }
 
     if (!nextPrompt && (imageDataUrls.length > 0 || fileAttachments.length > 0)) {
       const parts: string[] = [];
@@ -604,7 +676,6 @@ export function WebMaestroAskBar({
       setPendingImages(snapshot.pendingImages);
       setPendingFiles(snapshot.pendingFiles);
       setPrompt(snapshot.prompt);
-      setWebSearchEnabled(snapshot.webSearchEnabled);
       window.requestAnimationFrame(() => {
         const input = inputRef.current;
         if (!input) {
@@ -621,7 +692,6 @@ export function WebMaestroAskBar({
     setPrompt('');
     setPendingImages([]);
     setPendingFiles([]);
-    setWebSearchEnabled(false);
     setPreviewImageSrc(null);
     promptRef.current = '';
     pendingImagesRef.current = [];
@@ -649,7 +719,6 @@ export function WebMaestroAskBar({
     pendingImages,
     prompt,
     resizeAskInput,
-    webSearchEnabled,
   ]);
 
   const handleSubmit = (event: FormEvent) => {
@@ -658,6 +727,36 @@ export function WebMaestroAskBar({
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing) {
+      return;
+    }
+
+    if (skillSlash.isOpen) {
+      if (event.key === 'ArrowDown' && skillSlash.matches.length > 0) {
+        event.preventDefault();
+        skillSlash.moveDown();
+        return;
+      }
+      if (event.key === 'ArrowUp' && skillSlash.matches.length > 0) {
+        event.preventDefault();
+        skillSlash.moveUp();
+        return;
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        const activeMatch = skillSlash.getActiveMatch();
+        if (activeMatch) {
+          event.preventDefault();
+          handleSkillSelect(activeMatch);
+          return;
+        }
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        skillSlash.dismiss();
+        return;
+      }
+    }
+
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       submitPrompt();
@@ -964,8 +1063,12 @@ export function WebMaestroAskBar({
               }}
               onChange={(event) => {
                 setPrompt(event.target.value);
+                setCaretIndex(event.target.selectionStart ?? event.target.value.length);
                 resizeAskInput(event.target);
               }}
+              onSelect={syncCaretIndex}
+              onClick={syncCaretIndex}
+              onKeyUp={syncCaretIndex}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
             />
@@ -994,27 +1097,6 @@ export function WebMaestroAskBar({
             <Paperclip size={16} strokeWidth={2} aria-hidden='true' />
           </button>
           <button
-            type='button'
-            className='home-dashboard__ask-action app-button'
-            aria-label='Mencionar arquivo'
-            disabled
-            title='Em breve'
-          >
-            <AtSign size={16} strokeWidth={2} aria-hidden='true' />
-          </button>
-          <button
-            type='button'
-            className={`home-dashboard__ask-action app-button${
-              webSearchEnabled ? ' home-dashboard__ask-action--active' : ''
-            }`}
-            aria-label='Pesquisar na web'
-            aria-pressed={webSearchEnabled}
-            disabled={submitting}
-            onClick={() => setWebSearchEnabled((current) => !current)}
-          >
-            <Globe size={16} strokeWidth={2} aria-hidden='true' />
-          </button>
-          <button
             type='submit'
             className='home-dashboard__ask-send app-button app-button--enter'
             aria-label='Enviar'
@@ -1031,6 +1113,16 @@ export function WebMaestroAskBar({
           onClose={handleClosePreview}
         />
       ) : null}
+      <WebAgentSkillSlashMenu
+        open={skillSlash.isOpen}
+        anchorRect={skillMenuRect}
+        matches={skillSlash.matches}
+        activeIndex={skillSlash.activeIndex}
+        loading={skillsLoading}
+        error={skillsError}
+        onClose={skillSlash.dismiss}
+        onSelect={handleSkillSelect}
+      />
       {attachMenuOpen && attachMenuRect
         ? createPortal(
             <div

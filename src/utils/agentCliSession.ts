@@ -230,7 +230,15 @@ export function buildAgentPrintPromptCommand(options: AgentPrintPromptOptions): 
     return '';
   }
 
-  const parts = ['cursor-agent', '-p', '--output-format', 'stream-json', '--trust', '--force'];
+  const parts = [
+    'cursor-agent',
+    '-p',
+    '--output-format',
+    'stream-json',
+    '--stream-partial-output',
+    '--trust',
+    '--force',
+  ];
 
   if (options.continueSession) {
     parts.push('--continue');

@@ -57,8 +57,8 @@ export interface EmulatorSessionStartControls {
 }
 
 const STREAM_MAX_WIDTH = 540;
-const MIN_FRAME_INTERVAL_MS = 50;
-const BURST_FRAME_INTERVAL_MS = 25;
+const MIN_FRAME_INTERVAL_MS = 16;
+const BURST_FRAME_INTERVAL_MS = 16;
 const BURST_DURATION_MS = 1500;
 const INPUT_CAPTURE_IDLE_TIMEOUT_MS = 100;
 const INPUT_CAPTURE_POLL_MS = 4;

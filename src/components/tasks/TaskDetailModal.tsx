@@ -3,6 +3,10 @@ import { memo, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState
 import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { EmptyState } from '@/components/overlay/EmptyState';
+import {
+  readTaskExecutionAnchor,
+  type TaskExecutionAnchor,
+} from '@/components/tasks/TaskAgentModeModal';
 import { TaskAttachmentImage } from '@/components/tasks/TaskAttachmentImage';
 import type {
   ProjectTask,
@@ -93,7 +97,7 @@ interface TaskDetailModalProps {
   jiraSiteUrl?: string;
   onClose: () => void;
   onEdit?: () => void;
-  onExecute: (task?: ProjectTask) => void;
+  onExecute: (task?: ProjectTask, anchor?: TaskExecutionAnchor | null) => void;
   onOpenTask?: (task: ProjectTask) => void;
   onTaskUpdated?: (task: ProjectTask) => void;
 }
@@ -695,11 +699,13 @@ function TaskDetailModalComponent({
           <span className='app-button__label'>Concluir</span>
         </button>
       ) : null}
-      {!hasParentSubtasks ? (
+      {!hasParentSubtasks && !isCompleted ? (
         <button
           type='button'
           className='project-dialog__btn project-dialog__btn--play app-button'
-          onClick={() => handleExecute(requestClose)}
+          onClick={(event) =>
+            handleExecute(requestClose, undefined, readTaskExecutionAnchor(event.currentTarget))
+          }
         >
           <Play size={14} strokeWidth={2} />
           <span className='app-button__label'>Executar</span>
@@ -717,8 +723,12 @@ function TaskDetailModalComponent({
   );
 
   const handleExecute = useCallback(
-    (requestClose: () => void, taskToExecute?: ProjectTask) => {
-      onExecute(taskToExecute);
+    (
+      requestClose: () => void,
+      taskToExecute?: ProjectTask,
+      anchor?: TaskExecutionAnchor | null,
+    ) => {
+      onExecute(taskToExecute, anchor);
       requestClose();
     },
     [onExecute],
@@ -768,6 +778,7 @@ function TaskDetailModalComponent({
       handleExecute(
         requestClose,
         resolveSubtaskForExecute(subtaskKey, title, status, assignee, assigneeAvatarUrl),
+        readTaskExecutionAnchor(event.currentTarget),
       );
     },
     [handleExecute, resolveSubtaskForExecute],
@@ -987,14 +998,18 @@ function TaskDetailModalComponent({
             <span className='app-button__label'>Concluir</span>
           </button>
         ) : null}
-        <button
-          type='button'
-          className='project-dialog__btn project-dialog__btn--play app-button'
-          onClick={() => handleExecute(requestClose)}
-        >
-          <Play size={14} strokeWidth={2} />
-          <span className='app-button__label'>Executar</span>
-        </button>
+        {!isCompleted ? (
+          <button
+            type='button'
+            className='project-dialog__btn project-dialog__btn--play app-button'
+            onClick={(event) =>
+              handleExecute(requestClose, undefined, readTaskExecutionAnchor(event.currentTarget))
+            }
+          >
+            <Play size={14} strokeWidth={2} />
+            <span className='app-button__label'>Executar</span>
+          </button>
+        ) : null}
       </div>
     </>
   );
@@ -1130,24 +1145,26 @@ function TaskDetailModalComponent({
                             {getTaskInitials(assigneeName)}
                           </span>
                         ) : null}
-                        <button
-                          type='button'
-                          className='tasks-drawer__action tasks-drawer__action--play app-button app-button--enter'
-                          aria-label={`Executar ${subtask.title}`}
-                          onClick={(event) =>
-                            handleSubtaskExecute(
-                              event,
-                              requestClose,
-                              subtask.key,
-                              subtask.title,
-                              fullTask?.status ?? subtask.status,
-                              assigneeName,
-                              assigneeAvatar,
-                            )
-                          }
-                        >
-                          <Play size={12} strokeWidth={2.25} />
-                        </button>
+                        {statusBadge?.kind !== 'done' ? (
+                          <button
+                            type='button'
+                            className='tasks-drawer__action tasks-drawer__action--play app-button app-button--enter'
+                            aria-label={`Executar ${subtask.title}`}
+                            onClick={(event) =>
+                              handleSubtaskExecute(
+                                event,
+                                requestClose,
+                                subtask.key,
+                                subtask.title,
+                                fullTask?.status ?? subtask.status,
+                                assigneeName,
+                                assigneeAvatar,
+                              )
+                            }
+                          >
+                            <Play size={12} strokeWidth={2.25} />
+                          </button>
+                        ) : null}
                       </div>
                     </article>
                   );

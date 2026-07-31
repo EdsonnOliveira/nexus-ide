@@ -13,6 +13,7 @@ interface TabItemProps {
   index: number;
   isFocused: boolean;
   isRestarting: boolean;
+  isDirty?: boolean;
   hasNotification?: boolean;
   pingTone?: ProjectPingTone;
   isDropTarget: boolean;
@@ -30,6 +31,7 @@ function TabItemComponent({
   index,
   isFocused,
   isRestarting,
+  isDirty = false,
   hasNotification = false,
   pingTone = 'red',
   isDropTarget,
@@ -161,8 +163,12 @@ function TabItemComponent({
       classes.push('tab-item--notified');
     }
 
+    if (isDirty) {
+      classes.push('tab-item--dirty');
+    }
+
     return classes.join(' ');
-  }, [hasNotification, isDropTarget, isFocused, pinned]);
+  }, [hasNotification, isDirty, isDropTarget, isFocused, pinned]);
 
   return (
     <div
@@ -202,8 +208,14 @@ function TabItemComponent({
         {displayTitle}
       </span>
       {pinned ? null : (
-        <button type='button' className='tab-item__close' onClick={handleClose} aria-label='Fechar aba'>
-          <X size={16} strokeWidth={2.25} />
+        <button
+          type='button'
+          className={`tab-item__close${isDirty ? ' tab-item__close--dirty' : ''}`}
+          onClick={handleClose}
+          aria-label={isDirty ? 'Fechar aba com alterações não salvas' : 'Fechar aba'}
+        >
+          <span className='tab-item__dirty-dot' aria-hidden='true' />
+          <X size={16} strokeWidth={2.25} className='tab-item__close-icon' />
         </button>
       )}
     </div>

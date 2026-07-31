@@ -2,6 +2,7 @@ import { ClipboardPaste, ListFilter, Plus, Search, Settings2, ListTodo } from 'l
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
+import type { TaskExecutionAnchor } from '@/components/tasks/TaskAgentModeModal';
 import { TaskContextMenu } from '@/components/tasks/TaskContextMenu';
 import { TaskFilterModal } from '@/components/tasks/TaskFilterModal';
 import { TaskListItem } from '@/components/tasks/TaskListItem';
@@ -13,6 +14,7 @@ import {
   countActiveTaskFilters,
   EMPTY_TASK_FILTERS,
   filterProjectTasks,
+  resolveTaskSubtasks,
 } from '@/utils/taskFilters';
 import { formatTaskSource, getTaskInitials } from '@/utils/taskLabels';
 
@@ -27,7 +29,7 @@ interface TaskListViewProps {
   onCreate: () => void;
   onImportJson: () => void;
   onView: (task: ProjectTask) => void;
-  onExecute: (task: ProjectTask) => void;
+  onExecute: (task: ProjectTask, anchor?: TaskExecutionAnchor | null) => void;
   onCopyJson: (task: ProjectTask) => void;
   onCompleteTask: (task: ProjectTask) => void;
   onReopenTask: (task: ProjectTask) => void;
@@ -319,6 +321,9 @@ function TaskListViewComponent({
               key={task.externalId ?? task.id}
               task={task}
               relatedTasks={tasks}
+              contextMenuTaskKey={
+                contextMenu ? (contextMenu.task.externalId ?? contextMenu.task.id) : null
+              }
               onView={onView}
               onExecute={onExecute}
               onContextMenu={handleContextMenu}
@@ -331,6 +336,7 @@ function TaskListViewComponent({
           task={contextMenu.task}
           x={contextMenu.x}
           y={contextMenu.y}
+          allowComplete={resolveTaskSubtasks(contextMenu.task, tasks).length === 0}
           onClose={() => setContextMenu(null)}
           onCopyJson={handleCopyJson}
           onComplete={handleCompleteTask}

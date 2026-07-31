@@ -794,39 +794,253 @@ function jiraDownload(
   });
 }
 
+interface AdfMark {
+  type?: string;
+  attrs?: Record<string, unknown>;
+}
+
+interface AdfNode {
+  type?: string;
+  text?: string;
+  attrs?: Record<string, unknown>;
+  marks?: AdfMark[];
+  content?: AdfNode[];
+}
+
 function extractJiraDescription(description: unknown): string {
   if (typeof description === 'string') {
-    return description;
+    return description.trim();
   }
 
   if (!description || typeof description !== 'object') {
     return '';
   }
 
-  const record = description as { content?: unknown[] };
-  const parts: string[] = [];
+  return convertAdfToMarkdown(description as AdfNode)
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
-  const walk = (node: unknown) => {
-    if (!node || typeof node !== 'object') {
-      return;
-    }
-
-    const entry = node as { type?: string; text?: string; content?: unknown[] };
-
-    if (entry.type === 'text' && entry.text) {
-      parts.push(entry.text);
-    }
-
-    if (Array.isArray(entry.content)) {
-      entry.content.forEach(walk);
-    }
-  };
-
-  if (Array.isArray(record.content)) {
-    record.content.forEach(walk);
+function convertAdfToMarkdown(
+  node: AdfNode,
+  listContext?: { ordered: boolean; index: number },
+  depth = 0,
+): string {
+  if (depth > 64) {
+    return '';
   }
 
-  return parts.join(' ').replace(/\s+/g, ' ').trim();
+  const type = node.type ?? '';
+  const children = Array.isArray(node.content) ? node.content : [];
+  const nextDepth = depth + 1;
+
+  switch (type) {
+    case 'doc':
+      return children.map((child) => convertAdfToMarkdown(child, undefined, nextDepth)).join('');
+    case 'paragraph':
+      return `${children.map((child) => convertAdfInline(child)).join('')}\n\n`;
+    case 'heading': {
+      const level = Math.min(6, Math.max(1, Number(node.attrs?.level ?? 3) || 3));
+      return `${'#'.repeat(level)} ${children.map((child) => convertAdfInline(child)).join('')}\n\n`;
+    }
+    case 'bulletList':
+      return `${children
+        .map((child) => convertAdfToMarkdown(child, { ordered: false, index: 0 }, nextDepth))
+        .join('')}\n`;
+    case 'orderedList':
+      return `${children
+        .map((child, index) =>
+          convertAdfToMarkdown(child, { ordered: true, index: index + 1 }, nextDepth),
+        )
+        .join('')}\n`;
+    case 'listItem': {
+      const prefix = listContext?.ordered ? `${listContext.index}. ` : '- ';
+      const parts: string[] = [];
+
+      for (const child of children) {
+        if (child.type === 'paragraph') {
+          parts.push((child.content ?? []).map((entry) => convertAdfInline(entry)).join(''));
+          continue;
+        }
+
+        if (child.type === 'bulletList' || child.type === 'orderedList' || child.type === 'taskList') {
+          const nested = convertAdfToMarkdown(child, undefined, nextDepth)
+            .trimEnd()
+            .split('\n')
+            .map((line) => (line ? `  ${line}` : line))
+            .join('\n');
+          parts.push(`\n${nested}`);
+          continue;
+        }
+
+        parts.push(convertAdfToMarkdown(child, listContext, nextDepth).trimEnd());
+      }
+
+      return `${prefix}${parts.join('').trim()}\n`;
+    }
+    case 'taskList':
+      return `${children.map((child) => convertAdfToMarkdown(child, undefined, nextDepth)).join('')}\n`;
+    case 'taskItem': {
+      const state = String(node.attrs?.state ?? 'TODO').toUpperCase();
+      const checked = state === 'DONE' ? 'x' : ' ';
+      const text = children
+        .map((child) => {
+          if (child.type === 'paragraph') {
+            return (child.content ?? []).map((entry) => convertAdfInline(entry)).join('');
+          }
+
+          return convertAdfInline(child);
+        })
+        .join('')
+        .trim();
+      return `- [${checked}] ${text}\n`;
+    }
+    case 'codeBlock': {
+      const language = typeof node.attrs?.language === 'string' ? node.attrs.language : '';
+      const code = children
+        .map((child) => (child.type === 'text' ? (child.text ?? '') : convertAdfInline(child)))
+        .join('');
+      return `\n\`\`\`${language}\n${code}\n\`\`\`\n\n`;
+    }
+    case 'blockquote': {
+      const inner = children
+        .map((child) => convertAdfToMarkdown(child, undefined, nextDepth))
+        .join('')
+        .trim();
+      return `${inner
+        .split('\n')
+        .map((line) => `> ${line}`)
+        .join('\n')}\n\n`;
+    }
+    case 'rule':
+      return '\n---\n\n';
+    case 'hardBreak':
+      return '\n';
+    case 'table':
+      return `${children.map((child) => convertAdfToMarkdown(child, undefined, nextDepth)).join('')}\n`;
+    case 'tableRow': {
+      const cells = children.map((child) =>
+        convertAdfToMarkdown(child, undefined, nextDepth).replace(/\n+/g, ' ').trim(),
+      );
+      const row = `| ${cells.join(' | ')} |`;
+
+      if (children.some((child) => child.type === 'tableHeader')) {
+        const separator = `| ${cells.map(() => '---').join(' | ')} |`;
+        return `${row}\n${separator}\n`;
+      }
+
+      return `${row}\n`;
+    }
+    case 'tableHeader':
+    case 'tableCell':
+      return children
+        .map((child) => {
+          if (child.type === 'paragraph') {
+            return (child.content ?? []).map((entry) => convertAdfInline(entry)).join('');
+          }
+
+          return convertAdfToMarkdown(child, undefined, nextDepth).trim();
+        })
+        .join(' ');
+    case 'mediaSingle':
+    case 'mediaGroup':
+    case 'expand':
+    case 'panel':
+      return children.map((child) => convertAdfToMarkdown(child, undefined, nextDepth)).join('');
+    case 'text':
+      return convertAdfInline(node);
+    default:
+      if (children.length > 0) {
+        return children
+          .map((child) => convertAdfToMarkdown(child, listContext, nextDepth))
+          .join('');
+      }
+
+      return convertAdfInline(node);
+  }
+}
+
+function convertAdfInline(node: AdfNode): string {
+  const type = node.type ?? '';
+
+  if (type === 'hardBreak') {
+    return '\n';
+  }
+
+  if (type === 'mention') {
+    const mentionText = typeof node.attrs?.text === 'string' ? node.attrs.text.trim() : '';
+
+    if (mentionText) {
+      return mentionText.startsWith('@') ? mentionText : `@${mentionText}`;
+    }
+
+    return `@${String(node.attrs?.id ?? 'user')}`;
+  }
+
+  if (type === 'emoji') {
+    if (typeof node.attrs?.text === 'string' && node.attrs.text.trim()) {
+      return node.attrs.text;
+    }
+
+    if (typeof node.attrs?.shortName === 'string' && node.attrs.shortName.trim()) {
+      return node.attrs.shortName;
+    }
+
+    return '';
+  }
+
+  if (type === 'inlineCard') {
+    return typeof node.attrs?.url === 'string' ? node.attrs.url : '';
+  }
+
+  if (type === 'status') {
+    return typeof node.attrs?.text === 'string' ? node.attrs.text : '';
+  }
+
+  if (type !== 'text') {
+    if (Array.isArray(node.content) && node.content.length > 0) {
+      return node.content.map((child) => convertAdfInline(child)).join('');
+    }
+
+    return '';
+  }
+
+  let text = node.text ?? '';
+
+  if (!text) {
+    return '';
+  }
+
+  const marks = Array.isArray(node.marks) ? node.marks : [];
+  const markTypes = new Set(
+    marks.map((mark) => mark.type).filter((value): value is string => Boolean(value)),
+  );
+
+  if (markTypes.has('code')) {
+    return `\`${text.replace(/`/g, '\\`')}\``;
+  }
+
+  const linkMark = marks.find((mark) => mark.type === 'link');
+  const href = typeof linkMark?.attrs?.href === 'string' ? linkMark.attrs.href : '';
+
+  if (href) {
+    text = `[${text}](${href})`;
+  }
+
+  if (markTypes.has('strong') || markTypes.has('bold')) {
+    text = `**${text}**`;
+  }
+
+  if (markTypes.has('em') || markTypes.has('italic')) {
+    text = `*${text}*`;
+  }
+
+  if (markTypes.has('strike')) {
+    text = `~~${text}~~`;
+  }
+
+  return text;
 }
 
 async function downloadJiraAttachments(

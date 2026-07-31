@@ -10,6 +10,7 @@ import {
   LOCAL_TASK_PRIORITY_OPTIONS,
   toDatetimeLocalInputValue,
 } from '@/utils/taskLabels';
+import { LOCAL_TASK_STATUS_PENDING } from '@/utils/taskJson';
 import { readClipboardImageDataUrl } from '@/utils/terminalClipboardImage';
 
 interface TaskFormModalProps {
@@ -173,6 +174,7 @@ function TaskFormModalComponent({
         source: 'local',
         title: trimmedTitle,
         description: description.trim(),
+        status: task?.status?.trim() || LOCAL_TASK_STATUS_PENDING,
         attachments,
         local: Object.keys(localMeta).length > 0 ? localMeta : undefined,
         updatedAt: Date.now(),

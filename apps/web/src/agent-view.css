@@ -561,6 +561,54 @@
   border-left: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.context-menu__submenu-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.agent-view__composer-mention-menu {
+  min-width: 280px;
+  max-width: min(420px, calc(100vw - 24px));
+  max-height: min(280px, calc(100vh - 120px));
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+.agent-view__composer-mention-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-view__composer-mention-subtitle {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.agent-view__composer-mention-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.agent-view__composer-mention-empty--icon {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-view__composer-mention-menu .context-menu__item {
+  gap: 8px;
+}
+
 .web-agent-model-select {
   min-width: 0;
 }

@@ -12,8 +12,8 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react';
-import { ArrowUp, AtSign, FileText, Globe, Paperclip, Square, X } from 'lucide-react';
-import type { WebAgentSession, WebAgentTurn, WebAgentActivity } from '../store';
+import { ArrowUp, FileText, Paperclip, Square, X } from 'lucide-react';
+import { useWebStore, type WebAgentSession, type WebAgentTurn, type WebAgentActivity } from '../store';
 import {
   buildWebActionBlockSummary,
   buildWebActivityRenderChunks,
@@ -42,6 +42,13 @@ import {
   type WebPendingAskFile,
   type WebPendingAskImage,
 } from './webAgentPromptImages';
+import { useWebAgentSkills, type WebAgentSkillHint } from './useWebAgentSkills';
+import { useWebAgentSkillSlash } from './useWebAgentSkillSlash';
+import { WebAgentSkillSlashMenu } from './WebAgentSkillSlashMenu';
+import {
+  applyWebSkillSlashMention,
+  type WebSkillSlashMatch,
+} from './webAgentSkillSlash';
 
 interface WebAgentChatProps {
   agent: WebAgentSession;
@@ -747,6 +754,8 @@ export function WebAgentChat({
   const [pendingImages, setPendingImages] = useState<WebPendingAskImage[]>([]);
   const [pendingFiles, setPendingFiles] = useState<WebPendingAskFile[]>([]);
   const [sendingFollowUp, setSendingFollowUp] = useState(false);
+  const [caretIndex, setCaretIndex] = useState(0);
+  const [skillMenuRect, setSkillMenuRect] = useState<DOMRect | null>(null);
   const [dropActive, setDropActive] = useState(false);
   const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
   const [previewImageName, setPreviewImageName] = useState('imagem.png');
@@ -777,6 +786,43 @@ export function WebAgentChat({
     () => WEB_AGENT_MODELS.map((item) => ({ value: item.value, label: item.label })),
     [],
   );
+  const showSkills = modeId === 'agent' || modeId === 'multitask';
+  const devices = useWebStore((state) => state.devices);
+  const activeWorkspaceId = useWebStore((state) => state.activeWorkspaceId);
+  const skillWorkspaceId = useMemo(() => {
+    if (!agent.deviceId) {
+      return activeWorkspaceId;
+    }
+    return (
+      devices.find((device) => device.id === agent.deviceId)?.workspace_id ?? activeWorkspaceId
+    );
+  }, [activeWorkspaceId, agent.deviceId, devices]);
+  const { skills, loading: skillsLoading, error: skillsError, refresh: refreshSkills } =
+    useWebAgentSkills({
+    workspaceId: skillWorkspaceId,
+    deviceId: agent.deviceId,
+    projectId: agent.projectId,
+    enabled: showSkills,
+  });
+  const skillSlash = useWebAgentSkillSlash({
+    value: draft,
+    caretIndex,
+    skills,
+    enabled: showSkills && !sendingFollowUp,
+  });
+  const skillSlashOpenedRef = useRef(false);
+
+  useEffect(() => {
+    if (!skillSlash.isOpen) {
+      skillSlashOpenedRef.current = false;
+      return;
+    }
+    if (skillSlashOpenedRef.current || skillsLoading || skills.length > 0 || !showSkills) {
+      return;
+    }
+    skillSlashOpenedRef.current = true;
+    void refreshSkills();
+  }, [refreshSkills, showSkills, skillSlash.isOpen, skills.length, skillsLoading]);
 
   draftRef.current = draft;
   pendingImagesRef.current = pendingImages;
@@ -803,6 +849,7 @@ export function WebAgentChat({
     (nextDraft: string, nextCaret: number) => {
       setDraft(nextDraft);
       draftRef.current = nextDraft;
+      setCaretIndex(nextCaret);
       window.requestAnimationFrame(() => {
         const input = inputRef.current;
         if (!input) {
@@ -814,6 +861,60 @@ export function WebAgentChat({
       });
     },
     [resizeComposerInput],
+  );
+
+  const syncCaretIndex = useCallback(() => {
+    const input = inputRef.current;
+    if (!input) {
+      return;
+    }
+    setCaretIndex(input.selectionStart ?? 0);
+  }, []);
+
+  useEffect(() => {
+    if (!skillSlash.isOpen) {
+      setSkillMenuRect(null);
+      return;
+    }
+    const rect = askFormRef.current?.getBoundingClientRect() ?? inputRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+    setSkillMenuRect(rect);
+  }, [caretIndex, draft, skillSlash.isOpen]);
+
+  const handleSelectSkill = useCallback(
+    (skill: WebAgentSkillHint) => {
+      const skillToken = skill.command.trim().replace(/\n+$/, '');
+      if (!skillToken) {
+        return;
+      }
+      const current = draftRef.current;
+      const leading = current.match(/^\s*/)?.[0] ?? '';
+      const rest = current.slice(leading.length);
+      const existingSkill = rest.match(/^(\/[^\s/]+(?:\/[^\s/]+)*)(?:\s([\s\S]*))?$/);
+      const body = existingSkill ? (existingSkill[2] ?? '').trimStart() : rest;
+      const nextDraft = body ? `${skillToken} ${body}` : `${skillToken} `;
+      setDraftWithCaret(nextDraft, nextDraft.length);
+    },
+    [setDraftWithCaret],
+  );
+
+  const handleSkillSlashSelect = useCallback(
+    (match: WebSkillSlashMatch) => {
+      if (!skillSlash.context) {
+        return;
+      }
+      const { nextValue, nextCaret } = applyWebSkillSlashMention(
+        draft,
+        skillSlash.context.startIndex,
+        skillSlash.context.endIndex,
+        match.insertText,
+      );
+      skillSlash.dismiss();
+      setDraftWithCaret(nextValue, nextCaret);
+    },
+    [draft, setDraftWithCaret, skillSlash],
   );
 
   const attachImagesWithMentions = useCallback(
@@ -1156,6 +1257,36 @@ export function WebAgentChat({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing) {
+      return;
+    }
+
+    if (skillSlash.isOpen) {
+      if (event.key === 'ArrowDown' && skillSlash.matches.length > 0) {
+        event.preventDefault();
+        skillSlash.moveDown();
+        return;
+      }
+      if (event.key === 'ArrowUp' && skillSlash.matches.length > 0) {
+        event.preventDefault();
+        skillSlash.moveUp();
+        return;
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        const activeMatch = skillSlash.getActiveMatch();
+        if (activeMatch) {
+          event.preventDefault();
+          handleSkillSlashSelect(activeMatch);
+          return;
+        }
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        skillSlash.dismiss();
+        return;
+      }
+    }
+
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       submit();
@@ -1384,9 +1515,13 @@ export function WebAgentChat({
               mode={modeId}
               modelId={modelId}
               models={modelList}
+              skills={skills}
+              skillsLoading={skillsLoading}
+              showSkills={showSkills}
               attachDisabled={attachDisabled}
               onModeChange={(next) => onModeChange(agent.id, next)}
               onModelChange={(next) => onModelChange(agent.id, next)}
+              onSelectSkill={handleSelectSkill}
               onAttachImage={handleAttachImage}
               onAttachFile={handleAttachFile}
             />
@@ -1416,8 +1551,12 @@ export function WebAgentChat({
                 aria-label='Pergunte algo ao Nexus'
                 onChange={(event) => {
                   setDraft(event.target.value);
+                  setCaretIndex(event.target.selectionStart ?? event.target.value.length);
                   resizeComposerInput(event.target);
                 }}
+                onSelect={syncCaretIndex}
+                onClick={syncCaretIndex}
+                onKeyUp={syncCaretIndex}
                 onKeyDown={onKeyDown}
                 onPaste={handlePaste}
               />
@@ -1433,24 +1572,6 @@ export function WebAgentChat({
               onClick={handleAttachImage}
             >
               <Paperclip size={16} strokeWidth={2} aria-hidden='true' />
-            </button>
-            <button
-              type='button'
-              className='home-dashboard__ask-action app-button'
-              aria-label='Mencionar arquivo'
-              disabled
-              title='Em breve'
-            >
-              <AtSign size={16} strokeWidth={2} aria-hidden='true' />
-            </button>
-            <button
-              type='button'
-              className='home-dashboard__ask-action app-button'
-              aria-label='Pesquisar na web'
-              disabled
-              title='Em breve'
-            >
-              <Globe size={16} strokeWidth={2} aria-hidden='true' />
             </button>
             <button
               type={canStop ? 'button' : 'submit'}
@@ -1484,6 +1605,16 @@ export function WebAgentChat({
           onClose={() => setPreviewImageSrc(null)}
         />
       ) : null}
+      <WebAgentSkillSlashMenu
+        open={skillSlash.isOpen}
+        anchorRect={skillMenuRect}
+        matches={skillSlash.matches}
+        activeIndex={skillSlash.activeIndex}
+        loading={skillsLoading}
+        error={skillsError}
+        onClose={skillSlash.dismiss}
+        onSelect={handleSkillSlashSelect}
+      />
     </div>
   );
 }

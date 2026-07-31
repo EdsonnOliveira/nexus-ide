@@ -77,7 +77,7 @@ interface SimulatorScreenInfo {
 
 const MIN_FRAME_BYTES = 1_200;
 const MAX_STREAM_BUFFER_BYTES = 16 * 1024 * 1024;
-const MIN_FRAME_INTERVAL_MS = 50;
+const MIN_FRAME_INTERVAL_MS = 16;
 const DEFAULT_INPUT_SIZE = { inputWidth: 390, inputHeight: 844 };
 const STREAM_CODEC: EmulatorVideoCodec = 'jpeg';
 const IDB_STREAM_FPS = 60;

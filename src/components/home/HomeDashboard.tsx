@@ -35,6 +35,7 @@ import { EmptyState } from '@/components/overlay/EmptyState';
 import { SidebarCalendarEventPopup } from '@/components/sidebar/SidebarCalendarEventPopup';
 import { TaskDetailModal } from '@/components/tasks/TaskDetailModal';
 import { TaskFormModal } from '@/components/tasks/TaskFormModal';
+import type { TaskExecutionAnchor } from '@/components/tasks/TaskAgentModeModal';
 import type { HomeDashboardTaskEntry } from '@/hooks/useHomeDashboardData';
 import { useHomeDashboardData } from '@/hooks/useHomeDashboardData';
 import { useHomeDashboardActivityStats } from '@/hooks/useHomeDashboardActivityStats';
@@ -224,7 +225,7 @@ function HomeDashboardComponent() {
   }, []);
 
   const handleExecuteFromDetail = useCallback(
-    (task?: ProjectTask) => {
+    (task?: ProjectTask, anchor?: TaskExecutionAnchor | null) => {
       if (!detailEntry) {
         return;
       }
@@ -235,7 +236,7 @@ function HomeDashboardComponent() {
 
       void (async () => {
         await selectProject(entry.project.id);
-        executeTask(target, entry.project.id);
+        executeTask(target, entry.project.id, anchor);
       })();
     },
     [detailEntry, executeTask, selectProject],
@@ -280,10 +281,10 @@ function HomeDashboardComponent() {
   );
 
   const handleExecuteTask = useCallback(
-    (entry: HomeDashboardTaskEntry) => {
+    (entry: HomeDashboardTaskEntry, anchor?: TaskExecutionAnchor | null) => {
       void (async () => {
         await selectProject(entry.project.id);
-        executeTask(entry.task, entry.project.id);
+        executeTask(entry.task, entry.project.id, anchor);
       })();
     },
     [executeTask, selectProject],

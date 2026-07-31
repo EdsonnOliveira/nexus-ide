@@ -3911,8 +3911,7 @@ html.nexus-standalone .home-dashboard__ask-bar {
     font-size: 13px;
   }
 
-  .home-dashboard__ask-action[aria-label='Anexar'],
-  .home-dashboard__ask-action[aria-label='Mencionar arquivo'] {
+  .home-dashboard__ask-action[aria-label='Anexar'] {
     display: inline-flex;
   }
 }

@@ -17,6 +17,8 @@ export interface AgentPrintRunOptions {
   runToken: string;
 }
 
+const STDOUT_WATCHDOG_MS = 45_000;
+
 function resolveCursorAgentExecutable(): string {
   const home = os.homedir();
   const candidates = [
@@ -58,9 +60,21 @@ function resolveAgentPrintCwd(cwd: string): string {
 class AgentPrintRunner {
   private window: BrowserWindow | null = null;
   private processes = new Map<string, ChildProcessWithoutNullStreams>();
+  private watchdogs = new Map<string, ReturnType<typeof setTimeout>>();
 
   setWindow(window: BrowserWindow | null): void {
     this.window = window;
+  }
+
+  private clearWatchdog(paneId: string): void {
+    const timer = this.watchdogs.get(paneId);
+
+    if (!timer) {
+      return;
+    }
+
+    clearTimeout(timer);
+    this.watchdogs.delete(paneId);
   }
 
   private emit(channel: string, payload: unknown): void {
@@ -84,6 +98,7 @@ class AgentPrintRunner {
       '-p',
       '--output-format',
       'stream-json',
+      '--stream-partial-output',
       '--trust',
       '--force',
       '--workspace',
@@ -141,10 +156,54 @@ class AgentPrintRunner {
 
     let stdoutSeen = false;
     let stderrBuffer = '';
+    let closed = false;
+
+    const finishWithError = (error: string, code = 1) => {
+      if (closed) {
+        return;
+      }
+
+      closed = true;
+      this.clearWatchdog(options.paneId);
+
+      if (this.processes.get(options.paneId) === child) {
+        this.processes.delete(options.paneId);
+      }
+
+      try {
+        child.kill('SIGTERM');
+      } catch {
+      }
+
+      this.emit('agent:printDone', {
+        paneId: options.paneId,
+        runToken,
+        code,
+        error,
+      });
+    };
+
+    this.clearWatchdog(options.paneId);
+    this.watchdogs.set(
+      options.paneId,
+      setTimeout(() => {
+        if (stdoutSeen || this.processes.get(options.paneId) !== child) {
+          return;
+        }
+
+        const stderr = stderrBuffer.trim();
+        finishWithError(
+          stderr
+            ? `Agent sem stdout após ${Math.round(STDOUT_WATCHDOG_MS / 1000)}s. ${stderr.slice(0, 500)}`
+            : `Agent sem stdout após ${Math.round(STDOUT_WATCHDOG_MS / 1000)}s. Pare e tente de novo.`,
+        );
+      }, STDOUT_WATCHDOG_MS),
+    );
 
     const forward = (chunk: Buffer, fromStdout: boolean) => {
       if (fromStdout) {
         stdoutSeen = true;
+        this.clearWatchdog(options.paneId);
       }
 
       this.emit('agent:printData', {
@@ -160,6 +219,13 @@ class AgentPrintRunner {
     });
 
     child.on('close', (code) => {
+      if (closed) {
+        return;
+      }
+
+      closed = true;
+      this.clearWatchdog(options.paneId);
+
       if (this.processes.get(options.paneId) === child) {
         this.processes.delete(options.paneId);
       }
@@ -170,7 +236,9 @@ class AgentPrintRunner {
           ? stderr
           : !stdoutSeen && stderr
             ? stderr
-            : undefined;
+            : !stdoutSeen
+              ? 'Agent encerrou sem emitir stream-json.'
+              : undefined;
       const durationMs = Date.now() - startedAt;
 
       // #region agent log
@@ -199,20 +267,12 @@ class AgentPrintRunner {
     });
 
     child.on('error', (error) => {
-      if (this.processes.get(options.paneId) === child) {
-        this.processes.delete(options.paneId);
-      }
-
-      this.emit('agent:printDone', {
-        paneId: options.paneId,
-        runToken,
-        code: 1,
-        error: error.message,
-      });
+      finishWithError(error.message);
     });
   }
 
   stop(paneId: string): void {
+    this.clearWatchdog(paneId);
     const child = this.processes.get(paneId);
 
     if (!child) {
@@ -241,7 +301,7 @@ class AgentPrintRunner {
   }
 
   stopAll(): void {
-    for (const paneId of [...this.processes.keys()]) {
+    for (const paneId of Array.from(this.processes.keys())) {
       this.stop(paneId);
     }
   }

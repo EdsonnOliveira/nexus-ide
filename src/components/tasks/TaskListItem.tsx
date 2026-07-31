@@ -1,5 +1,9 @@
 import { ChevronRight, ListTree, Play } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  readTaskExecutionAnchor,
+  type TaskExecutionAnchor,
+} from '@/components/tasks/TaskAgentModeModal';
 import type { ProjectTask } from '@/types/task';
 import { TaskAttachmentImage } from '@/components/tasks/TaskAttachmentImage';
 import { getTaskSubtaskProgress, resolveTaskSubtasks } from '@/utils/taskFilters';
@@ -19,14 +23,16 @@ const DEEPCRM_PROGRESS_LABEL = /^\d+\s*\/\s*\d+\s*tarefas$/i;
 interface TaskListItemProps {
   task: ProjectTask;
   relatedTasks?: ProjectTask[];
+  contextMenuTaskKey?: string | null;
   onView: (task: ProjectTask) => void;
-  onExecute: (task: ProjectTask) => void;
+  onExecute: (task: ProjectTask, anchor?: TaskExecutionAnchor | null) => void;
   onContextMenu?: (task: ProjectTask, x: number, y: number) => void;
 }
 
 function TaskListItemComponent({
   task,
   relatedTasks = [],
+  contextMenuTaskKey = null,
   onView,
   onExecute,
   onContextMenu,
@@ -79,7 +85,7 @@ function TaskListItemComponent({
   const handlePlayClick = useCallback(
     (event: React.MouseEvent) => {
       event.stopPropagation();
-      onExecute(task);
+      onExecute(task, readTaskExecutionAnchor(event.currentTarget));
     },
     [onExecute, task],
   );
@@ -124,7 +130,10 @@ function TaskListItemComponent({
       assigneeAvatarUrl?: string,
     ) => {
       event.stopPropagation();
-      onExecute(resolveSubtaskTask(subtaskKey, title, status, assignee, assigneeAvatarUrl));
+      onExecute(
+        resolveSubtaskTask(subtaskKey, title, status, assignee, assigneeAvatarUrl),
+        readTaskExecutionAnchor(event.currentTarget),
+      );
     },
     [onExecute, resolveSubtaskTask],
   );
@@ -146,6 +155,30 @@ function TaskListItemComponent({
     [onContextMenu, task],
   );
 
+  const handleSubtaskContextMenu = useCallback(
+    (
+      event: React.MouseEvent,
+      subtaskKey: string,
+      title: string,
+      status?: string,
+      assignee?: string,
+      assigneeAvatarUrl?: string,
+    ) => {
+      if (!onContextMenu) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      onContextMenu(
+        resolveSubtaskTask(subtaskKey, title, status, assignee, assigneeAvatarUrl),
+        event.clientX,
+        event.clientY,
+      );
+    },
+    [onContextMenu, resolveSubtaskTask],
+  );
+
   const handleToggleSubtasks = useCallback((event: React.MouseEvent) => {
     event.stopPropagation();
     setSubtasksOpen((current) => !current);
@@ -165,19 +198,22 @@ function TaskListItemComponent({
     [onView, relatedTasks],
   );
 
-  const isCompleted = isLocalTaskCompleted(task);
+  const isCompleted = isLocalTaskCompleted(task) || statusBadge?.kind === 'done';
   const isLocalTask = task.source === 'local';
   const descriptionPreview = useMemo(
     () => (isLocalTask ? resolveTaskDescriptionFirstLine(task.description) : ''),
     [isLocalTask, task.description],
   );
   const hasSubtasks = Boolean(subtaskProgress && subtaskProgress.total > 0 && subtasks.length > 0);
+  const showPlay = !hasSubtasks && !isCompleted;
+  const taskMenuKey = task.externalId ?? task.id;
+  const parentMenuOpen = contextMenuTaskKey === taskMenuKey;
 
   const PriorityIcon = priority?.Icon;
 
   return (
     <div
-      className={`tasks-drawer__row${coverVisible ? ' tasks-drawer__row--with-cover' : ''}${isCompleted ? ' tasks-drawer__row--completed' : ''}${isLocalTask ? ' tasks-drawer__row--manual' : ''}${hasSubtasks ? ' tasks-drawer__row--with-subtasks' : ''}${subtasksOpen ? ' tasks-drawer__row--subtasks-open' : ''}${statusBadge?.kind === 'progress' ? ' tasks-drawer__row--progress' : ''}`}
+      className={`tasks-drawer__row${coverVisible ? ' tasks-drawer__row--with-cover' : ''}${isCompleted ? ' tasks-drawer__row--completed' : ''}${isLocalTask ? ' tasks-drawer__row--manual' : ''}${hasSubtasks ? ' tasks-drawer__row--with-subtasks' : ''}${subtasksOpen ? ' tasks-drawer__row--subtasks-open' : ''}${statusBadge?.kind === 'progress' ? ' tasks-drawer__row--progress' : ''}${parentMenuOpen ? ' tasks-drawer__row--menu-open' : ''}`}
       onContextMenu={handleContextMenu}
     >
       {coverAttachment ? (
@@ -256,7 +292,7 @@ function TaskListItemComponent({
           ) : null}
         </div>
         <div className='tasks-drawer__actions'>
-          {!hasSubtasks ? (
+          {showPlay ? (
             <button
               type='button'
               className='tasks-drawer__action tasks-drawer__action--play app-button app-button--enter'
@@ -319,15 +355,27 @@ function TaskListItemComponent({
                   fullTask?.deepcrm?.assigneeAvatarUrl ??
                   subtask.assigneeAvatarUrl;
                 const isClickable = Boolean(fullTask);
+                const showSubtaskPlay = subtaskStatus?.kind !== 'done';
+                const subtaskMenuOpen = contextMenuTaskKey === subtask.key;
 
                 return (
                   <div
                     key={subtask.key}
-                    className={`tasks-drawer__subtask-card${isClickable ? ' tasks-drawer__subtask-card--clickable app-button' : ''}`}
+                    className={`tasks-drawer__subtask-card app-button${isClickable ? ' tasks-drawer__subtask-card--clickable' : ''}${subtaskMenuOpen ? ' tasks-drawer__subtask-card--menu-open' : ''}`}
                     role={isClickable ? 'button' : undefined}
                     tabIndex={isClickable ? 0 : undefined}
                     onClick={
                       isClickable ? (event) => handleSubtaskClick(event, subtask.key) : undefined
+                    }
+                    onContextMenu={(event) =>
+                      handleSubtaskContextMenu(
+                        event,
+                        subtask.key,
+                        subtask.title,
+                        fullTask?.status ?? subtask.status,
+                        assigneeName,
+                        assigneeAvatar,
+                      )
                     }
                     onKeyDown={
                       isClickable
@@ -349,23 +397,25 @@ function TaskListItemComponent({
                   >
                     <div className='tasks-drawer__subtask-card-header'>
                       <span className='tasks-drawer__subtask-card-title'>{subtask.title}</span>
-                      <button
-                        type='button'
-                        className='tasks-drawer__action tasks-drawer__action--play app-button app-button--enter'
-                        aria-label={`Executar ${subtask.title}`}
-                        onClick={(event) =>
-                          handleSubtaskPlayClick(
-                            event,
-                            subtask.key,
-                            subtask.title,
-                            fullTask?.status ?? subtask.status,
-                            assigneeName,
-                            assigneeAvatar,
-                          )
-                        }
-                      >
-                        <Play size={12} strokeWidth={2.25} />
-                      </button>
+                      {showSubtaskPlay ? (
+                        <button
+                          type='button'
+                          className='tasks-drawer__action tasks-drawer__action--play app-button app-button--enter'
+                          aria-label={`Executar ${subtask.title}`}
+                          onClick={(event) =>
+                            handleSubtaskPlayClick(
+                              event,
+                              subtask.key,
+                              subtask.title,
+                              fullTask?.status ?? subtask.status,
+                              assigneeName,
+                              assigneeAvatar,
+                            )
+                          }
+                        >
+                          <Play size={12} strokeWidth={2.25} />
+                        </button>
+                      ) : null}
                     </div>
                     <div className='tasks-drawer__subtask-card-footer'>
                       <div className='tasks-drawer__card-meta'>

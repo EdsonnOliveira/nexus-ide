@@ -1,14 +1,18 @@
 import { Play } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
+import {
+  readTaskExecutionAnchor,
+  type TaskExecutionAnchor,
+} from '@/components/tasks/TaskAgentModeModal';
 import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
 import type { HomeDashboardTaskEntry } from '@/hooks/useHomeDashboardData';
-import { formatTaskSource } from '@/utils/taskLabels';
+import { classifyTaskStatus, formatTaskSource } from '@/utils/taskLabels';
 
 interface HomeDashboardTaskRowProps {
   entry: HomeDashboardTaskEntry;
   enterDelayMs?: number;
   onOpen: (entry: HomeDashboardTaskEntry) => void;
-  onExecute: (entry: HomeDashboardTaskEntry) => void;
+  onExecute: (entry: HomeDashboardTaskEntry, anchor?: TaskExecutionAnchor | null) => void;
 }
 
 function HomeDashboardTaskRowComponent({
@@ -55,13 +59,14 @@ function HomeDashboardTaskRowComponent({
   const handlePlay = useCallback(
     (event: React.MouseEvent) => {
       event.stopPropagation();
-      onExecute(entry);
+      onExecute(entry, readTaskExecutionAnchor(event.currentTarget));
     },
     [entry, onExecute],
   );
 
   const sourceLabel = entry.task.source === 'local' ? entry.project.name : formatTaskSource(entry.task.source);
   const showLogo = Boolean(logoSrc) && !logoFailed;
+  const showPlay = classifyTaskStatus(entry.task.status ?? '') !== 'done';
 
   return (
     <div
@@ -97,14 +102,16 @@ function HomeDashboardTaskRowComponent({
           </span>
         </span>
       </button>
-      <button
-        type='button'
-        className='home-dashboard__task-play app-button app-button--enter'
-        aria-label={`Executar ${entry.task.title}`}
-        onClick={handlePlay}
-      >
-        <Play size={16} strokeWidth={2.25} />
-      </button>
+      {showPlay ? (
+        <button
+          type='button'
+          className='home-dashboard__task-play app-button app-button--enter'
+          aria-label={`Executar ${entry.task.title}`}
+          onClick={handlePlay}
+        >
+          <Play size={16} strokeWidth={2.25} />
+        </button>
+      ) : null}
     </div>
   );
 }

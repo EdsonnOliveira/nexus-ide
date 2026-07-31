@@ -759,6 +759,10 @@ function paneNeedsBackgroundKeepAlive(
     return true;
   }
 
+  if (pane.type === 'file' && pane.viewMode === 'code') {
+    return true;
+  }
+
   return false;
 }
 

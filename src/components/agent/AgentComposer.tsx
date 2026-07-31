@@ -820,6 +820,8 @@ function AgentComposerComponent({
   const waitingLabel = isSubmitting ? 'Enviando…' : 'Iniciando agent…';
   const showWaitingStatus = isSubmitting || isBootstrapping;
   const showContextUsage = Boolean(contextUsage) || contextUsageLoading || canStop;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
   const resetPromptHistoryNavigation = useCallback(() => {
     promptHistoryIndexRef.current = -1;
@@ -906,34 +908,61 @@ function AgentComposerComponent({
       return;
     }
 
-    if (interactionPending) {
+    if (interactionPending || (!draft.trim() && images.length === 0)) {
       return;
     }
 
-    void (async () => {
-      const result = await onSubmit(draft);
+    const submittedDraft = draft;
+    resetPromptHistoryNavigation();
+    onDraftChange('');
 
-      if (result) {
-        resetPromptHistoryNavigation();
-        onDraftChange('');
+    void (async () => {
+      try {
+        const result = await onSubmit(submittedDraft);
+
+        if (!result && !draftRef.current.trim()) {
+          onDraftChange(submittedDraft);
+        }
+      } catch {
+        if (!draftRef.current.trim()) {
+          onDraftChange(submittedDraft);
+        }
       }
     })();
-  }, [canStop, draft, interactionPending, onDraftChange, onStop, onSubmit, resetPromptHistoryNavigation]);
+  }, [
+    canStop,
+    draft,
+    images.length,
+    interactionPending,
+    onDraftChange,
+    onStop,
+    onSubmit,
+    resetPromptHistoryNavigation,
+  ]);
 
   const handleForceSubmit = useCallback(() => {
-    if (interactionPending) {
+    if (interactionPending || (!draft.trim() && images.length === 0)) {
       return;
     }
 
-    void (async () => {
-      const result = await onSubmit(draft);
+    const submittedDraft = draft;
+    resetPromptHistoryNavigation();
+    onDraftChange('');
 
-      if (result) {
-        resetPromptHistoryNavigation();
-        onDraftChange('');
+    void (async () => {
+      try {
+        const result = await onSubmit(submittedDraft);
+
+        if (!result && !draftRef.current.trim()) {
+          onDraftChange(submittedDraft);
+        }
+      } catch {
+        if (!draftRef.current.trim()) {
+          onDraftChange(submittedDraft);
+        }
       }
     })();
-  }, [draft, interactionPending, onDraftChange, onSubmit, resetPromptHistoryNavigation]);
+  }, [draft, images.length, interactionPending, onDraftChange, onSubmit, resetPromptHistoryNavigation]);
 
   const handleModeChange = useCallback(
     (mode: typeof activeMode) => {
@@ -1014,6 +1043,10 @@ function AgentComposerComponent({
       }
 
       if (event.key === 'Enter' && !event.shiftKey) {
+        if (event.nativeEvent.isComposing) {
+          return;
+        }
+
         event.preventDefault();
         handleStopOrSubmit();
       }

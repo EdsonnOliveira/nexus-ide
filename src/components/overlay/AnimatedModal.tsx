@@ -6,17 +6,23 @@ import { registerModalOpen } from '@/utils/overlayBlocking';
 interface AnimatedModalProps {
   panelClassName: string;
   onClose: () => void;
+  closeDisabled?: boolean;
   children: (requestClose: () => void) => ReactNode;
 }
 
-function AnimatedModalComponent({ panelClassName, onClose, children }: AnimatedModalProps) {
+function AnimatedModalComponent({
+  panelClassName,
+  onClose,
+  closeDisabled = false,
+  children,
+}: AnimatedModalProps) {
   const { phase, requestClose } = useAnimatedUnmount(onClose, OVERLAY_MODAL_DURATION_MS);
 
   useEffect(() => registerModalOpen(), []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !closeDisabled) {
         requestClose();
       }
     };
@@ -26,12 +32,12 @@ function AnimatedModalComponent({ panelClassName, onClose, children }: AnimatedM
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [requestClose]);
+  }, [closeDisabled, requestClose]);
 
   return createPortal(
     <div
       className={`project-dialog-overlay overlay-backdrop--${phase}`}
-      onMouseDown={requestClose}
+      onMouseDown={closeDisabled ? undefined : requestClose}
     >
       <div
         className={`${panelClassName} overlay-panel--${phase}`}
