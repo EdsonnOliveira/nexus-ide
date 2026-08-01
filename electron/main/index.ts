@@ -69,13 +69,14 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
   ? path.join(process.env.APP_ROOT, 'public')
   : RENDERER_DIST;
 
+app.setName(DOCK_APP_NAME);
+app.setPath('userData', path.join(app.getPath('appData'), 'nexus-ide'));
+
 if (!app.requestSingleInstanceLock()) {
+  console.error('[main] another instance is already running — quitting');
   app.quit();
   process.exit(0);
 }
-
-app.setName(DOCK_APP_NAME);
-app.setPath('userData', path.join(app.getPath('appData'), 'nexus-ide'));
 
 function shouldRecoverRendererProcess(reason: string): boolean {
   return reason === 'crashed' || reason === 'oom' || reason === 'abnormal-exit';
@@ -130,19 +131,27 @@ let win: BrowserWindow | null = null;
 let isQuitting = false;
 let rendererReloadTimer: ReturnType<typeof setTimeout> | null = null;
 let flushMode: 'quit' | 'close' = 'quit';
+let isSessionFlushing = false;
 let sessionFlushTimer: ReturnType<typeof setTimeout> | null = null;
 const SESSION_FLUSH_TIMEOUT_MS = 5000;
 const preload = path.join(__dirname, '../preload/index.cjs');
 
 function completeSessionFlush(): void {
+  if (!isSessionFlushing) {
+    return;
+  }
+
+  isSessionFlushing = false;
+
   if (sessionFlushTimer) {
     clearTimeout(sessionFlushTimer);
     sessionFlushTimer = null;
   }
 
+  const mode = flushMode;
   isQuitting = true;
 
-  if (flushMode === 'close') {
+  if (mode === 'close') {
     ptyManager.killAll();
     agentPrintRunner.stopAll();
     testRunnerSession.stopAll();
@@ -156,10 +165,11 @@ function completeSessionFlush(): void {
 }
 
 function requestSessionFlush(mode: 'quit' | 'close'): void {
-  if (!win || win.isDestroyed()) {
+  if (!win || win.isDestroyed() || isSessionFlushing) {
     return;
   }
 
+  isSessionFlushing = true;
   flushMode = mode;
 
   if (sessionFlushTimer) {

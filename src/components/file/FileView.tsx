@@ -3,6 +3,7 @@ import { CodeEditor } from '@/components/file/CodeEditor';
 import { GitDiffView } from '@/components/file/GitDiffView';
 import type { FileTab } from '@/types';
 import { useFileDirtyStore } from '@/stores/useFileDirtyStore';
+import { isImageFileName } from '@/utils/fileViewMode';
 import { resolveAgentGitPromptsForFile } from '@/utils/resolveAgentGitPromptsForFile';
 import {
   getFileExternalRevision,
@@ -33,6 +34,13 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
 
   contentRef.current = content;
   isSavingRef.current = isSaving;
+
+  const fileName = useMemo(
+    () => tab.filePath.replace(/\\/g, '/').split('/').pop() ?? tab.title,
+    [tab.filePath, tab.title],
+  );
+  const isDiffImage = tab.viewMode === 'diff' && isImageFileName(fileName);
+  const isDiffTextEditable = tab.viewMode === 'diff' && !isDiffImage;
 
   const diffAgentPromptTurns = useMemo(() => {
     if (tab.viewMode !== 'diff') {
@@ -68,7 +76,7 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
     (isCancelled: () => boolean, options?: { silent?: boolean }) => {
       const silent = options?.silent ?? false;
 
-      if (tab.viewMode === 'diff') {
+      if (tab.viewMode === 'diff' && isImageFileName(fileName)) {
         setLoading(false);
         setError(null);
         setSaveError(null);
@@ -79,7 +87,7 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
         return;
       }
 
-      if (tab.viewMode === 'code' || tab.viewMode === 'preview') {
+      if (tab.viewMode === 'code' || tab.viewMode === 'preview' || isDiffTextEditable) {
         if (!silent) {
           setLoading(true);
         }
@@ -88,24 +96,37 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
         setSaveError(null);
         setMediaSrc(null);
 
+        const applyContent = (nextContent: string) => {
+          if (isCancelled()) {
+            return;
+          }
+
+          setContent(nextContent);
+          savedContentRef.current = nextContent;
+          useFileDirtyStore.getState().setDirty(tab.id, false);
+          setError(null);
+          setLoading(false);
+        };
+
         void window.nexus.files.readTextFile(tab.filePath).then((result) => {
           if (isCancelled()) {
             return;
           }
 
-          if (!result.ok) {
-            setError(result.error);
-            setContent('');
-            savedContentRef.current = '';
-            useFileDirtyStore.getState().setDirty(tab.id, false);
-            setLoading(false);
+          if (result.ok) {
+            applyContent(result.content);
             return;
           }
 
-          setContent(result.content);
-          savedContentRef.current = result.content;
+          if (tab.viewMode === 'diff' && typeof tab.diffAfter === 'string') {
+            applyContent(tab.diffAfter);
+            return;
+          }
+
+          setError(result.error);
+          setContent('');
+          savedContentRef.current = '';
           useFileDirtyStore.getState().setDirty(tab.id, false);
-          setError(null);
           setLoading(false);
         });
 
@@ -143,7 +164,7 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
 
       setLoading(false);
     },
-    [tab.filePath, tab.id, tab.viewMode],
+    [fileName, isDiffTextEditable, tab.diffAfter, tab.filePath, tab.id, tab.viewMode],
   );
 
   useEffect(() => {
@@ -161,7 +182,10 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
       return;
     }
 
-    if (tab.viewMode === 'code' && contentRef.current !== savedContentRef.current) {
+    if (
+      (tab.viewMode === 'code' || isDiffTextEditable) &&
+      contentRef.current !== savedContentRef.current
+    ) {
       return;
     }
 
@@ -172,10 +196,10 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [fileExternalRevision, loadFile, tab.viewMode]);
+  }, [fileExternalRevision, isDiffTextEditable, loadFile, tab.viewMode]);
 
   const isReadOnly = tab.viewMode === 'preview';
-  const canEdit = tab.viewMode === 'code' && !isReadOnly;
+  const canEdit = (tab.viewMode === 'code' || isDiffTextEditable) && !isReadOnly;
   const fileDirPath = useMemo(
     () => tab.filePath.replace(/\\/g, '/').replace(/\/[^/]*$/, ''),
     [tab.filePath],
@@ -237,7 +261,7 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
   }, [canEdit, persistContent, tab.id]);
 
   const handleContentChange = useCallback((value: string) => {
-    setContent(value);
+    setContent((current) => (current === value ? current : value));
     setSaveError(null);
   }, []);
 
@@ -246,16 +270,43 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
   }, [persistContent]);
 
   if (tab.viewMode === 'diff') {
+    if (isDiffImage) {
+      return (
+        <GitDiffView
+          filePath={tab.filePath}
+          before={tab.diffBefore ?? ''}
+          after={tab.diffAfter ?? ''}
+          isVisible={isVisible}
+          agentPromptTurns={diffAgentPromptTurns}
+          diffRepoPath={tab.diffRepoPath}
+          diffStaged={tab.diffStaged}
+          diffUntracked={tab.diffUntracked}
+        />
+      );
+    }
+
+    if (loading) {
+      return <div className='file-view file-view__state'>Carregando arquivo...</div>;
+    }
+
+    if (error) {
+      return <div className='file-view file-view__state file-view__state--error'>{error}</div>;
+    }
+
     return (
       <GitDiffView
         filePath={tab.filePath}
         before={tab.diffBefore ?? ''}
-        after={tab.diffAfter ?? ''}
+        after={content}
         isVisible={isVisible}
         agentPromptTurns={diffAgentPromptTurns}
         diffRepoPath={tab.diffRepoPath}
         diffStaged={tab.diffStaged}
         diffUntracked={tab.diffUntracked}
+        onChange={handleContentChange}
+        onSave={handleSave}
+        saveStatus={isSaving || saveError ? (saveError ?? 'Salvando...') : null}
+        saveError={Boolean(saveError)}
       />
     );
   }

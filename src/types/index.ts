@@ -1116,6 +1116,7 @@ export interface NexusAPI {
   };
   git: {
     getStatus: (dirPath: string) => Promise<GitStatusResult>;
+    getChangeCounts: (dirPath: string) => Promise<{ total: number; byRepo: Record<string, number> }>;
     discoverRepos: (dirPath: string) => Promise<GitRepoDiscovery[]>;
     stage: (dirPath: string, paths: string[]) => Promise<GitCommandResult>;
     unstage: (dirPath: string, paths: string[]) => Promise<GitCommandResult>;

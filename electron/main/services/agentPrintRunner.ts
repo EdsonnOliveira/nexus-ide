@@ -18,6 +18,20 @@ export interface AgentPrintRunOptions {
 }
 
 const STDOUT_WATCHDOG_MS = 45_000;
+const STDOUT_IDLE_WATCHDOG_MS = 300_000;
+const AGENT_RUNNING_MARKER = path.join(os.tmpdir(), 'nexus-ide-agent-running');
+
+function syncAgentRunningMarker(running: boolean): void {
+  try {
+    if (running) {
+      fs.writeFileSync(AGENT_RUNNING_MARKER, String(Date.now()), 'utf8');
+      return;
+    }
+
+    fs.rmSync(AGENT_RUNNING_MARKER, { force: true });
+  } catch {
+  }
+}
 
 function resolveCursorAgentExecutable(): string {
   const home = os.homedir();
@@ -131,9 +145,11 @@ class AgentPrintRunner {
       cwd: resolvedCwd,
       env: { ...process.env, PATH: buildCliPathEnv() },
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
     });
 
     this.processes.set(options.paneId, child);
+    syncAgentRunningMarker(true);
 
     const startedAt = Date.now();
     // #region agent log
@@ -170,9 +186,19 @@ class AgentPrintRunner {
         this.processes.delete(options.paneId);
       }
 
+      syncAgentRunningMarker(this.processes.size > 0);
+
       try {
-        child.kill('SIGTERM');
+        if (child.pid && process.platform !== 'win32') {
+          process.kill(-child.pid, 'SIGTERM');
+        } else {
+          child.kill('SIGTERM');
+        }
       } catch {
+        try {
+          child.kill('SIGTERM');
+        } catch {
+        }
       }
 
       this.emit('agent:printDone', {
@@ -183,27 +209,47 @@ class AgentPrintRunner {
       });
     };
 
-    this.clearWatchdog(options.paneId);
-    this.watchdogs.set(
-      options.paneId,
-      setTimeout(() => {
-        if (stdoutSeen || this.processes.get(options.paneId) !== child) {
-          return;
-        }
+    const armStartupWatchdog = () => {
+      this.clearWatchdog(options.paneId);
+      this.watchdogs.set(
+        options.paneId,
+        setTimeout(() => {
+          if (stdoutSeen || this.processes.get(options.paneId) !== child) {
+            return;
+          }
 
-        const stderr = stderrBuffer.trim();
-        finishWithError(
-          stderr
-            ? `Agent sem stdout após ${Math.round(STDOUT_WATCHDOG_MS / 1000)}s. ${stderr.slice(0, 500)}`
-            : `Agent sem stdout após ${Math.round(STDOUT_WATCHDOG_MS / 1000)}s. Pare e tente de novo.`,
-        );
-      }, STDOUT_WATCHDOG_MS),
-    );
+          const stderr = stderrBuffer.trim();
+          finishWithError(
+            stderr
+              ? `Agent sem stdout após ${Math.round(STDOUT_WATCHDOG_MS / 1000)}s. ${stderr.slice(0, 500)}`
+              : `Agent sem stdout após ${Math.round(STDOUT_WATCHDOG_MS / 1000)}s. Pare e tente de novo.`,
+          );
+        }, STDOUT_WATCHDOG_MS),
+      );
+    };
+
+    const armIdleWatchdog = () => {
+      this.clearWatchdog(options.paneId);
+      this.watchdogs.set(
+        options.paneId,
+        setTimeout(() => {
+          if (this.processes.get(options.paneId) !== child || closed) {
+            return;
+          }
+
+          finishWithError(
+            `Agent sem novos eventos por ${Math.round(STDOUT_IDLE_WATCHDOG_MS / 1000)}s. Pare e tente de novo.`,
+          );
+        }, STDOUT_IDLE_WATCHDOG_MS),
+      );
+    };
+
+    armStartupWatchdog();
 
     const forward = (chunk: Buffer, fromStdout: boolean) => {
       if (fromStdout) {
         stdoutSeen = true;
-        this.clearWatchdog(options.paneId);
+        armIdleWatchdog();
       }
 
       this.emit('agent:printData', {
@@ -229,6 +275,8 @@ class AgentPrintRunner {
       if (this.processes.get(options.paneId) === child) {
         this.processes.delete(options.paneId);
       }
+
+      syncAgentRunningMarker(this.processes.size > 0);
 
       const stderr = stderrBuffer.trim();
       const error =
@@ -276,6 +324,7 @@ class AgentPrintRunner {
     const child = this.processes.get(paneId);
 
     if (!child) {
+      syncAgentRunningMarker(this.processes.size > 0);
       return;
     }
 
@@ -288,16 +337,47 @@ class AgentPrintRunner {
     });
     // #endregion
 
-    child.kill('SIGTERM');
+    const pid = child.pid;
+
+    try {
+      if (pid && process.platform !== 'win32') {
+        process.kill(-pid, 'SIGTERM');
+      } else {
+        child.kill('SIGTERM');
+      }
+    } catch {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+      }
+    }
+
     setTimeout(() => {
-      if (!child.killed) {
-        child.kill('SIGKILL');
+      if (child.killed) {
+        return;
+      }
+
+      try {
+        if (pid && process.platform !== 'win32') {
+          process.kill(-pid, 'SIGKILL');
+        } else {
+          child.kill('SIGKILL');
+        }
+      } catch {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+        }
       }
     }, 400);
   }
 
   isRunning(paneId: string): boolean {
     return this.processes.has(paneId);
+  }
+
+  hasRunning(): boolean {
+    return this.processes.size > 0;
   }
 
   stopAll(): void {

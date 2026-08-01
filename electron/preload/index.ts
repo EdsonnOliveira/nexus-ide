@@ -210,6 +210,11 @@ const nexusApi = {
   },
   git: {
     getStatus: (dirPath: string) => ipcRenderer.invoke('git:getStatus', dirPath),
+    getChangeCounts: (dirPath: string) =>
+      ipcRenderer.invoke('git:getChangeCounts', dirPath) as Promise<{
+        total: number;
+        byRepo: Record<string, number>;
+      }>,
     discoverRepos: (dirPath: string) => ipcRenderer.invoke('git:discoverRepos', dirPath),
     stage: (dirPath: string, paths: string[]) => ipcRenderer.invoke('git:stage', dirPath, paths),
     unstage: (dirPath: string, paths: string[]) =>

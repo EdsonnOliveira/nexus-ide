@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
 import { useGitChangeCount } from '@/hooks/useGitChangeCount';
+import { useProjectStore } from '@/stores/useProjectStore';
 import type { Project } from '@/types';
 import { getProjectPingTone } from '@/utils/projectPingTone';
 import { countProjectTasksForToolbarBadge } from '@/utils/taskFilters';
@@ -81,7 +82,12 @@ function ProjectListItemComponent({
   }, []);
 
   const showLogo = Boolean(logoSrc) && !logoFailed;
-  const gitChangeCount = useGitChangeCount(project.path);
+  const projectsMigrated = useProjectStore((state) => state.projectsMigrated);
+  const gitChangeCount = useGitChangeCount(project.path, {
+    enabled: projectsMigrated,
+    watch: isActive,
+    deferMs: isActive ? 250 : 900 + enterIndex * 250,
+  });
   const openTaskCount = useMemo(
     () =>
       countProjectTasksForToolbarBadge(project.tasks ?? [], {

@@ -10879,6 +10879,94 @@ input {
   white-space: nowrap;
 }
 
+.git-diff-view__prompt-chip {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 220px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-secondary);
+  transition:
+    background var(--motion-out) var(--motion-ease-out),
+    color var(--motion-out) var(--motion-ease-out);
+}
+
+.git-diff-view__prompt-chip:hover:not(:disabled) {
+  background: var(--bg-tab-hover);
+  color: var(--text-primary);
+}
+
+.git-diff-view__viewport--editable {
+  display: flex;
+  flex-direction: column;
+}
+
+.git-diff-view__viewport--editable .file-view__editor {
+  flex: 1;
+  min-height: 0;
+}
+
+.git-diff-editor__line--add {
+  background: rgba(34, 197, 94, 0.14);
+}
+
+.git-diff-editor__removed-block {
+  background: rgba(248, 113, 113, 0.14);
+  border-left: 2px solid rgba(248, 113, 113, 0.55);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.git-diff-editor__removed-line {
+  padding: 0 8px 0 12px;
+  color: rgba(252, 165, 165, 0.95);
+  text-decoration: line-through;
+  text-decoration-color: rgba(252, 165, 165, 0.45);
+}
+
+.file-view__editor--diff .cm-changedLine {
+  background: rgba(34, 197, 94, 0.14);
+}
+
+.file-view__editor--diff .cm-changedText {
+  background: rgba(34, 197, 94, 0.28);
+}
+
+.file-view__editor--diff .cm-deletedChunk {
+  background: rgba(248, 113, 113, 0.12);
+  border-left: 2px solid rgba(248, 113, 113, 0.55);
+}
+
+.file-view__editor--diff .cm-deletedChunk .cm-deletedText,
+.file-view__editor--diff .cm-deletedLine {
+  color: rgba(252, 165, 165, 0.95);
+  text-decoration: line-through;
+  text-decoration-color: rgba(252, 165, 165, 0.45);
+  background: transparent;
+}
+
+.file-view__editor--diff .cm-changeGutter .cm-changedLineGutter {
+  background: rgba(34, 197, 94, 0.75);
+}
+
+.file-view__editor--diff .cm-deletedLineGutter {
+  background: rgba(248, 113, 113, 0.75);
+}
+
+.file-view__editor--diff .cm-collapsedLines {
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+}
+
 .git-diff-view__copy-path {
   flex-shrink: 0;
   width: 26px;

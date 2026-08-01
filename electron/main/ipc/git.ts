@@ -10,6 +10,7 @@ import {
   getGitFileDiffSides,
   getGitFileDiffImageSides,
   getGitStatus,
+  getProjectGitChangeCounts,
   listGitBranches,
   listGitStashes,
   pullGit,
@@ -29,6 +30,10 @@ export function registerGitHandlers(getWindow: () => Electron.BrowserWindow | nu
 
   ipcMain.handle('git:getStatus', async (_, dirPath: string) =>
     getGitStatus(resolveDirectoryPath(dirPath)),
+  );
+
+  ipcMain.handle('git:getChangeCounts', async (_, dirPath: string) =>
+    getProjectGitChangeCounts(resolveDirectoryPath(dirPath)),
   );
 
   ipcMain.handle('git:discoverRepos', async (_, dirPath: string) =>

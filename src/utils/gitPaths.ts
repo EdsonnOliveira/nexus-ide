@@ -148,6 +148,14 @@ export function toGitRelativePath(repoPath: string, filePath: string): string {
       return normalizedInput.slice(markerIndex + repoMarker.length);
     }
 
+    const markerMatch = normalizedInput.match(
+      /(?:^|\/)((?:src|app|apps|packages|electron|lib|components|pages|screens|hooks|utils|services)\/.+)$/i,
+    );
+
+    if (markerMatch?.[1]) {
+      return markerMatch[1];
+    }
+
     return pathBasenameFromSegments(normalizedInput);
   }
 

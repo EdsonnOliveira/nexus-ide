@@ -2,7 +2,6 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { TerminalCommandHint } from './terminalHints';
-import { findProjectRoot } from './terminalHints';
 
 const MAX_SKILL_HINTS = 14;
 const SKILL_BADGE_COLOR = '#8b5cf6';
@@ -71,23 +70,40 @@ function collectSkillsFromDirectory(
   }
 }
 
+function collectProjectSkillsWalkingUp(
+  startDir: string,
+  home: string,
+  seen: Set<string>,
+  hints: TerminalCommandHint[],
+): void {
+  let current = path.resolve(startDir);
+  const resolvedHome = path.resolve(home);
+
+  while (true) {
+    if (current === resolvedHome) {
+      break;
+    }
+
+    collectSkillsFromDirectory(path.join(current, '.cursor', 'skills'), seen, hints, 'user');
+
+    const parent = path.dirname(current);
+
+    if (parent === current) {
+      break;
+    }
+
+    current = parent;
+  }
+}
+
 export function getAgentSkillHints(cwd: string): TerminalCommandHint[] {
   const resolvedCwd = path.resolve(cwd);
   const seen = new Set<string>();
   const userHints: TerminalCommandHint[] = [];
   const builtinHints: TerminalCommandHint[] = [];
   const home = os.homedir();
-  const projectRoot = findProjectRoot(resolvedCwd);
 
-  if (projectRoot) {
-    collectSkillsFromDirectory(
-      path.join(projectRoot, '.cursor', 'skills'),
-      seen,
-      userHints,
-      'user',
-    );
-  }
-
+  collectProjectSkillsWalkingUp(resolvedCwd, home, seen, userHints);
   collectSkillsFromDirectory(path.join(home, '.cursor', 'skills'), seen, userHints, 'user');
   collectSkillsFromDirectory(
     path.join(home, '.cursor', 'skills-cursor'),

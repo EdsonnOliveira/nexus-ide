@@ -759,11 +759,19 @@ export function useTabActions(): TabStoreActions {
 
       const staged = options.staged;
       const untracked = options.untracked ?? false;
-      const { repoPath, gitRelativePath, absoluteFilePath } = await resolveGitDiffContext(
+      const resolvedInputPath =
+        filePath.includes('…') || filePath.includes('...')
+          ? (await import('@/utils/agentTranscriptParser')).resolveAgentActivityFilePath(
+              project.path,
+              filePath,
+            ) ?? filePath
+          : filePath;
+      const resolvedContext = await resolveGitDiffContext(
         project.path,
-        filePath,
+        resolvedInputPath,
         options.repoPath,
       );
+      let { repoPath, gitRelativePath, absoluteFilePath } = resolvedContext;
       const agentPrompt =
         options.agentPrompt ??
         resolveAgentGitPromptForFile(project.id, absoluteFilePath, repoPath) ??
@@ -772,13 +780,23 @@ export function useTabActions(): TabStoreActions {
         staged,
         untracked,
       });
-      const existing = findDiffTabByPath(project.tabs, absoluteFilePath, { staged, untracked });
+
+      if (sides.path && sides.path !== gitRelativePath) {
+        gitRelativePath = sides.path;
+        absoluteFilePath = `${repoPath.replace(/\\/g, '/').replace(/\/+$/, '')}/${sides.path}`;
+      }
+
+      const existing =
+        findDiffTabByPath(project.tabs, absoluteFilePath, { staged, untracked }) ??
+        findDiffTabByPath(project.tabs, resolvedContext.absoluteFilePath, { staged, untracked });
 
       if (existing) {
         const refreshedTabs = updatePaneInTabs(project.tabs, existing.id, (entry) =>
           entry.type === 'file' && entry.viewMode === 'diff'
             ? {
                 ...entry,
+                filePath: absoluteFilePath,
+                title: `${gitRelativePath.split('/').pop() ?? gitRelativePath} (diff)`,
                 diffBefore: sides.before,
                 diffAfter: sides.after,
                 diffRepoPath: repoPath,

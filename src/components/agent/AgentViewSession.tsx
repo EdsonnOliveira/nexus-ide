@@ -332,6 +332,20 @@ function AgentViewSessionComponent({
 
   const handleSubmit = useCallback(
     (value: string) => {
+      setIsTranscriptAtBottom(true);
+      transcriptScrollRef.current?.scrollToBottom({ smooth: false });
+
+      window.requestAnimationFrame(() => {
+        transcriptScrollRef.current?.scrollToBottom({ smooth: false });
+        window.requestAnimationFrame(() => {
+          transcriptScrollRef.current?.scrollToBottom({ smooth: false });
+        });
+      });
+
+      window.setTimeout(() => {
+        transcriptScrollRef.current?.scrollToBottom({ smooth: false });
+      }, 120);
+
       return submitPrompt(value);
     },
     [submitPrompt],

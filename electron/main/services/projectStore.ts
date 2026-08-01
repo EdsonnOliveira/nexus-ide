@@ -538,20 +538,22 @@ class ProjectStoreService {
   }
 
   select(id: string): void {
-    const state = this.readState();
-    const project = state.projects.find((item) => item.id === id);
+    const store = this.getStore();
+    const projects = store.get('projects') ?? [];
+    const project = projects.find((item) => item.id === id);
 
     if (!project) {
       return;
     }
 
+    const activeWorkspaceId = store.get('activeWorkspaceId') ?? null;
     let activeProjectIdByWorkspace = rememberProjectForWorkspace(
-      state.activeProjectIdByWorkspace,
+      store.get('activeProjectIdByWorkspace') ?? {},
       project.workspaceId,
       id,
     );
 
-    if (state.activeWorkspaceId === null) {
+    if (activeWorkspaceId === null) {
       activeProjectIdByWorkspace = rememberProjectForWorkspace(
         activeProjectIdByWorkspace,
         null,
@@ -560,16 +562,13 @@ class ProjectStoreService {
     } else {
       activeProjectIdByWorkspace = rememberProjectForWorkspace(
         activeProjectIdByWorkspace,
-        state.activeWorkspaceId,
+        activeWorkspaceId,
         id,
       );
     }
 
-    this.writeState({
-      ...state,
-      activeProjectId: id,
-      activeProjectIdByWorkspace,
-    });
+    store.set('activeProjectId', id);
+    store.set('activeProjectIdByWorkspace', activeProjectIdByWorkspace);
   }
 
   clearActiveProject(): void {

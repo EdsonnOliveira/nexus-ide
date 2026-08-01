@@ -1,7 +1,9 @@
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { buildCliPathEnv } from '../utils/cliPathEnv';
 import type { TerminalCommandHint } from './terminalHints';
 
+const execFileAsync = promisify(execFile);
 const MAX_MODEL_HINTS = 8;
 
 type ModelBadgeIcon = NonNullable<TerminalCommandHint['badgeIcon']>;
@@ -54,6 +56,7 @@ const MODEL_PRIORITY_PATTERNS = [
 
 let cachedModels: AgentModelEntry[] | null = null;
 let cacheTimestamp = 0;
+let refreshInFlight: Promise<void> | null = null;
 
 const CACHE_TTL_MS = 60_000;
 
@@ -84,6 +87,41 @@ function parseModelsOutput(output: string): AgentModelEntry[] {
   return models;
 }
 
+function scheduleModelsRefresh(): void {
+  if (refreshInFlight) {
+    return;
+  }
+
+  refreshInFlight = (async () => {
+    try {
+      const { stdout } = await execFileAsync('cursor-agent', ['models'], {
+        encoding: 'utf8',
+        env: { ...process.env, PATH: buildCliPathEnv() },
+        timeout: 10_000,
+        maxBuffer: 2 * 1024 * 1024,
+      });
+
+      const parsed = parseModelsOutput(stdout);
+
+      if (parsed.length > 0) {
+        cachedModels = parsed;
+      } else if (!cachedModels) {
+        cachedModels = FALLBACK_MODELS;
+      }
+
+      cacheTimestamp = Date.now();
+    } catch {
+      if (!cachedModels) {
+        cachedModels = FALLBACK_MODELS;
+      }
+
+      cacheTimestamp = Date.now();
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+}
+
 function loadAvailableModels(): AgentModelEntry[] {
   const now = Date.now();
 
@@ -91,26 +129,8 @@ function loadAvailableModels(): AgentModelEntry[] {
     return cachedModels;
   }
 
-  try {
-    const output = execFileSync('cursor-agent', ['models'], {
-      encoding: 'utf8',
-      env: { ...process.env, PATH: buildCliPathEnv() },
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 10_000,
-    });
-
-    const parsed = parseModelsOutput(output);
-
-    if (parsed.length > 0) {
-      cachedModels = parsed;
-      cacheTimestamp = now;
-      return parsed;
-    }
-  } catch {
-    return FALLBACK_MODELS;
-  }
-
-  return FALLBACK_MODELS;
+  scheduleModelsRefresh();
+  return cachedModels ?? FALLBACK_MODELS;
 }
 
 function prioritizeModels(models: AgentModelEntry[]): AgentModelEntry[] {

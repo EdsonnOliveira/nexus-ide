@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import {
   existsSync,
   readFileSync,
@@ -94,11 +94,21 @@ const discoveryCache = new Map<string, { expiresAt: number; repos: GitRepoDiscov
 const CACHE_TTL_MS = 5_000;
 const DISCOVERY_CACHE_TTL_MS = 30_000;
 const WATCH_DEBOUNCE_MS = 1_500;
-const MAX_GIT_DISCOVERY_DEPTH = 6;
+const MAX_GIT_DISCOVERY_DEPTH = 3;
+const MAX_NESTED_GIT_REPOS = 24;
 const MAX_UNTRACKED_LINE_COUNT_BYTES = 128 * 1024;
 const MAX_UNTRACKED_LINE_STATS = 80;
+const MAX_UNTRACKED_EXPAND_FILES = 200;
 const MAX_DIFF_TEXT_CHARS = 1_500_000;
 const MAX_GIT_BLOB_BUFFER_BYTES = MAX_IMAGE_DATA_URL_BYTES;
+const lightChangeCountCache = new Map<string, { expiresAt: number; byRepo: Record<string, number> }>();
+const lightChangeCountInFlight = new Map<
+  string,
+  Promise<{ total: number; byRepo: Record<string, number> }>
+>();
+const LIGHT_CHANGE_COUNT_TTL_MS = 4_000;
+const LIGHT_CHANGE_COUNT_TIMEOUT_MS = 15_000;
+const LIGHT_CHANGE_COUNT_CONCURRENCY = 4;
 
 function buildGitPorcelainStatusArgs(): string[] {
   return ['status', '--porcelain=1', '-b', '--untracked-files=all'];
@@ -179,59 +189,11 @@ function resolveRepo(dirPath: string): string {
   return resolveDirectoryPath(dirPath);
 }
 
-function resolveGitRepoRoot(dirPath: string): string {
-  const resolved = resolveRepo(dirPath);
-
-  if (isGitRepo(resolved)) {
-    return resolved;
-  }
-
-  try {
-    const output = execFileSync('git', ['-C', resolved, 'rev-parse', '--show-toplevel'], {
-      encoding: 'utf8',
-      timeout: 3000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-
-    if (output) {
-      return output;
-    }
-  } catch {
-    const nestedRepos = discoverGitRepos(resolved);
-
-    if (nestedRepos.length === 1) {
-      return nestedRepos[0].path;
-    }
-  }
-
-  const nestedRepos = discoverGitRepos(resolved);
-
-  if (nestedRepos.length === 1) {
-    return nestedRepos[0].path;
-  }
-
-  return resolved;
-}
-
 function resolveGitRepoForFilePath(dirPath: string, filePath: string): string {
   const resolved = resolveRepo(dirPath);
 
   if (isGitRepo(resolved)) {
     return resolved;
-  }
-
-  try {
-    const output = execFileSync('git', ['-C', resolved, 'rev-parse', '--show-toplevel'], {
-      encoding: 'utf8',
-      timeout: 3000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-
-    if (output) {
-      return output;
-    }
-  } catch {
-    // fall through to nested repo discovery
   }
 
   const repos = discoverGitRepos(resolved);
@@ -285,19 +247,56 @@ function shouldSkipGitDiscoveryDir(name: string): boolean {
   return GIT_DISCOVERY_IGNORED_DIRS.has(name);
 }
 
-function readGitBranchForRepo(resolved: string): string | null {
-  try {
-    const output = execFileSync('git', ['-C', resolved, 'rev-parse', '--abbrev-ref', 'HEAD'], {
-      encoding: 'utf8',
-      timeout: 3000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
+function resolveGitDir(repoPath: string): string | null {
+  const gitPath = path.join(repoPath, '.git');
 
-    if (!output || output === 'HEAD') {
+  if (!existsSync(gitPath)) {
+    return null;
+  }
+
+  try {
+    const gitStats = statSync(gitPath);
+
+    if (gitStats.isDirectory()) {
+      return gitPath;
+    }
+
+    const content = readFileSync(gitPath, 'utf8').trim();
+    const match = content.match(/^gitdir:\s*(.+)$/i);
+
+    if (!match?.[1]) {
       return null;
     }
 
-    return output;
+    const gitDir = match[1].trim();
+    return path.isAbsolute(gitDir) ? gitDir : path.resolve(repoPath, gitDir);
+  } catch {
+    return null;
+  }
+}
+
+function readGitBranchForRepo(resolved: string): string | null {
+  const gitDir = resolveGitDir(resolved);
+
+  if (!gitDir) {
+    return null;
+  }
+
+  try {
+    const head = readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
+
+    if (!head.startsWith('ref:')) {
+      return null;
+    }
+
+    const ref = head.slice(4).trim();
+
+    if (ref.startsWith('refs/heads/')) {
+      return ref.slice('refs/heads/'.length) || null;
+    }
+
+    const segments = ref.split('/');
+    return segments[segments.length - 1] || null;
   } catch {
     return null;
   }
@@ -308,7 +307,7 @@ function findNestedGitRepos(projectPath: string): GitRepoDiscovery[] {
   const repos: GitRepoDiscovery[] = [];
   const queue: Array<{ dir: string; depth: number }> = [{ dir: resolved, depth: 0 }];
 
-  while (queue.length > 0) {
+  while (queue.length > 0 && repos.length < MAX_NESTED_GIT_REPOS) {
     const current = queue.shift();
 
     if (!current) {
@@ -338,6 +337,11 @@ function findNestedGitRepos(projectPath: string): GitRepoDiscovery[] {
           relativePath,
           branch: readGitBranchForRepo(childPath),
         });
+
+        if (repos.length >= MAX_NESTED_GIT_REPOS) {
+          break;
+        }
+
         continue;
       }
 
@@ -350,6 +354,23 @@ function findNestedGitRepos(projectPath: string): GitRepoDiscovery[] {
   return repos.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 }
 
+function computeDiscoverGitRepos(resolved: string): GitRepoDiscovery[] {
+  const nested = findNestedGitRepos(resolved);
+
+  if (!isGitRepo(resolved)) {
+    return nested;
+  }
+
+  return [
+    {
+      path: resolved,
+      relativePath: '.',
+      branch: readGitBranchForRepo(resolved),
+    },
+    ...nested,
+  ].sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+}
+
 export function discoverGitRepos(projectPath: string): GitRepoDiscovery[] {
   const resolved = resolveRepo(projectPath);
   const now = Date.now();
@@ -359,19 +380,7 @@ export function discoverGitRepos(projectPath: string): GitRepoDiscovery[] {
     return cached.repos;
   }
 
-  const repos: GitRepoDiscovery[] = [];
-
-  if (isGitRepo(resolved)) {
-    repos.push({
-      path: resolved,
-      relativePath: '.',
-      branch: readGitBranchForRepo(resolved),
-    });
-  }
-
-  repos.push(...findNestedGitRepos(resolved));
-
-  const sorted = repos.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  const sorted = computeDiscoverGitRepos(resolved);
   discoveryCache.set(resolved, { expiresAt: now + DISCOVERY_CACHE_TTL_MS, repos: sorted });
 
   return sorted;
@@ -384,13 +393,20 @@ function resolveProjectGitRepo(projectPath: string): string | null {
     return resolved;
   }
 
-  return findNestedGitRepos(resolved)[0]?.path ?? null;
+  return discoverGitRepos(resolved)[0]?.path ?? null;
 }
 
 function invalidateCache(dirPath: string): void {
   const resolved = resolveRepo(dirPath);
   statusCache.delete(resolved);
   discoveryCache.delete(resolved);
+  lightChangeCountCache.delete(resolved);
+
+  for (const key of lightChangeCountCache.keys()) {
+    if (resolved.startsWith(`${key}/`) || key.startsWith(`${resolved}/`)) {
+      lightChangeCountCache.delete(key);
+    }
+  }
 }
 
 function invalidateCacheAndNotify(dirPath: string): void {
@@ -600,7 +616,7 @@ function collectUntrackedFilesUnderDirectory(repoPath: string, directoryPath: st
   const files: string[] = [];
   const queue: string[] = [absoluteDir];
 
-  while (queue.length > 0) {
+  while (queue.length > 0 && files.length < MAX_UNTRACKED_EXPAND_FILES) {
     const currentDir = queue.shift();
 
     if (!currentDir) {
@@ -616,6 +632,10 @@ function collectUntrackedFilesUnderDirectory(repoPath: string, directoryPath: st
     }
 
     for (const entry of entries) {
+      if (files.length >= MAX_UNTRACKED_EXPAND_FILES) {
+        break;
+      }
+
       if (shouldSkipGitDiscoveryDir(entry.name)) {
         continue;
       }
@@ -645,27 +665,132 @@ function expandUntrackedDirectoryEntries(
   untracked: GitChangeEntry[],
 ): GitChangeEntry[] {
   const expanded: GitChangeEntry[] = [];
+  let remaining = MAX_UNTRACKED_EXPAND_FILES;
 
   for (const entry of untracked) {
+    if (remaining <= 0) {
+      break;
+    }
+
     if (!isUntrackedDirectoryEntry(repoPath, entry.path)) {
       expanded.push(entry);
+      remaining -= 1;
       continue;
     }
 
     const normalized = entry.path.replace(/\\/g, '/').replace(/\/+$/, '');
-    const files = collectUntrackedFilesUnderDirectory(repoPath, normalized);
+    const files = collectUntrackedFilesUnderDirectory(repoPath, normalized).slice(0, remaining);
 
     if (files.length === 0) {
       expanded.push({ ...entry, path: normalized });
+      remaining -= 1;
       continue;
     }
 
     for (const filePath of files) {
       expanded.push({ path: filePath, status: 'untracked' });
+      remaining -= 1;
     }
   }
 
   return expanded;
+}
+
+async function countPorcelainChanges(repoPath: string): Promise<number> {
+  if (!isGitRepo(repoPath)) {
+    return 0;
+  }
+
+  try {
+    const { stdout: output } = await execFileAsync(
+      'git',
+      [
+        '-C',
+        repoPath,
+        'status',
+        '--porcelain=1',
+        '--untracked-files=normal',
+        '--',
+        '.',
+        ...Array.from(GIT_DISCOVERY_IGNORED_DIRS).map((segment) => `:(exclude)${segment}/**`),
+      ],
+      {
+        encoding: 'utf8',
+        maxBuffer: 10 * 1024 * 1024,
+        timeout: LIGHT_CHANGE_COUNT_TIMEOUT_MS,
+      },
+    );
+
+    let count = 0;
+
+    for (const line of output.split('\n')) {
+      if (!line || line.startsWith('##')) {
+        continue;
+      }
+
+      const entryPath = line.startsWith('??')
+        ? line.slice(3).trim()
+        : line.length >= 3
+          ? line.slice(3).trim().split(' -> ').pop()?.trim() ?? ''
+          : '';
+
+      if (!entryPath || isGitStatusExcludedPath(entryPath)) {
+        continue;
+      }
+
+      count += 1;
+    }
+
+    return count;
+  } catch {
+    return 0;
+  }
+}
+
+export async function getProjectGitChangeCounts(
+  projectPath: string,
+): Promise<{ total: number; byRepo: Record<string, number> }> {
+  const resolved = resolveRepo(projectPath);
+  const now = Date.now();
+  const cached = lightChangeCountCache.get(resolved);
+
+  if (cached && cached.expiresAt > now) {
+    const total = Object.values(cached.byRepo).reduce((sum, count) => sum + count, 0);
+    return { total, byRepo: cached.byRepo };
+  }
+
+  const existing = lightChangeCountInFlight.get(resolved);
+
+  if (existing) {
+    return existing;
+  }
+
+  const request = (async () => {
+    const repos = discoverGitRepos(resolved);
+    const entries = await mapWithConcurrency(
+      repos,
+      LIGHT_CHANGE_COUNT_CONCURRENCY,
+      async (repo) => [repo.path, await countPorcelainChanges(repo.path)] as const,
+    );
+    const byRepo = Object.fromEntries(entries);
+    const total = Object.values(byRepo).reduce((sum, count) => sum + count, 0);
+    lightChangeCountCache.set(resolved, {
+      expiresAt: Date.now() + LIGHT_CHANGE_COUNT_TTL_MS,
+      byRepo,
+    });
+
+    return { total, byRepo };
+  })();
+
+  lightChangeCountInFlight.set(resolved, request);
+
+  try {
+    return await request;
+  } finally {
+    if (lightChangeCountInFlight.get(resolved) === request) {
+      lightChangeCountInFlight.delete(resolved);
+    }
+  }
 }
 
 function parseStatusOutput(output: string, repoPath: string): GitStatusResult {
@@ -1118,10 +1243,100 @@ export async function commitGit(dirPath: string, message: string): Promise<GitCo
   }
 }
 
-function resolveGitFileInRepo(
+function extractGitPathMarkerSuffix(filePath: string): string | null {
+  const normalized = filePath.replace(/\\/g, '/');
+  const markerMatch = normalized.match(
+    /(?:^|\/)((?:src|app|apps|packages|electron|lib|components|pages|screens|hooks|utils|services)\/.+)$/i,
+  );
+  return markerMatch?.[1] ?? null;
+}
+
+async function listGitRelativePathsByBasename(
+  repoRoot: string,
+  fileName: string,
+): Promise<string[]> {
+  const matches = new Set<string>();
+
+  try {
+    const statusOutput = await runGit(repoRoot, [
+      'status',
+      '--porcelain',
+      '-uall',
+      '--',
+      `*${fileName}`,
+    ]);
+
+    for (const line of statusOutput.split('\n')) {
+      if (!line || line.length < 4) {
+        continue;
+      }
+
+      let entryPath = line.slice(3).trim().replace(/\\/g, '/');
+
+      if (entryPath.includes(' -> ')) {
+        entryPath = entryPath.split(' -> ').pop()?.trim() ?? entryPath;
+      }
+
+      entryPath = entryPath.replace(/^"+|"+$/g, '');
+
+      if (entryPath === fileName || entryPath.endsWith(`/${fileName}`)) {
+        matches.add(entryPath);
+      }
+    }
+  } catch {
+    // fall through
+  }
+
+  if (matches.size > 0) {
+    return [...matches];
+  }
+
+  try {
+    const trackedOutput = await runGit(repoRoot, [
+      'ls-files',
+      '--',
+      `**/${fileName}`,
+      fileName,
+    ]);
+
+    for (const line of trackedOutput.split('\n')) {
+      const entryPath = line.trim().replace(/\\/g, '/');
+
+      if (entryPath === fileName || entryPath.endsWith(`/${fileName}`)) {
+        matches.add(entryPath);
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return [...matches];
+}
+
+function pickGitRelativePathCandidate(candidates: string[]): string | null {
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  if (candidates.length === 1) {
+    return candidates[0];
+  }
+
+  const preferred = candidates.filter((candidate) =>
+    /(?:^|\/)(?:src|app|apps|packages|electron|lib|components|pages|screens)\//i.test(candidate),
+  );
+
+  if (preferred.length === 1) {
+    return preferred[0];
+  }
+
+  return [...candidates].sort((left, right) => right.length - left.length)[0] ?? null;
+}
+
+async function resolveGitFileInRepo(
   repoRoot: string,
   filePath: string,
-): { relativePath: string; absolutePath: string } {
+): Promise<{ relativePath: string; absolutePath: string }> {
   const resolvedRoot = path.resolve(repoRoot);
   const normalizedInput = filePath.replace(/\\/g, '/');
 
@@ -1137,10 +1352,38 @@ function resolveGitFileInRepo(
     relativePath = path.relative(resolvedRoot, absolutePath).replace(/\\/g, '/');
   }
 
-  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
-    const fileName = path.basename(normalizedInput);
-    relativePath = fileName;
-    absolutePath = path.resolve(resolvedRoot, fileName);
+  const needsRecovery =
+    relativePath.startsWith('..') ||
+    path.isAbsolute(relativePath) ||
+    !existsSync(absolutePath) ||
+    !relativePath.includes('/');
+
+  if (needsRecovery) {
+    const markerSuffix = extractGitPathMarkerSuffix(normalizedInput);
+
+    if (markerSuffix) {
+      const markerAbsolute = path.resolve(resolvedRoot, markerSuffix);
+
+      if (existsSync(markerAbsolute) || !relativePath.includes('/')) {
+        relativePath = markerSuffix;
+        absolutePath = markerAbsolute;
+      }
+    }
+
+    if (!existsSync(absolutePath) || !relativePath.includes('/')) {
+      const fileName = path.basename(normalizedInput);
+      const recovered = pickGitRelativePathCandidate(
+        await listGitRelativePathsByBasename(resolvedRoot, fileName),
+      );
+
+      if (recovered) {
+        relativePath = recovered;
+        absolutePath = path.resolve(resolvedRoot, relativePath);
+      } else if (!existsSync(absolutePath)) {
+        relativePath = fileName;
+        absolutePath = path.resolve(resolvedRoot, fileName);
+      }
+    }
   }
 
   return { relativePath, absolutePath };
@@ -1213,7 +1456,7 @@ export async function getGitDiff(
   staged: boolean,
 ): Promise<GitDiffResult> {
   const resolved = resolveRepo(dirPath);
-  const { relativePath } = resolveGitFileInRepo(resolved, filePath);
+  const { relativePath } = await resolveGitFileInRepo(resolved, filePath);
   const args = staged ? ['diff', '--cached', '--', relativePath] : ['diff', '--', relativePath];
   const patch = await runGit(resolved, args);
 
@@ -1226,7 +1469,7 @@ export async function getGitFileDiffSides(
   options: { staged: boolean; untracked?: boolean },
 ): Promise<GitFileDiffSidesResult> {
   const resolved = resolveGitRepoForFilePath(dirPath, filePath);
-  const { relativePath, absolutePath } = resolveGitFileInRepo(resolved, filePath);
+  const { relativePath, absolutePath } = await resolveGitFileInRepo(resolved, filePath);
 
   if (options.untracked) {
     return {
@@ -1266,7 +1509,7 @@ export async function getGitFileDiffImageSides(
   options: { staged: boolean; untracked?: boolean },
 ): Promise<GitFileDiffImageSidesResult> {
   const resolved = resolveGitRepoForFilePath(dirPath, filePath);
-  const { relativePath, absolutePath } = resolveGitFileInRepo(resolved, filePath);
+  const { relativePath, absolutePath } = await resolveGitFileInRepo(resolved, filePath);
 
   if (options.untracked) {
     const afterBuffer = await readWorktreeFileBuffer(absolutePath);
@@ -1491,11 +1734,11 @@ export function watchGitRepo(dirPath: string): void {
   }
 
   const metaWatchers: FSWatcher[] = [];
-  const gitDir = path.join(resolved, '.git');
+  const resolvedGitDir = resolveGitDir(resolved);
 
-  if (existsSync(gitDir) && statSync(gitDir).isDirectory()) {
+  if (resolvedGitDir && existsSync(resolvedGitDir) && statSync(resolvedGitDir).isDirectory()) {
     for (const metaFile of ['HEAD', 'index'] as const) {
-      const metaPath = path.join(gitDir, metaFile);
+      const metaPath = path.join(resolvedGitDir, metaFile);
 
       if (!existsSync(metaPath) || !statSync(metaPath).isFile()) {
         continue;

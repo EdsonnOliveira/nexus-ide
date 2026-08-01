@@ -48,6 +48,7 @@ import {
   createWebStreamJsonState,
   extractStreamChunk,
   feedWebStreamJson,
+  isTrivialWebResponseText,
   looksLikeMidProgressWebResponse,
   type WebStreamJsonState,
 } from './webStreamJson';
@@ -940,7 +941,20 @@ export function WebMaestroHome() {
       return false;
     }
 
-    if (!looksLikeMidProgressWebResponse(resolveLastWebAgentResponse(agent))) {
+    const lastResponse = resolveLastWebAgentResponse(agent);
+    const priorMidProgress = [...(agent.turns[agent.turns.length - 1]?.activities ?? [])]
+      .filter(
+        (entry) =>
+          entry.kind === 'response' &&
+          entry.label.trim() &&
+          entry.label.trim() !== lastResponse,
+      )
+      .some((entry) => looksLikeMidProgressWebResponse(entry.label));
+    const shouldContinue =
+      looksLikeMidProgressWebResponse(lastResponse) ||
+      (isTrivialWebResponseText(lastResponse) && priorMidProgress);
+
+    if (!shouldContinue) {
       return false;
     }
 

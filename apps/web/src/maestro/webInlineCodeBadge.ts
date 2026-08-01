@@ -59,6 +59,10 @@ function resolveInlineCodeBadgeTone(raw: string): InlineCodeBadgeTone {
     return 'type';
   }
 
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
+    return 'string';
+  }
+
   if (/^[a-z0-9]+(?:-[a-z0-9]+)+$/.test(token)) {
     return 'path';
   }

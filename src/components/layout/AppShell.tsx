@@ -154,6 +154,7 @@ function AppShellComponent() {
   ]);
   const gitChangeCount = useGitChangeCount(
     projectsMigrated ? (activeProject?.path ?? null) : null,
+    { watch: false, deferMs: 250 },
   );
   const activeProjectPath = activeProject?.path ?? null;
   const { openFileTab, openFilePreviewTab, openFileCodeTab, openDiffTab, openBrowserTab, selectPane } =
@@ -293,18 +294,26 @@ function AppShellComponent() {
     }
 
     const unsubscribe = window.nexus.onFlushSession(() => {
-      const timeoutId = window.setTimeout(() => {
+      let completed = false;
+      let timeoutId = 0;
+
+      const finish = () => {
+        if (completed) {
+          return;
+        }
+
+        completed = true;
+        window.clearTimeout(timeoutId);
         void window.nexus.session.flushComplete();
-      }, 4000);
+      };
+
+      timeoutId = window.setTimeout(finish, 4000);
 
       void Promise.all([flushTerminalSessionsNow(), flushAgentGitGroupsNow()])
         .catch((error) => {
           console.error('[app-shell] flush session failed', error);
         })
-        .finally(() => {
-          window.clearTimeout(timeoutId);
-          void window.nexus.session.flushComplete();
-        });
+        .finally(finish);
     });
 
     return unsubscribe;
@@ -355,7 +364,14 @@ function AppShellComponent() {
       return;
     }
 
-    void window.nexus.files.watchProject(activeProjectPath);
+    let cancelled = false;
+    const watchTimer = window.setTimeout(() => {
+      if (cancelled) {
+        return;
+      }
+
+      void window.nexus.files.watchProject(activeProjectPath);
+    }, 800);
 
     const unsubscribe = window.nexus.files.onProjectChange((payload) => {
       if (payload.changedPath) {
@@ -364,6 +380,8 @@ function AppShellComponent() {
     });
 
     return () => {
+      cancelled = true;
+      window.clearTimeout(watchTimer);
       unsubscribe();
       void window.nexus.files.unwatchProject(activeProjectPath);
     };
@@ -395,8 +413,8 @@ function AppShellComponent() {
             aria-hidden={!activeProject || undefined}
           >
             <PaneErrorBoundary>
-              {initialized && projectsMigrated ? (
-                <MainWorkspacePanel ready={initialized && projectsMigrated} />
+              {initialized ? (
+                <MainWorkspacePanel ready={initialized} />
               ) : (
                 <div className='empty-state'>Carregando...</div>
               )}

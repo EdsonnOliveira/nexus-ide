@@ -169,7 +169,14 @@ const AgentResponseBody = memo(function AgentResponseBody({
         copiedTimeoutRef.current = null;
       }, 1600);
 
-      if (code.classList.contains('markdown-preview__inline-code--path')) {
+      if (
+        code.classList.contains('markdown-preview__inline-code--path') &&
+        (/[/\\]/.test(value) ||
+          /\.\w{1,10}$/.test(value) ||
+          value.startsWith('~/') ||
+          value.startsWith('./') ||
+          value.startsWith('../'))
+      ) {
         const absolutePath = resolveAgentActivityFilePath(projectPath, value);
 
         if (absolutePath) {

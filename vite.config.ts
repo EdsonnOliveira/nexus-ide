@@ -1,4 +1,5 @@
 import { rmSync, existsSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { defineConfig } from 'vite';
@@ -12,6 +13,15 @@ const external = Object.keys(
 );
 
 const nexusElectronBinary = path.join(__dirname, 'build/Nexus.app/Contents/MacOS/Electron');
+const agentRunningMarker = path.join(os.tmpdir(), 'nexus-ide-agent-running');
+
+function isInAppAgentRunning(): boolean {
+  try {
+    return existsSync(agentRunningMarker);
+  } catch {
+    return false;
+  }
+}
 
 function stopBundledElectronApp(): void {
   const running = (process as NodeJS.Process & { electronApp?: ChildProcess | null }).electronApp;
@@ -59,13 +69,27 @@ export default defineConfig(({ command }) => {
           plugins: [notBundle()],
           onstart({ startup }) {
             if (process.platform === 'darwin' && existsSync(nexusElectronBinary)) {
+              const running = (process as NodeJS.Process & { electronApp?: ChildProcess | null })
+                .electronApp;
+
+              if (running && !running.killed && isInAppAgentRunning()) {
+                console.warn(
+                  '[vite] skipping Electron restart while in-app agent is running',
+                );
+                return;
+              }
+
               stopBundledElectronApp();
 
-              const child = spawn(nexusElectronBinary, ['.', '--no-sandbox'], {
-                cwd: process.cwd(),
-                stdio: 'inherit',
-                env: { ...process.env, NODE_OPTIONS: undefined },
-              });
+              const child = spawn(
+                nexusElectronBinary,
+                ['.', '--no-sandbox', '--remote-debugging-port=9222'],
+                {
+                  cwd: process.cwd(),
+                  stdio: 'inherit',
+                  env: { ...process.env, NODE_OPTIONS: undefined },
+                },
+              );
 
               child.on('exit', () => {
                 process.electronApp = null;

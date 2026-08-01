@@ -13,6 +13,8 @@ interface PtySession {
   id: string;
   pty: pty.IPty;
   scrollback: string;
+  dataDisposable: { dispose: () => void };
+  exitDisposable: { dispose: () => void };
 }
 
 const SCROLLBACK_LIMIT = 128 * 1024;
@@ -306,7 +308,7 @@ class PtyManager {
       rows: 24,
     });
 
-    terminal.onData((data) => {
+    const dataDisposable = terminal.onData((data) => {
       const session = this.sessions.get(id);
 
       if (session) {
@@ -318,13 +320,24 @@ class PtyManager {
       this.scheduleDataFlush();
     });
 
-    terminal.onExit(({ exitCode }) => {
+    const exitDisposable = terminal.onExit(({ exitCode }) => {
       this.pendingData.delete(id);
       this.sendToRenderer('terminal:exit', { ptyId: id, code: exitCode });
-      this.sessions.delete(id);
+      const session = this.sessions.get(id);
+
+      if (session) {
+        this.disposeSessionListeners(session);
+        this.sessions.delete(id);
+      }
     });
 
-    this.sessions.set(id, { id, pty: terminal, scrollback: '' });
+    this.sessions.set(id, {
+      id,
+      pty: terminal,
+      scrollback: '',
+      dataDisposable,
+      exitDisposable,
+    });
     return id;
   }
 
@@ -360,6 +373,27 @@ class PtyManager {
     }
   }
 
+  private disposeSessionListeners(session: PtySession): void {
+    try {
+      session.dataDisposable.dispose();
+    } catch {
+    }
+
+    try {
+      session.exitDisposable.dispose();
+    } catch {
+    }
+  }
+
+  private disposeSession(session: PtySession): void {
+    this.disposeSessionListeners(session);
+
+    try {
+      session.pty.kill();
+    } catch {
+    }
+  }
+
   kill(ptyId: string): void {
     const session = this.sessions.get(ptyId);
 
@@ -369,12 +403,7 @@ class PtyManager {
 
     this.sessions.delete(ptyId);
     this.pendingData.delete(ptyId);
-
-    try {
-      session.pty.kill();
-    } catch {
-      return;
-    }
+    this.disposeSession(session);
   }
 
   killAll(): void {
@@ -383,11 +412,7 @@ class PtyManager {
     this.pendingData.clear();
 
     for (const session of sessions) {
-      try {
-        session.pty.kill();
-      } catch {
-        continue;
-      }
+      this.disposeSession(session);
     }
   }
 }

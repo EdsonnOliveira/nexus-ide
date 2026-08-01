@@ -194,9 +194,8 @@ function basenamePath(filePath: string): string {
   return parts[parts.length - 1] ?? filePath;
 }
 
-function shortenPath(filePath: string): string {
-  const home = filePath.replace(/^\/Users\/[^/]+/, '~');
-  return home.length > 72 ? `…${home.slice(-68)}` : home;
+function toStoredAgentFilePath(filePath: string): string {
+  return filePath.replace(/\\/g, '/').replace(/^\/Users\/[^/]+/, '~');
 }
 
 function isSafeAssistantImageSrc(src: string): boolean {
@@ -639,17 +638,26 @@ function upsertResponse(state: AgentStreamJsonParserState, text: string, streami
   }
 
   settleThought(state);
-  state.pendingResponseText = trimmed;
 
   if (state.responseId) {
+    const current = state.activities.find((entry) => entry.id === state.responseId);
+    const currentLabel = current?.label?.trim() ?? '';
+    const shouldKeepExisting =
+      currentLabel.length > trimmed.length &&
+      !currentLabel.startsWith(trimmed) &&
+      !trimmed.startsWith(currentLabel);
+
+    const nextLabel = shouldKeepExisting ? currentLabel : trimmed;
+    state.pendingResponseText = nextLabel;
     state.activities = state.activities.map((entry) =>
       entry.id === state.responseId
-        ? { ...entry, label: trimmed, streaming: streaming ? true : undefined }
+        ? { ...entry, label: nextLabel, streaming: streaming ? true : undefined }
         : entry,
     );
     return;
   }
 
+  state.pendingResponseText = trimmed;
   const response = createActivity('response', trimmed, { streaming: streaming ? true : undefined });
   state.responseId = response.id;
   state.activities = [...state.activities, response];
@@ -663,10 +671,10 @@ function upsertFileRead(state: AgentStreamJsonParserState, filePath: string, lab
   }
 
   state.seenReadPaths.add(normalized);
-  const displayPath = shortenPath(filePath);
-  state.exploredFiles.push({ path: displayPath });
+  const storedPath = toStoredAgentFilePath(filePath);
+  state.exploredFiles.push({ path: storedPath });
   const read = createActivity('file_read', label ?? 'Read', {
-    filePath: displayPath,
+    filePath: storedPath,
     label: label ?? `Read ${basenamePath(filePath)}`,
   });
 
@@ -685,18 +693,18 @@ function trackEditedFile(
     return;
   }
 
-  const displayPath = shortenPath(filePath);
+  const storedPath = toStoredAgentFilePath(filePath);
 
   if (!state.editedPaths.has(normalized)) {
     state.editedPaths.add(normalized);
     state.editedFiles.push({
-      path: displayPath,
+      path: storedPath,
       ...(additions > 0 ? { additions } : {}),
       ...(deletions > 0 ? { deletions } : {}),
     });
   } else {
     const existing = state.editedFiles.find(
-      (entry) => entry.path.replace(/\\/g, '/').toLowerCase() === displayPath.replace(/\\/g, '/').toLowerCase(),
+      (entry) => entry.path.replace(/\\/g, '/').toLowerCase() === storedPath.replace(/\\/g, '/').toLowerCase(),
     );
 
     if (existing) {
@@ -727,9 +735,13 @@ function upsertFileEdit(
   }
 
   trackEditedFile(state, filePath, additions, deletions);
-  const displayPath = shortenPath(filePath);
+  const storedPath = toStoredAgentFilePath(filePath);
+  const storedPathKey = storedPath.toLowerCase();
   const existingIndex = state.activities.findIndex(
-    (entry) => entry.kind === 'file_edit' && entry.filePath?.trim().toLowerCase() === normalized,
+    (entry) =>
+      entry.kind === 'file_edit' &&
+      (entry.filePath?.trim().toLowerCase() === normalized ||
+        entry.filePath?.trim().toLowerCase() === storedPathKey),
   );
 
   if (existingIndex >= 0) {
@@ -741,7 +753,7 @@ function upsertFileEdit(
       ...state.activities.slice(0, existingIndex),
       {
         ...existing,
-        filePath: displayPath,
+        filePath: storedPath,
         label: `Edited ${basenamePath(filePath)}`,
         additions: nextAdditions > 0 ? nextAdditions : undefined,
         deletions: nextDeletions > 0 ? nextDeletions : undefined,
@@ -754,7 +766,7 @@ function upsertFileEdit(
   state.activities = [
     ...state.activities,
     createActivity('file_edit', 'Edited', {
-      filePath: displayPath,
+      filePath: storedPath,
       label: `Edited ${basenamePath(filePath)}`,
       additions: additions > 0 ? additions : undefined,
       deletions: deletions > 0 ? deletions : undefined,
@@ -1865,6 +1877,56 @@ export function tryMarkStreamJsonReadyToFinalize(state: AgentStreamJsonParserSta
   return true;
 }
 
+function isTrivialAgentResponseText(text: string): boolean {
+  const trimmed = text.trim();
+
+  if (!trimmed) {
+    return true;
+  }
+
+  if (trimmed.length <= 2) {
+    return true;
+  }
+
+  return /^[?.!…,;:]+$/u.test(trimmed);
+}
+
+export function looksLikeTruncatedAgentResponse(text: string): boolean {
+  const trimmed = text.trim();
+
+  if (!trimmed || trimmed.length < 8) {
+    return false;
+  }
+
+  const boldMarkers = trimmed.match(/\*\*/g)?.length ?? 0;
+
+  if (boldMarkers % 2 === 1) {
+    return true;
+  }
+
+  const fenceChunks = trimmed.split(/```/);
+  const inlineRegion = fenceChunks.filter((_, index) => index % 2 === 0).join('');
+  const inlineCodeMarkers = inlineRegion.match(/`/g)?.length ?? 0;
+
+  if (inlineCodeMarkers % 2 === 1) {
+    return true;
+  }
+
+  if (/^[a-záàâãéêíóôõúç]/u.test(trimmed)) {
+    return true;
+  }
+
+  if (/\*\*\d{4,13}$/u.test(trimmed)) {
+    return true;
+  }
+
+  if (/(?:^|\n)\s*[-*]\s+`[^`\n]+$/u.test(trimmed)) {
+    return true;
+  }
+
+  return false;
+}
+
 export function looksLikeMidProgressAgentResponse(text: string): boolean {
   const trimmed = text.trim();
 
@@ -1877,7 +1939,10 @@ export function looksLikeMidProgressAgentResponse(text: string): boolean {
     /\b(vou |vamos |i'll |i will |let me |i am going to |i'm going to |next[,:]?\s|em seguida|agora vou|seguindo com|continu(?:ar|ando|e)\b)/i.test(
       tail,
     ) ||
-    /\b(atualizo|subo|fa[cç]o|verifico|testo|leio|edito|crio|removo|adiciono|implemento|aplico|reinicio|configuro|ajusto|valido|confiro|envio|rodo|executo|abro|fecho|monitoro|acompanho|revogo)\b/i.test(
+    /\b(atualizo|atualizando|subo|subindo|fa[cç]o|fazendo|verifico|verificando|testo|testando|leio|lendo|edito|editando|crio|criando|removo|removendo|adiciono|adicionando|implemento|implementando|aplico|aplicando|reinicio|reiniciando|configuro|configurando|ajusto|ajustando|valido|validando|confiro|conferindo|envio|enviando|rodo|rodando|executo|executando|abro|abrindo|fecho|fechando|monitoro|monitorando|acompanho|acompanhando|revogo|revogando)\b/i.test(
+      tail,
+    ) ||
+    /\b(running|executing|checking|testing|reading|writing|updating|creating|sending|polling)\b/i.test(
       tail,
     );
 
@@ -1921,13 +1986,13 @@ function isAggregatedPriorResponseText(
   }
 
   const compactResult = resultText.replace(/\s+/g, '');
+  const lastCompact = responses[responses.length - 1]!.replace(/\s+/g, '');
 
   if (compactResult.length < 48) {
-    return false;
+    return lastCompact.length >= compactResult.length;
   }
 
   const compactJoined = responses.join('').replace(/\s+/g, '');
-  const lastCompact = responses[responses.length - 1]!.replace(/\s+/g, '');
 
   if (compactResult === lastCompact) {
     return true;
@@ -2007,7 +2072,44 @@ function hasIncompleteStreamJsonEnding(
 
   const lastResponseLabel = findLastResponseLabel(activities, state.pendingResponseText);
 
-  return looksLikeMidProgressAgentResponse(lastResponseLabel);
+  if (
+    looksLikeMidProgressAgentResponse(lastResponseLabel) ||
+    looksLikeTruncatedAgentResponse(lastResponseLabel)
+  ) {
+    return true;
+  }
+
+  if (!isTrivialAgentResponseText(lastResponseLabel)) {
+    return false;
+  }
+
+  const hadToolProgress =
+    state.seenReadPaths.size > 0 ||
+    state.editedPaths.size > 0 ||
+    state.shellCommands.length > 0 ||
+    state.shellCommandCount > 0 ||
+    activities.some(
+      (entry) =>
+        entry.kind === 'tool_run' || entry.kind === 'file_edit' || entry.kind === 'file_read',
+    );
+
+  if (!hadToolProgress && lastProgressIndex <= lastResponseIndex) {
+    return false;
+  }
+
+  const priorResponses = activities.filter(
+    (entry) =>
+      entry.kind === 'response' &&
+      entry.label.trim() &&
+      entry.label.trim() !== lastResponseLabel,
+  );
+
+  return (
+    Boolean(state.responseLead?.trim()) ||
+    state.summaryLeadCaptured ||
+    priorResponses.some((entry) => looksLikeMidProgressAgentResponse(entry.label)) ||
+    priorResponses.length > 0
+  );
 }
 
 export function hasIncompleteStreamJsonTurnEnding(
@@ -2082,7 +2184,21 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
     : turn.activities.length > 0
       ? turn.activities
       : state.activities;
-  const endedDuringThought = hasIncompleteStreamJsonEnding(state, sourceActivities);
+  const incompleteEnding = hasIncompleteStreamJsonEnding(state, sourceActivities);
+  const lastSourceActivity = [...sourceActivities]
+    .reverse()
+    .find(
+      (entry) =>
+        (entry.kind === 'response' && entry.label.trim()) ||
+        (entry.kind === 'thought' && entry.label.trim()) ||
+        entry.kind === 'question' ||
+        entry.kind === 'plan' ||
+        entry.kind === 'file_edit' ||
+        entry.kind === 'file_read' ||
+        entry.kind === 'tool_run',
+    );
+  const endedDuringThought =
+    incompleteEnding && lastSourceActivity?.kind === 'thought';
 
   let activities = sourceActivities
     .filter(
@@ -2132,14 +2248,34 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
 
   const safeLead = sanitizeResponseText(state.responseLead?.trim() ?? '').trim();
   const safeSummaryLead = sanitizeResponseText(summary?.responseLead?.trim() ?? '').trim();
-  const lastResponseLabel = [...activities]
+  const lastResponseIndex = [...activities]
+    .map((entry, index) => ({ entry, index }))
     .reverse()
-    .find((entry) => entry.kind === 'response')
-    ?.label.trim();
-  const needsTrailingIncompleteResponse =
-    endedDuringThought &&
+    .find(({ entry }) => entry.kind === 'response')?.index;
+  const lastResponseLabel =
+    lastResponseIndex !== undefined ? activities[lastResponseIndex]?.label.trim() : undefined;
+  const truncatedTrailingResponse =
     !hasPendingInteraction &&
-    lastResponseLabel !== incompleteFallback;
+    Boolean(lastResponseLabel) &&
+    isTrivialAgentResponseText(lastResponseLabel ?? '') &&
+    hasIncompleteStreamJsonEnding(state, activities);
+
+  if (
+    truncatedTrailingResponse &&
+    lastResponseIndex !== undefined &&
+    activities[lastResponseIndex]
+  ) {
+    activities = activities.map((entry, index) =>
+      index === lastResponseIndex ? { ...entry, label: incompleteFallback } : entry,
+    );
+  }
+
+  const needsTrailingIncompleteResponse =
+    incompleteEnding &&
+    !hasPendingInteraction &&
+    !truncatedTrailingResponse &&
+    lastResponseLabel !== incompleteFallback &&
+    !looksLikeTruncatedAgentResponse(lastResponseLabel ?? '');
   const statusFallback = [...turn.activities]
     .reverse()
     .find((entry) => entry.kind === 'status' && entry.label.trim())

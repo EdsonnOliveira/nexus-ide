@@ -51,7 +51,7 @@ function TabToolbarComponent() {
   const toggleTasks = useProjectStore((state) => state.toggleTasks);
   const toggleTests = useProjectStore((state) => state.toggleTests);
   const activeProject = projects.find((item) => item.id === activeProjectId) ?? null;
-  const gitChangeCount = useGitChangeCount(activeProject?.path ?? null);
+  const gitChangeCount = useGitChangeCount(activeProject?.path ?? null, { deferMs: 150 });
   const runningTestCount = useRunningTestCount();
   const openTaskCount = useMemo(() => {
     if (!activeProject) {

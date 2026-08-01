@@ -137,6 +137,25 @@ export function isValidReadFileTarget(target: string): boolean {
   return true;
 }
 
+function recoverAgentPathSuffix(truncatedPath: string): string {
+  const withoutEllipsis = truncatedPath.replace(/^(?:\.{3}|…)/, '').replace(/\\/g, '/');
+  const srcIndex = withoutEllipsis.search(
+    /(?:^|\/)(?:src|app|apps|packages|electron|lib|components|pages|screens|hooks|utils|services)\//i,
+  );
+
+  if (srcIndex >= 0) {
+    return withoutEllipsis.slice(srcIndex).replace(/^\/+/, '');
+  }
+
+  const segments = withoutEllipsis.replace(/^\/+/, '').split('/').filter(Boolean);
+
+  if (segments.length >= 2) {
+    return segments.slice(1).join('/');
+  }
+
+  return withoutEllipsis.replace(/^\/+/, '');
+}
+
 export function resolveAgentActivityFilePath(projectPath: string, filePath: string): string | null {
   const trimmed = filePath.trim();
 
@@ -147,9 +166,14 @@ export function resolveAgentActivityFilePath(projectPath: string, filePath: stri
   const normalizedProject = projectPath.replace(/\\/g, '/').replace(/\/+$/, '');
   let normalized = trimmed.replace(/\\/g, '/');
 
-  if (normalized.startsWith('…') || normalized.startsWith('...')) {
-    normalized = normalized.replace(/^(\.{3}|…)/, '').replace(/^\/+/, '');
-    return `${normalizedProject}/${normalized}`;
+  if (normalized.includes('…') || normalized.includes('...')) {
+    const suffix = recoverAgentPathSuffix(normalized);
+
+    if (!suffix) {
+      return null;
+    }
+
+    return suffix;
   }
 
   if (normalized.startsWith('~/')) {

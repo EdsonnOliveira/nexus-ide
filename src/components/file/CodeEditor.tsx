@@ -4,6 +4,7 @@ import { EditorState } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { memo, useMemo, useRef } from 'react';
 import { getCodeEditorExtensions } from '@/utils/codeEditorLanguage';
+import { createGitDiffHighlightExtension } from '@/utils/gitDiffEditorExtensions';
 
 const editorTheme = monokaiInit({
   settings: {
@@ -19,8 +20,10 @@ interface CodeEditorProps {
   value: string;
   isVisible: boolean;
   readOnly?: boolean;
+  diffBefore?: string;
   onChange: (value: string) => void;
   onSave: () => void;
+  onCreateEditor?: (view: EditorView) => void;
 }
 
 function CodeEditorComponent({
@@ -28,16 +31,20 @@ function CodeEditorComponent({
   value,
   isVisible,
   readOnly = false,
+  diffBefore,
   onChange,
   onSave,
+  onCreateEditor,
 }: CodeEditorProps) {
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
+  const isDiffEditor = typeof diffBefore === 'string';
 
   const extensions = useMemo(
     () => [
       ...getCodeEditorExtensions(filePath),
       ...(readOnly ? [EditorState.readOnly.of(true)] : []),
+      ...(isDiffEditor ? [createGitDiffHighlightExtension(diffBefore)] : []),
       keymap.of([
         {
           key: 'Mod-s',
@@ -73,7 +80,7 @@ function CodeEditorComponent({
       }),
       EditorView.lineWrapping,
     ],
-    [filePath, readOnly],
+    [diffBefore, filePath, isDiffEditor, readOnly],
   );
 
   return (
@@ -82,13 +89,14 @@ function CodeEditorComponent({
       theme={editorTheme}
       extensions={extensions}
       onChange={onChange}
+      onCreateEditor={onCreateEditor}
       basicSetup={{
         lineNumbers: true,
         foldGutter: false,
         highlightActiveLine: true,
         highlightActiveLineGutter: false,
       }}
-      className={`file-view__editor${isVisible ? '' : ' file-view__editor--hidden'}`}
+      className={`file-view__editor${isDiffEditor ? ' file-view__editor--diff' : ''}${isVisible ? '' : ' file-view__editor--hidden'}`}
     />
   );
 }

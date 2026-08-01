@@ -59,31 +59,37 @@ function AgentFileActivityRowComponent({
 
     if (isEdited) {
       openExplorerGit();
-      const repoPath = await resolveGitRepoPathForFile(projectPath, filePath || absolutePath || fileName);
-      const diffTargetPath = filePath || absolutePath;
+      const diffTargetPath = absolutePath || filePath;
 
       if (!diffTargetPath) {
         return;
       }
 
+      const repoPath = await resolveGitRepoPathForFile(projectPath, diffTargetPath);
+
       let staged = false;
       let untracked = false;
+
+      let openPath = diffTargetPath;
 
       try {
         const status = await window.nexus.git.getStatus(repoPath);
         const relativePath = toGitRelativePath(repoPath, diffTargetPath);
-        const change = findGitFlatChangeByPath(buildFlatChanges(status), relativePath);
+        const change =
+          findGitFlatChangeByPath(buildFlatChanges(status), relativePath) ??
+          findGitFlatChangeByPath(buildFlatChanges(status), fileName);
 
         if (change) {
           staged = change.staged;
           untracked = change.status === 'untracked';
+          openPath = change.path;
         }
       } catch {
         staged = false;
         untracked = false;
       }
 
-      void openDiffTab(diffTargetPath, {
+      void openDiffTab(openPath, {
         staged,
         untracked,
         repoPath,

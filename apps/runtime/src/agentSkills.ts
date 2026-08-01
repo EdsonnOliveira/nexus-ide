@@ -5,18 +5,6 @@ import path from 'node:path';
 const MAX_SKILL_HINTS = 14;
 const SKILL_BADGE_COLOR = '#8b5cf6';
 
-const ROOT_MARKERS = [
-  'package.json',
-  'Cargo.toml',
-  'go.mod',
-  'pyproject.toml',
-  'manage.py',
-  'docker-compose.yml',
-  'docker-compose.yaml',
-  'compose.yml',
-  'compose.yaml',
-];
-
 export interface AgentSkillHint {
   id: string;
   badge: string;
@@ -25,33 +13,6 @@ export interface AgentSkillHint {
   command: string;
   hintKind: 'skill';
   skillOrigin: 'user' | 'builtin';
-}
-
-function findProjectRoot(startDir: string): string | null {
-  let current = path.resolve(startDir);
-  let fallback: string | null = null;
-
-  while (true) {
-    for (const marker of ROOT_MARKERS) {
-      if (!existsSync(path.join(current, marker))) {
-        continue;
-      }
-
-      if (marker === 'package.json') {
-        return current;
-      }
-
-      fallback = current;
-    }
-
-    const parent = path.dirname(current);
-
-    if (parent === current) {
-      return fallback;
-    }
-
-    current = parent;
-  }
 }
 
 function readSkillName(skillDir: string, folderName: string): string {
@@ -121,20 +82,40 @@ function collectSkillsFromDirectory(
   }
 }
 
+function collectProjectSkillsWalkingUp(
+  startDir: string,
+  home: string,
+  seen: Set<string>,
+  hints: AgentSkillHint[],
+): void {
+  let current = path.resolve(startDir);
+  const resolvedHome = path.resolve(home);
+
+  while (true) {
+    if (current === resolvedHome) {
+      break;
+    }
+
+    collectSkillsFromDirectory(path.join(current, '.cursor', 'skills'), seen, hints, 'user');
+
+    const parent = path.dirname(current);
+
+    if (parent === current) {
+      break;
+    }
+
+    current = parent;
+  }
+}
+
 export function getAgentSkillHints(cwd: string | null): AgentSkillHint[] {
   const seen = new Set<string>();
   const userHints: AgentSkillHint[] = [];
   const builtinHints: AgentSkillHint[] = [];
   const home = os.homedir();
-  const projectRoot = cwd ? findProjectRoot(path.resolve(cwd)) : null;
 
-  if (projectRoot) {
-    collectSkillsFromDirectory(
-      path.join(projectRoot, '.cursor', 'skills'),
-      seen,
-      userHints,
-      'user',
-    );
+  if (cwd) {
+    collectProjectSkillsWalkingUp(path.resolve(cwd), home, seen, userHints);
   }
 
   collectSkillsFromDirectory(path.join(home, '.cursor', 'skills'), seen, userHints, 'user');
@@ -151,8 +132,7 @@ export function getAgentSkillHints(cwd: string | null): AgentSkillHint[] {
   userHints.sort(sortByLabel);
   builtinHints.sort(sortByLabel);
 
-  const cappedUser = userHints.slice(0, MAX_SKILL_HINTS);
-  const remainingSlots = Math.max(0, MAX_SKILL_HINTS - cappedUser.length);
+  const remainingSlots = Math.max(0, MAX_SKILL_HINTS - userHints.length);
 
-  return [...cappedUser, ...builtinHints.slice(0, remainingSlots)];
+  return [...userHints, ...builtinHints.slice(0, remainingSlots)];
 }

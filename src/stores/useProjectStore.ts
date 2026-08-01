@@ -187,9 +187,9 @@ function migrateAppState(appState: AppState): AppState {
   });
 }
 
-function yieldToNextFrame(): Promise<void> {
+function yieldToIdle(): Promise<void> {
   return new Promise((resolve) => {
-    window.requestAnimationFrame(() => resolve());
+    window.setTimeout(resolve, 0);
   });
 }
 
@@ -202,11 +202,15 @@ async function migrateAppStateChunked(appState: AppState): Promise<AppState> {
   const workspaces = rawWorkspaces.map((workspace, index) => migrateWorkspace(workspace, index));
   const fallbackWorkspaceId = workspaces[0]?.id ?? crypto.randomUUID();
   const migratedProjects: Project[] = [];
+  const chunkSize = 3;
 
   for (let index = 0; index < appState.projects.length; index += 1) {
     const project = appState.projects[index];
     migratedProjects.push(migrateProject(project, fallbackWorkspaceId));
-    await yieldToNextFrame();
+
+    if ((index + 1) % chunkSize === 0) {
+      await yieldToIdle();
+    }
   }
 
   return migrateLegacyGlobalWhatsAppLink({
@@ -277,8 +281,16 @@ function scheduleProjectMigration(
   get: () => ProjectStoreState,
   rawState: AppState,
 ): void {
+  const migrationWatchdog = window.setTimeout(() => {
+    if (!get().projectsMigrated) {
+      console.warn('[project-store] migration watchdog releasing UI gate');
+      set({ projectsMigrated: true });
+    }
+  }, 8_000);
+
   void (async () => {
-    try {      const shouldPersistBadgeColors = rawState.projects.some((project) =>
+    try {
+      const shouldPersistBadgeColors = rawState.projects.some((project) =>
         hasMissingBadgeColorIndex(project.tabs),
       );
       const shouldPersistTrimmedAgentHistory = rawState.projects.some((project) =>
@@ -344,6 +356,8 @@ function scheduleProjectMigration(
     } catch (error) {
       console.error('[project-store] migration failed', error);
       set({ projectsMigrated: true });
+    } finally {
+      window.clearTimeout(migrationWatchdog);
     }
   })();
 }

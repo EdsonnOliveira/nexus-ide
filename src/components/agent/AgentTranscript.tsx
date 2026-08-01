@@ -23,6 +23,7 @@ interface AgentTranscriptProps {
 }
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 48;
+const STICK_PIN_LOCK_MS = 360;
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -127,6 +128,7 @@ function AgentTranscriptComponent({
   const stickToBottomRef = useRef(true);
   const atBottomRef = useRef(true);
   const programmaticScrollRef = useRef(false);
+  const stickPinLockUntilRef = useRef(0);
   const scrollRafRef = useRef<number | null>(null);
   const contentHeightRef = useRef(0);
   const onAtBottomChangeRef = useRef(onAtBottomChange);
@@ -146,14 +148,16 @@ function AgentTranscriptComponent({
     onAtBottomChangeRef.current?.(atBottom);
   }, []);
 
+  const isStickPinLocked = useCallback(() => performance.now() < stickPinLockUntilRef.current, []);
+
   const releaseStickToBottom = useCallback(() => {
-    if (!stickToBottomRef.current) {
+    if (!stickToBottomRef.current || isStickPinLocked()) {
       return;
     }
 
     stickToBottomRef.current = false;
     notifyAtBottomChange(false);
-  }, [notifyAtBottomChange]);
+  }, [isStickPinLocked, notifyAtBottomChange]);
 
   const pinScrollToBottom = useCallback(() => {
     const container = scrollContainerRef.current;
@@ -188,11 +192,16 @@ function AgentTranscriptComponent({
     window.setTimeout(() => {
       pinScrollToBottom();
     }, 120);
+
+    window.setTimeout(() => {
+      pinScrollToBottom();
+    }, 280);
   }, [pinScrollToBottom]);
 
   const forceStickAndPin = useCallback(() => {
     stickToBottomRef.current = true;
     atBottomRef.current = true;
+    stickPinLockUntilRef.current = performance.now() + STICK_PIN_LOCK_MS;
     onAtBottomChangeRef.current?.(true);
     schedulePinScrollToBottom();
   }, [schedulePinScrollToBottom]);
@@ -216,6 +225,18 @@ function AgentTranscriptComponent({
         return;
       }
 
+      if (isStickPinLocked()) {
+        if (stickToBottomRef.current) {
+          scrollTranscriptToBottomInstant(container, {
+            programmaticScrollRef,
+            contentHeightRef,
+            onAtBottom: notifyAtBottomChange,
+          });
+        }
+
+        return;
+      }
+
       const atBottom = isScrollContainerAtBottom(container);
       stickToBottomRef.current = atBottom;
       notifyAtBottomChange(atBottom);
@@ -223,6 +244,10 @@ function AgentTranscriptComponent({
 
     const handleWheel = (event: WheelEvent) => {
       if (event.deltaY >= 0) {
+        return;
+      }
+
+      if (isStickPinLocked()) {
         return;
       }
 
@@ -243,6 +268,10 @@ function AgentTranscriptComponent({
     };
 
     const handleTouchMove = () => {
+      if (isStickPinLocked()) {
+        return;
+      }
+
       if (!isScrollContainerAtBottom(container)) {
         releaseStickToBottom();
       }
@@ -257,7 +286,7 @@ function AgentTranscriptComponent({
       container.removeEventListener('wheel', handleWheel);
       container.removeEventListener('touchmove', handleTouchMove);
     };
-  }, [notifyAtBottomChange, releaseStickToBottom, scrollContainerRef, scrollKey]);
+  }, [isStickPinLocked, notifyAtBottomChange, releaseStickToBottom, scrollContainerRef, scrollKey]);
 
   useEffect(() => {
     if (!scrollControlRef) {
@@ -273,6 +302,7 @@ function AgentTranscriptComponent({
         }
 
         stickToBottomRef.current = true;
+        stickPinLockUntilRef.current = performance.now() + STICK_PIN_LOCK_MS;
         programmaticScrollRef.current = true;
         scrollContainerToBottom(container, {
           smooth: options?.smooth ?? true,
@@ -280,6 +310,7 @@ function AgentTranscriptComponent({
             programmaticScrollRef.current = false;
             contentHeightRef.current = container.scrollHeight;
             notifyAtBottomChange(isScrollContainerAtBottom(container));
+            schedulePinScrollToBottom();
           },
         });
       },
@@ -288,9 +319,10 @@ function AgentTranscriptComponent({
     return () => {
       scrollControlRef.current = null;
     };
-  }, [notifyAtBottomChange, scrollContainerRef, scrollControlRef, scrollKey]);
+  }, [notifyAtBottomChange, schedulePinScrollToBottom, scrollContainerRef, scrollControlRef, scrollKey]);
 
   const lastTurnId = turns[turns.length - 1]?.id ?? null;
+  const turnCount = turns.length;
 
   useEffect(() => {
     if (!lastTurnId) {
@@ -311,7 +343,7 @@ function AgentTranscriptComponent({
     }
 
     forceStickAndPin();
-  }, [forceStickAndPin, lastTurnId]);
+  }, [forceStickAndPin, lastTurnId, turnCount]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -360,6 +392,7 @@ function AgentTranscriptComponent({
 
     const observer = new ResizeObserver(scheduleScrollToBottom);
     observer.observe(content);
+    observer.observe(container);
 
     return () => {
       observer.disconnect();

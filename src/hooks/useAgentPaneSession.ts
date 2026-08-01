@@ -112,8 +112,9 @@ const PTY_CLEAR_INPUT = '\x15';
 const STUCK_TURN_TIMEOUT_MS = 45_000;
 const STUCK_TURN_CHECK_MS = 5_000;
 const STREAM_JSON_ORPHAN_FINALIZE_MS = 2_000;
-const STREAM_JSON_INCOMPLETE_ORPHAN_FINALIZE_MS = 120_000;
+const STREAM_JSON_INCOMPLETE_ORPHAN_FINALIZE_MS = 45_000;
 const STREAM_JSON_HUNG_IDLE_MS = 1_800_000;
+const STREAM_JSON_STALLED_OUTPUT_MS = 90_000;
 const STREAM_JSON_EMPTY_HUNG_IDLE_MS = 90_000;
 const STREAM_JSON_DEAD_PROCESS_FINALIZE_MS = 2_000;
 const STREAM_JSON_IDLE_CHECK_MS = 500;
@@ -953,6 +954,23 @@ export function useAgentPaneSession({
 
         if (hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current)) {
           streamJsonStateRef.current.shouldFinalize = false;
+
+          if (
+            !processRunning &&
+            tryContinueIncompleteStreamJsonTurnRef.current(() => {
+              clearAgentPrintRunToken(paneIdRef.current);
+            })
+          ) {
+            return true;
+          }
+
+          if (!processRunning) {
+            agentPrintRunActiveRef.current = false;
+            window.nexus.agentPrint.stop(paneIdRef.current);
+            finalizeStreamJsonTurnFromEvent('tryFinalize-incomplete');
+            return true;
+          }
+
           return false;
         }
 
@@ -3105,12 +3123,12 @@ export function useAgentPaneSession({
             if (tryContinueIncompleteStreamJsonTurnRef.current(finishAgentPrintRun)) {
               return;
             }
-          } else {
-            finalizeStreamJsonTurnFromEvent('onDone-shouldFinalize');
-            finishAgentPrintRun();
-            streamJsonIncompleteContinueRef.current = false;
-            return;
           }
+
+          finalizeStreamJsonTurnFromEvent('onDone-shouldFinalize');
+          finishAgentPrintRun();
+          streamJsonIncompleteContinueRef.current = false;
+          return;
         }
 
         const activePaneId = paneIdRef.current;
@@ -3264,13 +3282,8 @@ export function useAgentPaneSession({
             return;
           }
 
-          if (hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current)) {
-            finishAgentPrintRun();
-            return;
-          }
-
           applyStreamJsonChunk('');
-          finalizeActiveTurn(true);
+          finalizeStreamJsonTurnFromEvent('onDone-incomplete-fallback');
           finishAgentPrintRun();
           streamJsonAutoRetryRef.current = false;
           streamJsonIncompleteContinueRef.current = false;
@@ -3281,12 +3294,13 @@ export function useAgentPaneSession({
           return;
         }
 
-        if (hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current)) {
-          finishAgentPrintRun();
-          return;
+        if (hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current)) {
+          applyStreamJsonChunk('');
+          finalizeStreamJsonTurnFromEvent('onDone-meaningful-fallback');
+        } else {
+          finalizeActiveTurn(true);
         }
 
-        finalizeActiveTurn(true);
         finishAgentPrintRun();
         streamJsonAutoRetryRef.current = false;
         streamJsonIncompleteContinueRef.current = false;
@@ -3381,7 +3395,12 @@ export function useAgentPaneSession({
             return;
           }
 
-          if (idleMs >= STREAM_JSON_HUNG_IDLE_MS) {
+          const stalledWithOutput =
+            idleMs >= STREAM_JSON_STALLED_OUTPUT_MS &&
+            hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current) &&
+            !hasPendingStreamJsonInteraction(streamJsonStateRef.current);
+
+          if (idleMs >= STREAM_JSON_HUNG_IDLE_MS || stalledWithOutput) {
             forceSettleStreamJsonInFlightWork(streamJsonStateRef.current);
             applyStreamJsonChunk('');
 
@@ -3402,15 +3421,9 @@ export function useAgentPaneSession({
             }
 
             if (streamJsonStateRef.current.shouldFinalize) {
-              if (hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current)) {
-                streamJsonStateRef.current.shouldFinalize = false;
-                lastStreamJsonChunkAtRef.current = Date.now();
-                return;
-              }
-
-              finalizeStreamJsonTurnFromEvent('hungIdle-shouldFinalize');
-            } else if (hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current)) {
-              lastStreamJsonChunkAtRef.current = Date.now();
+              finalizeStreamJsonTurnFromEvent(
+                stalledWithOutput ? 'stalledOutput-shouldFinalize' : 'hungIdle-shouldFinalize',
+              );
             } else {
               finalizeActiveTurn(true);
             }
@@ -3458,18 +3471,7 @@ export function useAgentPaneSession({
           }
 
           if (streamJsonStateRef.current.shouldFinalize) {
-            if (hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current)) {
-              streamJsonStateRef.current.shouldFinalize = false;
-              lastStreamJsonChunkAtRef.current = Date.now();
-              return;
-            }
-
-            finalizeStreamJsonTurnFromEvent();
-            return;
-          }
-
-          if (hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current)) {
-            lastStreamJsonChunkAtRef.current = Date.now();
+            finalizeStreamJsonTurnFromEvent('deadProcess-shouldFinalize');
             return;
           }
 
@@ -3479,7 +3481,8 @@ export function useAgentPaneSession({
             return;
           }
 
-          lastStreamJsonChunkAtRef.current = Date.now();
+          applyStreamJsonChunk('');
+          finalizeActiveTurn(true);
           return;
         }
 

@@ -44,6 +44,7 @@ import {
 import { useGitStatus } from '@/hooks/useGitStatus';
 import { useGitChangeCounts } from '@/hooks/useGitChangeCount';
 import { useDelayedHoverHint } from '@/hooks/useDelayedHoverHint';
+import { requestGitDiscoverRepos } from '@/utils/gitDiscoverRequest';
 import {
   useAgentGitChangeStore,
   useAgentGitGroupsForProject,
@@ -715,8 +716,7 @@ function ProjectGitDrawerComponent({
     setDiscoveredRepos([]);
     setSelectedRepoPath(null);
 
-    void window.nexus.git
-      .discoverRepos(rootPath)
+    void requestGitDiscoverRepos(rootPath)
       .then((repos) => {
         if (cancelled) {
           return;

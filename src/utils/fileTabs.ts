@@ -46,38 +46,73 @@ export function findFilePreviewTabByPath(tabs: TabBarItem[], filePath: string): 
   return null;
 }
 
+function diffTabMatchesPath(
+  tab: FileTab,
+  filePath: string,
+  options: { staged: boolean; untracked: boolean },
+): boolean {
+  return (
+    tab.viewMode === 'diff' &&
+    tab.filePath === filePath &&
+    tab.diffStaged === options.staged &&
+    (tab.diffUntracked ?? false) === options.untracked
+  );
+}
+
+function diffTabMatchesBasename(
+  tab: FileTab,
+  fileName: string,
+  options: { staged: boolean; untracked: boolean },
+): boolean {
+  if (
+    tab.viewMode !== 'diff' ||
+    tab.diffStaged !== options.staged ||
+    (tab.diffUntracked ?? false) !== options.untracked
+  ) {
+    return false;
+  }
+
+  const normalized = tab.filePath.replace(/\\/g, '/');
+  return normalized === fileName || normalized.endsWith(`/${fileName}`);
+}
+
 export function findDiffTabByPath(
   tabs: TabBarItem[],
   filePath: string,
   options: { staged: boolean; untracked?: boolean },
 ): FileTab | null {
   const untracked = options.untracked ?? false;
+  const matchOptions = { staged: options.staged, untracked };
+  const fileName = filePath.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? filePath;
+  let basenameMatch: FileTab | null = null;
 
   for (const item of tabs) {
-    if (
-      item.type === 'file' &&
-      item.viewMode === 'diff' &&
-      item.filePath === filePath &&
-      item.diffStaged === options.staged &&
-      (item.diffUntracked ?? false) === untracked
-    ) {
-      return item;
+    if (item.type === 'file') {
+      if (diffTabMatchesPath(item, filePath, matchOptions)) {
+        return item;
+      }
+
+      if (!basenameMatch && diffTabMatchesBasename(item, fileName, matchOptions)) {
+        basenameMatch = item;
+      }
     }
 
     if (item.type === 'split') {
       for (const pane of item.panes) {
-        if (
-          pane.type === 'file' &&
-          pane.viewMode === 'diff' &&
-          pane.filePath === filePath &&
-          pane.diffStaged === options.staged &&
-          (pane.diffUntracked ?? false) === untracked
-        ) {
+        if (pane.type !== 'file') {
+          continue;
+        }
+
+        if (diffTabMatchesPath(pane, filePath, matchOptions)) {
           return pane;
+        }
+
+        if (!basenameMatch && diffTabMatchesBasename(pane, fileName, matchOptions)) {
+          basenameMatch = pane;
         }
       }
     }
   }
 
-  return null;
+  return basenameMatch;
 }

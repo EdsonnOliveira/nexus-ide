@@ -1,16 +1,12 @@
 import { Check, ChevronDown, ChevronUp, Copy } from 'lucide-react';
+import { EditorView } from '@codemirror/view';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CodeEditor } from '@/components/file/CodeEditor';
 import { AgentGitPromptModal } from '@/components/git/AgentGitPromptChip';
 import { isImageFileName } from '@/utils/fileViewMode';
+import { getGitDiffEditableChangeLineNumbers } from '@/utils/gitDiffEditorExtensions';
 import { toGitRelativePath } from '@/utils/gitPaths';
-import { highlightTextLinesByNumber } from '@/utils/codeHighlight';
-import {
-  buildGitDiffLines,
-  getGitDiffChangeLineIndices,
-  getGitDiffChangeRegions,
-  gitDiffHasChanges,
-  type GitDiffLine,
-} from '@/utils/gitDiffLines';
+import type { AgentGitFilePromptTurn } from '@/utils/injectAgentPromptsIntoDiff';
 
 interface GitDiffScrollbarMarker {
   id: string;
@@ -19,10 +15,6 @@ interface GitDiffScrollbarMarker {
   height: number;
   changeIndex: number;
 }
-import {
-  injectAgentPromptsIntoDiffLines,
-  type AgentGitFilePromptTurn,
-} from '@/utils/injectAgentPromptsIntoDiff';
 
 interface GitDiffViewProps {
   filePath: string;
@@ -33,71 +25,28 @@ interface GitDiffViewProps {
   diffRepoPath?: string;
   diffStaged?: boolean;
   diffUntracked?: boolean;
+  onChange?: (value: string) => void;
+  onSave?: () => void;
+  saveStatus?: string | null;
+  saveError?: boolean;
 }
 
-function resolveGitDiffLineHtml(
-  line: GitDiffLine,
-  beforeHighlights: Map<number, string>,
-  afterHighlights: Map<number, string>,
-): string {
-  if (line.kind === 'remove' && line.oldLineNumber !== null) {
-    return beforeHighlights.get(line.oldLineNumber) ?? '';
-  }
-
-  if (line.newLineNumber !== null) {
-    return afterHighlights.get(line.newLineNumber) ?? '';
-  }
-
-  return '';
-}
-
-function GitDiffPromptRow({
-  prompt,
-  onOpen,
+function GitDiffImagePanel({
+  label,
+  src,
+  fileName,
 }: {
-  prompt: string;
-  onOpen: (prompt: string) => void;
+  label: string;
+  src: string;
+  fileName: string;
 }) {
-  const labelRef = useRef<HTMLButtonElement>(null);
-  const [isTruncated, setIsTruncated] = useState(false);
-
-  useEffect(() => {
-    const element = labelRef.current;
-
-    if (!element) {
-      return;
-    }
-
-    const checkTruncation = () => {
-      setIsTruncated(element.scrollWidth > element.clientWidth);
-    };
-
-    checkTruncation();
-
-    const observer = new ResizeObserver(checkTruncation);
-    observer.observe(element);
-
-    return () => {
-      observer.disconnect();
-    };
-  }, [prompt]);
-
-  const handleClick = useCallback(() => {
-    if (isTruncated) {
-      onOpen(prompt);
-    }
-  }, [isTruncated, onOpen, prompt]);
-
   return (
-    <button
-      ref={labelRef}
-      type='button'
-      className={`git-diff-view__prompt-btn app-button app-button--enter${isTruncated ? ' git-diff-view__prompt-btn--expandable' : ''}`}
-      title={isTruncated ? prompt : undefined}
-      onClick={handleClick}
-    >
-      &ldquo;{prompt}&rdquo;
-    </button>
+    <div className='git-diff-view__image-panel'>
+      <span className='git-diff-view__image-label'>{label}</span>
+      <div className='git-diff-view__image-frame'>
+        <img src={src} alt={`${label} — ${fileName}`} className='git-diff-view__image' draggable={false} />
+      </div>
+    </div>
   );
 }
 
@@ -118,32 +67,11 @@ function GitDiffScrollbarGutter({
         <button
           key={marker.id}
           type='button'
-          tabIndex={-1}
           className={`git-diff-view__scrollbar-marker git-diff-view__scrollbar-marker--${marker.kind} app-button`}
-          style={{ top: `${marker.top}px`, height: `${marker.height}px` }}
-          aria-hidden='true'
+          style={{ top: `${marker.top}%`, height: `${marker.height}%` }}
           onClick={() => onMarkerClick(marker.changeIndex)}
         />
       ))}
-    </div>
-  );
-}
-
-function GitDiffImagePanel({
-  label,
-  src,
-  fileName,
-}: {
-  label: string;
-  src: string;
-  fileName: string;
-}) {
-  return (
-    <div className='git-diff-view__image-panel'>
-      <span className='git-diff-view__image-label'>{label}</span>
-      <div className='git-diff-view__image-frame'>
-        <img src={src} alt={fileName} className='git-diff-view__image' draggable={false} />
-      </div>
     </div>
   );
 }
@@ -157,10 +85,12 @@ function GitDiffViewComponent({
   diffRepoPath,
   diffStaged = false,
   diffUntracked = false,
+  onChange,
+  onSave,
+  saveStatus = null,
+  saveError = false,
 }: GitDiffViewProps) {
-  const rowRefs = useRef<Map<number, HTMLDivElement>>(new Map());
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
+  const editorViewRef = useRef<EditorView | null>(null);
   const [currentChangeIndex, setCurrentChangeIndex] = useState(0);
   const [scrollbarMarkers, setScrollbarMarkers] = useState<GitDiffScrollbarMarker[]>([]);
   const [expandedPrompt, setExpandedPrompt] = useState<string | null>(null);
@@ -171,70 +101,89 @@ function GitDiffViewComponent({
   const [imageError, setImageError] = useState<string | null>(null);
   const fileName = useMemo(() => filePath.split('/').pop() ?? filePath, [filePath]);
   const isImageDiff = useMemo(() => isImageFileName(fileName), [fileName]);
-  const baseLines = useMemo(() => buildGitDiffLines(before, after), [after, before]);
-  const allLines = useMemo(
-    () => injectAgentPromptsIntoDiffLines(baseLines, agentPromptTurns),
-    [agentPromptTurns, baseLines],
-  );
-  const isDiffTruncated = allLines.length > 2_500;
-  const lines = useMemo(
-    () => (isDiffTruncated ? allLines.slice(0, 2_500) : allLines),
-    [allLines, isDiffTruncated],
-  );
-  const hasChanges = useMemo(() => gitDiffHasChanges(before, after), [after, before]);
-  const changeLineIndices = useMemo(() => getGitDiffChangeLineIndices(lines), [lines]);
-  const changeCount = changeLineIndices.length;
-  const beforeHighlights = useMemo(
-    () => highlightTextLinesByNumber(before, filePath),
-    [before, filePath],
-  );
-  const afterHighlights = useMemo(
-    () => highlightTextLinesByNumber(after, filePath),
-    [after, filePath],
-  );
+  const [changeLineNumbers, setChangeLineNumbers] = useState<number[]>([]);
+  const changeCount = changeLineNumbers.length;
+  const promptLabel = agentPromptTurns[0]?.prompt?.trim() || null;
 
-  const lineIndexToChangeIndex = useMemo(() => {
-    const map = new Map<number, number>();
+  useEffect(() => {
+    if (isImageDiff) {
+      setChangeLineNumbers([]);
+      return;
+    }
 
-    changeLineIndices.forEach((lineIndex, changeIndex) => {
-      map.set(lineIndex, changeIndex);
-    });
-
-    return map;
-  }, [changeLineIndices]);
-
-  const setRowRef = useCallback(
-    (lineIndex: number) => (element: HTMLDivElement | null) => {
-      if (element) {
-        rowRefs.current.set(lineIndex, element);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (cancelled) {
         return;
       }
 
-      rowRefs.current.delete(lineIndex);
+      setChangeLineNumbers(getGitDiffEditableChangeLineNumbers(before, after));
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [after, before, isImageDiff]);
+
+  const handleCopyPath = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(filePath);
+      setPathCopied(true);
+      window.setTimeout(() => setPathCopied(false), 1500);
+    } catch {
+      setPathCopied(false);
+    }
+  }, [filePath]);
+
+  const handleOpenPromptModal = useCallback((prompt: string) => {
+    setExpandedPrompt(prompt);
+  }, []);
+
+  const handleClosePromptModal = useCallback(() => {
+    setExpandedPrompt(null);
+  }, []);
+
+  const handleCreateEditor = useCallback((view: EditorView) => {
+    editorViewRef.current = view;
+  }, []);
+
+  const handleContentChange = useCallback(
+    (value: string) => {
+      if (value === after) {
+        return;
+      }
+
+      onChange?.(value);
     },
-    [],
+    [after, onChange],
   );
 
-  const scrollToChange = useCallback((changeIndex: number) => {
-    const lineIndex = changeLineIndices[changeIndex];
+  const scrollToChange = useCallback(
+    (changeIndex: number) => {
+      const view = editorViewRef.current;
+      const lineNumber = changeLineNumbers[changeIndex];
 
-    if (lineIndex === undefined) {
-      return;
-    }
+      if (!view || lineNumber === undefined) {
+        return;
+      }
 
-    const row = rowRefs.current.get(lineIndex);
+      if (lineNumber < 1 || lineNumber > view.state.doc.lines) {
+        return;
+      }
 
-    if (!row) {
-      return;
-    }
-
-    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-    row.scrollIntoView({
-      block: 'center',
-      behavior: prefersReducedMotion ? 'auto' : 'smooth',
-    });
-  }, [changeLineIndices]);
+      const line = view.state.doc.line(lineNumber);
+      view.dispatch({
+        selection: { anchor: line.from },
+        effects: EditorView.scrollIntoView(line.from, {
+          y: 'center',
+          yMargin: 40,
+        }),
+      });
+      view.focus();
+    },
+    [changeLineNumbers],
+  );
 
   const navigateToChange = useCallback(
     (changeIndex: number) => {
@@ -256,23 +205,26 @@ function GitDiffViewComponent({
     navigateToChange(currentChangeIndex + 1);
   }, [currentChangeIndex, navigateToChange]);
 
-  const handleOpenPromptModal = useCallback((prompt: string) => {
-    setExpandedPrompt(prompt);
-  }, []);
-
-  const handleClosePromptModal = useCallback(() => {
-    setExpandedPrompt(null);
-  }, []);
-
-  const handleCopyPath = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(filePath);
-      setPathCopied(true);
-      window.setTimeout(() => setPathCopied(false), 1500);
-    } catch {
-      setPathCopied(false);
+  useEffect(() => {
+    if (changeCount === 0) {
+      setCurrentChangeIndex(0);
+      setScrollbarMarkers([]);
+      return;
     }
-  }, [filePath]);
+
+    setCurrentChangeIndex((current) => Math.min(current, changeCount - 1));
+
+    const totalLines = Math.max(after.split('\n').length, 1);
+    setScrollbarMarkers(
+      changeLineNumbers.map((lineNumber, changeIndex) => ({
+        id: `change-${changeIndex}-${lineNumber}`,
+        kind: 'add' as const,
+        top: Math.min(96, Math.max(1, ((lineNumber - 1) / totalLines) * 100)),
+        height: Math.max(1.2, (1 / totalLines) * 100),
+        changeIndex,
+      })),
+    );
+  }, [after, changeCount, changeLineNumbers]);
 
   useEffect(() => {
     if (!isImageDiff) {
@@ -325,10 +277,8 @@ function GitDiffViewComponent({
         return;
       }
 
-      setImageBeforeSrc(null);
-      setImageAfterSrc(null);
-      setImageError('Não foi possível carregar a imagem');
       setImageLoading(false);
+      setImageError('Não foi possível carregar a imagem');
     });
 
     return () => {
@@ -336,133 +286,20 @@ function GitDiffViewComponent({
     };
   }, [diffRepoPath, diffStaged, diffUntracked, filePath, isImageDiff]);
 
-  const hasImageChanges = imageBeforeSrc !== imageAfterSrc;
   const showImageBefore = Boolean(imageBeforeSrc);
   const showImageAfter = Boolean(imageAfterSrc);
+  const hasImageChanges = imageBeforeSrc !== imageAfterSrc;
   const showSingleImagePanel = showImageBefore !== showImageAfter;
-
   const showPreviousChange = currentChangeIndex > 0;
   const showNextChange = currentChangeIndex < changeCount - 1;
   const navControlsClassName = [
     'emulator-view__controls',
-    'git-diff-view__nav-controls',
     'app-button--enter',
-    !showPreviousChange && !showNextChange
-      ? 'git-diff-view__nav-controls--counter-only'
-      : showPreviousChange && !showNextChange
-        ? 'git-diff-view__nav-controls--prev-only'
-        : !showPreviousChange && showNextChange
-          ? 'git-diff-view__nav-controls--next-only'
-          : null,
+    showPreviousChange ? '' : 'emulator-view__controls--start',
+    showNextChange ? '' : 'emulator-view__controls--end',
   ]
     .filter(Boolean)
     .join(' ');
-
-  const updateScrollbarMarkers = useCallback(() => {
-    const scrollElement = scrollRef.current;
-    const bodyElement = bodyRef.current;
-
-    if (!scrollElement || !bodyElement) {
-      return;
-    }
-
-    const scrollHeight = scrollElement.scrollHeight;
-    const trackHeight = scrollElement.clientHeight;
-
-    if (scrollHeight <= 0 || trackHeight <= 0) {
-      setScrollbarMarkers([]);
-      return;
-    }
-
-    const regions = getGitDiffChangeRegions(lines);
-    const nextMarkers: GitDiffScrollbarMarker[] = [];
-
-    regions.forEach((region) => {
-      const firstRow = bodyElement.children.item(region.startLineIndex) as HTMLElement | null;
-      const lastRow = bodyElement.children.item(region.endLineIndex) as HTMLElement | null;
-
-      if (!firstRow || !lastRow) {
-        return;
-      }
-
-      const top = (firstRow.offsetTop / scrollHeight) * trackHeight;
-      const bottom = ((lastRow.offsetTop + lastRow.offsetHeight) / scrollHeight) * trackHeight;
-      const changeIndex = lineIndexToChangeIndex.get(region.startLineIndex) ?? 0;
-
-      nextMarkers.push({
-        id: `${region.kind}-${region.startLineIndex}-${region.endLineIndex}`,
-        kind: region.kind,
-        top,
-        height: Math.max(3, bottom - top),
-        changeIndex,
-      });
-    });
-
-    setScrollbarMarkers((current) => {
-      if (
-        current.length === nextMarkers.length &&
-        current.every(
-          (marker, index) =>
-            marker.id === nextMarkers[index]?.id &&
-            marker.top === nextMarkers[index]?.top &&
-            marker.height === nextMarkers[index]?.height &&
-            marker.kind === nextMarkers[index]?.kind,
-        )
-      ) {
-        return current;
-      }
-
-      return nextMarkers;
-    });
-  }, [lineIndexToChangeIndex, lines]);
-
-  useEffect(() => {
-    if (!isVisible || changeCount === 0) {
-      return;
-    }
-
-    setCurrentChangeIndex(0);
-
-    const frameId = window.requestAnimationFrame(() => {
-      scrollToChange(0);
-      updateScrollbarMarkers();
-    });
-
-    return () => {
-      window.cancelAnimationFrame(frameId);
-    };
-  }, [after, before, changeCount, isVisible, scrollToChange, updateScrollbarMarkers]);
-
-  useEffect(() => {
-    const scrollElement = scrollRef.current;
-    const bodyElement = bodyRef.current;
-
-    if (!scrollElement || !bodyElement || !hasChanges) {
-      setScrollbarMarkers([]);
-      return;
-    }
-
-    let frameId = 0;
-
-    const scheduleUpdate = () => {
-      window.cancelAnimationFrame(frameId);
-      frameId = window.requestAnimationFrame(updateScrollbarMarkers);
-    };
-
-    scheduleUpdate();
-
-    const resizeObserver = new ResizeObserver(scheduleUpdate);
-    resizeObserver.observe(scrollElement);
-    resizeObserver.observe(bodyElement);
-
-    window.addEventListener('resize', scheduleUpdate);
-
-    return () => {
-      window.cancelAnimationFrame(frameId);
-      resizeObserver.disconnect();
-      window.removeEventListener('resize', scheduleUpdate);
-    };
-  }, [hasChanges, updateScrollbarMarkers]);
 
   if (isImageDiff) {
     return (
@@ -513,12 +350,22 @@ function GitDiffViewComponent({
 
   return (
     <div
-      className={`file-view file-view--code file-view--diff git-diff-view${isVisible ? '' : ' file-view--hidden'}`}
+      className={`file-view file-view--code file-view--diff git-diff-view git-diff-view--editable${isVisible ? '' : ' file-view--hidden'}`}
     >
       <div className='git-diff-view__header'>
         <span className='git-diff-view__path' title={filePath}>
           {filePath}
         </span>
+        {promptLabel ? (
+          <button
+            type='button'
+            className='git-diff-view__prompt-chip app-button app-button--enter'
+            title={promptLabel}
+            onClick={() => handleOpenPromptModal(promptLabel)}
+          >
+            &ldquo;{promptLabel}&rdquo;
+          </button>
+        ) : null}
         <button
           type='button'
           className='git-diff-view__copy-path app-button app-button--enter'
@@ -529,72 +376,17 @@ function GitDiffViewComponent({
           {pathCopied ? <Check size={14} strokeWidth={2} /> : <Copy size={14} strokeWidth={2} />}
         </button>
       </div>
-      <div className='git-diff-view__viewport'>
-        <div ref={scrollRef} className='git-diff-view__scroll'>
-          <div ref={bodyRef} className='git-diff-view__body'>
-            {!hasChanges ? (
-              <div className='git-diff-view__empty'>Nenhuma alteração neste arquivo</div>
-            ) : (
-              <>
-                {isDiffTruncated ? (
-                  <div className='git-diff-view__empty'>
-                    Diff grande — exibindo as primeiras 2500 linhas para manter o app estável
-                  </div>
-                ) : null}
-                {lines.map((line, index) => {
-                  if (line.kind === 'prompt') {
-                    return (
-                      <div
-                        key={`prompt-${index}`}
-                        className='git-diff-view__row git-diff-view__row--prompt'
-                      >
-                        <span className='git-diff-view__line-num git-diff-view__line-num--old' />
-                        <span className='git-diff-view__line-num git-diff-view__line-num--new' />
-                        <span className='git-diff-view__sign git-diff-view__sign--prompt'>»</span>
-                        <span className='git-diff-view__content git-diff-view__content--prompt'>
-                          <GitDiffPromptRow prompt={line.content} onOpen={handleOpenPromptModal} />
-                        </span>
-                      </div>
-                    );
-                  }
-
-                  const changeIndex = lineIndexToChangeIndex.get(index);
-                  const isChangeLine = changeIndex !== undefined;
-
-                  return (
-                    <div
-                      key={`${line.kind}-${index}`}
-                      ref={isChangeLine ? setRowRef(index) : undefined}
-                      data-change-index={isChangeLine ? changeIndex : undefined}
-                      className={`git-diff-view__row git-diff-view__row--${line.kind}${isChangeLine && changeIndex === currentChangeIndex ? ' git-diff-view__row--current' : ''}`}
-                    >
-                      <span className='git-diff-view__line-num git-diff-view__line-num--old'>
-                        {line.oldLineNumber ?? ''}
-                      </span>
-                      <span className='git-diff-view__line-num git-diff-view__line-num--new'>
-                        {line.newLineNumber ?? ''}
-                      </span>
-                      <span className='git-diff-view__sign'>
-                        {line.kind === 'add' ? '+' : line.kind === 'remove' ? '-' : ' '}
-                      </span>
-                      <span
-                        className='git-diff-view__content hljs'
-                        dangerouslySetInnerHTML={{
-                          __html:
-                            resolveGitDiffLineHtml(line, beforeHighlights, afterHighlights) || ' ',
-                        }}
-                      />
-                    </div>
-                  );
-                })}
-              </>
-            )}
-          </div>
-        </div>
-        <GitDiffScrollbarGutter
-          markers={scrollbarMarkers}
-          onMarkerClick={navigateToChange}
+      <div className='git-diff-view__viewport git-diff-view__viewport--editable'>
+        <CodeEditor
+          filePath={filePath}
+          value={after}
+          isVisible={isVisible}
+          diffBefore={before}
+          onChange={handleContentChange}
+          onSave={onSave ?? (() => undefined)}
+          onCreateEditor={handleCreateEditor}
         />
+        <GitDiffScrollbarGutter markers={scrollbarMarkers} onMarkerClick={navigateToChange} />
         {changeCount > 0 ? (
           <div className='git-diff-view__nav'>
             <div
@@ -631,6 +423,11 @@ function GitDiffViewComponent({
           </div>
         ) : null}
       </div>
+      {saveStatus ? (
+        <div className={`file-view__save-status${saveError ? ' file-view__save-status--error' : ''}`}>
+          {saveStatus}
+        </div>
+      ) : null}
       {expandedPrompt ? (
         <AgentGitPromptModal prompt={expandedPrompt} onClose={handleClosePromptModal} />
       ) : null}

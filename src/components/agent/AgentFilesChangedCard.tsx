@@ -45,31 +45,38 @@ function AgentFilesChangedCardComponent({
 
       openExplorerGit();
       const absolutePath = resolveAgentActivityFilePath(projectPath, trimmed);
-      const repoPath = await resolveGitRepoPathForFile(projectPath, trimmed || absolutePath || '');
-      const diffTargetPath = trimmed || absolutePath;
+      const diffTargetPath = absolutePath || trimmed;
 
       if (!diffTargetPath) {
         return;
       }
 
+      const repoPath = await resolveGitRepoPathForFile(projectPath, diffTargetPath);
+
       let staged = false;
       let untracked = false;
+
+      let openPath = diffTargetPath;
+      const fileName = getFileName(diffTargetPath);
 
       try {
         const status = await window.nexus.git.getStatus(repoPath);
         const relativePath = toGitRelativePath(repoPath, diffTargetPath);
-        const change = findGitFlatChangeByPath(buildFlatChanges(status), relativePath);
+        const change =
+          findGitFlatChangeByPath(buildFlatChanges(status), relativePath) ??
+          findGitFlatChangeByPath(buildFlatChanges(status), fileName);
 
         if (change) {
           staged = change.staged;
           untracked = change.status === 'untracked';
+          openPath = change.path;
         }
       } catch {
         staged = false;
         untracked = false;
       }
 
-      void openDiffTab(diffTargetPath, {
+      void openDiffTab(openPath, {
         staged,
         untracked,
         repoPath,

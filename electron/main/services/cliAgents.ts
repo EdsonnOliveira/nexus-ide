@@ -1,4 +1,5 @@
-import { execFileSync } from 'node:child_process';
+import { existsSync, statSync } from 'node:fs';
+import path from 'node:path';
 import { buildCliPathEnv } from '../utils/cliPathEnv';
 
 export type CliAgentBadgeIcon = 'cursor' | 'claude' | 'codex' | 'gemini';
@@ -52,17 +53,27 @@ function isCommandAvailable(command: string, pathEnv: string): boolean {
     return false;
   }
 
-  try {
-    const result = execFileSync('/usr/bin/which', [command], {
-      encoding: 'utf8',
-      env: { ...process.env, PATH: pathEnv },
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
+  for (const dir of pathEnv.split(path.delimiter)) {
+    if (!dir) {
+      continue;
+    }
 
-    return Boolean(result);
-  } catch {
-    return false;
+    const candidate = path.join(dir, command);
+
+    if (!existsSync(candidate)) {
+      continue;
+    }
+
+    try {
+      if (statSync(candidate).isFile()) {
+        return true;
+      }
+    } catch {
+      continue;
+    }
   }
+
+  return false;
 }
 
 function getAvailableCommands(): Set<string> {

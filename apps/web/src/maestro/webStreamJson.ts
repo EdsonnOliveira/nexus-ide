@@ -90,9 +90,8 @@ function basenamePath(filePath: string): string {
   return parts[parts.length - 1] ?? filePath;
 }
 
-function shortenPath(filePath: string): string {
-  const home = filePath.replace(/^\/Users\/[^/]+/, '~');
-  return home.length > 72 ? `…${home.slice(-68)}` : home;
+function toStoredAgentFilePath(filePath: string): string {
+  return filePath.replace(/\\/g, '/').replace(/^\/Users\/[^/]+/, '~');
 }
 
 function extractShellToolOutput(result: unknown): string {
@@ -433,17 +432,25 @@ function upsertResponse(state: WebStreamJsonState, text: string, streaming: bool
   }
 
   settleThought(state);
-  state.response = trimmed;
 
   if (state.responseId) {
+    const current = state.activities.find((entry) => entry.id === state.responseId);
+    const currentLabel = current?.label?.trim() ?? '';
+    const shouldKeepExisting =
+      currentLabel.length > trimmed.length &&
+      !currentLabel.startsWith(trimmed) &&
+      !trimmed.startsWith(currentLabel);
+    const nextLabel = shouldKeepExisting ? currentLabel : trimmed;
+    state.response = nextLabel;
     state.activities = state.activities.map((entry) =>
       entry.id === state.responseId
-        ? { ...entry, label: trimmed, streaming: streaming ? true : undefined }
+        ? { ...entry, label: nextLabel, streaming: streaming ? true : undefined }
         : entry,
     );
     return;
   }
 
+  state.response = trimmed;
   const response = createActivity(state, 'response', trimmed, {
     streaming: streaming ? true : undefined,
   });
@@ -458,9 +465,9 @@ function upsertFileRead(state: WebStreamJsonState, filePath: string, label?: str
   }
 
   state.seenReadPaths.add(normalized);
-  const displayPath = shortenPath(filePath);
+  const storedPath = toStoredAgentFilePath(filePath);
   const read = createActivity(state, 'file_read', label ?? `Read ${basenamePath(filePath)}`, {
-    filePath: displayPath,
+    filePath: storedPath,
   });
   state.activities = [...state.activities, read];
 }
@@ -476,9 +483,13 @@ function upsertFileEdit(
     return;
   }
 
-  const displayPath = shortenPath(filePath);
+  const storedPath = toStoredAgentFilePath(filePath);
+  const storedPathKey = storedPath.toLowerCase();
   const existingIndex = state.activities.findIndex(
-    (entry) => entry.kind === 'file_edit' && entry.filePath?.trim().toLowerCase() === normalized,
+    (entry) =>
+      entry.kind === 'file_edit' &&
+      (entry.filePath?.trim().toLowerCase() === normalized ||
+        entry.filePath?.trim().toLowerCase() === storedPathKey),
   );
 
   if (existingIndex >= 0) {
@@ -489,7 +500,7 @@ function upsertFileEdit(
       ...state.activities.slice(0, existingIndex),
       {
         ...existing,
-        filePath: displayPath,
+        filePath: storedPath,
         label: `Edited ${basenamePath(filePath)}`,
         additions: nextAdditions > 0 ? nextAdditions : undefined,
         deletions: nextDeletions > 0 ? nextDeletions : undefined,
@@ -502,7 +513,7 @@ function upsertFileEdit(
   state.activities = [
     ...state.activities,
     createActivity(state, 'file_edit', `Edited ${basenamePath(filePath)}`, {
-      filePath: displayPath,
+      filePath: storedPath,
       additions: additions > 0 ? additions : undefined,
       deletions: deletions > 0 ? deletions : undefined,
     }),
@@ -756,6 +767,20 @@ function settleAllStreaming(state: WebStreamJsonState): void {
   );
 }
 
+export function isTrivialWebResponseText(text: string): boolean {
+  const trimmed = text.trim();
+
+  if (!trimmed) {
+    return true;
+  }
+
+  if (trimmed.length <= 2) {
+    return true;
+  }
+
+  return /^[?.!…,;:]+$/u.test(trimmed);
+}
+
 export function looksLikeMidProgressWebResponse(text: string): boolean {
   const trimmed = text.trim();
 
@@ -768,7 +793,10 @@ export function looksLikeMidProgressWebResponse(text: string): boolean {
     /\b(vou |vamos |i'll |i will |let me |i am going to |i'm going to |next[,:]?\s|em seguida|agora vou|seguindo com|continu(?:ar|ando|e)\b)/i.test(
       tail,
     ) ||
-    /\b(atualizo|subo|fa[cç]o|verifico|testo|leio|edito|crio|removo|adiciono|implemento|aplico|reinicio|configuro|ajusto|valido|confiro|envio|rodo|executo|abro|fecho|monitoro|acompanho|revogo)\b/i.test(
+    /\b(atualizo|atualizando|subo|subindo|fa[cç]o|fazendo|verifico|verificando|testo|testando|leio|lendo|edito|editando|crio|criando|removo|removendo|adiciono|adicionando|implemento|implementando|aplico|aplicando|reinicio|reiniciando|configuro|configurando|ajusto|ajustando|valido|validando|confiro|conferindo|envio|enviando|rodo|rodando|executo|executando|abro|abrindo|fecho|fechando|monitoro|monitorando|acompanho|acompanhando|revogo|revogando)\b/i.test(
+      tail,
+    ) ||
+    /\b(running|executing|checking|testing|reading|writing|updating|creating|sending|polling)\b/i.test(
       tail,
     );
 
@@ -807,13 +835,13 @@ function isAggregatedPriorWebResponseText(
   }
 
   const compactResult = resultText.replace(/\s+/g, '');
+  const lastCompact = responses[responses.length - 1]!.replace(/\s+/g, '');
 
   if (compactResult.length < 48) {
-    return false;
+    return lastCompact.length >= compactResult.length;
   }
 
   const compactJoined = responses.join('').replace(/\s+/g, '');
-  const lastCompact = responses[responses.length - 1]!.replace(/\s+/g, '');
 
   if (compactResult === lastCompact) {
     return true;
@@ -890,7 +918,16 @@ function handleEvent(state: WebStreamJsonState, event: Record<string, unknown>):
     }
     settleAllStreaming(state);
     const lastResponse = findLastWebResponseLabel(state);
-    if (!looksLikeMidProgressWebResponse(lastResponse)) {
+    const priorResponses = state.activities.filter(
+      (entry) =>
+        entry.kind === 'response' &&
+        entry.label.trim() &&
+        entry.label.trim() !== lastResponse,
+    );
+    const truncatedTrailing =
+      isTrivialWebResponseText(lastResponse) &&
+      priorResponses.some((entry) => looksLikeMidProgressWebResponse(entry.label));
+    if (!looksLikeMidProgressWebResponse(lastResponse) && !truncatedTrailing) {
       state.done = true;
     }
   }

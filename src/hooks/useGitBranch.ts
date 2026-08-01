@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { requestGitDiscoverRepos } from '@/utils/gitDiscoverRequest';
 import { subscribeGitRepoChange } from '@/utils/gitRepoChangeBus';
 import {
   buildGitBranchBarEntries,
@@ -48,13 +49,21 @@ async function fetchGitBranchEntries(
     return existing;
   }
 
-  const request = window.nexus.git.discoverRepos(projectPath).then((repos) => {
-    inflightRequests.delete(cacheKey);
-    const activeRepo = resolveActiveGitRepo(repos, terminalCwd);
-    const entries = buildGitBranchBarEntries(repos, activeRepo);
-    setGitBranchCache(cacheKey, entries);
-    return entries;
-  });
+  const request = requestGitDiscoverRepos(projectPath)
+    .then((repos) => {
+      const activeRepo = resolveActiveGitRepo(repos, terminalCwd);
+      const entries = buildGitBranchBarEntries(repos, activeRepo);
+      setGitBranchCache(cacheKey, entries);
+      return entries;
+    })
+    .catch(() => {
+      return gitBranchCache.get(cacheKey) ?? [];
+    })
+    .finally(() => {
+      if (inflightRequests.get(cacheKey) === request) {
+        inflightRequests.delete(cacheKey);
+      }
+    });
 
   inflightRequests.set(cacheKey, request);
   return request;
