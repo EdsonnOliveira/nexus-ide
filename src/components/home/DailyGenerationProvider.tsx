@@ -1,15 +1,6 @@
-import {
-  createContext,
-  lazy,
-  memo,
-  Suspense,
-  useCallback,
-  useContext,
-  useMemo,
-  useState,
-  type ReactNode,
-} from 'react';
+import { lazy, memo, Suspense, useCallback, useMemo, useState, type ReactNode } from 'react';
 import { DailyGenerateDateMenu } from '@/components/home/DailyGenerateDateMenu';
+import { DailyGenerationContext } from '@/components/home/dailyGenerationContext';
 
 const DailyAgentResultModal = lazy(() =>
   import('@/components/home/DailyAgentResultModal').then((module) => ({
@@ -33,28 +24,6 @@ interface ExternalDailyDateMenuState {
   projectId: string;
   anchorRect: DOMRect;
 }
-
-interface DailyGenerationContextValue {
-  skillOptions: ReturnType<typeof useHomeDashboardDailySkill>['skillOptions'];
-  selectedSkillId: string;
-  selectedSkill: ReturnType<typeof useHomeDashboardDailySkill>['selectedSkill'];
-  selectSkillById: ReturnType<typeof useHomeDashboardDailySkill>['selectSkillById'];
-  loadingSkills: boolean;
-  isSkillAvailableForProject: ReturnType<typeof useHomeDashboardDailySkill>['isSkillAvailableForProject'];
-  runningProjectId: string | null;
-  hasCachedResult: (projectId: string) => boolean;
-  generateForProject: (
-    project: Project,
-    groups: AgentGitChangeGroup[],
-    gitChanges: GitFlatChange[],
-    transcriptions: LinkedTranscriptionSummary[],
-    targetDate: Date,
-  ) => void;
-  viewCached: (projectId: string) => void;
-  openDailyDateMenu: (projectId: string, x: number, y: number) => void;
-}
-
-const DailyGenerationContext = createContext<DailyGenerationContextValue | null>(null);
 
 function anchorRectFromPoint(x: number, y: number): DOMRect {
   return new DOMRect(x, y, 1, 1);
@@ -222,13 +191,4 @@ function DailyGenerationProviderComponent({ children }: { children: ReactNode })
 }
 
 export const DailyGenerationProvider = memo(DailyGenerationProviderComponent);
-
-export function useDailyGeneration(): DailyGenerationContextValue {
-  const context = useContext(DailyGenerationContext);
-
-  if (!context) {
-    throw new Error('useDailyGeneration must be used within DailyGenerationProvider');
-  }
-
-  return context;
-}
+export { useDailyGeneration } from '@/components/home/dailyGenerationContext';

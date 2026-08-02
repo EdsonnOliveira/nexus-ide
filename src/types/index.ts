@@ -119,6 +119,7 @@ export type AgentActivityKind =
   | 'file_read'
   | 'live_status'
   | 'tool_run'
+  | 'task'
   | 'response'
   | 'question'
   | 'plan';
@@ -171,6 +172,10 @@ export interface AgentActivity {
   toolCommand?: string;
   toolOutput?: string;
   toolExitCode?: number | null;
+  taskPrompt?: string;
+  taskSubagentType?: string;
+  taskAgentId?: string;
+  taskSummary?: string;
 }
 
 export interface AgentFollowUp {
@@ -205,6 +210,13 @@ export interface AgentTurnSummary {
   commands?: AgentTurnSummaryCommandRef[];
 }
 
+export interface AgentTurnUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
 export interface AgentTurn {
   id: string;
   user: AgentUserMessage;
@@ -214,6 +226,7 @@ export interface AgentTurn {
   completedAt?: number;
   pendingFollowUp?: boolean;
   summary?: AgentTurnSummary;
+  usage?: AgentTurnUsage;
 }
 
 export interface AgentTab {

@@ -1,5 +1,15 @@
+import { holdIncompleteMarkerSuffix } from '@/utils/terminalMarkerStream';
+
 const NEXUS_CWD_MARKER_PREFIX = '\x1eNEXUS_CWD\x1f';
 const NEXUS_CWD_MARKER_SUFFIX = '\x1e';
+const CWD_MARKERS = [NEXUS_CWD_MARKER_PREFIX];
+const CWD_HOLD_MARKERS = [
+  NEXUS_CWD_MARKER_PREFIX,
+  '\x1eNEXUS_CMD_START\x1e',
+  '\x1eNEXUS_CMD_EXIT\x1f',
+  '\x1eNEXUS_PROMPT\x1f',
+  '\x1eNEXUS_PROMPT_HIDE\x1e',
+];
 
 export function createNexusCwdStreamParser(onCwdChange: (cwd: string) => void) {
   let pending = '';
@@ -14,7 +24,20 @@ export function createNexusCwdStreamParser(onCwdChange: (cwd: string) => void) {
       const start = combined.indexOf(NEXUS_CWD_MARKER_PREFIX, cursor);
 
       if (start === -1) {
-        output += combined.slice(cursor);
+        const remainder = combined.slice(cursor);
+        const held = holdIncompleteMarkerSuffix(remainder, CWD_HOLD_MARKERS);
+        const pendingIsCwdPrefix = CWD_MARKERS.some((marker) =>
+          marker.startsWith(held.pending),
+        );
+
+        if (held.pending && !pendingIsCwdPrefix) {
+          output += held.solid + held.pending;
+          pending = '';
+        } else {
+          output += held.solid;
+          pending = held.pending;
+        }
+
         break;
       }
 

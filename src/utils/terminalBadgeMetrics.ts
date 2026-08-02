@@ -128,11 +128,18 @@ export function computePromptBadgesPosition(
   };
 }
 
+export interface TerminalCommandHistoryPosition {
+  top?: number;
+  bottom?: number;
+  left: number;
+  placement: 'above' | 'below';
+}
+
 export function computeCommandHistoryPosition(
   shell: HTMLElement,
   mount: HTMLElement,
   terminal: Terminal,
-): { top: number; left: number } | null {
+): TerminalCommandHistoryPosition | null {
   const cell = readTerminalCellDimensions(terminal, mount);
   const screen = mount.querySelector('.xterm-screen');
 
@@ -142,12 +149,29 @@ export function computeCommandHistoryPosition(
 
   const shellRect = shell.getBoundingClientRect();
   const screenRect = screen.getBoundingClientRect();
-  const promptRowBottom =
-    screenRect.top - shellRect.top + (terminal.buffer.active.cursorY + 1) * cell.height;
+  const gap = 6;
+  const promptRowTop =
+    screenRect.top - shellRect.top + terminal.buffer.active.cursorY * cell.height;
+  const promptRowBottom = promptRowTop + cell.height;
+  const spaceBelow = Math.max(0, shellRect.height - promptRowBottom - gap);
+  const spaceAbove = Math.max(0, promptRowTop - gap);
+  const preferredHeight = Math.min(320, shellRect.height * 0.5);
+  const minComfortable = Math.min(preferredHeight, 180);
+  const placeAbove = spaceBelow < minComfortable && spaceAbove > spaceBelow;
+  const left = screenRect.left - shellRect.left;
+
+  if (placeAbove) {
+    return {
+      bottom: Math.max(0, shellRect.height - promptRowTop + gap),
+      left,
+      placement: 'above',
+    };
+  }
 
   return {
-    top: promptRowBottom + 6,
-    left: screenRect.left - shellRect.left,
+    top: promptRowBottom + gap,
+    left,
+    placement: 'below',
   };
 }
 

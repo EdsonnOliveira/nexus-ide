@@ -1,4 +1,8 @@
 import { memo, useCallback, useMemo, useState } from 'react';
+import {
+  AgentActivityIcon,
+  resolveAgentActivityIconFromLabel,
+} from '@/components/agent/AgentActivityIcon';
 import { AgentToolActivityScrollList } from '@/components/agent/AgentFileActivityRow';
 import { AgentThoughtBlock } from '@/components/agent/AgentThoughtBlock';
 import type { AgentActivity } from '@/types';
@@ -39,6 +43,11 @@ function AgentActionBlockSummaryComponent({
     setExpanded((current) => !current);
   }, []);
 
+  const iconKind = useMemo(
+    () => resolveAgentActivityIconFromLabel(summary.label),
+    [summary.label],
+  );
+
   if (!summary.hasToolProgress) {
     return (
       <>
@@ -60,7 +69,8 @@ function AgentActionBlockSummaryComponent({
           aria-expanded={expanded}
           onClick={handleToggle}
         >
-          {summary.label}
+          <AgentActivityIcon kind={iconKind} />
+          <span>{summary.label}</span>
         </button>
         {hasDiff ? (
           <span className='agent-view__turn-summary-diff'>

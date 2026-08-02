@@ -1,5 +1,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import {
+  AgentActivityIcon,
+  resolveAgentActivityIconFromLabel,
+  resolveAgentActivityIconKind,
+} from '@/components/agent/AgentActivityIcon';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useTabActions } from '@/stores/useTabStore';
 import type { AgentActivity, AgentTurnSummaryCommandRef } from '@/types';
@@ -49,6 +54,14 @@ function AgentFileActivityRowComponent({
   );
   const verb =
     verbOverride ?? (activity.kind === 'file_read' ? 'Read' : 'Edited');
+  const iconKind = useMemo(
+    () =>
+      resolveAgentActivityIconKind({
+        ...activity,
+        verbOverride: verb,
+      }),
+    [activity, verb],
+  );
   const showDiff = activity.kind === 'file_edit' && !live;
   const isEdited = activity.kind === 'file_edit';
 
@@ -117,6 +130,7 @@ function AgentFileActivityRowComponent({
     <div
       className={`agent-view__file-row app-button--enter${live ? ' agent-view__file-row--live' : ''}`}
     >
+      <AgentActivityIcon kind={iconKind} />
       <span className='agent-view__file-verb'>{verb}</span>
       {fileName ? (
         absolutePath ? (
@@ -251,12 +265,15 @@ function renderAgentToolActivityRow(
       );
     }
 
+    const liveLabel = activity.label.trim();
+
     return (
       <div
         key={activity.id}
         className='agent-view__file-row agent-view__file-row--live app-button--enter'
       >
-        <span className='agent-view__file-verb'>{activity.label.trim()}</span>
+        <AgentActivityIcon kind={resolveAgentActivityIconFromLabel(liveLabel)} />
+        <span className='agent-view__file-verb'>{liveLabel}</span>
       </div>
     );
   }
@@ -266,6 +283,7 @@ function renderAgentToolActivityRow(
 
     return (
       <div key={activity.id} className='agent-view__file-row app-button--enter'>
+        <AgentActivityIcon kind='ran' />
         <span className='agent-view__file-verb'>Run</span>
         <span className='agent-view__file-name' title={command}>
           {command.length > 96 ? `${command.slice(0, 93)}…` : command}
@@ -302,7 +320,10 @@ function AgentToolActivityScrollListComponent({
     return (
       <div className='agent-view__tool-batch'>
         {summary ? (
-          <div className='agent-view__status-line agent-view__status-line--batch'>{summary}</div>
+          <div className='agent-view__status-line agent-view__status-line--batch'>
+            <AgentActivityIcon kind={resolveAgentActivityIconFromLabel(summary)} />
+            <span>{summary}</span>
+          </div>
         ) : null}
         {detailRow}
       </div>
@@ -327,6 +348,7 @@ function AgentCommandActivityRowComponent({ command }: AgentCommandActivityRowPr
 
   return (
     <div className='agent-view__file-row app-button--enter'>
+      <AgentActivityIcon kind='ran' />
       <span className='agent-view__file-verb'>Run</span>
       <span className='agent-view__file-name' title={command}>
         {displayCommand}
@@ -381,11 +403,21 @@ function AgentToolRunRowComponent({ activity }: AgentToolRunRowProps) {
     setOutputExpanded((prev) => !prev);
   }, []);
 
+  const iconKind = useMemo(
+    () =>
+      resolveAgentActivityIconKind({
+        ...activity,
+        verbOverride: verb,
+      }),
+    [activity, verb],
+  );
+
   return (
     <div
       className={`agent-view__tool-run app-button--enter${live ? ' agent-view__tool-run--live' : ''}`}
     >
       <div className={`agent-view__file-row${live ? ' agent-view__file-row--live' : ''}`}>
+        <AgentActivityIcon kind={iconKind} />
         <span className='agent-view__file-verb'>{verb}</span>
         <span className='agent-view__file-name' title={command || activity.label}>
           {displayCommand}

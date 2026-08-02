@@ -8,7 +8,11 @@ import {
   useAgentGitChangeStore,
   useAgentGitGroupsForProject,
 } from '@/stores/useAgentGitChangeStore';
-import type { AgentTurnSummary, AgentTurnSummaryFileRef } from '@/types';
+import type {
+  AgentTurnSummary,
+  AgentTurnSummaryFileRef,
+  AgentTurnUsage,
+} from '@/types';
 import type { AgentGitChangeGroup } from '@/types/agentGit';
 
 interface AgentResponseActionsProps {
@@ -18,6 +22,9 @@ interface AgentResponseActionsProps {
   content: string;
   summary?: AgentTurnSummary;
   editedFiles?: AgentTurnSummaryFileRef[];
+  startedAt?: number;
+  completedAt?: number;
+  usage?: AgentTurnUsage;
   showSkillPills?: boolean;
   showCopyPill?: boolean;
 }
@@ -117,6 +124,9 @@ function AgentResponseActionsComponent({
   content,
   summary,
   editedFiles,
+  startedAt,
+  completedAt,
+  usage,
   showSkillPills = false,
   showCopyPill = true,
 }: AgentResponseActionsProps) {
@@ -167,6 +177,9 @@ function AgentResponseActionsComponent({
         <AgentFilesChangedCard
           files={filesForCard}
           projectPath={projectPath}
+          startedAt={startedAt}
+          completedAt={completedAt}
+          usage={usage}
           onReview={handleOpenChanges}
         />
       ) : null}

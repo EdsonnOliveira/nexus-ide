@@ -5,7 +5,7 @@ import { EmptyState } from '@/components/overlay/EmptyState';
 import { DailyProjectPickerModal } from '@/components/home/DailyProjectPickerModal';
 import { HomeDashboardSection } from '@/components/home/HomeDashboardSection';
 import { HomeDashboardDailyProjectRow } from '@/components/home/HomeDashboardDailyProjectRow';
-import { useDailyGeneration } from '@/components/home/DailyGenerationProvider';
+import { useDailyGeneration } from '@/components/home/dailyGenerationContext';
 import {
   HomeDashboardDailySkeleton,
   HomeDashboardSelectSkeleton,

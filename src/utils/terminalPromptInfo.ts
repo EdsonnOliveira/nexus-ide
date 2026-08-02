@@ -1,3 +1,5 @@
+import { holdIncompleteMarkerSuffix } from '@/utils/terminalMarkerStream';
+
 export interface TerminalPromptInfo {
   nodeVersion: string;
   path: string;
@@ -10,17 +12,16 @@ export interface TerminalPromptInfo {
 const PROMPT_PREFIX = '\x1eNEXUS_PROMPT\x1f';
 const PROMPT_HIDE = '\x1eNEXUS_PROMPT_HIDE\x1e';
 const MARKER_SUFFIX = '\x1e';
+const PROMPT_MARKERS = [PROMPT_HIDE, PROMPT_PREFIX];
+const PROMPT_HOLD_MARKERS = [
+  ...PROMPT_MARKERS,
+  '\x1eNEXUS_CWD\x1f',
+  '\x1eNEXUS_CMD_START\x1e',
+  '\x1eNEXUS_CMD_EXIT\x1f',
+];
 
 function sanitizePromptField(value: string): string {
   return value.replace(/[\x1e\x1f]/g, '');
-}
-
-function isIncompleteMarkerPrefix(value: string): boolean {
-  if (!value || value[0] !== '\x1e') {
-    return false;
-  }
-
-  return PROMPT_HIDE.startsWith(value) || PROMPT_PREFIX.startsWith(value);
 }
 
 export function parseTerminalPromptPayload(payload: string): TerminalPromptInfo | null {
@@ -68,11 +69,17 @@ export function createNexusPromptStreamParser(
 
       if (start === -1 || !kind) {
         const remainder = combined.slice(cursor);
+        const held = holdIncompleteMarkerSuffix(remainder, PROMPT_HOLD_MARKERS);
+        const pendingIsPromptPrefix = PROMPT_MARKERS.some((marker) =>
+          marker.startsWith(held.pending),
+        );
 
-        if (isIncompleteMarkerPrefix(remainder)) {
-          pending = remainder;
+        if (held.pending && !pendingIsPromptPrefix) {
+          output += held.solid + held.pending;
+          pending = '';
         } else {
-          output += remainder;
+          output += held.solid;
+          pending = held.pending;
         }
 
         break;

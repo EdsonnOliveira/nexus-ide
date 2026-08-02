@@ -61,6 +61,7 @@ export interface AgentStreamJsonParserState {
   planActivityId: string | null;
   shellToolEvents: StreamJsonShellToolEvent[];
   runningToolRunStack: string[];
+  runningTaskStack: string[];
 }
 
 export interface StreamJsonTurnUpdate {
@@ -114,6 +115,7 @@ export function createAgentStreamJsonParserState(): AgentStreamJsonParserState {
     planActivityId: null,
     shellToolEvents: [],
     runningToolRunStack: [],
+    runningTaskStack: [],
   };
 }
 
@@ -454,6 +456,10 @@ function hasVisibleStreamJsonProgress(state: AgentStreamJsonParserState): boolea
       return Boolean(entry.label.trim() || entry.toolCommand?.trim());
     }
 
+    if (entry.kind === 'task') {
+      return Boolean(entry.label.trim());
+    }
+
     if (entry.kind === 'response') {
       return Boolean(entry.label.trim());
     }
@@ -487,6 +493,10 @@ function pruneEmptyThoughtPlaceholders(state: AgentStreamJsonParserState): boole
 
     if (entry.kind === 'tool_run' || entry.kind === 'live_status' || entry.kind === 'status') {
       return Boolean(entry.label.trim() || entry.toolCommand?.trim());
+    }
+
+    if (entry.kind === 'task') {
+      return Boolean(entry.label.trim());
     }
 
     if (entry.kind === 'response') {
@@ -1302,6 +1312,30 @@ function handleToolCallCompleted(state: AgentStreamJsonParserState, toolCall: un
     return;
   }
 
+  const taskToolCall = payload.taskToolCall as
+    | {
+        args?: {
+          description?: string;
+          prompt?: string;
+          subagentType?: string;
+          agentId?: string;
+        };
+        result?: {
+          success?: {
+            durationMs?: number | string;
+            isBackground?: boolean;
+            agentId?: string;
+          };
+          error?: { error?: string };
+        };
+      }
+    | undefined;
+
+  if (taskToolCall) {
+    completeTaskActivity(state, taskToolCall);
+    return;
+  }
+
   if (payload.mcpToolCall || payload.shellToolCall) {
     completeToolRun(state, { label: 'Ran tool' });
   }
@@ -1354,6 +1388,114 @@ function completeToolRun(
           ...entry,
           streaming: undefined,
           ...extra,
+        }
+      : entry,
+  );
+}
+
+function resolveTaskSummary(prompt: string | undefined): string | undefined {
+  if (!prompt?.trim()) {
+    return undefined;
+  }
+
+  const firstLine = prompt
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+
+  if (!firstLine) {
+    return undefined;
+  }
+
+  return firstLine.length > 120 ? `${firstLine.slice(0, 117)}…` : firstLine;
+}
+
+function startTaskActivity(
+  state: AgentStreamJsonParserState,
+  args: {
+    description?: string;
+    prompt?: string;
+    subagentType?: string;
+    agentId?: string;
+  },
+): void {
+  const description = args.description?.trim() || 'Subagent task';
+  const prompt = args.prompt?.trim() || '';
+  const activity = createActivity('task', description, {
+    streaming: true,
+    taskPrompt: prompt || undefined,
+    taskSubagentType: args.subagentType?.trim() || undefined,
+    taskAgentId: args.agentId?.trim() || undefined,
+    taskSummary: resolveTaskSummary(prompt),
+  });
+
+  state.activities = [...state.activities, activity];
+  state.runningTaskStack.push(activity.id);
+}
+
+function completeTaskActivity(
+  state: AgentStreamJsonParserState,
+  toolCall: {
+    args?: {
+      description?: string;
+      prompt?: string;
+      subagentType?: string;
+      agentId?: string;
+    };
+    result?: {
+      success?: {
+        durationMs?: number | string;
+        isBackground?: boolean;
+        agentId?: string;
+      };
+      error?: { error?: string };
+    };
+  },
+): void {
+  const id = state.runningTaskStack.pop();
+  const args = toolCall.args;
+  const success = toolCall.result?.success;
+  const durationRaw = success?.durationMs;
+  const durationMs =
+    typeof durationRaw === 'number'
+      ? durationRaw
+      : typeof durationRaw === 'string'
+        ? Number(durationRaw)
+        : undefined;
+  const prompt = args?.prompt?.trim() || '';
+  const description = args?.description?.trim();
+  const agentId = success?.agentId?.trim() || args?.agentId?.trim();
+
+  if (!id) {
+    if (!description && !prompt) {
+      return;
+    }
+
+    state.activities = [
+      ...state.activities,
+      createActivity('task', description || 'Subagent task', {
+        taskPrompt: prompt || undefined,
+        taskSubagentType: args?.subagentType?.trim() || undefined,
+        taskAgentId: agentId || undefined,
+        taskSummary: resolveTaskSummary(prompt),
+        durationMs: Number.isFinite(durationMs) ? durationMs : undefined,
+      }),
+    ];
+    return;
+  }
+
+  state.activities = state.activities.map((entry) =>
+    entry.id === id
+      ? {
+          ...entry,
+          streaming: undefined,
+          label: description || entry.label,
+          taskPrompt: prompt || entry.taskPrompt,
+          taskSubagentType: args?.subagentType?.trim() || entry.taskSubagentType,
+          taskAgentId: agentId || entry.taskAgentId,
+          taskSummary: resolveTaskSummary(prompt) || entry.taskSummary,
+          durationMs: Number.isFinite(durationMs) ? durationMs : entry.durationMs,
         }
       : entry,
   );
@@ -1454,6 +1596,22 @@ function handleToolCallStarted(state: AgentStreamJsonParserState, toolCall: unkn
     return;
   }
 
+  const taskToolCall = payload.taskToolCall as
+    | {
+        args?: {
+          description?: string;
+          prompt?: string;
+          subagentType?: string;
+          agentId?: string;
+        };
+      }
+    | undefined;
+
+  if (taskToolCall?.args) {
+    startTaskActivity(state, taskToolCall.args);
+    return;
+  }
+
   if (payload.mcpToolCall) {
     startToolRun(state, 'Running tool');
   }
@@ -1537,7 +1695,8 @@ function handleStreamJsonEvent(state: AgentStreamJsonParserState, event: Record<
       hasMeaningfulStreamJsonTurnOutput(state) &&
       !hasIncompleteStreamJsonEnding(state) &&
       !findStreamingThoughtActivity(state)?.streaming &&
-      state.runningToolRunStack.length === 0
+      state.runningToolRunStack.length === 0 &&
+      state.runningTaskStack.length === 0
     ) {
       state.shouldFinalize = true;
       // #region agent log
@@ -1672,11 +1831,15 @@ function hasStableStreamJsonProgressUi(state: AgentStreamJsonParserState): boole
 }
 
 export function ensureStreamJsonStallProgressUi(state: AgentStreamJsonParserState): boolean {
-  if (state.runningToolRunStack.length > 0) {
+  if (state.runningToolRunStack.length > 0 || state.runningTaskStack.length > 0) {
     return false;
   }
 
-  if (state.activities.some((entry) => entry.kind === 'tool_run' && entry.streaming)) {
+  if (
+    state.activities.some(
+      (entry) => (entry.kind === 'tool_run' || entry.kind === 'task') && entry.streaming,
+    )
+  ) {
     return false;
   }
 
@@ -1736,6 +1899,18 @@ export function forceSettleStreamJsonInFlightWork(state: AgentStreamJsonParserSt
     completeToolRun(state);
   }
 
+  while (state.runningTaskStack.length > 0) {
+    const id = state.runningTaskStack.pop();
+
+    if (!id) {
+      continue;
+    }
+
+    state.activities = state.activities.map((entry) =>
+      entry.id === id ? { ...entry, streaming: undefined } : entry,
+    );
+  }
+
   settleThought(state);
   sealActiveResponseSegment(state);
   state.activities = state.activities.filter((entry) => entry.kind !== 'live_status');
@@ -1788,7 +1963,7 @@ export function isAgentStreamJsonStateAwaitingCompletion(
     return true;
   }
 
-  if (state.runningToolRunStack.length > 0) {
+  if (state.runningToolRunStack.length > 0 || state.runningTaskStack.length > 0) {
     return true;
   }
 
@@ -1813,7 +1988,10 @@ export function isAgentStreamJsonStateAwaitingCompletion(
 
   return state.activities.some(
     (entry) =>
-      (entry.kind === 'tool_run' || entry.kind === 'live_status' || entry.kind === 'response') &&
+      (entry.kind === 'tool_run' ||
+        entry.kind === 'task' ||
+        entry.kind === 'live_status' ||
+        entry.kind === 'response') &&
       Boolean(entry.streaming),
   );
 }
@@ -1831,7 +2009,7 @@ export function tryMarkStreamJsonReadyToFinalize(state: AgentStreamJsonParserSta
     return false;
   }
 
-  if (state.runningToolRunStack.length > 0) {
+  if (state.runningToolRunStack.length > 0 || state.runningTaskStack.length > 0) {
     return false;
   }
 
@@ -1863,7 +2041,10 @@ export function tryMarkStreamJsonReadyToFinalize(state: AgentStreamJsonParserSta
       };
     }
 
-    if ((entry.kind === 'tool_run' || entry.kind === 'live_status') && entry.streaming) {
+    if (
+      (entry.kind === 'tool_run' || entry.kind === 'task' || entry.kind === 'live_status') &&
+      entry.streaming
+    ) {
       return {
         ...entry,
         streaming: undefined,
@@ -1889,6 +2070,36 @@ function isTrivialAgentResponseText(text: string): boolean {
   }
 
   return /^[?.!…,;:]+$/u.test(trimmed);
+}
+
+const COMPLETE_SHORT_RESPONSE_WORDS =
+  /^(?:ok|sim|não|nao|yes|no|done|pronto|feito|certo|aqui|ali|hoje|ontem|agora|ainda|também|tambem|depois|antes|então|entao|assim|muito|pouco|mais|menos|bem|mal|já|ja|só|so|eu|tu|ele|ela|nós|nos|vos|eles|elas|me|te|se|lhe|lhes|um|uma|uns|umas|ao|à|o|a|os|as|de|da|do|das|dos|em|no|na|nas|nos|que|ou|e|é|com|por|sem|sob|até|ate|após|apos|entre|sobre|desde|para|pelo|pela|pelos|pelas|the|and|for|not|but|you|all|can|had|her|was|one|our|out|day|get|has|him|his|how|man|new|now|old|see|two|way|who|boy|did|its|let|put|say|she|too|use|js|ts|tsx|css|md|json|yml|yaml|sh|py|go|rs|rb|php|html|svg|png|jpg|gif|pdf|xml|env|git|src|app|web|api|cli|dev|prod|hml|mock|ios|android)$/iu;
+
+const COMPLETE_WORD_SUFFIX =
+  /(?:mente|ções|ção|dades|dade|ismos|ismo|áveis|ável|íveis|ível|ando|endo|indo|ados|adas|idos|idas|ado|ada|ido|ida|aram|eram|iram|avam|iam|ará|erá|irá|aria|eria|iria|amos|emos|imos|ally|tion|ness|ment|ings|ers|ies|ous|ful|ed|ly|ing|er|or|al|ic|ive|ize|ise|est|ous)$/iu;
+
+function looksLikeAbruptlyCutWord(text: string): boolean {
+  const trimmed = text.trim();
+
+  if (!trimmed || /[.!?;:…)"\]}'"`]$/u.test(trimmed)) {
+    return false;
+  }
+
+  if (!/[a-záàâãéêíóôõúç]$/u.test(trimmed)) {
+    return false;
+  }
+
+  const lastToken = trimmed.split(/\s+/u).pop()?.replace(/^["'(\[{«]+/u, '') ?? '';
+
+  if (!/^[a-záàâãéêíóôõúçA-ZÁÀÂÃÉÊÍÓÔÕÚÇ]{3,8}$/u.test(lastToken)) {
+    return false;
+  }
+
+  if (COMPLETE_SHORT_RESPONSE_WORDS.test(lastToken) || COMPLETE_WORD_SUFFIX.test(lastToken)) {
+    return false;
+  }
+
+  return /[a-záàâãéêíóôõúç]$/u.test(lastToken);
 }
 
 export function looksLikeTruncatedAgentResponse(text: string): boolean {
@@ -1921,6 +2132,10 @@ export function looksLikeTruncatedAgentResponse(text: string): boolean {
   }
 
   if (/(?:^|\n)\s*[-*]\s+`[^`\n]+$/u.test(trimmed)) {
+    return true;
+  }
+
+  if (looksLikeAbruptlyCutWord(trimmed)) {
     return true;
   }
 
@@ -2053,7 +2268,8 @@ function hasIncompleteStreamJsonEnding(
     if (
       entry.kind === 'tool_run' ||
       entry.kind === 'file_edit' ||
-      entry.kind === 'file_read'
+      entry.kind === 'file_read' ||
+      entry.kind === 'task'
     ) {
       lastProgressIndex = index;
       continue;
@@ -2079,6 +2295,28 @@ function hasIncompleteStreamJsonEnding(
     return true;
   }
 
+  const priorResponses = activities.filter(
+    (entry) =>
+      entry.kind === 'response' &&
+      entry.label.trim() &&
+      entry.label.trim() !== lastResponseLabel,
+  );
+  const priorMidProgress = priorResponses.some((entry) =>
+    looksLikeMidProgressAgentResponse(entry.label),
+  );
+  const lastLooksComplete =
+    /\b(pronto|conclu[ií]do|finalizado|feito|tudo certo|all set|that's all|completed|finished|done)\b[.!…]?\s*$/i.test(
+      lastResponseLabel,
+    ) || /[.!?;:…]"?$/u.test(lastResponseLabel);
+
+  if (
+    !isTrivialAgentResponseText(lastResponseLabel) &&
+    priorMidProgress &&
+    !lastLooksComplete
+  ) {
+    return true;
+  }
+
   if (!isTrivialAgentResponseText(lastResponseLabel)) {
     return false;
   }
@@ -2090,24 +2328,20 @@ function hasIncompleteStreamJsonEnding(
     state.shellCommandCount > 0 ||
     activities.some(
       (entry) =>
-        entry.kind === 'tool_run' || entry.kind === 'file_edit' || entry.kind === 'file_read',
+        entry.kind === 'tool_run' ||
+        entry.kind === 'file_edit' ||
+        entry.kind === 'file_read' ||
+        entry.kind === 'task',
     );
 
   if (!hadToolProgress && lastProgressIndex <= lastResponseIndex) {
     return false;
   }
 
-  const priorResponses = activities.filter(
-    (entry) =>
-      entry.kind === 'response' &&
-      entry.label.trim() &&
-      entry.label.trim() !== lastResponseLabel,
-  );
-
   return (
     Boolean(state.responseLead?.trim()) ||
     state.summaryLeadCaptured ||
-    priorResponses.some((entry) => looksLikeMidProgressAgentResponse(entry.label)) ||
+    priorMidProgress ||
     priorResponses.length > 0
   );
 }
@@ -2274,8 +2508,7 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
     incompleteEnding &&
     !hasPendingInteraction &&
     !truncatedTrailingResponse &&
-    lastResponseLabel !== incompleteFallback &&
-    !looksLikeTruncatedAgentResponse(lastResponseLabel ?? '');
+    lastResponseLabel !== incompleteFallback;
   const statusFallback = [...turn.activities]
     .reverse()
     .find((entry) => entry.kind === 'status' && entry.label.trim())
@@ -2355,6 +2588,11 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
     ...turn,
     activities,
     ...(summary ? { summary } : {}),
+    ...(state.pendingUsage
+      ? { usage: state.pendingUsage }
+      : turn.usage
+        ? { usage: turn.usage }
+        : {}),
     running: false,
     completedAt: Date.now(),
   };
@@ -2384,4 +2622,7 @@ export function resetAgentStreamJsonTurn(state: AgentStreamJsonParserState): voi
   state.questionActivityId = null;
   state.pendingPlan = false;
   state.planActivityId = null;
+  state.shellToolEvents = [];
+  state.runningToolRunStack = [];
+  state.runningTaskStack = [];
 }

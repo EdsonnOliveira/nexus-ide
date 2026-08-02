@@ -1,4 +1,8 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  AgentActivityIcon,
+  resolveAgentActivityIconKind,
+} from '@/components/agent/AgentActivityIcon';
 import type { AgentActivity } from '@/types';
 import { useMarkdownCodeHighlight, useDeferredMarkdownHtml } from '@/hooks/useMarkdownCodeHighlight';
 
@@ -189,6 +193,7 @@ function AgentThoughtBlockComponent({
     : isBriefThought
       ? 'Thought briefly'
       : `Thought for ${formatDuration(activity.durationMs)}`;
+  const iconKind = useMemo(() => resolveAgentActivityIconKind(activity), [activity]);
 
   const showWaitingState = activity.streaming && !bodyText;
   const waitingHint = showWaitingState
@@ -210,6 +215,7 @@ function AgentThoughtBlockComponent({
         disabled={!canToggle}
         onClick={handleToggle}
       >
+        <AgentActivityIcon kind={iconKind} />
         <span
           className={`agent-view__file-verb agent-view__thought-title${activity.streaming ? ' agent-view__thought-title--streaming' : ''}`}
         >

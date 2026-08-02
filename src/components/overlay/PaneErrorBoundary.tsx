@@ -8,12 +8,13 @@ interface PaneErrorBoundaryProps {
 
 interface PaneErrorBoundaryState {
   hasError: boolean;
+  resetKey: number;
 }
 
 export class PaneErrorBoundary extends Component<PaneErrorBoundaryProps, PaneErrorBoundaryState> {
-  state: PaneErrorBoundaryState = { hasError: false };
+  state: PaneErrorBoundaryState = { hasError: false, resetKey: 0 };
 
-  static getDerivedStateFromError(): PaneErrorBoundaryState {
+  static getDerivedStateFromError(): Partial<PaneErrorBoundaryState> {
     return { hasError: true };
   }
 
@@ -22,7 +23,10 @@ export class PaneErrorBoundary extends Component<PaneErrorBoundaryProps, PaneErr
   }
 
   private handleRetry = (): void => {
-    this.setState({ hasError: false });
+    this.setState((prev) => ({
+      hasError: false,
+      resetKey: prev.resetKey + 1,
+    }));
   };
 
   render(): ReactNode {
@@ -47,6 +51,6 @@ export class PaneErrorBoundary extends Component<PaneErrorBoundaryProps, PaneErr
       );
     }
 
-    return this.props.children;
+    return <div key={this.state.resetKey}>{this.props.children}</div>;
   }
 }

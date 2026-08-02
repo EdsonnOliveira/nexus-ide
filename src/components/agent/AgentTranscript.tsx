@@ -1,9 +1,11 @@
 import { memo, useCallback, useEffect, useRef, type MutableRefObject, type RefObject } from 'react';
 import type { AgentQuestionAnswers, AgentTurn } from '@/types';
 import { AgentTurnView } from '@/components/agent/AgentTurnView';
+import { resolveActiveAgentTurnId } from '@/utils/agentPromptRail';
 
 export interface AgentTranscriptScrollControl {
   scrollToBottom: (options?: { smooth?: boolean }) => void;
+  scrollToTurn: (turnId: string, options?: { smooth?: boolean }) => void;
 }
 
 interface AgentTranscriptProps {
@@ -17,6 +19,7 @@ interface AgentTranscriptProps {
   paneId: string;
   disableStickyPrompt?: boolean;
   onAtBottomChange?: (atBottom: boolean) => void;
+  onActiveTurnChange?: (turnId: string | null) => void;
   onEdit?: (turnId: string) => void;
   onRedo?: (turnId: string) => void;
   onSubmitQuestion?: (activityId: string, answers: AgentQuestionAnswers) => boolean | Promise<boolean>;
@@ -120,6 +123,7 @@ function AgentTranscriptComponent({
   paneId,
   disableStickyPrompt = false,
   onAtBottomChange,
+  onActiveTurnChange,
   onEdit,
   onRedo,
   onSubmitQuestion,
@@ -130,14 +134,65 @@ function AgentTranscriptComponent({
   const programmaticScrollRef = useRef(false);
   const stickPinLockUntilRef = useRef(0);
   const scrollRafRef = useRef<number | null>(null);
+  const activeTurnRafRef = useRef<number | null>(null);
   const contentHeightRef = useRef(0);
+  const turnElementsRef = useRef<Map<string, HTMLElement>>(new Map());
+  const activeTurnIdRef = useRef<string | null>(null);
   const onAtBottomChangeRef = useRef(onAtBottomChange);
+  const onActiveTurnChangeRef = useRef(onActiveTurnChange);
   const lastTurnIdRef = useRef<string | null>(null);
   const lastScrollKeyRef = useRef(scrollKey ?? '');
 
   useEffect(() => {
     onAtBottomChangeRef.current = onAtBottomChange;
   }, [onAtBottomChange]);
+
+  useEffect(() => {
+    onActiveTurnChangeRef.current = onActiveTurnChange;
+  }, [onActiveTurnChange]);
+
+  const publishActiveTurn = useCallback((turnId: string | null) => {
+    if (activeTurnIdRef.current === turnId) {
+      return;
+    }
+
+    activeTurnIdRef.current = turnId;
+    onActiveTurnChangeRef.current?.(turnId);
+  }, []);
+
+  const syncActiveTurn = useCallback(() => {
+    const container = scrollContainerRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    publishActiveTurn(resolveActiveAgentTurnId(container, turns, turnElementsRef.current));
+  }, [publishActiveTurn, scrollContainerRef, turns]);
+
+  const scheduleSyncActiveTurn = useCallback(() => {
+    if (activeTurnRafRef.current !== null) {
+      return;
+    }
+
+    activeTurnRafRef.current = window.requestAnimationFrame(() => {
+      activeTurnRafRef.current = null;
+      syncActiveTurn();
+    });
+  }, [syncActiveTurn]);
+
+  const handleTurnElementChange = useCallback(
+    (turnId: string, element: HTMLElement | null) => {
+      if (element) {
+        turnElementsRef.current.set(turnId, element);
+      } else {
+        turnElementsRef.current.delete(turnId);
+      }
+
+      scheduleSyncActiveTurn();
+    },
+    [scheduleSyncActiveTurn],
+  );
 
   const notifyAtBottomChange = useCallback((atBottom: boolean) => {
     if (atBottomRef.current === atBottom) {
@@ -221,6 +276,8 @@ function AgentTranscriptComponent({
     }
 
     const handleScroll = () => {
+      scheduleSyncActiveTurn();
+
       if (programmaticScrollRef.current) {
         return;
       }
@@ -286,7 +343,14 @@ function AgentTranscriptComponent({
       container.removeEventListener('wheel', handleWheel);
       container.removeEventListener('touchmove', handleTouchMove);
     };
-  }, [isStickPinLocked, notifyAtBottomChange, releaseStickToBottom, scrollContainerRef, scrollKey]);
+  }, [
+    isStickPinLocked,
+    notifyAtBottomChange,
+    releaseStickToBottom,
+    scheduleSyncActiveTurn,
+    scrollContainerRef,
+    scrollKey,
+  ]);
 
   useEffect(() => {
     if (!scrollControlRef) {
@@ -311,15 +375,94 @@ function AgentTranscriptComponent({
             contentHeightRef.current = container.scrollHeight;
             notifyAtBottomChange(isScrollContainerAtBottom(container));
             schedulePinScrollToBottom();
+            scheduleSyncActiveTurn();
           },
         });
+      },
+      scrollToTurn: (turnId, options) => {
+        const container = scrollContainerRef.current;
+        const turnElement = turnElementsRef.current.get(turnId);
+
+        if (!container || !turnElement) {
+          return;
+        }
+
+        stickToBottomRef.current = false;
+        stickPinLockUntilRef.current = 0;
+        programmaticScrollRef.current = true;
+        publishActiveTurn(turnId);
+
+        const containerRect = container.getBoundingClientRect();
+        const turnRect = turnElement.getBoundingClientRect();
+        const nextTop = Math.max(0, container.scrollTop + (turnRect.top - containerRect.top) - 12);
+        const useSmooth = options?.smooth ?? !prefersReducedMotion();
+
+        if (!useSmooth) {
+          container.scrollTop = nextTop;
+          programmaticScrollRef.current = false;
+          notifyAtBottomChange(isScrollContainerAtBottom(container));
+          scheduleSyncActiveTurn();
+          return;
+        }
+
+        const startTop = container.scrollTop;
+        const distance = nextTop - startTop;
+
+        if (Math.abs(distance) < 1) {
+          programmaticScrollRef.current = false;
+          notifyAtBottomChange(isScrollContainerAtBottom(container));
+          scheduleSyncActiveTurn();
+          return;
+        }
+
+        const duration = Math.min(420, Math.max(220, Math.abs(distance) * 0.4));
+        const startTime = performance.now();
+
+        const step = (now: number) => {
+          const progress = Math.min(1, (now - startTime) / duration);
+          const eased = 1 - Math.pow(1 - progress, 3);
+          container.scrollTop = startTop + distance * eased;
+
+          if (progress < 1) {
+            window.requestAnimationFrame(step);
+            return;
+          }
+
+          container.scrollTop = nextTop;
+          programmaticScrollRef.current = false;
+          notifyAtBottomChange(isScrollContainerAtBottom(container));
+          scheduleSyncActiveTurn();
+        };
+
+        window.requestAnimationFrame(step);
       },
     };
 
     return () => {
       scrollControlRef.current = null;
     };
-  }, [notifyAtBottomChange, schedulePinScrollToBottom, scrollContainerRef, scrollControlRef, scrollKey]);
+  }, [
+    notifyAtBottomChange,
+    publishActiveTurn,
+    schedulePinScrollToBottom,
+    scheduleSyncActiveTurn,
+    scrollContainerRef,
+    scrollControlRef,
+    scrollKey,
+  ]);
+
+  useEffect(() => {
+    scheduleSyncActiveTurn();
+  }, [scheduleSyncActiveTurn, turns]);
+
+  useEffect(() => {
+    return () => {
+      if (activeTurnRafRef.current !== null) {
+        window.cancelAnimationFrame(activeTurnRafRef.current);
+        activeTurnRafRef.current = null;
+      }
+    };
+  }, []);
 
   const lastTurnId = turns[turns.length - 1]?.id ?? null;
   const turnCount = turns.length;
@@ -418,6 +561,7 @@ function AgentTranscriptComponent({
           projectPath={projectPath}
           paneId={paneId}
           disableStickyPrompt={disableStickyPrompt}
+          onTurnElementChange={handleTurnElementChange}
           onEdit={onEdit}
           onRedo={onRedo}
           onSubmitQuestion={onSubmitQuestion}

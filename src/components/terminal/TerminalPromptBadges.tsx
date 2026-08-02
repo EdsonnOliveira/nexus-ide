@@ -3,21 +3,36 @@ import { createPortal } from 'react-dom';
 import {
   ArrowUp,
   Check,
-  File,
   FileText,
   Folder,
   GitBranch,
 } from 'lucide-react';
+import {
+  ExplorerDirectoryIcon,
+  ExplorerFileIcon,
+} from '@/components/explorer/ExplorerTreeIcon';
 import { StatusBarBranchMenu } from '@/components/layout/StatusBarBranchMenu';
 import {
   positionDropdownAboveAnchor,
   useAnchoredDropdownMenu,
 } from '@/hooks/useAnchoredDropdownMenu';
 import { useProjectStore } from '@/stores/useProjectStore';
-import type { ProjectDirectoryEntry } from '@/types';
+import {
+  EXPLORER_ROOT_COLORS,
+  type ProjectDirectoryEntry,
+  type ProjectKind,
+} from '@/types';
 import { shellEscapeSingleQuotes } from '@/utils/agentCliSession';
 import type { TerminalPromptInfo } from '@/utils/terminalPromptInfo';
 import { gitRepoHasPendingWork } from '@/utils/gitPendingWork';
+
+function getProjectKindBadgeLabel(kind: ProjectKind): string {
+  if (kind === 'mobile') {
+    return 'APP';
+  }
+
+  return kind.toUpperCase();
+}
 
 interface TerminalPromptBadgesProps {
   info: TerminalPromptInfo | null;
@@ -232,6 +247,7 @@ interface PathMenuProps {
 
 function PathMenu({ anchorRect, cwd, onClose, onSelectDirectory }: PathMenuProps) {
   const [entries, setEntries] = useState<ProjectDirectoryEntry[]>([]);
+  const [projectKinds, setProjectKinds] = useState<Record<string, ProjectKind | null>>({});
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -244,13 +260,29 @@ function PathMenu({ anchorRect, cwd, onClose, onSelectDirectory }: PathMenuProps
 
       try {
         const next = await window.nexus.files.listDirectoryEntries(cwd);
+        const directoryPaths = next
+          .filter((entry) => entry.type === 'directory')
+          .map((entry) => entry.path);
+
+        let kinds: Record<string, ProjectKind | null> = {};
+
+        try {
+          kinds =
+            directoryPaths.length > 0
+              ? await window.nexus.files.detectProjectKinds(directoryPaths)
+              : {};
+        } catch {
+          kinds = {};
+        }
 
         if (!cancelled) {
           setEntries(next);
+          setProjectKinds(kinds);
         }
       } catch {
         if (!cancelled) {
           setEntries([]);
+          setProjectKinds({});
         }
       } finally {
         if (!cancelled) {
@@ -320,6 +352,12 @@ function PathMenu({ anchorRect, cwd, onClose, onSelectDirectory }: PathMenuProps
           ) : null}
           {filtered.map((entry) => {
             const isDirectory = entry.type === 'directory';
+            const projectKind = isDirectory ? projectKinds[entry.path] : null;
+            const entryIndex = entries.findIndex((item) => item.path === entry.path);
+            const accentColor =
+              isDirectory && projectKind && entryIndex >= 0
+                ? EXPLORER_ROOT_COLORS[entryIndex % EXPLORER_ROOT_COLORS.length]
+                : undefined;
 
             return (
               <button
@@ -333,12 +371,27 @@ function PathMenu({ anchorRect, cwd, onClose, onSelectDirectory }: PathMenuProps
                   }
                 }}
               >
-                {isDirectory ? (
-                  <Folder size={14} className='terminal-prompt-badge-menu__item-icon' />
+                {isDirectory && projectKind ? (
+                  <span
+                    className='project-explorer__kind-badge'
+                    style={
+                      accentColor
+                        ? { backgroundColor: accentColor, color: '#000000' }
+                        : undefined
+                    }
+                  >
+                    {getProjectKindBadgeLabel(projectKind)}
+                  </span>
                 ) : (
-                  <File size={14} className='terminal-prompt-badge-menu__item-icon' />
+                  <span className='terminal-prompt-badge-menu__item-icon terminal-prompt-badge-menu__item-icon--explorer'>
+                    {isDirectory ? (
+                      <ExplorerDirectoryIcon folderName={entry.name} expanded={false} />
+                    ) : (
+                      <ExplorerFileIcon name={entry.name} />
+                    )}
+                  </span>
                 )}
-                <span>{entry.name}</span>
+                <span style={accentColor ? { color: accentColor } : undefined}>{entry.name}</span>
               </button>
             );
           })}

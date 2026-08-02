@@ -1,5 +1,10 @@
 import { memo, useCallback, useMemo, useState } from 'react';
 import {
+  AgentActivityIcon,
+  resolveAgentActivityIconFromLabel,
+  type AgentActivityIconKind,
+} from '@/components/agent/AgentActivityIcon';
+import {
   AgentCommandActivityScrollList,
   AgentFileActivityScrollList,
 } from '@/components/agent/AgentFileActivityRow';
@@ -9,6 +14,12 @@ import {
   isAgentTurnSummaryVisible,
   type AgentTurnSummarySegmentKind,
 } from '@/utils/agentTurnSummary';
+
+const SUMMARY_SEGMENT_ICON: Record<AgentTurnSummarySegmentKind, AgentActivityIconKind> = {
+  edited: 'edit',
+  explored: 'read',
+  commands: 'ran',
+};
 
 interface AgentTurnSummaryLineProps {
   summary: AgentTurnSummary;
@@ -54,6 +65,14 @@ function AgentTurnSummaryLineComponent({ summary, projectPath }: AgentTurnSummar
     setExpandedKind((current) => (current === kind ? null : kind));
   }, []);
 
+  const leadingIconKind = useMemo(() => {
+    const first = segments[0];
+    if (!first) {
+      return resolveAgentActivityIconFromLabel('');
+    }
+    return SUMMARY_SEGMENT_ICON[first.kind];
+  }, [segments]);
+
   if (!isAgentTurnSummaryVisible(summary)) {
     return null;
   }
@@ -71,6 +90,7 @@ function AgentTurnSummaryLineComponent({ summary, projectPath }: AgentTurnSummar
       <div className='agent-view__turn-summary-row'>
         {segments.length > 0 ? (
           <div className='agent-view__turn-summary-text'>
+            <AgentActivityIcon kind={leadingIconKind} />
             {segments.map((segment, index) => {
               const hasDropdown = Boolean(segment.files?.length || segment.commands?.length);
               const isOpen = expandedKind === segment.kind;

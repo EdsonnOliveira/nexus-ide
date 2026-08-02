@@ -6,8 +6,10 @@ interface TerminalCommandHistoryPopupProps {
   entries: ShellCommandHistoryEntry[];
   selectedIndex: number;
   visible: boolean;
-  top: number;
+  top?: number;
+  bottom?: number;
   left: number;
+  placement?: 'above' | 'below';
   onSelectIndex: (index: number) => void;
 }
 
@@ -16,7 +18,9 @@ function TerminalCommandHistoryPopupComponent({
   selectedIndex,
   visible,
   top,
+  bottom,
   left,
+  placement = 'below',
   onSelectIndex,
 }: TerminalCommandHistoryPopupProps) {
   const [now, setNow] = useState(() => Date.now());
@@ -42,8 +46,8 @@ function TerminalCommandHistoryPopupComponent({
 
   return (
     <div
-      className='terminal-command-history app-button--enter'
-      style={{ top, left }}
+      className={`terminal-command-history terminal-command-history--${placement} app-button--enter`}
+      style={{ top, bottom, left }}
       role='listbox'
       aria-label='Histórico de comandos'
     >

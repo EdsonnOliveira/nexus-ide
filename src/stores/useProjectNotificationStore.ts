@@ -5,6 +5,7 @@ import {
   stopAgentNotificationSoundLoop,
 } from '@/utils/agentNotificationSound';
 import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
+import { notifyDesktopAgentWebPush } from '@/utils/notifyDesktopAgentWebPush';
 
 interface ProjectNotificationState {
   notifiedAgentPaneByProject: Record<string, string>;
@@ -19,6 +20,7 @@ export const useProjectNotificationStore = create<ProjectNotificationState>((set
   markProjectReady: (projectId, paneId) => {
     playAgentNotificationSound();
     startAgentNotificationSoundLoop();
+    notifyDesktopAgentWebPush(projectId, paneId);
 
     set((state) => ({
       notifiedAgentPaneByProject: {
@@ -27,6 +29,7 @@ export const useProjectNotificationStore = create<ProjectNotificationState>((set
       },
     }));
   },
+
   restoreProjectNotification: (projectId, paneId) => {
     set((state) => ({
       notifiedAgentPaneByProject: {

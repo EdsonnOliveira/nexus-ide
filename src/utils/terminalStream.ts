@@ -1,3 +1,7 @@
+import {
+  createNexusCommandStatusStreamParser,
+  type TerminalCommandStatusEvent,
+} from '@/utils/terminalCommandStatus';
 import { createNexusCwdStreamParser } from '@/utils/terminalCwd';
 import {
   createNexusPromptStreamParser,
@@ -6,6 +10,10 @@ import {
 
 const SOFT_INPUT_BG = '\x1b[48;2;28;28;32m';
 const SOFT_BORDER_FG = '\x1b[38;2;255;255;255m';
+const SOFT_ERROR_BG = '\x1b[48;2;48;22;24m';
+const SOFT_ERROR_BORDER_FG = '\x1b[38;2;239;68;68m';
+
+export type { TerminalCommandStatusEvent };
 
 function isDarkTrueColor(r: number, g: number, b: number): boolean {
   return Math.max(r, g, b) <= 55;
@@ -126,6 +134,7 @@ export function createTerminalOutputParser(
   onShellPrompt?: () => void,
   onPromptInfo?: (info: TerminalPromptInfo) => void,
   onPromptHide?: () => void,
+  onCommandStatusEvent?: (event: TerminalCommandStatusEvent) => void,
 ) {
   const parseCwd = createNexusCwdStreamParser((cwd) => {
     onCwdChange(cwd);
@@ -137,9 +146,13 @@ export function createTerminalOutputParser(
     () => onPromptHide?.(),
   );
 
+  const parseCommandStatus = createNexusCommandStatusStreamParser((event) => {
+    onCommandStatusEvent?.(event);
+  });
+
   return (chunk: string): string =>
-    softenDarkTerminalBackgrounds(parsePrompt(parseCwd(chunk)));
+    softenDarkTerminalBackgrounds(parsePrompt(parseCommandStatus(parseCwd(chunk))));
 }
 
-export { SOFT_BORDER_FG, SOFT_INPUT_BG };
+export { SOFT_BORDER_FG, SOFT_ERROR_BORDER_FG, SOFT_ERROR_BG, SOFT_INPUT_BG };
 export type { TerminalPromptInfo };

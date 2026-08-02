@@ -62,6 +62,7 @@ import {
   computeCommandHistoryPosition,
   computePromptBadgesPosition,
   readTerminalCellDimensions,
+  type TerminalCommandHistoryPosition,
 } from '@/utils/terminalBadgeMetrics';
 import {
   computeCommandBlockMenuPosition,
@@ -69,6 +70,9 @@ import {
   getTerminalCellPosition,
   type TerminalCommandBlock,
 } from '@/utils/terminalCommandBlocks';
+import { createTerminalCommandDecorationController } from '@/utils/terminalCommandDecorations';
+import type { TerminalCommandStatusEvent } from '@/utils/terminalStream';
+
 interface XTermViewProps {
   paneId: string;
   projectPath: string;
@@ -186,17 +190,17 @@ function writeTerminalOutput(
   terminal: Terminal,
   data: string,
   stickToBottomRef: { current: boolean },
+  onWriteComplete?: () => void,
 ): void {
-  terminal.write(data);
+  terminal.write(data, () => {
+    if (stickToBottomRef.current && !isLineEditRedraw(data)) {
+      terminal.scrollToBottom();
+    } else if (!stickToBottomRef.current) {
+      stickToBottomRef.current = isTerminalAtBottom(terminal);
+    }
 
-  if (!stickToBottomRef.current) {
-    stickToBottomRef.current = isTerminalAtBottom(terminal);
-    return;
-  }
-
-  if (!isLineEditRedraw(data)) {
-    terminal.scrollToBottom();
-  }
+    onWriteComplete?.();
+  });
 }
 
 function refreshTerminalDisplay(
@@ -481,7 +485,11 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
   const [commandHistoryOpen, setCommandHistoryOpen] = useState(false);
   const [commandHistoryIndex, setCommandHistoryIndex] = useState(0);
   const [commandHistoryEntries, setCommandHistoryEntries] = useState<ShellCommandHistoryEntry[]>([]);
-  const [commandHistoryPos, setCommandHistoryPos] = useState({ top: 0, left: 0 });
+  const [commandHistoryPos, setCommandHistoryPos] = useState<TerminalCommandHistoryPosition>({
+    top: 0,
+    left: 0,
+    placement: 'below',
+  });
   const [commandBlockMenu, setCommandBlockMenu] = useState<{
     block: TerminalCommandBlock;
     top: number;
@@ -541,7 +549,12 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     }
 
     setCommandHistoryPos((prev) =>
-      prev.top === next.top && prev.left === next.left ? prev : next,
+      prev.top === next.top &&
+      prev.bottom === next.bottom &&
+      prev.left === next.left &&
+      prev.placement === next.placement
+        ? prev
+        : next,
     );
   }, []);
 
@@ -1033,6 +1046,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     void document.fonts.load("13px 'Symbols Nerd Font Mono'");
 
     const terminal = new Terminal({
+      allowProposedApi: true,
       cursorBlink: true,
       cursorStyle: 'bar',
       cursorWidth: 1,
@@ -1220,6 +1234,9 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       handleMobileReleaseShellPrompt(paneIdRef.current);
     });
 
+    const commandDecorations = createTerminalCommandDecorationController();
+    let pendingCommandStatusEvents: TerminalCommandStatusEvent[] = [];
+
     const parseStream = createTerminalOutputParser(
       (nextCwd) => {
         cwdRef.current = nextCwd;
@@ -1248,6 +1265,13 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         promptBadgesVisibleRef.current = false;
         setPromptBadgesVisible(false);
         closeCommandHistoryRef.current(false);
+      },
+      (event) => {
+        if (isAgentSessionRef.current) {
+          return;
+        }
+
+        pendingCommandStatusEvents.push(event);
       },
     );
 
@@ -1375,7 +1399,29 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         return;
       }
 
-      writeTerminalOutput(activeTerminal, parseStream(data), stickToBottomRef);
+      const baseLine =
+        activeTerminal.buffer.active.baseY + activeTerminal.buffer.active.cursorY;
+      pendingCommandStatusEvents = [];
+      const cleaned = parseStream(data);
+      const commandEvents = pendingCommandStatusEvents;
+      pendingCommandStatusEvents = [];
+
+      writeTerminalOutput(activeTerminal, cleaned, stickToBottomRef, () => {
+        if (!canUseTerminal(terminalRef.current, disposedRef) || commandEvents.length === 0) {
+          return;
+        }
+
+        try {
+          commandDecorations.handleEvents(
+            terminalRef.current,
+            cleaned,
+            baseLine,
+            commandEvents,
+          );
+        } catch {
+          // ignore decoration failures so the shell stays usable
+        }
+      });
       scheduleSyncPasteImagesFromPromptRef.current(true);
 
       if (promptBadgesVisibleRef.current) {
@@ -1523,6 +1569,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       container.removeEventListener('focusin', handleFocusIn);
       container.removeEventListener('focusout', handleFocusOut);
       disposeAgentDetectorReset();
+      commandDecorations.dispose();
       scrollDisposable.dispose();
       linkDisposable.dispose();
       themeObserver.disconnect();
@@ -1794,7 +1841,9 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
             selectedIndex={commandHistoryIndex}
             visible={commandHistoryOpen}
             top={commandHistoryPos.top}
+            bottom={commandHistoryPos.bottom}
             left={commandHistoryPos.left}
+            placement={commandHistoryPos.placement}
             onSelectIndex={handleSelectCommandHistoryIndex}
           />
         ) : null}

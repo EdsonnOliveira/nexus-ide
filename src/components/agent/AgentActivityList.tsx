@@ -1,12 +1,22 @@
 import { Fragment, memo, useCallback, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
-import type { AgentActivity, AgentQuestionAnswers, AgentTurnSummary } from '@/types';
+import type {
+  AgentActivity,
+  AgentQuestionAnswers,
+  AgentTurnSummary,
+  AgentTurnUsage,
+} from '@/types';
 import { useMarkdownCodeHighlight, useDeferredMarkdownHtml } from '@/hooks/useMarkdownCodeHighlight';
+import {
+  AgentActivityIcon,
+  resolveAgentActivityIconFromLabel,
+} from '@/components/agent/AgentActivityIcon';
 import { AgentToolActivityScrollList } from '@/components/agent/AgentFileActivityRow';
 import { AgentThoughtBlock } from '@/components/agent/AgentThoughtBlock';
 import { AgentQuestionCard } from '@/components/agent/AgentQuestionCard';
 import { AgentPlanReviewDock } from '@/components/agent/AgentPlanReviewDock';
 import { AgentResponseActions } from '@/components/agent/AgentResponseActions';
 import { AgentActionBlockSummary } from '@/components/agent/AgentActionBlockSummary';
+import { AgentTaskActivityCard } from '@/components/agent/AgentTaskActivityCard';
 import { AgentTurnSummaryLine } from '@/components/agent/AgentTurnSummaryLine';
 import { MarkdownImageLightbox } from '@/components/overlay/MarkdownImageLightbox';
 import {
@@ -24,6 +34,7 @@ import {
   sanitizeResponseText,
   isValidReadFileTarget,
 } from '@/utils/agentTranscriptParser';
+import { looksLikeTruncatedAgentResponse } from '@/utils/agentStreamJsonParser';
 import { findMarkdownPreviewImage } from '@/utils/downloadImageSrc';
 import { normalizeMarkdownSource } from '@/utils/markdownText';
 import { useTabActions } from '@/stores/useTabStore';
@@ -32,6 +43,9 @@ interface AgentActivityListProps {
   activities: AgentActivity[];
   running: boolean;
   summary?: AgentTurnSummary;
+  startedAt?: number;
+  completedAt?: number;
+  usage?: AgentTurnUsage;
   projectId: string;
   projectPath: string;
   paneId: string;
@@ -91,7 +105,42 @@ function isRenderableActivity(activity: AgentActivity, running: boolean): boolea
     return activity.planStatus !== 'pending';
   }
 
+  if (activity.kind === 'task') {
+    return Boolean(activity.label.trim());
+  }
+
   return true;
+}
+
+function collectRelatedFilesForTask(
+  activities: AgentActivity[],
+  taskId: string,
+): string[] {
+  const taskIndex = activities.findIndex((entry) => entry.id === taskId);
+
+  if (taskIndex < 0) {
+    return [];
+  }
+
+  const files: string[] = [];
+
+  for (let index = taskIndex + 1; index < activities.length; index += 1) {
+    const entry = activities[index];
+
+    if (!entry) {
+      continue;
+    }
+
+    if (entry.kind === 'task' || entry.kind === 'response' || entry.kind === 'question' || entry.kind === 'plan') {
+      break;
+    }
+
+    if ((entry.kind === 'file_read' || entry.kind === 'file_edit') && entry.filePath?.trim()) {
+      files.push(entry.filePath.trim());
+    }
+  }
+
+  return files;
 }
 
 function findAgentResponseInlineCode(element: EventTarget | null): HTMLElement | null {
@@ -229,6 +278,9 @@ function AgentActivityListComponent({
   activities,
   running,
   summary,
+  startedAt,
+  completedAt,
+  usage,
   projectId,
   projectPath,
   paneId,
@@ -287,7 +339,12 @@ function AgentActivityListComponent({
         continue;
       }
 
-      if (entry.kind === 'tool_run' || entry.kind === 'file_edit' || entry.kind === 'file_read') {
+      if (
+        entry.kind === 'tool_run' ||
+        entry.kind === 'file_edit' ||
+        entry.kind === 'file_read' ||
+        entry.kind === 'task'
+      ) {
         lastProgressIndex = index;
         continue;
       }
@@ -360,6 +417,10 @@ function AgentActivityListComponent({
               return Boolean(entry.label.trim() || entry.toolCommand?.trim());
             }
 
+            if (entry.kind === 'task') {
+              return Boolean(entry.label.trim());
+            }
+
             return false;
           });
           const collapseEmptyPlaceholder =
@@ -390,7 +451,8 @@ function AgentActivityListComponent({
 
           return (
             <div key={activity.id} className='agent-view__status-line app-button--enter'>
-              {activity.label}
+              <AgentActivityIcon kind={resolveAgentActivityIconFromLabel(activity.label)} />
+              <span>{activity.label}</span>
             </div>
           );
         }
@@ -449,6 +511,22 @@ function AgentActivityListComponent({
           return <AgentPlanReviewDock key={activity.id} activity={activity} mode='archive' />;
         }
 
+        if (activity.kind === 'task') {
+          const taskIndex = visibleActivities.findIndex((entry) => entry.id === activity.id);
+          const previous = taskIndex > 0 ? visibleActivities[taskIndex - 1] : null;
+          const showToolsHeader = previous?.kind !== 'task';
+
+          return (
+            <AgentTaskActivityCard
+              key={activity.id}
+              activity={activity}
+              projectPath={projectPath}
+              relatedFiles={collectRelatedFilesForTask(visibleActivities, activity.id)}
+              showToolsHeader={showToolsHeader}
+            />
+          );
+        }
+
         return null;
   };
 
@@ -468,11 +546,22 @@ function AgentActivityListComponent({
     return 'O agente encerrou sem uma resposta em texto.';
   }, [endedDuringThought, incompleteClosingMessage, summary]);
 
+  const lastVisibleResponseLabel = useMemo(() => {
+    for (let index = visibleActivities.length - 1; index >= 0; index -= 1) {
+      const entry = visibleActivities[index];
+
+      if (entry?.kind === 'response') {
+        return getSanitizedResponseLabel(entry.label).trim();
+      }
+    }
+
+    return '';
+  }, [visibleActivities]);
+
   const showIncompleteClosing =
     !running &&
-    endedDuringThought &&
-    [...visibleActivities].reverse().find((entry) => entry.kind === 'response')?.label.trim() !==
-      incompleteClosingMessage;
+    lastVisibleResponseLabel !== incompleteClosingMessage &&
+    (endedDuringThought || looksLikeTruncatedAgentResponse(lastVisibleResponseLabel));
 
   const renderLiveActionGroup = (activities: AgentActivity[]): ReactNode => {
     const nodes: ReactNode[] = [];
@@ -582,7 +671,8 @@ function AgentActivityListComponent({
       ) : null}
       {running && visibleActivities.length === 0 ? (
         <div className='agent-view__status-line agent-view__status-line--pending'>
-          Executando agent…
+          <AgentActivityIcon kind='tools' />
+          <span>Executando agent…</span>
         </div>
       ) : null}
       {showResponseActions ? (
@@ -593,6 +683,9 @@ function AgentActivityListComponent({
           content={finalResponseText}
           summary={summary}
           editedFiles={editedFilesForCard}
+          startedAt={startedAt}
+          completedAt={completedAt}
+          usage={usage}
           showSkillPills={isLatestTurn}
           showCopyPill={showCopyPill}
         />

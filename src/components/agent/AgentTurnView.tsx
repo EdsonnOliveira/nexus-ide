@@ -15,6 +15,7 @@ interface AgentTurnViewProps {
   projectPath: string;
   paneId: string;
   disableStickyPrompt?: boolean;
+  onTurnElementChange?: (turnId: string, element: HTMLElement | null) => void;
   onEdit?: (turnId: string) => void;
   onRedo?: (turnId: string) => void;
   onSubmitQuestion?: (activityId: string, answers: AgentQuestionAnswers) => boolean | Promise<boolean>;
@@ -30,6 +31,7 @@ function AgentTurnViewComponent({
   projectPath,
   paneId,
   disableStickyPrompt = false,
+  onTurnElementChange,
   onEdit,
   onRedo,
   onSubmitQuestion,
@@ -59,7 +61,13 @@ function AgentTurnViewComponent({
   );
 
   return (
-    <div className='agent-view__turn'>
+    <div
+      className='agent-view__turn'
+      data-agent-turn-id={turn.id}
+      ref={(node) => {
+        onTurnElementChange?.(turn.id, node);
+      }}
+    >
       <div ref={stickySentinelRef} className='agent-view__user-prompt-sticky-sentinel' aria-hidden='true' />
       <div
         className={`agent-view__user-prompt-sticky${stickyPromptActive ? ' agent-view__user-prompt-sticky--enabled' : ''}${isPromptStuck ? ' agent-view__user-prompt-sticky--stuck' : ''}${stickyPhase === 'in' ? ' agent-view__user-prompt-sticky--enter' : ''}${stickyPhase === 'out' ? ' agent-view__user-prompt-sticky--exit' : ''}`}
@@ -79,6 +87,9 @@ function AgentTurnViewComponent({
             activities={turn.activities}
             running={turn.running}
             summary={turn.summary}
+            startedAt={turn.startedAt}
+            completedAt={turn.completedAt}
+            usage={turn.usage}
             projectId={projectId}
             projectPath={projectPath}
             paneId={paneId}

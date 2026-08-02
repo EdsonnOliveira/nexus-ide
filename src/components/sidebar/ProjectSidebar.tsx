@@ -10,7 +10,7 @@ import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStor
 import { useAgentComposerDraftStore } from '@/stores/useAgentComposerDraftStore';
 import { ProjectListItem } from '@/components/sidebar/ProjectListItem';
 import { WorkspaceMark } from '@/components/sidebar/WorkspaceMark';
-import { useDailyGeneration } from '@/components/home/DailyGenerationProvider';
+import { useDailyGeneration } from '@/components/home/dailyGenerationContext';
 import { ProjectContextMenu } from '@/components/sidebar/ProjectContextMenu';
 import { ProjectPromptDialog } from '@/components/sidebar/ProjectPromptDialog';
 import { ProjectColorPicker } from '@/components/sidebar/ProjectColorPicker';

@@ -6,6 +6,7 @@ typeset -g _NEXUS_GIT_FILES=0
 typeset -g _NEXUS_GIT_ADDS=0
 typeset -g _NEXUS_GIT_DELS=0
 typeset -g _NEXUS_CMD_START=0
+typeset -g _NEXUS_CMD_ACTIVE=0
 typeset -g _NEXUS_LAST_DURATION=''
 typeset -g _NEXUS_TRANSIENT=''
 typeset -g _NEXUS_SHOW_DIVIDER=0
@@ -130,7 +131,14 @@ _nexus_emit_prompt_info() {
 }
 
 _nexus_set_prompt() {
+  local last_exit=$?
+
   setopt local_options no_nomatch
+
+  if (( _NEXUS_CMD_ACTIVE )); then
+    print -rn $'\x1eNEXUS_CMD_EXIT\x1f'"${last_exit}"$'\x1e'
+    typeset -g _NEXUS_CMD_ACTIVE=0
+  fi
 
   _nexus_prompt_update_duration
   _nexus_prompt_refresh_node
@@ -150,7 +158,9 @@ _nexus_set_prompt() {
 
 _nexus_preexec() {
   print -rn $'\x1eNEXUS_PROMPT_HIDE\x1e'
+  print -rn $'\x1eNEXUS_CMD_START\x1e'
   typeset -g _NEXUS_SHOW_DIVIDER=1
+  typeset -g _NEXUS_CMD_ACTIVE=1
 
   if [[ -n "$EPOCHREALTIME" ]]; then
     _NEXUS_CMD_START=$EPOCHREALTIME

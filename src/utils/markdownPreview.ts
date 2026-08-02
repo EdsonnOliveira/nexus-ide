@@ -210,6 +210,10 @@ function expandMarkdownLines(source: string): string[] {
   return lines;
 }
 
+function stripInlineMarkdownCode(line: string): string {
+  return line.replace(/`[^`]*`/g, ' ');
+}
+
 function looksLikeMarkdownProseLine(line: string): boolean {
   const trimmed = line.trim();
 
@@ -257,45 +261,47 @@ function looksLikeCodeLine(line: string): boolean {
     return true;
   }
 
-  if (/[{}]/.test(trimmed)) {
-    return true;
-  }
-
-  if (/=>/.test(trimmed)) {
-    return true;
-  }
-
   if (looksLikeMarkdownProseLine(trimmed)) {
     return false;
   }
 
-  if (/;/.test(trimmed)) {
-    if (/^\s*(const|let|var|return|import|export|throw|break|continue|case|default)\b/.test(trimmed)) {
-      return true;
-    }
+  const structural = stripInlineMarkdownCode(trimmed);
 
-    if (/=>/.test(trimmed)) {
-      return true;
-    }
-
-    if (/^\s*[\w$.)]+\s*;/.test(trimmed)) {
-      return true;
-    }
-  }
-
-  if (/=>|\+\+|--|<<|>>|::|\?\./.test(trimmed)) {
+  if (/[{}]/.test(structural)) {
     return true;
   }
 
-  if (/^\s*\)?\s*:\s*[\w<>,\s|.&]+[{;]/.test(trimmed)) {
+  if (/=>/.test(structural)) {
     return true;
   }
 
-  if (/^\s*if\s*\(/.test(trimmed)) {
+  if (/;/.test(structural)) {
+    if (/^\s*(const|let|var|return|import|export|throw|break|continue|case|default)\b/.test(structural)) {
+      return true;
+    }
+
+    if (/=>/.test(structural)) {
+      return true;
+    }
+
+    if (/^\s*[\w$.)]+\s*;/.test(structural)) {
+      return true;
+    }
+  }
+
+  if (/=>|\+\+|--|<<|>>|::|\?\./.test(structural)) {
     return true;
   }
 
-  if (/[=<>]=/.test(trimmed)) {
+  if (/^\s*\)?\s*:\s*[\w<>,\s|.&]+[{;]/.test(structural)) {
+    return true;
+  }
+
+  if (/^\s*if\s*\(/.test(structural)) {
+    return true;
+  }
+
+  if (/[=<>]=/.test(structural)) {
     return true;
   }
 

@@ -742,6 +742,38 @@ export async function upsertPushPreferences(
   return data as PushPreferencesRow;
 }
 
+export type PushKind = 'agent' | 'deploy' | 'device';
+
+export async function sendPushNotification(
+  client: NexusClient,
+  input: {
+    userId: string;
+    kind: PushKind;
+    title: string;
+    body: string;
+    dedupeKey?: string;
+    data?: Record<string, unknown>;
+  },
+): Promise<{ ok: boolean; sent?: number; skipped?: string }> {
+  const { data, error } = await client.functions.invoke('send-push', {
+    body: {
+      userId: input.userId,
+      kind: input.kind,
+      title: input.title,
+      body: input.body,
+      dedupeKey: input.dedupeKey,
+      data: input.data,
+    },
+  });
+  if (error) {
+    throw error;
+  }
+  if (!data || typeof data !== 'object' || !('ok' in data)) {
+    return { ok: false };
+  }
+  return data as { ok: boolean; sent?: number; skipped?: string };
+}
+
 export async function getUserVercelToken(
   client: NexusClient,
   userId: string,

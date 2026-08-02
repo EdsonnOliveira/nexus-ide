@@ -17,6 +17,7 @@ import {
   AgentTranscript,
   type AgentTranscriptScrollControl,
 } from '@/components/agent/AgentTranscript';
+import { AgentPromptRail } from '@/components/agent/AgentPromptRail';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import { useAgentPaneSession } from '@/hooks/useAgentPaneSession';
 import { useAgentComposerDraftStore } from '@/stores/useAgentComposerDraftStore';
@@ -53,6 +54,7 @@ function AgentViewSessionComponent({
   );
   const [turns, setTurns] = useState<AgentTurn[]>(() => sessionTab.turns ?? []);
   const [isTranscriptAtBottom, setIsTranscriptAtBottom] = useState(true);
+  const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const transcriptScrollRef = useRef<AgentTranscriptScrollControl | null>(null);
@@ -134,8 +136,16 @@ function AgentViewSessionComponent({
     setIsTranscriptAtBottom(atBottom);
   }, []);
 
+  const handleActiveTurnChange = useCallback((turnId: string | null) => {
+    setActiveTurnId(turnId);
+  }, []);
+
   const handleScrollTranscriptToBottom = useCallback(() => {
     transcriptScrollRef.current?.scrollToBottom();
+  }, []);
+
+  const handleSelectPromptTurn = useCallback((turnId: string) => {
+    transcriptScrollRef.current?.scrollToTurn(turnId);
   }, []);
 
   const handleDraftChange = useCallback(
@@ -385,6 +395,14 @@ function AgentViewSessionComponent({
       onMouseDown={handleMouseDown}
     >
       <div className='agent-view__transcript-shell'>
+        {turns.length > 1 ? (
+          <AgentPromptRail
+            turns={turns}
+            activeTurnId={activeTurnId}
+            projectPath={projectPath}
+            onSelectTurn={handleSelectPromptTurn}
+          />
+        ) : null}
         <div className='agent-view__transcript' ref={transcriptRef}>
           {turns.length === 0 ? (
             <div className='agent-view__empty'>{emptyState}</div>
@@ -400,6 +418,7 @@ function AgentViewSessionComponent({
               paneId={tab.id}
               disableStickyPrompt={disableStickyPrompt}
               onAtBottomChange={handleTranscriptAtBottomChange}
+              onActiveTurnChange={handleActiveTurnChange}
               onEdit={editAgentTurn}
               onRedo={redoAgentTurn}
               onSubmitQuestion={submitQuestionAnswers}
