@@ -29,7 +29,8 @@ import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useCloudAgentSessionsSync } from '@/hooks/useCloudAgentSessionsSync';
 import { useRemoteEmulatorTabSync } from '@/hooks/useRemoteEmulatorTabSync';
 import { useCloudStore } from '@/stores/useCloudStore';
-import { projectHasLiveAgentSession } from '@/utils/paneAgentSession';
+import { projectNeedsBackgroundHost } from '@/utils/paneAgentSession';
+import { useAgentShellTerminalStore } from '@/stores/useAgentShellTerminalStore';
 import { isAnyModalOpen, subscribeOverlayBlockingChange } from '@/utils/overlayBlocking';
 
 const LazyHomeDashboard = lazy(() =>
@@ -133,6 +134,19 @@ function AppShellComponent() {
   const agentPrintRunTokenByPane = useTerminalSessionStore((state) => state.agentPrintRunTokenByPane);
   const agentBusyByPane = useTerminalSessionStore((state) => state.agentBusyByPane);
   const awaitingResponseByPane = useTerminalSessionStore((state) => state.awaitingResponseByPane);
+  const runningShellTerminalCount = useAgentShellTerminalStore((state) => {
+    let count = 0;
+
+    for (const entries of Object.values(state.entriesByAgentPane)) {
+      for (const entry of entries) {
+        if (entry.status === 'starting' || entry.status === 'running') {
+          count += 1;
+        }
+      }
+    }
+
+    return count;
+  });
   const needsOffscreenAgentHost = useMemo(() => {
     if (activeProjectId) {
       return false;
@@ -144,13 +158,14 @@ function AppShellComponent() {
       awaitingResponseByPane,
     };
 
-    return projects.some((project) => projectHasLiveAgentSession(project, session));
+    return projects.some((project) => projectNeedsBackgroundHost(project, session));
   }, [
     activeProjectId,
     agentBusyByPane,
     agentPrintRunTokenByPane,
     awaitingResponseByPane,
     projects,
+    runningShellTerminalCount,
   ]);
   const gitChangeCount = useGitChangeCount(
     projectsMigrated ? (activeProject?.path ?? null) : null,

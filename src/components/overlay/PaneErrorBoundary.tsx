@@ -1,4 +1,4 @@
-import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { Component, Fragment, type ErrorInfo, type ReactNode } from 'react';
 
 import { NexusLogo } from '@/components/overlay/NexusLogo';
 
@@ -51,6 +51,6 @@ export class PaneErrorBoundary extends Component<PaneErrorBoundaryProps, PaneErr
       );
     }
 
-    return <div key={this.state.resetKey}>{this.props.children}</div>;
+    return <Fragment key={this.state.resetKey}>{this.props.children}</Fragment>;
   }
 }

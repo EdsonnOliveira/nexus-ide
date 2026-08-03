@@ -16,6 +16,7 @@ import {
   getAgentModeOption,
 } from '@/constants/agentModes';
 import { AgentComposerModeChip } from '@/components/agent/AgentComposerModeChip';
+import { cycleAgentMode } from '@/utils/cycleAgentMode';
 import {
   AgentComposerModelSelect,
   AgentComposerPlusMenu,
@@ -90,8 +91,10 @@ interface AgentComposerProps {
   contextUsage: AgentContextUsageSnapshot | null;
   contextUsageLoading: boolean;
   promptHistory?: string[];
+  followUpCount?: number;
   onDraftChange: (value: string) => void;
   onSubmit: (draft: string) => boolean | Promise<boolean>;
+  onFlushNextFollowUp?: () => boolean;
   onStop: () => boolean;
   onRunCommand: (command: string) => boolean;
   onRequestContextUsageReport: () => void;
@@ -368,8 +371,10 @@ function AgentComposerComponent({
   contextUsage,
   contextUsageLoading,
   promptHistory = [],
+  followUpCount = 0,
   onDraftChange,
   onSubmit,
+  onFlushNextFollowUp,
   onStop,
   onRunCommand,
   onRequestContextUsageReport,
@@ -977,10 +982,13 @@ function AgentComposerComponent({
     isVisible,
     isBusy,
     draft,
+    hasPendingImages: images.length > 0,
+    followUpCount,
     activeMode,
     modelHints,
     onSubmit: handleSubmit,
     onForceSubmit: handleForceSubmit,
+    onFlushNextFollowUp,
     onStop: () => {
       onStop();
     },
@@ -1004,7 +1012,7 @@ function AgentComposerComponent({
           return;
         }
 
-        if (event.key === 'Enter' || event.key === 'Tab') {
+        if (event.key === 'Enter' || (event.key === 'Tab' && !event.shiftKey)) {
           const activeMatch = mention.getActiveMatch();
 
           if (activeMatch) {
@@ -1020,6 +1028,12 @@ function AgentComposerComponent({
           handleMentionClose();
           return;
         }
+      }
+
+      if (event.key === 'Tab' && event.shiftKey) {
+        event.preventDefault();
+        handleModeChange(cycleAgentMode(activeMode));
+        return;
       }
 
       if (isEditing && event.key === 'Escape') {
@@ -1052,8 +1066,10 @@ function AgentComposerComponent({
       }
     },
     [
+      activeMode,
       handleMentionClose,
       handleMentionSelect,
+      handleModeChange,
       handleStopOrSubmit,
       isEditing,
       mention,

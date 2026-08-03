@@ -1,5 +1,6 @@
 import type {
   AgentActivity,
+  AgentFollowUp,
   AgentTab,
   AgentTurn,
   AgentTurnSummary,
@@ -290,18 +291,49 @@ export function sanitizeAgentTurnHistory(turns: AgentTurn[]): AgentTurn[] {
   return trimAgentTurnHistory(turns);
 }
 
+export function sanitizeAgentFollowUps(followUps: AgentFollowUp[]): AgentFollowUp[] {
+  if (followUps.length === 0) {
+    return followUps;
+  }
+
+  return followUps.map((item) => {
+    const hasHeavy = item.attachments.some((attachment) => attachment.dataUrl.length > 256);
+
+    if (!hasHeavy) {
+      return item;
+    }
+
+    return {
+      ...item,
+      attachments: item.attachments.map((attachment) =>
+        attachment.dataUrl.length > 256 ? { ...attachment, dataUrl: '' } : attachment,
+      ),
+    };
+  });
+}
+
 function trimAgentTab(tab: Tab): Tab {
   if (tab.type !== 'agent') {
     return tab;
   }
 
   const turns = sanitizeAgentTurnHistory(tab.turns ?? []);
+  const followUps = sanitizeAgentFollowUps(tab.followUps ?? []);
+  const turnsChanged = turns !== tab.turns || (turns.length === 0 && Boolean(tab.ptyId));
+  const followUpsChanged =
+    followUps.length !== (tab.followUps?.length ?? 0) ||
+    followUps.some((item, index) => item !== tab.followUps?.[index]);
 
-  if (turns === tab.turns && !(turns.length === 0 && tab.ptyId)) {
+  if (!turnsChanged && !followUpsChanged) {
     return tab;
   }
 
-  return { ...tab, turns, ptyId: turns.length === 0 ? null : tab.ptyId };
+  return {
+    ...tab,
+    turns,
+    followUps: followUps.length > 0 ? followUps : undefined,
+    ptyId: turns.length === 0 ? null : tab.ptyId,
+  };
 }
 
 export function trimAgentTurnsInTabBarItems(items: TabBarItem[]): TabBarItem[] {
@@ -319,12 +351,22 @@ export function trimAgentTurnsInTabBarItems(items: TabBarItem[]): TabBarItem[] {
 
 export function trimAgentTabState(tab: AgentTab): AgentTab {
   const turns = sanitizeAgentTurnHistory(tab.turns ?? []);
+  const followUps = sanitizeAgentFollowUps(tab.followUps ?? []);
+  const turnsChanged = turns !== tab.turns || (turns.length === 0 && Boolean(tab.ptyId));
+  const followUpsChanged =
+    followUps.length !== (tab.followUps?.length ?? 0) ||
+    followUps.some((item, index) => item !== tab.followUps?.[index]);
 
-  if (turns === tab.turns && !(turns.length === 0 && tab.ptyId)) {
+  if (!turnsChanged && !followUpsChanged) {
     return tab;
   }
 
-  return { ...tab, turns, ptyId: turns.length === 0 ? null : tab.ptyId };
+  return {
+    ...tab,
+    turns,
+    followUps: followUps.length > 0 ? followUps : undefined,
+    ptyId: turns.length === 0 ? null : tab.ptyId,
+  };
 }
 
 export function resolveSanitizedAgentTab(tab: AgentTab): AgentTab {

@@ -118,7 +118,7 @@ const STREAM_JSON_STALLED_OUTPUT_MS = 90_000;
 const STREAM_JSON_EMPTY_HUNG_IDLE_MS = 90_000;
 const STREAM_JSON_DEAD_PROCESS_FINALIZE_MS = 2_000;
 const STREAM_JSON_IDLE_CHECK_MS = 500;
-const STREAM_JSON_RESPONSE_IDLE_FINALIZE_MS = 700;
+const STREAM_JSON_RESPONSE_IDLE_FINALIZE_MS = 400;
 const STREAM_JSON_STALL_UI_MS = 4_000;
 const STREAM_JSON_LONG_SHELL_HANDOFF_MS = 45_000;
 const STREAM_JSON_STARTUP_GRACE_MS = 45_000;
@@ -127,11 +127,11 @@ const SUBMIT_GATE_TIMEOUT_MS = 20_000;
 const SUBMIT_SETUP_TIMEOUT_MS = 8_000;
 const COMPOSER_READY_POLL_MS = 250;
 const COMPOSER_READY_MAX_MS = 12_000;
-const STREAM_JSON_AUTO_RETRY_DELAY_MS = 600;
-const STREAM_JSON_MAX_INCOMPLETE_CONTINUES = 12;
+const STREAM_JSON_AUTO_RETRY_DELAY_MS = 250;
+const STREAM_JSON_MAX_INCOMPLETE_CONTINUES = 4;
 const STREAM_JSON_INCOMPLETE_CONTINUE_PROMPT =
   'Continue from where you left off. Finish the incomplete response.';
-const STREAMING_TURNS_UI_MS = 200;
+const STREAMING_TURNS_UI_MS = 40;
 const PERSIST_TURNS_DEBOUNCE_MS = 1200;
 const CONTEXT_USAGE_REPORT_DELAY_MS = 700;
 const AGENT_OUTPUT_TAIL_SIZE = 8192;
@@ -155,6 +155,7 @@ interface UseAgentPaneSessionOptions {
   onPtyCreated: (ptyId: string) => void;
   onPtyLost: () => void;
   onTurnsChange: (turns: AgentTurn[], options?: { persist?: boolean }) => void;
+  onFollowUpsChange: (followUps: AgentFollowUp[]) => void;
   onAppendDraft?: (text: string) => void;
   onRestoreDraft?: (text: string) => void;
 }
@@ -219,6 +220,31 @@ function createFailedPromptActivity(message?: string): AgentActivity {
   };
 }
 
+const UNCAPTURED_RESPONSE_LABEL = 'Nenhuma resposta foi capturada. Tente enviar novamente.';
+
+function shouldAutoFlushFollowUpsAfterTurn(activities: AgentActivity[]): boolean {
+  if (hasPendingAgentQuestion(activities) || hasPendingAgentPlan(activities)) {
+    return false;
+  }
+
+  const responses = activities.filter(
+    (entry) => entry.kind === 'response' && entry.label.trim().length > 0,
+  );
+
+  if (responses.some((entry) => entry.label.trim() !== UNCAPTURED_RESPONSE_LABEL)) {
+    return true;
+  }
+
+  return activities.some(
+    (entry) =>
+      entry.kind === 'file_edit' ||
+      entry.kind === 'file_read' ||
+      entry.kind === 'tool_run' ||
+      entry.kind === 'task' ||
+      entry.kind === 'plan',
+  );
+}
+
 export function useAgentPaneSession({
   tab,
   projectPath,
@@ -227,6 +253,7 @@ export function useAgentPaneSession({
   onPtyCreated,
   onPtyLost,
   onTurnsChange,
+  onFollowUpsChange,
   onAppendDraft,
   onRestoreDraft,
 }: UseAgentPaneSessionOptions) {
@@ -242,6 +269,7 @@ export function useAgentPaneSession({
   const lastStreamJsonChunkAtRef = useRef(Date.now());
   const outputTailRef = useRef('');
   const onTurnsChangeRef = useRef(onTurnsChange);
+  const onFollowUpsChangeRef = useRef(onFollowUpsChange);
   const onPtyCreatedRef = useRef(onPtyCreated);
   const onPtyLostRef = useRef(onPtyLost);
   const onAppendDraftRef = useRef(onAppendDraft);
@@ -284,10 +312,10 @@ export function useAgentPaneSession({
   const contextUsageReportTimerRef = useRef<number | null>(null);
   const contextUsageReportPendingRef = useRef(false);
   const [turnsRevision, setTurnsRevision] = useState(0);
-  const [followUps, setFollowUps] = useState<AgentFollowUp[]>([]);
+  const [followUps, setFollowUps] = useState<AgentFollowUp[]>(() => tab.followUps ?? []);
   const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
   const editingTurnIdRef = useRef<string | null>(null);
-  const followUpsRef = useRef<AgentFollowUp[]>([]);
+  const followUpsRef = useRef<AgentFollowUp[]>(tab.followUps ?? []);
   const consumedFollowUpIdsRef = useRef<Set<string>>(new Set());
   const followUpFlushInFlightRef = useRef(false);
   const suppressFollowUpFlushRef = useRef(false);
@@ -300,6 +328,7 @@ export function useAgentPaneSession({
   isVisibleRef.current = isVisible;
   isRuntimeActiveRef.current = isRuntimeActive;
   onTurnsChangeRef.current = onTurnsChange;
+  onFollowUpsChangeRef.current = onFollowUpsChange;
   onPtyCreatedRef.current = onPtyCreated;
   onPtyLostRef.current = onPtyLost;
   onAppendDraftRef.current = onAppendDraft;
@@ -307,6 +336,13 @@ export function useAgentPaneSession({
   followUpsRef.current = followUps.filter(
     (item) => !consumedFollowUpIdsRef.current.has(item.id),
   );
+
+  const persistFollowUps = useCallback((next: AgentFollowUp[]) => {
+    const cleaned = next.filter((item) => !consumedFollowUpIdsRef.current.has(item.id));
+    followUpsRef.current = cleaned;
+    setFollowUps(cleaned);
+    onFollowUpsChangeRef.current(cleaned);
+  }, []);
 
   useEffect(() => {
     deferAutoSpawnRef.current =
@@ -497,6 +533,14 @@ export function useAgentPaneSession({
   }, [tab.id, usesStreamJson]);
 
   useEffect(() => {
+    if (!usesStreamJson || !isVisible || !window.nexus?.agentPrint?.warm) {
+      return;
+    }
+
+    void window.nexus.agentPrint.warm();
+  }, [isVisible, usesStreamJson]);
+
+  useEffect(() => {
     const incoming = sanitizeAgentTurnHistory(tab.turns ?? []);
     const localTurns = turnsRef.current;
     const localRunning = localTurns.some((turn) => turn.running);
@@ -517,13 +561,19 @@ export function useAgentPaneSession({
         return;
       }
 
+      const hadLocalTranscript = localTurns.length > 0;
+
       cursorAgentContinueRef.current = false;
       streamJsonStateRef.current = replaceAgentStreamJsonSession(paneIdRef.current);
       turnsRef.current = incoming;
       editingTurnIdRef.current = null;
       setEditingTurnId(null);
-      consumedFollowUpIdsRef.current.clear();
-      setFollowUps([]);
+
+      if (hadLocalTranscript) {
+        consumedFollowUpIdsRef.current.clear();
+        persistFollowUps([]);
+      }
+
       setTurnsRevision((revision) => revision + 1);
       return;
     }
@@ -549,7 +599,7 @@ export function useAgentPaneSession({
 
     turnsRef.current = incoming;
     setTurnsRevision((revision) => revision + 1);
-  }, [tab.turns]);
+  }, [persistFollowUps, tab.turns]);
 
   useEffect(() => {
     if (tab.ptyId) {
@@ -653,6 +703,8 @@ export function useAgentPaneSession({
         turnsRef.current = trimmedTurns;
         onTurnsChangeRef.current(trimmedTurns, { persist: true });
       }
+
+      onFollowUpsChangeRef.current(followUpsRef.current);
     };
   }, [cancelPersistTurnsDebounce]);
 
@@ -793,7 +845,10 @@ export function useAgentPaneSession({
 
     setIsAgentReady(true);
 
-    if (!suppressFollowUpFlushRef.current) {
+    if (
+      !suppressFollowUpFlushRef.current &&
+      shouldAutoFlushFollowUpsAfterTurn(nextTurns[resolvedIndex]?.activities ?? [])
+    ) {
       tryFlushFollowUpQueueRef.current();
     }
 
@@ -855,7 +910,6 @@ export function useAgentPaneSession({
     const resolvedIndex = index === -1 ? -1 : turns.length - 1 - index;
 
     if (resolvedIndex === -1) {
-      tryFlushFollowUpQueueRef.current();
       promotePendingFollowUpTurnRef.current();
       return;
     }
@@ -892,7 +946,11 @@ export function useAgentPaneSession({
     }
 
     setIsAgentReady(true);
-    tryFlushFollowUpQueueRef.current();
+
+    if (shouldAutoFlushFollowUpsAfterTurn(finalizedActivities)) {
+      tryFlushFollowUpQueueRef.current();
+    }
+
     promotePendingFollowUpTurnRef.current();
   }, [clearAgentPrintRunToken, persistTurns]);
 
@@ -1714,7 +1772,7 @@ export function useAgentPaneSession({
       suppressFollowUpFlushRef.current = false;
     } else {
       consumedFollowUpIdsRef.current.clear();
-      setFollowUps([]);
+      persistFollowUps([]);
     }
 
     return Boolean(ptyId) || usesStreamJson;
@@ -1723,6 +1781,7 @@ export function useAgentPaneSession({
     clearApprovalConfirmTimer,
     clearStreamJsonSettleTimer,
     finalizeActiveTurn,
+    persistFollowUps,
     persistTurns,
     syncAgentReadyFromTail,
     usesStreamJson,
@@ -2028,7 +2087,7 @@ export function useAgentPaneSession({
       followUpFlushInFlightRef.current = true;
       consumedFollowUpIdsRef.current.add(target.id);
       followUpsRef.current = followUpsRef.current.filter((item) => item.id !== target.id);
-      setFollowUps((current) => current.filter((item) => item.id !== target.id));
+      persistFollowUps(followUpsRef.current);
 
       try {
         const dispatched = dispatchFollowUpToPty(target, options?.force ?? false);
@@ -2036,9 +2095,7 @@ export function useAgentPaneSession({
         if (!dispatched) {
           consumedFollowUpIdsRef.current.delete(target.id);
           followUpsRef.current = [target, ...followUpsRef.current];
-          setFollowUps((current) =>
-            current.some((item) => item.id === target.id) ? current : [target, ...current],
-          );
+          persistFollowUps(followUpsRef.current);
           return false;
         }
 
@@ -2047,7 +2104,7 @@ export function useAgentPaneSession({
         followUpFlushInFlightRef.current = false;
       }
     },
-    [dispatchFollowUpToPty],
+    [dispatchFollowUpToPty, persistFollowUps],
   );
 
   const enqueueFollowUp = useCallback(
@@ -2063,15 +2120,18 @@ export function useAgentPaneSession({
         ...(fields.agentPrompt ? { agentPrompt: fields.agentPrompt } : {}),
       };
 
-      setFollowUps((current) => [...current, item]);
+      persistFollowUps([...followUpsRef.current, item]);
       return true;
     },
-    [],
+    [persistFollowUps],
   );
 
-  const removeFollowUp = useCallback((id: string) => {
-    setFollowUps((current) => current.filter((item) => item.id !== id));
-  }, []);
+  const removeFollowUp = useCallback(
+    (id: string) => {
+      persistFollowUps(followUpsRef.current.filter((item) => item.id !== id));
+    },
+    [persistFollowUps],
+  );
 
   const editFollowUp = useCallback(
     (id: string) => {
@@ -2081,11 +2141,11 @@ export function useAgentPaneSession({
         return;
       }
 
-      setFollowUps((current) => current.filter((entry) => entry.id !== id));
+      persistFollowUps(followUpsRef.current.filter((entry) => entry.id !== id));
       onRestoreDraftRef.current?.(resolveFollowUpAgentPrompt(item));
       void restoreAgentPromptAttachmentsToPane(projectPath, paneIdRef.current, item.attachments);
     },
-    [projectPath],
+    [persistFollowUps, projectPath],
   );
 
   const sendFollowUpNow = useCallback(
@@ -2140,7 +2200,7 @@ export function useAgentPaneSession({
         setEditingTurnId(null);
         await rollbackAgentFromTurn(editingTurnId);
         consumedFollowUpIdsRef.current.clear();
-        setFollowUps([]);
+        persistFollowUps([]);
       }
 
       submitInFlightRef.current = true;
@@ -2260,6 +2320,7 @@ export function useAgentPaneSession({
       enqueueFollowUp,
       finalizeActiveTurn,
       markStreamJsonTurnStarted,
+      persistFollowUps,
       persistTurns,
       rollbackAgentFromTurn,
       sendPromptToPty,
@@ -2525,7 +2586,7 @@ export function useAgentPaneSession({
       editingTurnIdRef.current = turnId;
       setEditingTurnId(turnId);
       consumedFollowUpIdsRef.current.clear();
-      setFollowUps([]);
+      persistFollowUps([]);
 
       onRestoreDraftRef.current?.(target.user.agentPrompt ?? target.user.content);
 
@@ -2544,7 +2605,7 @@ export function useAgentPaneSession({
 
       return true;
     },
-    [projectPath, runCommand, stopAgent],
+    [persistFollowUps, projectPath, runCommand, stopAgent],
   );
 
   const cancelAgentTurnEdit = useCallback((): boolean => {
@@ -3135,11 +3196,6 @@ export function useAgentPaneSession({
 
         if (!turnsRef.current.some((turn) => turn.running)) {
           useTerminalSessionStore.getState().completeTaskIfAwaiting(activePaneId);
-
-          if (followUpsRef.current.length > 0) {
-            tryFlushFollowUpQueueRef.current();
-          }
-
           finishAgentPrintRun();
           return;
         }
@@ -3626,21 +3682,6 @@ export function useAgentPaneSession({
   }, [finalizeActiveTurn, finalizeStreamJsonTurnFromEvent, isTurnRunning, usesStreamJson]);
 
   useEffect(() => {
-    if (followUps.length === 0 || isTurnRunning || isSubmitting || hasPendingQuestion || hasPendingPlan) {
-      return;
-    }
-
-    tryFlushFollowUpQueue();
-  }, [
-    followUps.length,
-    hasPendingPlan,
-    hasPendingQuestion,
-    isSubmitting,
-    isTurnRunning,
-    tryFlushFollowUpQueue,
-  ]);
-
-  useEffect(() => {
     return registerAgentPaneHandlers(paneIdRef.current, {
       submit: submitPrompt,
       stop: stopAgent,
@@ -3649,6 +3690,10 @@ export function useAgentPaneSession({
       redo: redoAgentTurn,
     });
   }, [appendDraft, redoAgentTurn, runCommand, stopAgent, submitPrompt, tab.id]);
+
+  const flushNextFollowUp = useCallback(() => {
+    return tryFlushFollowUpQueue({ force: true });
+  }, [tryFlushFollowUpQueue]);
 
   return {
     submitPrompt,
@@ -3662,6 +3707,7 @@ export function useAgentPaneSession({
     editFollowUp,
     sendFollowUpNow,
     removeFollowUp,
+    flushNextFollowUp,
     submitQuestionAnswers,
     hasPendingQuestion,
     acceptPlan,

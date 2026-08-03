@@ -23,7 +23,7 @@ import { useAgentPaneSession } from '@/hooks/useAgentPaneSession';
 import { useAgentComposerDraftStore } from '@/stores/useAgentComposerDraftStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { TERMINAL_AGENTS } from '@/constants/terminalAgents';
-import type { AgentTurn } from '@/types';
+import type { AgentTurn, AgentFollowUp } from '@/types';
 import { cliAgentToTerminalAgent } from '@/utils/agentTabHelpers';
 import { buildAgentPromptHistory } from '@/utils/agentPromptAttachments';
 import { isHomeBoundAgentPane } from '@/utils/homeDashboardAgents';
@@ -193,6 +193,13 @@ function AgentViewSessionComponent({
     [onUpdateTab],
   );
 
+  const handleFollowUpsChange = useCallback(
+    (nextFollowUps: AgentFollowUp[]) => {
+      onUpdateTab({ followUps: nextFollowUps });
+    },
+    [onUpdateTab],
+  );
+
   const restoreDraft = useCallback(
     (text: string) => {
       handleDraftChange(text);
@@ -213,6 +220,7 @@ function AgentViewSessionComponent({
     editFollowUp,
     sendFollowUpNow,
     removeFollowUp,
+    flushNextFollowUp,
     submitQuestionAnswers,
     hasPendingQuestion,
     acceptPlan,
@@ -233,6 +241,7 @@ function AgentViewSessionComponent({
     onPtyCreated,
     onPtyLost,
     onTurnsChange: handleTurnsChange,
+    onFollowUpsChange: handleFollowUpsChange,
     onAppendDraft: appendDraft,
     onRestoreDraft: restoreDraft,
   });
@@ -486,8 +495,10 @@ function AgentViewSessionComponent({
           contextUsage={contextUsage}
           contextUsageLoading={contextUsageLoading}
           promptHistory={promptHistory}
+          followUpCount={followUps.length}
           onDraftChange={handleDraftChange}
           onSubmit={handleSubmit}
+          onFlushNextFollowUp={flushNextFollowUp}
           onStop={stopAgent}
           onRunCommand={runCommand}
           onRequestContextUsageReport={requestContextUsageReport}

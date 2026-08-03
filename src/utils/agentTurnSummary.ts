@@ -535,7 +535,23 @@ export function partitionLiveActionBlockActivities(activities: AgentActivity[]):
   }
 
   if (lastStreamingIndex < 0) {
-    return { settled: activities, live: [] };
+    let liveStatusIndex = -1;
+
+    for (let index = activities.length - 1; index >= 0; index -= 1) {
+      if (activities[index]?.kind === 'live_status') {
+        liveStatusIndex = index;
+        break;
+      }
+    }
+
+    if (liveStatusIndex < 0) {
+      return { settled: activities, live: [] };
+    }
+
+    return {
+      settled: activities.slice(0, liveStatusIndex),
+      live: activities.slice(liveStatusIndex),
+    };
   }
 
   let cutIndex = lastStreamingIndex;
@@ -554,9 +570,14 @@ export function partitionLiveActionBlockActivities(activities: AgentActivity[]):
     cutIndex = index;
   }
 
+  const liveSlice = activities.slice(cutIndex);
+  const trailingLiveStatus = activities
+    .slice(0, cutIndex)
+    .filter((entry) => entry.kind === 'live_status');
+
   return {
-    settled: activities.slice(0, cutIndex),
-    live: activities.slice(cutIndex),
+    settled: activities.slice(0, cutIndex).filter((entry) => entry.kind !== 'live_status'),
+    live: [...trailingLiveStatus, ...liveSlice],
   };
 }
 
@@ -682,14 +703,6 @@ export function buildLiveToolBatchSummary(
   running: boolean,
 ): string | null {
   if (running) {
-    const liveStatus = [...activities]
-      .reverse()
-      .find((activity) => activity.kind === 'live_status' && activity.label.trim());
-
-    if (liveStatus?.label.trim()) {
-      return liveStatus.label.trim();
-    }
-
     const streamingShell = [...activities]
       .reverse()
       .find(
@@ -706,18 +719,18 @@ export function buildLiveToolBatchSummary(
       return `Executando ${preview}`;
     }
 
-    const aggregateSummary = buildLiveToolBatchAggregateSummary(activities, true);
-
-    if (aggregateSummary) {
-      return aggregateSummary;
-    }
-
     const streamingTool = [...activities]
       .reverse()
       .find((activity) => activity.kind === 'tool_run' && activity.streaming && activity.label.trim());
 
     if (streamingTool?.label.trim()) {
       return streamingTool.label.trim();
+    }
+
+    const aggregateSummary = buildLiveToolBatchAggregateSummary(activities, true);
+
+    if (aggregateSummary) {
+      return aggregateSummary;
     }
   }
 

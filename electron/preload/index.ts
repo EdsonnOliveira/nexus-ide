@@ -98,6 +98,7 @@ const nexusApi = {
     },
     isRunning: (paneId: string): Promise<boolean> =>
       ipcRenderer.invoke('agent:printIsRunning', paneId),
+    warm: (): Promise<void> => ipcRenderer.invoke('agent:printWarm'),
     onData: (
       callback: (paneId: string, data: string, runToken: string) => void,
     ): (() => void) => {

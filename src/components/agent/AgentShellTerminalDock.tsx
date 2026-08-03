@@ -157,7 +157,7 @@ function AgentShellTerminalPanelComponent({
             onPtyLost={handlePtyLost}
             onCwdChange={setCwd}
             onOpenLinkInBrowser={() => undefined}
-            restoreCommand={entry.command}
+            restoreCommand={entry.status === 'starting' ? entry.command : null}
           />
         </div>
       </div>

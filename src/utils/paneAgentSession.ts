@@ -2,6 +2,7 @@ import type { AgentTurn, Project } from '@/types';
 import { readHomeAgentMap } from '@/utils/homeDashboardAgents';
 import { isAgentTurnActivelyRunning } from '@/utils/projectAgentStatus';
 import { collectProjectPanes, findPaneTab } from '@/utils/tabGroups';
+import { useAgentShellTerminalStore } from '@/stores/useAgentShellTerminalStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 
 function turnHasResponse(turn: AgentTurn): boolean {
@@ -118,6 +119,47 @@ export function projectHasLiveAgentSession(
   return false;
 }
 
+export function agentPaneHasRunningShellTerminals(paneId: string): boolean {
+  const entries = useAgentShellTerminalStore.getState().entriesByAgentPane[paneId] ?? [];
+
+  return entries.some((entry) => entry.status === 'starting' || entry.status === 'running');
+}
+
+export function projectHasKeepAliveTerminals(project: Project): boolean {
+  for (const pane of collectProjectPanes(project.tabs)) {
+    if (pane.type === 'terminal' && pane.ptyId) {
+      return true;
+    }
+
+    if (pane.type === 'agent' && agentPaneHasRunningShellTerminals(pane.id)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function projectHasPendingFollowUps(project: Project): boolean {
+  for (const pane of collectProjectPanes(project.tabs)) {
+    if (pane.type === 'agent' && (pane.followUps?.length ?? 0) > 0) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function projectNeedsBackgroundHost(
+  project: Project,
+  session: PaneAgentSessionSnapshot,
+): boolean {
+  return (
+    projectHasLiveAgentSession(project, session) ||
+    projectHasKeepAliveTerminals(project) ||
+    projectHasPendingFollowUps(project)
+  );
+}
+
 const MAX_HOSTED_PROJECTS = 10;
 
 export function resolveHostedAgentProjects(
@@ -143,7 +185,7 @@ export function resolveHostedAgentProjects(
       continue;
     }
 
-    if (projectHasLiveAgentSession(project, session)) {
+    if (projectNeedsBackgroundHost(project, session)) {
       essentialIds.add(project.id);
       continue;
     }

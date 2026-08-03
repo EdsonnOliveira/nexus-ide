@@ -55,11 +55,12 @@ import { completeAgentGitTurn, trackAgentGitPrompt } from '@/utils/agentGitTurn'
 import { useAgentPrintBridge } from '@/hooks/useAgentPrintBridge';
 import { useAgentGitChangeStore } from '@/stores/useAgentGitChangeStore';
 import {
+  agentPaneHasRunningShellTerminals,
   isPaneAgentSessionLive,
   resolveHostedAgentProjects,
   type PaneAgentSessionSnapshot,
 } from '@/utils/paneAgentSession';
-import { isAgentTurnActivelyRunning } from '@/utils/projectAgentStatus';
+import { useAgentShellTerminalStore } from '@/stores/useAgentShellTerminalStore';
 import {
   isOverlayBlockingTerminalHints,
   subscribeOverlayBlockingChange,
@@ -84,6 +85,7 @@ import {
 } from '@/utils/explorerExternalDrop';
 import {
   buildRunningAgentProjectIdSet,
+  isAgentTurnActivelyRunning,
   resolvePaneAgentCommand,
   shouldMarkAgentAwaiting,
 } from '@/utils/projectAgentStatus';
@@ -136,7 +138,7 @@ interface TabPaneProps {
   ) => void;
   onUpdateAgentTab: (
     tabId: string,
-    patch: Partial<Pick<AgentTab, 'turns' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'>>,
+    patch: Partial<Pick<AgentTab, 'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'>>,
   ) => void;
 }
 
@@ -755,7 +757,11 @@ function paneNeedsBackgroundKeepAlive(
     return true;
   }
 
-  if (pane.type === 'terminal' && pane.ptyId) {
+  if (pane.type === 'agent' && agentPaneHasRunningShellTerminals(pane.id)) {
+    return true;
+  }
+
+  if (pane.type === 'terminal') {
     return true;
   }
 
@@ -826,6 +832,7 @@ interface ProjectWorkspaceProps {
   project: Project;
   isProjectActive: boolean;
   agentSession: PaneAgentSessionSnapshot;
+  runningShellTerminalCount: number;
   terminalRefs: React.MutableRefObject<Record<string, XTermViewHandle | null>>;
   tabDropOverlay: TabDropOverlayState | null;
   onFocusPane: (paneId: string) => void;
@@ -843,7 +850,7 @@ interface ProjectWorkspaceProps {
   ) => void;
   onUpdateAgentTab: (
     tabId: string,
-    patch: Partial<Pick<AgentTab, 'turns' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'>>,
+    patch: Partial<Pick<AgentTab, 'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'>>,
   ) => void;
   onSplitRatioCommit: (
     splitTabId: string,
@@ -856,6 +863,7 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
   project,
   isProjectActive,
   agentSession,
+  runningShellTerminalCount,
   terminalRefs,
   tabDropOverlay,
   onFocusPane,
@@ -967,7 +975,7 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
       project.tabs.filter((item) =>
         shouldKeepTabAliveForProject(item, isProjectActive, agentSession),
       ),
-    [agentSession, isProjectActive, project.tabs],
+    [agentSession, isProjectActive, project.tabs, runningShellTerminalCount],
   );
 
   if (!project.tabs.length || !activeTabItem) {
@@ -1016,6 +1024,19 @@ function TerminalPanelComponent() {
     }),
     [agentBusyByPane, agentPrintRunTokenByPane, awaitingResponseByPane],
   );
+  const runningShellTerminalCount = useAgentShellTerminalStore((state) => {
+    let count = 0;
+
+    for (const entries of Object.values(state.entriesByAgentPane)) {
+      for (const entry of entries) {
+        if (entry.status === 'starting' || entry.status === 'running') {
+          count += 1;
+        }
+      }
+    }
+
+    return count;
+  });
   const completionTrackersRef = useRef(new Map<string, PaneCompletionTracker>());
   const ptyToPaneRef = useRef(new Map<string, string>());
   const paneByIdRef = useRef(new Map<string, Tab>());
@@ -1059,7 +1080,7 @@ function TerminalPanelComponent() {
   );
   const hostedProjects = useMemo(
     () => resolveHostedAgentProjects(projects, activeProjectId, agentSession),
-    [activeProjectId, agentSession, projects],
+    [activeProjectId, agentSession, projects, runningShellTerminalCount],
   );
   const toggleAutomations = useProjectStore((state) => state.toggleAutomations);
   const featuredAutomations = useMemo(
@@ -1236,7 +1257,7 @@ function TerminalPanelComponent() {
   const handleUpdateAgentTab = useCallback(
     (
       tabId: string,
-      patch: Partial<Pick<AgentTab, 'turns' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'>>,
+      patch: Partial<Pick<AgentTab, 'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'>>,
     ) => {
       void updateAgentTab(tabId, patch);
     },
@@ -1491,6 +1512,7 @@ function TerminalPanelComponent() {
                   project={project}
                   isProjectActive={false}
                   agentSession={agentSession}
+                  runningShellTerminalCount={runningShellTerminalCount}
                   terminalRefs={terminalRefs}
                   tabDropOverlay={null}
                   onFocusPane={handleFocusPane}
@@ -1630,6 +1652,7 @@ function TerminalPanelComponent() {
                     project={project}
                     isProjectActive={project.id === activeProjectId}
                     agentSession={agentSession}
+                    runningShellTerminalCount={runningShellTerminalCount}
                     terminalRefs={terminalRefs}
                     tabDropOverlay={project.id === activeProjectId ? tabDropOverlay : null}
                     onFocusPane={handleFocusPane}

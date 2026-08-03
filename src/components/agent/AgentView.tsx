@@ -21,7 +21,7 @@ export interface AgentViewProps {
   onFocusPane: () => void;
   onPtyCreated: (ptyId: string) => void;
   onPtyLost: () => void;
-  onUpdateTab: (patch: Partial<Pick<AgentTab, 'turns' | 'workingDirectory' | 'restoreCommand'>>) => void;
+  onUpdateTab: (patch: Partial<Pick<AgentTab, 'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand'>>) => void;
 }
 
 function AgentViewShell({

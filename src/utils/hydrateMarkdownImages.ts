@@ -126,6 +126,10 @@ export async function hydrateMarkdownImageHtml(
       continue;
     }
 
+    if (/^(?:nexus-file|file):\/\//i.test(job.src) && !job.isPending) {
+      continue;
+    }
+
     if (/^https?:\/\//i.test(job.src) && !job.isPending && !job.imageRef) {
       continue;
     }

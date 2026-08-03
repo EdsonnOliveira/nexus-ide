@@ -24,6 +24,7 @@ export interface WebStreamJsonState {
   runningToolRunStack: string[];
   seenReadPaths: Set<string>;
   activitySeq: number;
+  sawStreamingAssistantDelta: boolean;
 }
 
 export interface WebStreamJsonUpdate {
@@ -62,6 +63,7 @@ export function createWebStreamJsonState(): WebStreamJsonState {
     runningToolRunStack: [],
     seenReadPaths: new Set(),
     activitySeq: 0,
+    sawStreamingAssistantDelta: false,
   };
 }
 
@@ -425,34 +427,226 @@ function sealActiveResponseSegment(state: WebStreamJsonState): void {
   state.responseId = null;
 }
 
-function upsertResponse(state: WebStreamJsonState, text: string, streaming: boolean): void {
-  const trimmed = text.trim();
+function compactResponseText(value: string): string {
+  return value.replace(/\s+/g, '');
+}
+
+function findLastResponseActivity(
+  activities: WebStreamJsonState['activities'],
+): WebStreamJsonState['activities'][number] | undefined {
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const entry = activities[index];
+
+    if (entry?.kind === 'response' && entry.label.trim()) {
+      return entry;
+    }
+  }
+
+  return undefined;
+}
+
+function hasBlockingActivityAfterResponse(
+  activities: WebStreamJsonState['activities'],
+  responseId: string,
+): boolean {
+  const responseIndex = activities.findIndex((entry) => entry.id === responseId);
+
+  if (responseIndex < 0) {
+    return false;
+  }
+
+  for (let index = responseIndex + 1; index < activities.length; index += 1) {
+    const entry = activities[index];
+
+    if (!entry) {
+      continue;
+    }
+
+    if (entry.kind === 'live_status') {
+      continue;
+    }
+
+    if (entry.kind === 'thought' && !entry.label.trim()) {
+      continue;
+    }
+
+    if (entry.kind === 'status' && !entry.label.trim()) {
+      continue;
+    }
+
+    return true;
+  }
+
+  return false;
+}
+
+function extractAssistantImageMarkdownBlocks(label: string): string[] {
+  return (
+    label.match(
+      /!\[[^\]]*\]\((?:data:image\/[^)\s]+|https?:\/\/[^)\s]+|file:\/\/[^)\s]+|nexus-file:\/\/[^)\s]+|\/[^)\s]+\.(?:png|jpe?g|gif|webp|bmp|svg)(?:\?[^)\s]*)?)\)/gi,
+    ) ?? []
+  );
+}
+
+function preserveAssistantImages(previousLabel: string, nextLabel: string): string {
+  const images = extractAssistantImageMarkdownBlocks(previousLabel);
+  const missing = images.filter((image) => !nextLabel.includes(image));
+
+  if (missing.length === 0) {
+    return nextLabel;
+  }
+
+  return `${nextLabel.replace(/\s+$/u, '')}\n\n${missing.join('\n\n')}\n`;
+}
+
+function appendResponseDelta(currentLabel: string, delta: string): string {
+  if (!delta) {
+    return currentLabel;
+  }
+
+  if (!currentLabel) {
+    return delta.replace(/^\s+/u, '');
+  }
+
+  if (delta.startsWith(currentLabel)) {
+    return delta;
+  }
+
+  if (currentLabel.endsWith(delta)) {
+    return currentLabel;
+  }
+
+  const compactCurrent = compactResponseText(currentLabel);
+  const compactDelta = compactResponseText(delta);
+
+  if (compactDelta && compactDelta === compactCurrent) {
+    return currentLabel;
+  }
+
+  const maxOverlap = Math.min(currentLabel.length, delta.length);
+
+  for (let size = maxOverlap; size >= 1; size -= 1) {
+    if (currentLabel.endsWith(delta.slice(0, size))) {
+      return `${currentLabel}${delta.slice(size)}`;
+    }
+  }
+
+  return `${currentLabel}${delta}`;
+}
+
+function mergeAssistantSnapshot(currentLabel: string, incoming: string): string {
+  const trimmed = incoming.trim();
+
   if (!trimmed) {
+    return currentLabel;
+  }
+
+  if (!currentLabel.trim()) {
+    return trimmed;
+  }
+
+  const currentTrimmed = currentLabel.trim();
+
+  if (trimmed === currentTrimmed) {
+    return currentLabel;
+  }
+
+  const compactCurrent = compactResponseText(currentTrimmed);
+  const compactIncoming = compactResponseText(trimmed);
+
+  if (compactIncoming === compactCurrent) {
+    return currentLabel;
+  }
+
+  if (trimmed.startsWith(currentTrimmed) || compactIncoming.startsWith(compactCurrent)) {
+    return preserveAssistantImages(currentLabel, trimmed);
+  }
+
+  if (currentTrimmed.startsWith(trimmed) || compactCurrent.startsWith(compactIncoming)) {
+    return currentLabel;
+  }
+
+  const shouldKeepExisting =
+    currentTrimmed.length > trimmed.length &&
+    !compactCurrent.includes(compactIncoming) &&
+    !compactIncoming.includes(compactCurrent);
+
+  const nextLabel = shouldKeepExisting ? currentLabel : trimmed;
+  return preserveAssistantImages(currentLabel, nextLabel);
+}
+
+function resolveAssistantEventMode(
+  event: Record<string, unknown>,
+  sawStreamingAssistantDelta: boolean,
+): 'delta' | 'snapshot' | 'ignore' {
+  const hasTimestamp =
+    typeof event.timestamp_ms === 'number' ||
+    (typeof event.timestamp_ms === 'string' && event.timestamp_ms.trim().length > 0);
+  const modelCallId = event.model_call_id;
+  const hasModelCallId =
+    (typeof modelCallId === 'string' && modelCallId.trim().length > 0) ||
+    typeof modelCallId === 'number';
+
+  if (hasTimestamp && !hasModelCallId) {
+    return 'delta';
+  }
+
+  if (hasTimestamp && hasModelCallId) {
+    return 'snapshot';
+  }
+
+  if (!hasTimestamp && sawStreamingAssistantDelta) {
+    return 'ignore';
+  }
+
+  return 'snapshot';
+}
+
+function upsertResponse(
+  state: WebStreamJsonState,
+  text: string,
+  mode: 'delta' | 'snapshot' | 'final',
+): void {
+  if (!text || !/\S/u.test(text)) {
     return;
   }
 
   settleThought(state);
 
+  if (!state.responseId) {
+    const lastResponse = findLastResponseActivity(state.activities);
+    const compactIncoming = compactResponseText(text);
+    const compactLast = lastResponse ? compactResponseText(lastResponse.label) : '';
+
+    if (lastResponse && compactLast && compactIncoming && compactIncoming === compactLast) {
+      return;
+    }
+
+    if (lastResponse && !hasBlockingActivityAfterResponse(state.activities, lastResponse.id)) {
+      state.responseId = lastResponse.id;
+    }
+  }
+
   if (state.responseId) {
     const current = state.activities.find((entry) => entry.id === state.responseId);
-    const currentLabel = current?.label?.trim() ?? '';
-    const shouldKeepExisting =
-      currentLabel.length > trimmed.length &&
-      !currentLabel.startsWith(trimmed) &&
-      !trimmed.startsWith(currentLabel);
-    const nextLabel = shouldKeepExisting ? currentLabel : trimmed;
+    const currentLabel = current?.label ?? '';
+    const nextLabel =
+      mode === 'delta'
+        ? appendResponseDelta(currentLabel, text)
+        : mergeAssistantSnapshot(currentLabel, text);
     state.response = nextLabel;
     state.activities = state.activities.map((entry) =>
       entry.id === state.responseId
-        ? { ...entry, label: nextLabel, streaming: streaming ? true : undefined }
+        ? { ...entry, label: nextLabel, streaming: mode === 'final' ? undefined : true }
         : entry,
     );
     return;
   }
 
-  state.response = trimmed;
-  const response = createActivity(state, 'response', trimmed, {
-    streaming: streaming ? true : undefined,
+  const initialLabel = mode === 'delta' ? text.replace(/^\s+/u, '') : text.trim();
+  state.response = initialLabel;
+  const response = createActivity(state, 'response', initialLabel, {
+    streaming: mode === 'final' ? undefined : true,
   });
   state.responseId = response.id;
   state.activities = [...state.activities, response];
@@ -835,39 +1029,44 @@ function isAggregatedPriorWebResponseText(
   }
 
   const compactResult = resultText.replace(/\s+/g, '');
-  const lastCompact = responses[responses.length - 1]!.replace(/\s+/g, '');
-
-  if (compactResult.length < 48) {
-    return lastCompact.length >= compactResult.length;
-  }
-
-  const compactJoined = responses.join('').replace(/\s+/g, '');
+  const lastResponse = responses[responses.length - 1]!;
+  const lastCompact = lastResponse.replace(/\s+/g, '');
 
   if (compactResult === lastCompact) {
     return true;
   }
 
-  if (
-    lastCompact.length >= 16 &&
-    compactResult.includes(lastCompact) &&
-    compactResult.length > lastCompact.length
-  ) {
+  if (compactResult.length < 48) {
+    return lastCompact.length >= compactResult.length && lastCompact.includes(compactResult);
+  }
+
+  if (lastCompact.includes(compactResult) && lastCompact.length >= compactResult.length) {
+    return true;
+  }
+
+  if (compactResult.includes(lastCompact) && compactResult.length > lastCompact.length) {
     return false;
   }
 
+  const compactJoined = responses.join('').replace(/\s+/g, '');
+
   if (
     compactJoined.length >= 48 &&
-    compactResult === compactJoined
+    (compactResult === compactJoined || compactResult.startsWith(compactJoined))
   ) {
     return true;
   }
 
+  if (responses.length < 2) {
+    return false;
+  }
+
   const matched = responses.filter((entry) => {
     const compact = entry.replace(/\s+/g, '');
-    return compact.length >= 16 && compactResult.includes(compact.slice(0, Math.min(48, compact.length)));
+    return compact.length >= 24 && compactResult.includes(compact);
   }).length;
 
-  return matched >= Math.min(2, responses.length);
+  return matched >= 2 && compactJoined.length >= Math.floor(compactResult.length * 0.8);
 }
 
 function handleEvent(state: WebStreamJsonState, event: Record<string, unknown>): void {
@@ -900,10 +1099,23 @@ function handleEvent(state: WebStreamJsonState, event: Record<string, unknown>):
   }
 
   if (type === 'assistant') {
-    const text = extractAssistantText(event.message);
-    if (text) {
-      upsertResponse(state, text, true);
+    const mode = resolveAssistantEventMode(event, state.sawStreamingAssistantDelta);
+
+    if (mode === 'ignore') {
+      return;
     }
+
+    const text = extractAssistantText(event.message);
+
+    if (!text) {
+      return;
+    }
+
+    if (mode === 'delta') {
+      state.sawStreamingAssistantDelta = true;
+    }
+
+    upsertResponse(state, text, mode);
     return;
   }
 
@@ -914,7 +1126,7 @@ function handleEvent(state: WebStreamJsonState, event: Record<string, unknown>):
     const resultText =
       typeof event.result === 'string' ? event.result.trim() : state.response.trim();
     if (resultText && !isAggregatedPriorWebResponseText(resultText, state.activities)) {
-      upsertResponse(state, resultText, false);
+      upsertResponse(state, resultText, 'final');
     }
     settleAllStreaming(state);
     const lastResponse = findLastWebResponseLabel(state);

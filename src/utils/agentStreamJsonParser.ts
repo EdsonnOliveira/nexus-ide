@@ -62,6 +62,7 @@ export interface AgentStreamJsonParserState {
   shellToolEvents: StreamJsonShellToolEvent[];
   runningToolRunStack: string[];
   runningTaskStack: string[];
+  sawStreamingAssistantDelta: boolean;
 }
 
 export interface StreamJsonTurnUpdate {
@@ -116,6 +117,7 @@ export function createAgentStreamJsonParserState(): AgentStreamJsonParserState {
     shellToolEvents: [],
     runningToolRunStack: [],
     runningTaskStack: [],
+    sawStreamingAssistantDelta: false,
   };
 }
 
@@ -396,13 +398,7 @@ function appendThoughtDelta(currentLabel: string, delta: string): string {
     return currentLabel;
   }
 
-  const needsSpace =
-    !currentLabel.endsWith(' ') &&
-    !currentLabel.endsWith('\n') &&
-    !delta.startsWith(' ') &&
-    !/^[,.;:!?)]/.test(delta);
-
-  const combined = `${currentLabel}${needsSpace ? ' ' : ''}${delta}`;
+  const combined = `${currentLabel}${delta}`;
 
   return combined.length > MAX_THOUGHT_LABEL_CHARS
     ? combined.slice(combined.length - MAX_THOUGHT_LABEL_CHARS)
@@ -413,6 +409,8 @@ function upsertThought(state: AgentStreamJsonParserState, delta: string): void {
   if (!delta) {
     return;
   }
+
+  clearStreamJsonLiveStatus(state);
 
   const streamingThought = findStreamingThoughtActivity(state);
 
@@ -529,25 +527,51 @@ function pruneEmptyThoughtPlaceholders(state: AgentStreamJsonParserState): boole
   return true;
 }
 
-function ensureRunningProgressPlaceholder(state: AgentStreamJsonParserState): boolean {
-  if (hasVisibleStreamJsonProgress(state)) {
-    return false;
+function hasActiveTurnProgressUi(state: AgentStreamJsonParserState): boolean {
+  if (state.runningToolRunStack.length > 0 || state.runningTaskStack.length > 0) {
+    return true;
   }
 
-  if (findStreamingThoughtActivity(state)?.streaming) {
-    return false;
-  }
+  return state.activities.some((entry) => {
+    if (entry.kind === 'thought' && entry.streaming) {
+      return true;
+    }
 
-  const thought = createActivity('thought', '', {
-    streaming: true,
-    collapsed: false,
+    if ((entry.kind === 'tool_run' || entry.kind === 'task') && entry.streaming) {
+      return true;
+    }
+
+    if (entry.kind === 'live_status' && entry.label.trim()) {
+      return true;
+    }
+
+    if (entry.kind === 'response' && entry.streaming) {
+      return true;
+    }
+
+    return false;
   });
+}
 
-  state.thoughtId = thought.id;
-  state.thoughtStartedAt = thought.createdAt;
-  state.thoughtSessionStartedAt = thought.createdAt;
-  state.activities = [...state.activities, thought];
-  return true;
+function ensureRunningProgressPlaceholder(state: AgentStreamJsonParserState): boolean {
+  if (hasActiveTurnProgressUi(state)) {
+    return false;
+  }
+
+  if (!hasVisibleStreamJsonProgress(state)) {
+    const thought = createActivity('thought', '', {
+      streaming: true,
+      collapsed: false,
+    });
+
+    state.thoughtId = thought.id;
+    state.thoughtStartedAt = thought.createdAt;
+    state.thoughtSessionStartedAt = thought.createdAt;
+    state.activities = [...state.activities, thought];
+    return true;
+  }
+
+  return upsertStreamJsonLiveStatus(state, 'Planning next moves...');
 }
 
 function settleThought(state: AgentStreamJsonParserState): void {
@@ -640,35 +664,228 @@ function sealActiveResponseSegment(state: AgentStreamJsonParserState): void {
   state.responseId = null;
 }
 
-function upsertResponse(state: AgentStreamJsonParserState, text: string, streaming: boolean): void {
-  const trimmed = text.trim();
+function compactResponseText(value: string): string {
+  return value.replace(/\s+/g, '');
+}
+
+function findLastResponseActivity(
+  activities: AgentActivity[],
+): AgentActivity | undefined {
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const entry = activities[index];
+
+    if (entry?.kind === 'response' && entry.label.trim()) {
+      return entry;
+    }
+  }
+
+  return undefined;
+}
+
+function hasBlockingActivityAfterResponse(
+  activities: AgentActivity[],
+  responseId: string,
+): boolean {
+  const responseIndex = activities.findIndex((entry) => entry.id === responseId);
+
+  if (responseIndex < 0) {
+    return false;
+  }
+
+  for (let index = responseIndex + 1; index < activities.length; index += 1) {
+    const entry = activities[index];
+
+    if (!entry) {
+      continue;
+    }
+
+    if (entry.kind === 'live_status') {
+      continue;
+    }
+
+    if (entry.kind === 'thought' && !entry.label.trim()) {
+      continue;
+    }
+
+    if (entry.kind === 'status' && !entry.label.trim()) {
+      continue;
+    }
+
+    return true;
+  }
+
+  return false;
+}
+
+function extractAssistantImageMarkdownBlocks(label: string): string[] {
+  return (
+    label.match(
+      /!\[[^\]]*\]\((?:data:image\/[^)\s]+|https?:\/\/[^)\s]+|file:\/\/[^)\s]+|nexus-file:\/\/[^)\s]+|\/[^)\s]+\.(?:png|jpe?g|gif|webp|bmp|svg)(?:\?[^)\s]*)?)\)/gi,
+    ) ?? []
+  );
+}
+
+function preserveAssistantImages(previousLabel: string, nextLabel: string): string {
+  const images = extractAssistantImageMarkdownBlocks(previousLabel);
+  const missing = images.filter((image) => !nextLabel.includes(image));
+
+  if (missing.length === 0) {
+    return nextLabel;
+  }
+
+  return `${nextLabel.replace(/\s+$/u, '')}\n\n${missing.join('\n\n')}\n`;
+}
+
+function appendResponseDelta(currentLabel: string, delta: string): string {
+  if (!delta) {
+    return currentLabel;
+  }
+
+  if (!currentLabel) {
+    return delta.replace(/^\s+/u, '');
+  }
+
+  if (delta.startsWith(currentLabel)) {
+    return delta;
+  }
+
+  if (currentLabel.endsWith(delta)) {
+    return currentLabel;
+  }
+
+  const compactCurrent = compactResponseText(currentLabel);
+  const compactDelta = compactResponseText(delta);
+
+  if (compactDelta && compactDelta === compactCurrent) {
+    return currentLabel;
+  }
+
+  const maxOverlap = Math.min(currentLabel.length, delta.length);
+
+  for (let size = maxOverlap; size >= 1; size -= 1) {
+    if (currentLabel.endsWith(delta.slice(0, size))) {
+      return `${currentLabel}${delta.slice(size)}`;
+    }
+  }
+
+  return `${currentLabel}${delta}`;
+}
+
+function mergeAssistantSnapshot(currentLabel: string, incoming: string): string {
+  const trimmed = incoming.trim();
 
   if (!trimmed) {
+    return currentLabel;
+  }
+
+  if (!currentLabel.trim()) {
+    return trimmed;
+  }
+
+  const currentTrimmed = currentLabel.trim();
+
+  if (trimmed === currentTrimmed) {
+    return currentLabel;
+  }
+
+  const compactCurrent = compactResponseText(currentTrimmed);
+  const compactIncoming = compactResponseText(trimmed);
+
+  if (compactIncoming === compactCurrent) {
+    return currentLabel;
+  }
+
+  if (trimmed.startsWith(currentTrimmed) || compactIncoming.startsWith(compactCurrent)) {
+    return preserveAssistantImages(currentLabel, trimmed);
+  }
+
+  if (currentTrimmed.startsWith(trimmed) || compactCurrent.startsWith(compactIncoming)) {
+    return currentLabel;
+  }
+
+  const shouldKeepExisting =
+    currentTrimmed.length > trimmed.length &&
+    !compactCurrent.includes(compactIncoming) &&
+    !compactIncoming.includes(compactCurrent);
+
+  const nextLabel = shouldKeepExisting ? currentLabel : trimmed;
+  return preserveAssistantImages(currentLabel, nextLabel);
+}
+
+function resolveAssistantEventMode(
+  event: Record<string, unknown>,
+  sawStreamingAssistantDelta: boolean,
+): 'delta' | 'snapshot' | 'ignore' {
+  const hasTimestamp =
+    typeof event.timestamp_ms === 'number' ||
+    (typeof event.timestamp_ms === 'string' && event.timestamp_ms.trim().length > 0);
+  const modelCallId = event.model_call_id;
+  const hasModelCallId =
+    (typeof modelCallId === 'string' && modelCallId.trim().length > 0) ||
+    typeof modelCallId === 'number';
+
+  if (hasTimestamp && !hasModelCallId) {
+    return 'delta';
+  }
+
+  if (hasTimestamp && hasModelCallId) {
+    return 'snapshot';
+  }
+
+  if (!hasTimestamp && sawStreamingAssistantDelta) {
+    return 'ignore';
+  }
+
+  return 'snapshot';
+}
+
+function upsertResponse(
+  state: AgentStreamJsonParserState,
+  text: string,
+  mode: 'delta' | 'snapshot' | 'final',
+): void {
+  if (!text || !/\S/u.test(text)) {
     return;
   }
 
+  clearStreamJsonLiveStatus(state);
   settleThought(state);
+
+  if (!state.responseId) {
+    const lastResponse = findLastResponseActivity(state.activities);
+    const compactIncoming = compactResponseText(text);
+    const compactLast = lastResponse ? compactResponseText(lastResponse.label) : '';
+
+    if (lastResponse && compactLast && compactIncoming && compactIncoming === compactLast) {
+      return;
+    }
+
+    if (lastResponse && !hasBlockingActivityAfterResponse(state.activities, lastResponse.id)) {
+      state.responseId = lastResponse.id;
+    }
+  }
 
   if (state.responseId) {
     const current = state.activities.find((entry) => entry.id === state.responseId);
-    const currentLabel = current?.label?.trim() ?? '';
-    const shouldKeepExisting =
-      currentLabel.length > trimmed.length &&
-      !currentLabel.startsWith(trimmed) &&
-      !trimmed.startsWith(currentLabel);
-
-    const nextLabel = shouldKeepExisting ? currentLabel : trimmed;
+    const currentLabel = current?.label ?? '';
+    const nextLabel =
+      mode === 'delta'
+        ? appendResponseDelta(currentLabel, text)
+        : mergeAssistantSnapshot(currentLabel, text);
     state.pendingResponseText = nextLabel;
     state.activities = state.activities.map((entry) =>
       entry.id === state.responseId
-        ? { ...entry, label: nextLabel, streaming: streaming ? true : undefined }
+        ? { ...entry, label: nextLabel, streaming: mode === 'final' ? undefined : true }
         : entry,
     );
     return;
   }
 
-  state.pendingResponseText = trimmed;
-  const response = createActivity('response', trimmed, { streaming: streaming ? true : undefined });
+  const initialLabel = mode === 'delta' ? text.replace(/^\s+/u, '') : text.trim();
+  state.pendingResponseText = initialLabel;
+  const response = createActivity('response', initialLabel, {
+    streaming: mode === 'final' ? undefined : true,
+  });
   state.responseId = response.id;
   state.activities = [...state.activities, response];
 }
@@ -1363,6 +1580,8 @@ function startToolRun(
     return;
   }
 
+  clearStreamJsonLiveStatus(state);
+
   const activity = createActivity('tool_run', trimmed, {
     streaming: true,
     ...extra,
@@ -1420,6 +1639,8 @@ function startTaskActivity(
     agentId?: string;
   },
 ): void {
+  clearStreamJsonLiveStatus(state);
+
   const description = args.description?.trim() || 'Subagent task';
   const prompt = args.prompt?.trim() || '';
   const activity = createActivity('task', description, {
@@ -1667,8 +1888,23 @@ function handleStreamJsonEvent(state: AgentStreamJsonParserState, event: Record<
   }
 
   if (type === 'assistant') {
+    const mode = resolveAssistantEventMode(event, state.sawStreamingAssistantDelta);
+
+    if (mode === 'ignore') {
+      return;
+    }
+
     const text = extractAssistantText(event.message);
-    upsertResponse(state, text, true);
+
+    if (!text) {
+      return;
+    }
+
+    if (mode === 'delta') {
+      state.sawStreamingAssistantDelta = true;
+    }
+
+    upsertResponse(state, text, mode);
     return;
   }
 
@@ -1687,7 +1923,7 @@ function handleStreamJsonEvent(state: AgentStreamJsonParserState, event: Record<
       typeof event.result === 'string' ? event.result.trim() : state.pendingResponseText.trim();
 
     if (resultText && !isAggregatedPriorResponseText(resultText, state.activities)) {
-      upsertResponse(state, resultText, false);
+      upsertResponse(state, resultText, 'final');
     }
 
     if (
@@ -1826,13 +2062,9 @@ export function clearStreamJsonLiveStatus(state: AgentStreamJsonParserState): bo
   return true;
 }
 
-function hasStableStreamJsonProgressUi(state: AgentStreamJsonParserState): boolean {
-  return hasVisibleStreamJsonProgress(state);
-}
-
 export function ensureStreamJsonStallProgressUi(state: AgentStreamJsonParserState): boolean {
   if (state.runningToolRunStack.length > 0 || state.runningTaskStack.length > 0) {
-    return false;
+    return clearStreamJsonLiveStatus(state);
   }
 
   if (
@@ -1840,7 +2072,7 @@ export function ensureStreamJsonStallProgressUi(state: AgentStreamJsonParserStat
       (entry) => (entry.kind === 'tool_run' || entry.kind === 'task') && entry.streaming,
     )
   ) {
-    return false;
+    return clearStreamJsonLiveStatus(state);
   }
 
   let changed = false;
@@ -1850,7 +2082,7 @@ export function ensureStreamJsonStallProgressUi(state: AgentStreamJsonParserStat
     changed = true;
   }
 
-  if (hasStreamingThoughtContent(state)) {
+  if (hasStreamingThoughtContent(state) || findStreamingThoughtActivity(state)?.streaming) {
     if (clearStreamJsonLiveStatus(state)) {
       changed = true;
     }
@@ -1873,6 +2105,10 @@ export function resolveStreamJsonStallLiveStatus(
     return null;
   }
 
+  if (findStreamingThoughtActivity(state)?.streaming) {
+    return null;
+  }
+
   if (state.runningToolRunStack.length > 0) {
     return null;
   }
@@ -1881,17 +2117,25 @@ export function resolveStreamJsonStallLiveStatus(
     return null;
   }
 
-  if (hasStableStreamJsonProgressUi(state)) {
+  if (state.activities.some((entry) => entry.kind === 'task' && entry.streaming)) {
     return null;
   }
 
   const idleSeconds = Math.max(1, Math.round(idleMs / 1000));
 
   if (state.pendingResponseText.trim() || state.responseId) {
+    if (idleMs < 30_000) {
+      return null;
+    }
+
     return `Agent executando… (${idleSeconds}s)`;
   }
 
-  return `Aguardando resposta do agent… (${idleSeconds}s)`;
+  if (idleMs >= 30_000) {
+    return `Aguardando resposta do agent… (${idleSeconds}s)`;
+  }
+
+  return 'Planning next moves...';
 }
 
 export function forceSettleStreamJsonInFlightWork(state: AgentStreamJsonParserState): void {
@@ -2201,37 +2445,52 @@ function isAggregatedPriorResponseText(
   }
 
   const compactResult = resultText.replace(/\s+/g, '');
-  const lastCompact = responses[responses.length - 1]!.replace(/\s+/g, '');
-
-  if (compactResult.length < 48) {
-    return lastCompact.length >= compactResult.length;
-  }
-
-  const compactJoined = responses.join('').replace(/\s+/g, '');
+  const lastResponse = responses[responses.length - 1]!;
+  const lastCompact = lastResponse.replace(/\s+/g, '');
 
   if (compactResult === lastCompact) {
     return true;
   }
 
-  if (lastCompact.length >= 16 && compactResult.includes(lastCompact) && compactResult.length > lastCompact.length + 16) {
+  if (compactResult.length < 48) {
+    return lastCompact.length >= compactResult.length && lastCompact.includes(compactResult);
+  }
+
+  if (lastCompact.includes(compactResult) && lastCompact.length >= compactResult.length) {
     return true;
   }
 
   if (
+    compactResult.includes(lastCompact) &&
+    compactResult.length > lastCompact.length &&
+    (looksLikeTruncatedAgentResponse(lastResponse) ||
+      lastCompact.length < 96 ||
+      !compactResult.startsWith(lastCompact))
+  ) {
+    return false;
+  }
+
+  const compactJoined = responses.join('').replace(/\s+/g, '');
+
+  if (
     compactJoined.length >= 48 &&
-    (compactResult.startsWith(compactJoined.slice(0, Math.min(96, compactJoined.length))) ||
-      compactJoined.startsWith(compactResult.slice(0, Math.min(96, compactResult.length))) ||
-      compactResult.includes(compactJoined.slice(0, Math.min(96, compactJoined.length))))
+    (compactResult === compactJoined ||
+      compactResult.startsWith(compactJoined) ||
+      (compactJoined.startsWith(compactResult) && compactResult.length >= 48))
   ) {
     return true;
   }
 
+  if (responses.length < 2) {
+    return false;
+  }
+
   const matched = responses.filter((entry) => {
     const compact = entry.replace(/\s+/g, '');
-    return compact.length >= 16 && compactResult.includes(compact.slice(0, Math.min(48, compact.length)));
+    return compact.length >= 24 && compactResult.includes(compact);
   }).length;
 
-  return matched >= Math.min(2, responses.length);
+  return matched >= 2 && compactJoined.length >= Math.floor(compactResult.length * 0.8);
 }
 
 function hasIncompleteStreamJsonEnding(
@@ -2625,4 +2884,5 @@ export function resetAgentStreamJsonTurn(state: AgentStreamJsonParserState): voi
   state.shellToolEvents = [];
   state.runningToolRunStack = [];
   state.runningTaskStack = [];
+  state.sawStreamingAssistantDelta = false;
 }

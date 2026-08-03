@@ -203,7 +203,7 @@ function AgentCardComponent({
   }, [paneId, setTabPtyId, slot.project.id]);
 
   const handleUpdateTab = useCallback(
-    (patch: Partial<Pick<AgentTab, 'turns' | 'workingDirectory' | 'restoreCommand'>>) => {
+    (patch: Partial<Pick<AgentTab, 'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand'>>) => {
       void updateAgentTab(paneId, patch);
     },
     [paneId, updateAgentTab],

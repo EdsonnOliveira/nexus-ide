@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AgentTurn, AppState, MailMailboxRef, Project, ProjectUpdatePayload, Tab, TabBarItem, Workspace, WorkspaceUpdatePayload } from '@/types';
+import type { AgentTab, AgentTurn, AppState, MailMailboxRef, Project, ProjectUpdatePayload, Tab, TabBarItem, Workspace, WorkspaceUpdatePayload } from '@/types';
 import { PROJECT_COLORS } from '@/types';
 import {
   migrateProjectTestEntry,
@@ -442,9 +442,34 @@ function buildAgentTurnsMap(projects: Project[]): Map<string, AgentTurn[]> {
   return turnsByPane;
 }
 
+function buildAgentFollowUpsMap(projects: Project[]): Map<string, NonNullable<AgentTab['followUps']>> {
+  const followUpsByPane = new Map<string, NonNullable<AgentTab['followUps']>>();
+
+  for (const project of projects) {
+    for (const item of project.tabs) {
+      const panes = item.type === 'split' ? item.panes : [item];
+
+      for (const pane of panes) {
+        if (pane.type !== 'agent') {
+          continue;
+        }
+
+        const followUps = pane.followUps ?? [];
+
+        if (followUps.length > 0) {
+          followUpsByPane.set(pane.id, followUps);
+        }
+      }
+    }
+  }
+
+  return followUpsByPane;
+}
+
 function mergeAgentTurnsIntoTabs(
   tabs: TabBarItem[],
   prevTurnsByPane: Map<string, AgentTurn[]>,
+  prevFollowUpsByPane: Map<string, NonNullable<AgentTab['followUps']>>,
 ): TabBarItem[] {
   return tabs.map((item) => {
     if (item.type === 'split') {
@@ -455,24 +480,27 @@ function mergeAgentTurnsIntoTabs(
             return pane;
           }
 
+          let nextPane = pane;
           const prevTurns = prevTurnsByPane.get(pane.id);
 
-          if (!prevTurns || prevTurns.length === 0) {
-            return pane;
+          if (prevTurns && prevTurns.length > 0) {
+            const nextTurns = pane.turns ?? [];
+            const prevRunning = prevTurns.some((turn) => turn.running);
+
+            if (nextTurns.length === 0) {
+              nextPane = prevRunning ? { ...nextPane, turns: prevTurns } : nextPane;
+            } else if (shouldPreferLocalAgentTurnHistory(prevTurns, nextTurns)) {
+              nextPane = { ...nextPane, turns: prevTurns };
+            }
           }
 
-          const nextTurns = pane.turns ?? [];
-          const prevRunning = prevTurns.some((turn) => turn.running);
+          const prevFollowUps = prevFollowUpsByPane.get(pane.id);
 
-          if (nextTurns.length === 0) {
-            return prevRunning ? { ...pane, turns: prevTurns } : pane;
+          if (prevFollowUps && prevFollowUps.length > 0 && (nextPane.followUps?.length ?? 0) === 0) {
+            nextPane = { ...nextPane, followUps: prevFollowUps };
           }
 
-          if (shouldPreferLocalAgentTurnHistory(prevTurns, nextTurns)) {
-            return { ...pane, turns: prevTurns };
-          }
-
-          return pane;
+          return nextPane;
         }),
       };
     }
@@ -481,24 +509,27 @@ function mergeAgentTurnsIntoTabs(
       return item;
     }
 
+    let nextItem = item;
     const prevTurns = prevTurnsByPane.get(item.id);
 
-    if (!prevTurns || prevTurns.length === 0) {
-      return item;
+    if (prevTurns && prevTurns.length > 0) {
+      const nextTurns = item.turns ?? [];
+      const prevRunning = prevTurns.some((turn) => turn.running);
+
+      if (nextTurns.length === 0) {
+        nextItem = prevRunning ? { ...nextItem, turns: prevTurns } : nextItem;
+      } else if (shouldPreferLocalAgentTurnHistory(prevTurns, nextTurns)) {
+        nextItem = { ...nextItem, turns: prevTurns };
+      }
     }
 
-    const nextTurns = item.turns ?? [];
-    const prevRunning = prevTurns.some((turn) => turn.running);
+    const prevFollowUps = prevFollowUpsByPane.get(item.id);
 
-    if (nextTurns.length === 0) {
-      return prevRunning ? { ...item, turns: prevTurns } : item;
+    if (prevFollowUps && prevFollowUps.length > 0 && (nextItem.followUps?.length ?? 0) === 0) {
+      nextItem = { ...nextItem, followUps: prevFollowUps };
     }
 
-    if (shouldPreferLocalAgentTurnHistory(prevTurns, nextTurns)) {
-      return { ...item, turns: prevTurns };
-    }
-
-    return item;
+    return nextItem;
   });
 }
 
@@ -570,6 +601,7 @@ function mergeMissingHomeBoundAgentTabs(
 function preserveRuntimePtyIds(next: AppState, prev: AppState): AppState {
   const prevMap = buildTerminalPtyIdMap(prev.projects);
   const prevTurnsByPane = buildAgentTurnsMap(prev.projects);
+  const prevFollowUpsByPane = buildAgentFollowUpsMap(prev.projects);
   const withHomeAgents = mergeMissingHomeBoundAgentTabs(next.projects, prev.projects);
 
   for (const project of withHomeAgents) {
@@ -586,7 +618,12 @@ function preserveRuntimePtyIds(next: AppState, prev: AppState): AppState {
     });
   }
 
-  if (prevMap.size === 0 && prevTurnsByPane.size === 0 && withHomeAgents === next.projects) {
+  if (
+    prevMap.size === 0 &&
+    prevTurnsByPane.size === 0 &&
+    prevFollowUpsByPane.size === 0 &&
+    withHomeAgents === next.projects
+  ) {
     return next;
   }
 
@@ -600,8 +637,8 @@ function preserveRuntimePtyIds(next: AppState, prev: AppState): AppState {
         tabs = mergePtyIdsIntoTabs(tabs, paneMap);
       }
 
-      if (prevTurnsByPane.size > 0) {
-        tabs = mergeAgentTurnsIntoTabs(tabs, prevTurnsByPane);
+      if (prevTurnsByPane.size > 0 || prevFollowUpsByPane.size > 0) {
+        tabs = mergeAgentTurnsIntoTabs(tabs, prevTurnsByPane, prevFollowUpsByPane);
       }
 
       if (tabs === project.tabs) {

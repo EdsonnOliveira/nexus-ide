@@ -51,6 +51,10 @@ export function resolveAgentActivityIconFromLabel(label: string): AgentActivityI
     return 'thinking';
   }
 
+  if (/^(?:Planning|Waiting|Aguardando|Agent executando)\b/i.test(text)) {
+    return 'thinking';
+  }
+
   if (/^Thought\b/i.test(text)) {
     return 'thought';
   }

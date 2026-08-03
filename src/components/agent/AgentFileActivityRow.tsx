@@ -317,12 +317,24 @@ function AgentToolActivityScrollListComponent({
       return null;
     }
 
+    const isLiveSummary =
+      Boolean(summary) &&
+      (Boolean(detail?.streaming) ||
+        detail?.kind === 'live_status' ||
+        /^(?:Executando|Running|Exploring|Editing|Planning|Thinking|Aguardando|Agent executando)\b/i.test(
+          summary ?? '',
+        ));
+
     return (
       <div className='agent-view__tool-batch'>
         {summary ? (
-          <div className='agent-view__status-line agent-view__status-line--batch'>
+          <div
+            className={`agent-view__status-line agent-view__status-line--batch${isLiveSummary ? ' agent-view__status-line--shimmer' : ''}`}
+          >
             <AgentActivityIcon kind={resolveAgentActivityIconFromLabel(summary)} />
-            <span>{summary}</span>
+            <span className={isLiveSummary ? 'agent-view__status-shimmer-text' : undefined}>
+              {summary}
+            </span>
           </div>
         ) : null}
         {detailRow}

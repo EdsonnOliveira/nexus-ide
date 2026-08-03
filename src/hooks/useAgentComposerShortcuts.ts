@@ -10,10 +10,13 @@ interface UseAgentComposerShortcutsOptions {
   isVisible: boolean;
   isBusy: boolean;
   draft: string;
+  hasPendingImages?: boolean;
+  followUpCount?: number;
   activeMode: AutomationAgentMode;
   modelHints: TerminalCommandHint[];
   onSubmit: () => void;
   onForceSubmit: () => void;
+  onFlushNextFollowUp?: () => boolean;
   onStop: () => void;
   onModeChange: (mode: AutomationAgentMode) => void;
   onRunModelCommand: (command: string) => void;
@@ -22,14 +25,16 @@ interface UseAgentComposerShortcutsOptions {
 
 export function useAgentComposerShortcuts({
   inputRef,
-  isFocused,
   isVisible,
   isBusy,
   draft,
+  hasPendingImages = false,
+  followUpCount = 0,
   activeMode,
   modelHints,
   onSubmit,
   onForceSubmit,
+  onFlushNextFollowUp,
   onStop,
   onModeChange,
   onRunModelCommand,
@@ -38,18 +43,31 @@ export function useAgentComposerShortcuts({
   const handleStopOrSubmit = useCallback(() => {
     const trimmed = draft.trim();
 
-    if (isBusy && !trimmed) {
+    if (isBusy && !trimmed && !hasPendingImages) {
       onStop();
       return;
     }
 
-    if (trimmed) {
+    if (trimmed || hasPendingImages) {
       onSubmit();
+      return;
     }
-  }, [draft, isBusy, onStop, onSubmit]);
+
+    if (!isBusy && followUpCount > 0) {
+      onFlushNextFollowUp?.();
+    }
+  }, [
+    draft,
+    followUpCount,
+    hasPendingImages,
+    isBusy,
+    onFlushNextFollowUp,
+    onStop,
+    onSubmit,
+  ]);
 
   useEffect(() => {
-    if (!isFocused || !isVisible) {
+    if (!isVisible) {
       return;
     }
 
@@ -117,7 +135,6 @@ export function useAgentComposerShortcuts({
     handleStopOrSubmit,
     inputRef,
     isBusy,
-    isFocused,
     isVisible,
     modelHints,
     onForceSubmit,

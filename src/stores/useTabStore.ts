@@ -23,7 +23,7 @@ import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
 import { buildCursorAgentResumeCommand } from '@/utils/cursorAgentResume';
 import { parseCursorAgentHistoryTranscript } from '@/utils/parseCursorAgentHistoryTranscript';
 import { hydrateAgentTurns } from '@/utils/agentPromptAttachments';
-import { sanitizeAgentTurnHistory } from '@/utils/trimAgentTurnHistory';
+import { sanitizeAgentFollowUps, sanitizeAgentTurnHistory } from '@/utils/trimAgentTurnHistory';
 import { stopAgentPane } from '@/utils/agentPaneRegistry';
 import { normalizeBrowserUrl } from '@/utils/browserUrl';
 import { createBadgeColorIndex } from '@/utils/tabBadge';
@@ -92,7 +92,10 @@ export interface TabStoreActions {
   updateAgentTab: (
     tabId: string,
     patch: Partial<
-      Pick<AgentTab, 'turns' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title' | 'messages'>
+      Pick<
+        AgentTab,
+        'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title' | 'messages'
+      >
     >,
   ) => Promise<void>;
   setSplitRatio: (
@@ -1213,10 +1216,14 @@ export function useTabActions(): TabStoreActions {
         return;
       }
 
-      const patchWithTrim =
-        patch.turns !== undefined
+      const patchWithTrim = {
+        ...(patch.turns !== undefined
           ? { ...patch, turns: sanitizeAgentTurnHistory(patch.turns) }
-          : patch;
+          : patch),
+        ...(patch.followUps !== undefined
+          ? { followUps: sanitizeAgentFollowUps(patch.followUps) }
+          : {}),
+      };
 
       const nextTabs = updatePaneInTabs(project.tabs, tabId, (entry) =>
         entry.type === 'agent' ? { ...entry, ...patchWithTrim } : entry,

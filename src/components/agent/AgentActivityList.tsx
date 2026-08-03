@@ -18,6 +18,7 @@ import { AgentResponseActions } from '@/components/agent/AgentResponseActions';
 import { AgentActionBlockSummary } from '@/components/agent/AgentActionBlockSummary';
 import { AgentTaskActivityCard } from '@/components/agent/AgentTaskActivityCard';
 import { AgentTurnSummaryLine } from '@/components/agent/AgentTurnSummaryLine';
+import { AgentLiveStatus } from '@/components/agent/AgentLiveStatus';
 import { MarkdownImageLightbox } from '@/components/overlay/MarkdownImageLightbox';
 import {
   buildActionBlockSummary,
@@ -563,6 +564,32 @@ function AgentActivityListComponent({
     lastVisibleResponseLabel !== incompleteClosingMessage &&
     (endedDuringThought || looksLikeTruncatedAgentResponse(lastVisibleResponseLabel));
 
+  const hasLiveProgressIndicator = useMemo(() => {
+    if (!running) {
+      return false;
+    }
+
+    return visibleActivities.some((entry) => {
+      if (entry.kind === 'live_status' && entry.label.trim()) {
+        return true;
+      }
+
+      if (entry.kind === 'thought' && entry.streaming) {
+        return true;
+      }
+
+      if ((entry.kind === 'tool_run' || entry.kind === 'task') && entry.streaming) {
+        return true;
+      }
+
+      if (entry.kind === 'response' && entry.streaming) {
+        return true;
+      }
+
+      return false;
+    });
+  }, [running, visibleActivities]);
+
   const renderLiveActionGroup = (activities: AgentActivity[]): ReactNode => {
     const nodes: ReactNode[] = [];
     let toolGroup: AgentActivity[] = [];
@@ -670,9 +697,12 @@ function AgentActivityListComponent({
         </>
       ) : null}
       {running && visibleActivities.length === 0 ? (
-        <div className='agent-view__status-line agent-view__status-line--pending'>
-          <AgentActivityIcon kind='tools' />
-          <span>Executando agent…</span>
+        <AgentLiveStatus label='Thinking...' />
+      ) : null}
+      {running && visibleActivities.length > 0 && !hasLiveProgressIndicator ? (
+        <div className='agent-view__file-row agent-view__file-row--live app-button--enter'>
+          <AgentActivityIcon kind='thinking' />
+          <span className='agent-view__file-verb'>Planning next moves...</span>
         </div>
       ) : null}
       {showResponseActions ? (

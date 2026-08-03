@@ -424,6 +424,13 @@ function isMarkdownFenceLine(line: string): boolean {
   return /^```/.test(line.trim());
 }
 
+function repairBrokenMarkdownImages(text: string): string {
+  return text.replace(
+    /!(?!\[[^\]]*\]\()([^\n\[]*?)\]\(([^)\s]+\.(?:png|jpe?g|gif|webp|bmp|svg)(?:\?[^)\s]*)?)\)/gi,
+    '![]($2)',
+  );
+}
+
 function sanitizeResponseText(text: string): string {
   const seen = new Set<string>();
   const lines: string[] = [];
@@ -452,7 +459,7 @@ function sanitizeResponseText(text: string): string {
     lines.push(sanitized);
   }
 
-  return lines.join('\n').trim();
+  return repairBrokenMarkdownImages(lines.join('\n').trim());
 }
 
 function appendNarrative(

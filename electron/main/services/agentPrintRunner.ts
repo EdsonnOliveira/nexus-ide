@@ -1,7 +1,8 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import type { BrowserWindow } from 'electron';
 import { buildCliPathEnv } from '../utils/cliPathEnv';
 import { writeDebugSessionLog } from '../utils/debugSessionLog';
@@ -17,9 +18,22 @@ export interface AgentPrintRunOptions {
   runToken: string;
 }
 
+const execFileAsync = promisify(execFile);
 const STDOUT_WATCHDOG_MS = 45_000;
 const STDOUT_IDLE_WATCHDOG_MS = 300_000;
+const STDOUT_FLUSH_MS = 12;
+const STDOUT_FLUSH_MAX_CHARS = 32_000;
+const WARM_TTL_MS = 5 * 60_000;
 const AGENT_RUNNING_MARKER = path.join(os.tmpdir(), 'nexus-ide-agent-running');
+
+interface StdoutBatch {
+  runToken: string;
+  chunks: string[];
+  chars: number;
+  timer: ReturnType<typeof setTimeout> | null;
+  idleTimer: ReturnType<typeof setTimeout> | null;
+  leading: boolean;
+}
 
 function syncAgentRunningMarker(running: boolean): void {
   try {
@@ -75,6 +89,9 @@ class AgentPrintRunner {
   private window: BrowserWindow | null = null;
   private processes = new Map<string, ChildProcessWithoutNullStreams>();
   private watchdogs = new Map<string, ReturnType<typeof setTimeout>>();
+  private stdoutBatches = new Map<string, StdoutBatch>();
+  private warmPromise: Promise<void> | null = null;
+  private lastWarmAt = 0;
 
   setWindow(window: BrowserWindow | null): void {
     this.window = window;
@@ -101,6 +118,140 @@ class AgentPrintRunner {
     } catch {
       this.window = null;
     }
+  }
+
+  private flushStdoutBatch(paneId: string): void {
+    const batch = this.stdoutBatches.get(paneId);
+
+    if (!batch) {
+      return;
+    }
+
+    if (batch.timer) {
+      clearTimeout(batch.timer);
+      batch.timer = null;
+    }
+
+    if (batch.idleTimer) {
+      clearTimeout(batch.idleTimer);
+      batch.idleTimer = null;
+    }
+
+    if (batch.chars === 0 || batch.chunks.length === 0) {
+      return;
+    }
+
+    const data = batch.chunks.join('');
+    const runToken = batch.runToken;
+    batch.chunks = [];
+    batch.chars = 0;
+    batch.leading = false;
+
+    this.emit('agent:printData', {
+      paneId,
+      runToken,
+      data,
+    });
+
+    batch.idleTimer = setTimeout(() => {
+      batch.idleTimer = null;
+      batch.leading = true;
+    }, STDOUT_FLUSH_MS * 2);
+  }
+
+  private clearStdoutBatch(paneId: string): void {
+    const batch = this.stdoutBatches.get(paneId);
+
+    if (!batch) {
+      return;
+    }
+
+    if (batch.timer) {
+      clearTimeout(batch.timer);
+    }
+
+    if (batch.idleTimer) {
+      clearTimeout(batch.idleTimer);
+    }
+
+    this.stdoutBatches.delete(paneId);
+  }
+
+  private enqueueStdout(paneId: string, runToken: string, chunk: string): void {
+    if (!chunk) {
+      return;
+    }
+
+    let batch = this.stdoutBatches.get(paneId);
+
+    if (!batch) {
+      batch = {
+        runToken,
+        chunks: [],
+        chars: 0,
+        timer: null,
+        idleTimer: null,
+        leading: true,
+      };
+      this.stdoutBatches.set(paneId, batch);
+    }
+
+    if (batch.idleTimer) {
+      clearTimeout(batch.idleTimer);
+      batch.idleTimer = null;
+    }
+
+    batch.runToken = runToken;
+    batch.chunks.push(chunk);
+    batch.chars += chunk.length;
+
+    if (batch.chars >= STDOUT_FLUSH_MAX_CHARS) {
+      this.flushStdoutBatch(paneId);
+      return;
+    }
+
+    if (batch.leading) {
+      this.flushStdoutBatch(paneId);
+      return;
+    }
+
+    if (!batch.timer) {
+      batch.timer = setTimeout(() => {
+        this.flushStdoutBatch(paneId);
+      }, STDOUT_FLUSH_MS);
+    }
+  }
+
+  warm(): Promise<void> {
+    const now = Date.now();
+
+    if (this.warmPromise) {
+      return this.warmPromise;
+    }
+
+    if (now - this.lastWarmAt < WARM_TTL_MS) {
+      return Promise.resolve();
+    }
+
+    const executable = resolveCursorAgentExecutable();
+
+    this.warmPromise = (async () => {
+      try {
+        await execFileAsync(executable, ['models'], {
+          encoding: 'utf8',
+          env: { ...process.env, PATH: buildCliPathEnv() },
+          timeout: 10_000,
+          maxBuffer: 2 * 1024 * 1024,
+        });
+        this.lastWarmAt = Date.now();
+      } catch {
+        this.lastWarmAt = Date.now();
+      } finally {
+        this.warmPromise = null;
+      }
+    })();
+
+    return this.warmPromise;
   }
 
   start(options: AgentPrintRunOptions): void {
@@ -181,6 +332,8 @@ class AgentPrintRunner {
 
       closed = true;
       this.clearWatchdog(options.paneId);
+      this.flushStdoutBatch(options.paneId);
+      this.clearStdoutBatch(options.paneId);
 
       if (this.processes.get(options.paneId) === child) {
         this.processes.delete(options.paneId);
@@ -246,20 +399,13 @@ class AgentPrintRunner {
 
     armStartupWatchdog();
 
-    const forward = (chunk: Buffer, fromStdout: boolean) => {
-      if (fromStdout) {
-        stdoutSeen = true;
-        armIdleWatchdog();
-      }
-
-      this.emit('agent:printData', {
-        paneId: options.paneId,
-        runToken,
-        data: chunk.toString('utf8'),
-      });
+    const forwardStdout = (chunk: Buffer) => {
+      stdoutSeen = true;
+      armIdleWatchdog();
+      this.enqueueStdout(options.paneId, runToken, chunk.toString('utf8'));
     };
 
-    child.stdout.on('data', (chunk) => forward(chunk, true));
+    child.stdout.on('data', (chunk) => forwardStdout(chunk));
     child.stderr.on('data', (chunk) => {
       stderrBuffer = `${stderrBuffer}${chunk.toString('utf8')}`.slice(-4096);
     });
@@ -271,6 +417,8 @@ class AgentPrintRunner {
 
       closed = true;
       this.clearWatchdog(options.paneId);
+      this.flushStdoutBatch(options.paneId);
+      this.clearStdoutBatch(options.paneId);
 
       if (this.processes.get(options.paneId) === child) {
         this.processes.delete(options.paneId);
@@ -321,6 +469,8 @@ class AgentPrintRunner {
 
   stop(paneId: string): void {
     this.clearWatchdog(paneId);
+    this.flushStdoutBatch(paneId);
+    this.clearStdoutBatch(paneId);
     const child = this.processes.get(paneId);
 
     if (!child) {

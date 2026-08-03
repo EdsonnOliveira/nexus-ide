@@ -13,4 +13,8 @@ export function registerAgentPrintHandlers(): void {
   ipcMain.handle('agent:printIsRunning', (_, paneId: string) =>
     agentPrintRunner.isRunning(paneId),
   );
+
+  ipcMain.handle('agent:printWarm', async () => {
+    await agentPrintRunner.warm();
+  });
 }

@@ -1,5 +1,6 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import os from 'node:os';
 import { basename, extname, join } from 'node:path';
 import path from 'node:path';
 
@@ -154,6 +155,14 @@ function isPathInsideRoot(filePath: string, root: string): boolean {
   return resolved === rootResolved || resolved.startsWith(`${rootResolved}${path.sep}`);
 }
 
+function isAllowedAbsoluteImagePath(filePath: string, projectRoot: string): boolean {
+  if (isPathInsideRoot(filePath, projectRoot)) {
+    return true;
+  }
+
+  return isPathInsideRoot(filePath, os.tmpdir());
+}
+
 export async function resolveProjectImageAsDataUrl(
   projectPath: string | null | undefined,
   imageRef: string,
@@ -181,8 +190,10 @@ export async function resolveProjectImageAsDataUrl(
   const candidates: string[] = [];
 
   if (path.isAbsolute(normalized)) {
-    if (isPathInsideRoot(normalized, projectRoot)) {
-      candidates.push(path.resolve(normalized));
+    const absolute = path.resolve(normalized);
+
+    if (isAllowedAbsoluteImagePath(absolute, projectRoot)) {
+      candidates.push(absolute);
     }
   } else {
     candidates.push(path.resolve(projectRoot, normalized));
@@ -198,7 +209,7 @@ export async function resolveProjectImageAsDataUrl(
   }
 
   for (const candidate of candidates) {
-    if (!isPathInsideRoot(candidate, projectRoot)) {
+    if (!isAllowedAbsoluteImagePath(candidate, projectRoot)) {
       continue;
     }
 

@@ -236,6 +236,7 @@ export interface AgentTab {
   cliAgent: string;
   ptyId: string | null;
   turns: AgentTurn[];
+  followUps?: AgentFollowUp[];
   messages?: AgentMessage[];
   restoreCommand?: string | null;
   workingDirectory?: string | null;
@@ -904,6 +905,7 @@ export interface NexusAPI {
     }) => Promise<void>;
     stop: (paneId: string) => void;
     isRunning: (paneId: string) => Promise<boolean>;
+    warm: () => Promise<void>;
     onData: (
       callback: (paneId: string, data: string, runToken: string) => void,
     ) => () => void;

@@ -1505,52 +1505,38 @@ export async function createIosSimulatorSession(
     await sendHomeButtonPress();
   };
 
-  const performAppSwitcherGesture = async (): Promise<boolean> => {
-    const centerX = 0.5;
-    const startY = 0.96;
-    const holdY = 0.5;
-
+  const sendDoubleHomeForAppSwitcher = async (): Promise<boolean> => {
     if (useSimulatorServer) {
-      await sendSimulatorInput(formatSimulatorTouchInput('Down', centerX, startY));
-      await delay(50);
-
-      const steps = 10;
-
-      for (let step = 1; step <= steps; step += 1) {
-        const y = startY + ((holdY - startY) * step) / steps;
-        await sendSimulatorInput(formatSimulatorTouchInput('Move', centerX, y));
-        await delay(35);
-      }
-
-      await delay(800);
-      await sendSimulatorInput(formatSimulatorTouchInput('Up', centerX, holdY));
+      await sendSimulatorInput(formatSimulatorButtonInput('Down', 'home'));
+      await delay(80);
+      await sendSimulatorInput(formatSimulatorButtonInput('Up', 'home'));
+      await delay(150);
+      await sendSimulatorInput(formatSimulatorButtonInput('Down', 'home'));
+      await delay(80);
+      await sendSimulatorInput(formatSimulatorButtonInput('Up', 'home'));
       return true;
     }
 
     if (idb.found) {
-      const px = Math.round(centerX * inputSize.inputWidth);
-      const startPy = Math.round(startY * inputSize.inputHeight);
-      const holdPy = Math.round(holdY * inputSize.inputHeight);
-      const result = await runCommand(idb.path, [
-        'ui',
-        'swipe',
-        '--udid',
-        udid,
-        '--duration',
-        '1.4',
-        String(px),
-        String(startPy),
-        String(px),
-        String(holdPy),
-      ]);
+      const first = await runCommand(idb.path, ['ui', 'button', '--udid', udid, 'HOME']);
 
-      return result.code === 0;
+      if (first.code !== 0) {
+        return false;
+      }
+
+      await delay(150);
+      const second = await runCommand(idb.path, ['ui', 'button', '--udid', udid, 'HOME']);
+      return second.code === 0;
     }
 
     return false;
   };
 
   const pressAppSwitcherWithFallback = async () => {
+    if (await sendDoubleHomeForAppSwitcher()) {
+      return;
+    }
+
     const previousAppResult = await runCommand('osascript', [
       '-e',
       'tell application "System Events" to get name of first process whose frontmost is true',
@@ -1615,10 +1601,7 @@ export async function createIosSimulatorSession(
     if (menuResult.code === 0) {
       await delay(120);
       await restorePreviousApp();
-      return;
     }
-
-    await performAppSwitcherGesture();
   };
 
   const setSimulatorOrientation = async (
