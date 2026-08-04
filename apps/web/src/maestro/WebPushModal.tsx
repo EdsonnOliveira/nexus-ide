@@ -264,10 +264,10 @@ function WebPushModalComponent({ open, onClose }: WebPushModalProps) {
             <AppCheckbox
               checked={deviceEnabled}
               disabled={!enabled || busy}
-              aria-label='Notificar Mac offline'
+              aria-label='Notificar Mac online ou offline'
               onChange={(checked) => void handlePreferenceChange('device_enabled', checked)}
             />
-            <span>Mac offline</span>
+            <span>Mac online ou offline</span>
           </label>
         </div>
 

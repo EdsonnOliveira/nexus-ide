@@ -112,6 +112,48 @@ async function listActiveDeployments(token: string): Promise<{
   return { deployment: deployments[0] ?? null, deployments };
 }
 
+async function resolveDevicePushRecipients(
+  ownerId: string,
+  workspaceId: string,
+): Promise<string[]> {
+  const admin = getServiceSupabaseClient();
+  const recipientIds = new Set<string>([ownerId]);
+  if (!admin) {
+    return [...recipientIds];
+  }
+  const { data: members } = await admin
+    .from('workspace_members')
+    .select('user_id')
+    .eq('workspace_id', workspaceId);
+  for (const member of members ?? []) {
+    recipientIds.add(String(member.user_id));
+  }
+  return [...recipientIds];
+}
+
+export async function notifyMacOnline(device: {
+  id: string;
+  name?: string | null;
+  owner_id: string;
+  workspace_id: string;
+}): Promise<void> {
+  const deviceId = String(device.id);
+  const ownerId = String(device.owner_id);
+  const name = String(device.name || 'Mac');
+  const bucket = hourBucket();
+  const recipientIds = await resolveDevicePushRecipients(ownerId, String(device.workspace_id));
+  for (const userId of recipientIds) {
+    await notifyPush({
+      userId,
+      kind: 'device',
+      title: 'Mac online',
+      body: `${name} ficou online`,
+      dedupeKey: `device:${deviceId}:online:${bucket}`,
+      data: { deviceId, name },
+    });
+  }
+}
+
 async function checkDevicesOffline(): Promise<void> {
   const admin = getServiceSupabaseClient();
   if (!admin) {
@@ -138,15 +180,7 @@ async function checkDevicesOffline(): Promise<void> {
       continue;
     }
 
-    const recipientIds = new Set<string>([ownerId]);
-    const { data: members } = await admin
-      .from('workspace_members')
-      .select('user_id')
-      .eq('workspace_id', device.workspace_id);
-    for (const member of members ?? []) {
-      recipientIds.add(String(member.user_id));
-    }
-
+    const recipientIds = await resolveDevicePushRecipients(ownerId, String(device.workspace_id));
     for (const userId of recipientIds) {
       await notifyPush({
         userId,

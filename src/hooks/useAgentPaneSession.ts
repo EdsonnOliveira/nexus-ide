@@ -295,6 +295,7 @@ export function useAgentPaneSession({
   const streamJsonAutoRetryRef = useRef(false);
   const streamJsonIncompleteContinueRef = useRef(false);
   const streamJsonIncompleteContinueCountRef = useRef(0);
+  const streamJsonDeferredStartTimerRef = useRef<number | null>(null);
   const tryScheduleStreamJsonAutoRetryRef = useRef<(finishAgentPrintRun: () => void) => boolean>(
     () => false,
   );
@@ -382,6 +383,13 @@ export function useAgentPaneSession({
     agentPrintRunActiveRef.current = false;
     hasStreamJsonChunkRef.current = false;
     useTerminalSessionStore.getState().setAgentPrintRunToken(paneId, null);
+  }, []);
+
+  const clearStreamJsonDeferredStart = useCallback(() => {
+    if (streamJsonDeferredStartTimerRef.current !== null) {
+      window.clearTimeout(streamJsonDeferredStartTimerRef.current);
+      streamJsonDeferredStartTimerRef.current = null;
+    }
   }, []);
 
   const isTurnRunning = useMemo(
@@ -755,6 +763,7 @@ export function useAgentPaneSession({
 
   const finalizeActiveTurn = useCallback((notifyOnComplete = false, options?: { force?: boolean }) => {
     clearStreamJsonSettleTimer();
+    clearStreamJsonDeferredStart();
 
     const turns = turnsRef.current;
     const index = [...turns].reverse().findIndex((turn) => turn.running);
@@ -855,7 +864,13 @@ export function useAgentPaneSession({
     }
 
     promotePendingFollowUpTurnRef.current();
-  }, [clearAgentPrintRunToken, clearStreamJsonSettleTimer, persistTurns, usesStreamJson]);
+  }, [
+    clearAgentPrintRunToken,
+    clearStreamJsonDeferredStart,
+    clearStreamJsonSettleTimer,
+    persistTurns,
+    usesStreamJson,
+  ]);
 
   useEffect(() => {
     if (isAgentBusy || isTurnRunning || isSubmitting) {
@@ -932,6 +947,7 @@ export function useAgentPaneSession({
     streamJsonAutoRetryRef.current = false;
     streamJsonIncompleteContinueRef.current = false;
     streamJsonIncompleteContinueCountRef.current = 0;
+    clearStreamJsonDeferredStart();
     clearAgentPrintRunToken(paneId);
     persistTurns(nextTurns, { flush: true });
     recordHomeDashboardActivity('agentExecutions');
@@ -954,7 +970,7 @@ export function useAgentPaneSession({
     }
 
     promotePendingFollowUpTurnRef.current();
-  }, [clearAgentPrintRunToken, persistTurns]);
+  }, [clearAgentPrintRunToken, clearStreamJsonDeferredStart, persistTurns]);
 
   const clearContextUsageReportTimer = useCallback(() => {
     if (contextUsageReportTimerRef.current !== null) {
@@ -1324,6 +1340,7 @@ export function useAgentPaneSession({
       streamJsonStateRef.current.activities = createInitialTurnActivities();
 
       if (!options?.isAutoRetry) {
+        clearStreamJsonDeferredStart();
         streamJsonAutoRetryRef.current = false;
         streamJsonIncompleteContinueRef.current = false;
         streamJsonIncompleteContinueCountRef.current = 0;
@@ -1362,7 +1379,7 @@ export function useAgentPaneSession({
 
       return true;
     },
-    [agentRootPath, bindAgentPrintRunToken],
+    [agentRootPath, bindAgentPrintRunToken, clearStreamJsonDeferredStart],
   );
 
   const tryScheduleStreamJsonAutoRetry = useCallback(
@@ -1398,13 +1415,24 @@ export function useAgentPaneSession({
       streamJsonStateRef.current.activities = createInitialTurnActivities();
       turnOutputBufferRef.current = '';
 
-      window.setTimeout(() => {
+      clearStreamJsonDeferredStart();
+      const retryTurnId = retryTurn.id;
+      streamJsonDeferredStartTimerRef.current = window.setTimeout(() => {
+        streamJsonDeferredStartTimerRef.current = null;
+
+        const activeTurn = turnsRef.current.find((turn) => turn.running);
+
+        if (!activeTurn || activeTurn.id !== retryTurnId) {
+          streamJsonAutoRetryRef.current = false;
+          return;
+        }
+
         startStreamJsonAgentRun(prompt, imageRefs, { isAutoRetry: true });
       }, STREAM_JSON_AUTO_RETRY_DELAY_MS);
 
       return true;
     },
-    [startStreamJsonAgentRun],
+    [clearStreamJsonDeferredStart, startStreamJsonAgentRun],
   );
   tryScheduleStreamJsonAutoRetryRef.current = tryScheduleStreamJsonAutoRetry;
 
@@ -1464,8 +1492,21 @@ export function useAgentPaneSession({
       cursorAgentContinueRef.current = true;
       streamJsonStateRef.current.sessionId = resumeChatId;
 
-      window.setTimeout(() => {
-        if (!turnsRef.current.some((turn) => turn.running)) {
+      const continueTurnId =
+        turnsRef.current.find((turn) => turn.running)?.id ?? null;
+
+      clearStreamJsonDeferredStart();
+      streamJsonDeferredStartTimerRef.current = window.setTimeout(() => {
+        streamJsonDeferredStartTimerRef.current = null;
+
+        const activeTurn = turnsRef.current.find((turn) => turn.running);
+
+        if (!activeTurn || activeTurn.id !== continueTurnId) {
+          streamJsonIncompleteContinueRef.current = false;
+          return;
+        }
+
+        if (resolveAgentPrintRunToken(paneId) !== runToken) {
           streamJsonIncompleteContinueRef.current = false;
           return;
         }
@@ -1485,7 +1526,13 @@ export function useAgentPaneSession({
 
       return true;
     },
-    [agentRootPath, bindAgentPrintRunToken, updateActiveTurn],
+    [
+      agentRootPath,
+      bindAgentPrintRunToken,
+      clearStreamJsonDeferredStart,
+      resolveAgentPrintRunToken,
+      updateActiveTurn,
+    ],
   );
   tryContinueIncompleteStreamJsonTurnRef.current = tryContinueIncompleteStreamJsonTurn;
 
@@ -1688,6 +1735,7 @@ export function useAgentPaneSession({
     submitInFlightRef.current = false;
     setIsSubmitting(false);
     clearStreamJsonSettleTimer();
+    clearStreamJsonDeferredStart();
 
     if (submitTimeoutRef.current !== null) {
       window.clearTimeout(submitTimeoutRef.current);
@@ -1699,6 +1747,7 @@ export function useAgentPaneSession({
     clearApprovalConfirmTimer();
     resetAgentReadyDetectors(paneId);
     streamJsonAutoRetryRef.current = false;
+    streamJsonIncompleteContinueRef.current = false;
 
     clearAgentPrintRunToken(paneId);
     session.takePendingLaunchCommand(paneId);
@@ -1781,6 +1830,7 @@ export function useAgentPaneSession({
   }, [
     clearAgentPrintRunToken,
     clearApprovalConfirmTimer,
+    clearStreamJsonDeferredStart,
     clearStreamJsonSettleTimer,
     finalizeActiveTurn,
     persistFollowUps,

@@ -21,7 +21,7 @@ import {
 import { executeCommand } from './commandExecutor';
 import { listActiveTerminalIds } from './terminalSessions';
 import { createFileAuthStorage } from './sessionStorage';
-import { runPushMaintenance } from './pushMaintenance';
+import { notifyMacOnline, runPushMaintenance } from './pushMaintenance';
 import { syncMobileReleaseSnapshotFromDisk } from './syncMobileReleaseSnapshot';
 import { publishDesktopAgentPanes } from './publishDesktopAgentPanes';
 
@@ -102,6 +102,11 @@ async function ensureDevice(
   const name = defaultDeviceName(deviceName);
 
   if (pairingCode) {
+    const { data: beforePair } = await client
+      .from('devices')
+      .select('id, name, owner_id, workspace_id, status')
+      .eq('id', identity.deviceId)
+      .maybeSingle();
     const claimed = await claimDevicePairing(client, {
       code: pairingCode,
       deviceId: identity.deviceId,
@@ -111,6 +116,14 @@ async function ensureDevice(
       capabilities,
     });
     console.log(`[nexus-runtime] paired as ${claimed.name} (${claimed.id})`);
+    if (beforePair?.status === 'offline') {
+      void notifyMacOnline({
+        id: claimed.id,
+        name: claimed.name,
+        owner_id: claimed.owner_id,
+        workspace_id: claimed.workspace_id,
+      });
+    }
   } else {
     const { data: existing } = await client
       .from('devices')
@@ -119,7 +132,8 @@ async function ensureDevice(
       .maybeSingle();
 
     if (existing) {
-      await client
+      const wasOffline = existing.status === 'offline';
+      const { error: updateError } = await client
         .from('devices')
         .update({
           name,
@@ -132,6 +146,14 @@ async function ensureDevice(
           is_enabled: true,
         })
         .eq('id', identity.deviceId);
+      if (!updateError && wasOffline) {
+        void notifyMacOnline({
+          id: existing.id,
+          name,
+          owner_id: existing.owner_id,
+          workspace_id: existing.workspace_id,
+        });
+      }
     } else {
       await client.from('devices').insert({
         id: identity.deviceId,
@@ -200,9 +222,14 @@ function startLocalSocket(
       if (text === 'open_agent_sessions' || text.includes('"type":"open_agent_sessions"')) {
         void (async () => {
           try {
-            await publishBeforeList();
+            void publishBeforeList().catch((error) => {
+              console.error('[nexus-runtime] publish before list failed', error);
+            });
             const bundles = await listOpenSessions();
-            writeSafe({ type: 'open_agent_sessions', bundles });
+            writeSafe({
+              type: 'open_agent_sessions',
+              bundles: bundles.filter((bundle) => bundle.session.source !== 'desktop_pane'),
+            });
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             writeSafe({ type: 'error', message });
@@ -270,17 +297,25 @@ async function main(): Promise<void> {
 
   const heartbeat = async () => {
     try {
+      const { data: beforeHeartbeat } = await client
+        .from('devices')
+        .select('id, name, owner_id, workspace_id, status')
+        .eq('id', deviceId)
+        .maybeSingle();
       await touchHeartbeat(client, deviceId, {
         capabilities: detectCapabilities(),
         active_terminals: listActiveTerminalIds().length,
       });
+      if (beforeHeartbeat?.status === 'offline') {
+        void notifyMacOnline({
+          id: beforeHeartbeat.id,
+          name: beforeHeartbeat.name,
+          owner_id: beforeHeartbeat.owner_id,
+          workspace_id: beforeHeartbeat.workspace_id,
+        });
+      }
     } catch (error) {
       console.error('[nexus-runtime] heartbeat failed', error);
-    }
-    try {
-      await publishDesktopAgentPanes(client, deviceId, session.user.id);
-    } catch (error) {
-      console.error('[nexus-runtime] publish panes failed', error);
     }
   };
 
@@ -297,10 +332,21 @@ async function main(): Promise<void> {
     }
   };
 
+  const runPublishPanes = () => {
+    void publishDesktopAgentPanes(client, deviceId, session.user.id).catch((error) => {
+      console.error('[nexus-runtime] publish panes failed', error);
+    });
+  };
+
   void runHeartbeat();
   setInterval(() => {
     void runHeartbeat();
   }, HEARTBEAT_MS);
+
+  setTimeout(() => {
+    runPublishPanes();
+    setInterval(runPublishPanes, 60_000);
+  }, 45_000);
 
   const FAST_INPUT_TYPES = new Set([
     'emulator_tap',
@@ -403,6 +449,16 @@ async function main(): Promise<void> {
 
   console.log('[nexus-runtime] ready');
 }
+
+process.on('SIGTERM', () => {
+  console.log('[nexus-runtime] shutting down');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('[nexus-runtime] shutting down');
+  process.exit(0);
+});
 
 main().catch((error) => {
   console.error('[nexus-runtime] fatal', error);

@@ -113,7 +113,7 @@ export async function listOpenAgentSessionsFromRuntime(
     type?: string;
     bundles?: AgentSessionBundle[];
     message?: string;
-  }>('open_agent_sessions', socketPath, 15000);
+  }>('open_agent_sessions', socketPath, 4000);
 
   if (!response || response.type === 'error' || !Array.isArray(response.bundles)) {
     return [];

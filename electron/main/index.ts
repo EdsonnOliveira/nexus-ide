@@ -19,6 +19,10 @@ import {
   startDesktopControlServer,
   stopDesktopControlServer,
 } from './services/desktopControlServer';
+import {
+  startManagedRuntime,
+  stopManagedRuntime,
+} from './services/cloudRuntimeSupervisor';
 import { registerFileHandlers } from './ipc/files';
 import { registerProjectHandlers } from './ipc/projects';
 import { registerGitHandlers } from './ipc/git';
@@ -485,6 +489,9 @@ app.whenReady().then(() => {
   const appIcon = applyAppBranding();
   createWindow(appIcon);
   registerShortcuts();
+  setImmediate(() => {
+    startManagedRuntime();
+  });
 });
 
 function requestOpenBrowserTab(url: string): void {
@@ -542,6 +549,7 @@ app.on('window-all-closed', () => {
   void cleanupEmulatorSessions();
 
   if (process.platform !== 'darwin') {
+    stopManagedRuntime();
     app.quit();
   }
 });
@@ -566,6 +574,7 @@ app.on('will-quit', () => {
   ptyManager.killAll();
   agentPrintRunner.stopAll();
   testRunnerSession.stopAll();
+  stopManagedRuntime();
   stopDesktopControlServer();
   void cleanupEmulatorSessions();
 });

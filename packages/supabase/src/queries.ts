@@ -1000,6 +1000,7 @@ export async function listOpenAgentSessionBundles(
   workspaceId?: string | null,
   createdBy?: string | null,
   deviceId?: string | null,
+  options?: { excludeSources?: string[] },
 ): Promise<AgentSessionBundle[]> {
   let query = client
     .from('agent_sessions')
@@ -1017,6 +1018,10 @@ export async function listOpenAgentSessionBundles(
 
   if (deviceId) {
     query = query.eq('device_id', deviceId);
+  }
+
+  for (const source of options?.excludeSources ?? []) {
+    query = query.neq('source', source);
   }
 
   const { data: sessions, error } = await query;

@@ -8,7 +8,7 @@ import { useProjectNotificationStore } from '@/stores/useProjectNotificationStor
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
 import { useAgentComposerDraftStore } from '@/stores/useAgentComposerDraftStore';
-import { ProjectListItem } from '@/components/sidebar/ProjectListItem';
+import { ProjectAgentRunningIndicator, ProjectListItem } from '@/components/sidebar/ProjectListItem';
 import { WorkspaceMark } from '@/components/sidebar/WorkspaceMark';
 import { useDailyGeneration } from '@/components/home/dailyGenerationContext';
 import { ProjectContextMenu } from '@/components/sidebar/ProjectContextMenu';
@@ -1081,10 +1081,7 @@ function ProjectSidebarComponent() {
             </span>
             <span className='sidebar__filter-text'>{workspaceFilterLabel}</span>
             {workspaceFilterHasRunningAgent ? (
-              <span
-                className='project-item__agent project-item__agent--loading sidebar__filter-agent'
-                aria-label='Agent em execução'
-              />
+              <ProjectAgentRunningIndicator className='sidebar__filter-agent' />
             ) : null}
           </span>
           <ChevronDown size={14} />

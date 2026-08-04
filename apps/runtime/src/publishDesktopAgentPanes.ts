@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { NexusClient } from '@nexus/supabase';
@@ -39,6 +39,26 @@ interface DesktopAgentPane {
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_MESSAGE_CHARS = 50_000;
+
+let publishInFlight: Promise<{ published: number; closed: number }> | null = null;
+let lastPublishToken: string | null = null;
+
+function projectsStatePath(): string {
+  return path.join(userDataDir(), 'projects.json');
+}
+
+function getProjectsPublishToken(): string {
+  const filePath = projectsStatePath();
+  if (!existsSync(filePath)) {
+    return 'missing:0';
+  }
+  try {
+    const stats = statSync(filePath);
+    return `${stats.mtimeMs}:${stats.size}`;
+  } catch {
+    return `error:${Date.now()}`;
+  }
+}
 
 function userDataDir(): string {
   return path.join(os.homedir(), 'Library', 'Application Support', 'nexus-ide');
@@ -195,7 +215,7 @@ function collectAgentPanesFromTabs(tabs: unknown[]): Array<{
 }
 
 function readDesktopAgentPanes(): DesktopAgentPane[] {
-  const projectsPath = path.join(userDataDir(), 'projects.json');
+  const projectsPath = projectsStatePath();
   if (!existsSync(projectsPath)) {
     return [];
   }
@@ -328,6 +348,34 @@ async function syncDesktopPaneTurns(
 }
 
 export async function publishDesktopAgentPanes(
+  client: NexusClient,
+  deviceId: string,
+  userId: string,
+  options?: { force?: boolean },
+): Promise<{ published: number; closed: number }> {
+  if (publishInFlight) {
+    return publishInFlight;
+  }
+
+  const token = getProjectsPublishToken();
+  if (!options?.force && token === lastPublishToken) {
+    return { published: 0, closed: 0 };
+  }
+
+  publishInFlight = (async () => {
+    try {
+      const result = await publishDesktopAgentPanesUnlocked(client, deviceId, userId);
+      lastPublishToken = token;
+      return result;
+    } finally {
+      publishInFlight = null;
+    }
+  })();
+
+  return publishInFlight;
+}
+
+async function publishDesktopAgentPanesUnlocked(
   client: NexusClient,
   deviceId: string,
   userId: string,

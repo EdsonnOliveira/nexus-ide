@@ -2787,6 +2787,14 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
       ),
     ];
   } else if (activities.length === 0 && !hasPendingInteraction) {
+    const progressFallback =
+      state.editedPaths.size > 0 ||
+      state.shellCommands.length > 0 ||
+      state.shellCommandCount > 0 ||
+      state.seenReadPaths.size > 0
+        ? 'Alterações aplicadas.'
+        : null;
+
     activities = [
       statusFallback
         ? {
@@ -2797,7 +2805,9 @@ export function finalizeStreamJsonTurn(turn: AgentTurn, state: AgentStreamJsonPa
           }
         : createActivity(
             'response',
-            'Nenhuma resposta foi capturada. Tente enviar novamente.',
+            progressFallback ||
+              incompleteFallback ||
+              'Nenhuma resposta foi capturada. Tente enviar novamente.',
           ),
     ];
   } else if (

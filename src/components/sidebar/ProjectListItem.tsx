@@ -20,6 +20,26 @@ interface ProjectListItemProps {
   onContextMenu: (project: Project, x: number, y: number) => void;
 }
 
+export function ProjectAgentRunningIndicator({ className }: { className?: string }) {
+  return (
+    <span
+      className={`project-item__agent project-item__agent--loading${className ? ` ${className}` : ''}`}
+      aria-label='Agent em execução'
+    >
+      <svg className='project-item__agent-svg' viewBox='22 22 44 44' aria-hidden='true'>
+        <circle
+          className='project-item__agent-circle'
+          cx='44'
+          cy='44'
+          r='20.2'
+          fill='none'
+          strokeWidth='4'
+        />
+      </svg>
+    </span>
+  );
+}
+
 function ProjectListItemComponent({
   project,
   isActive,
@@ -182,9 +202,7 @@ function ProjectListItemComponent({
           {isAutomationRunning ? (
             <span className='project-item__automation project-item__automation--loading' aria-label='Automação em execução' />
           ) : null}
-          {isAgentRunning ? (
-            <span className='project-item__agent project-item__agent--loading' aria-label='Agent em execução' />
-          ) : null}
+          {isAgentRunning ? <ProjectAgentRunningIndicator /> : null}
         </span>
       ) : null}
     </button>

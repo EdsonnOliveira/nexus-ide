@@ -20,11 +20,9 @@ async function fetchOpenAgentSessionBundles(
   authenticated: boolean,
 ): Promise<AgentSessionBundle[]> {
   if (authenticated && cloudSupabase) {
-    return listOpenAgentSessionBundles(cloudSupabase);
-  }
-
-  if (window.nexus?.cloud?.listOpenAgentSessions) {
-    return window.nexus.cloud.listOpenAgentSessions();
+    return listOpenAgentSessionBundles(cloudSupabase, null, null, null, {
+      excludeSources: ['desktop_pane'],
+    });
   }
 
   return [];
@@ -32,7 +30,6 @@ async function fetchOpenAgentSessionBundles(
 
 export function useCloudAgentSessionsSync(active: boolean): void {
   const authenticated = useCloudStore((state) => state.authenticated);
-  const runtimeOnline = useCloudStore((state) => state.runtimeOnline);
   const mergeSessions = useCloudAgentSessionsStore((state) => state.mergeSessions);
   const patchRunningTurn = useCloudAgentSessionsStore((state) => state.patchRunningTurn);
   const setSessionStatus = useCloudAgentSessionsStore((state) => state.setSessionStatus);
@@ -46,10 +43,7 @@ export function useCloudAgentSessionsSync(active: boolean): void {
       return;
     }
 
-    const canSync =
-      (authenticated && Boolean(cloudSupabase)) ||
-      runtimeOnline ||
-      Boolean(window.nexus?.cloud?.listOpenAgentSessions);
+    const canSync = authenticated && Boolean(cloudSupabase);
 
     if (!canSync) {
       clearSessions();
@@ -151,9 +145,10 @@ export function useCloudAgentSessionsSync(active: boolean): void {
           return;
         }
 
-        const hydrated = hydrateCloudAgentSessions(bundles).filter(
-          (session) => session.source !== 'desktop_pane',
+        const remoteBundles = bundles.filter(
+          (bundle) => bundle.session.source !== 'desktop_pane',
         );
+        const hydrated = hydrateCloudAgentSessions(remoteBundles);
         const hydratedIds = new Set(hydrated.map((session) => session.id));
 
         for (const sessionId of Array.from(subscriptionsRef.current.keys())) {
@@ -206,7 +201,6 @@ export function useCloudAgentSessionsSync(active: boolean): void {
   }, [
     active,
     authenticated,
-    runtimeOnline,
     clearSessions,
     mergeSessions,
     patchRunningTurn,

@@ -1,4 +1,5 @@
 import { readFileSync, existsSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertNexusSupabaseUrl } from '@nexus/supabase';
@@ -49,8 +50,12 @@ export function loadRuntimeEnv(): {
   socketPath: string;
 } {
   const root = path.resolve(__dirname, '../../..');
-  loadEnvFile(path.join(root, '.env.local'));
+  const homeNexus = path.join(os.homedir(), '.nexus');
+
   loadEnvFile(path.join(root, '.env'));
+  loadEnvFile(path.join(root, '.env.local'));
+  loadEnvFile(path.join(homeNexus, '.env'));
+  loadEnvFile(path.join(homeNexus, '.env.local'));
 
   const url = process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL ?? '';
   const anonKey = process.env.VITE_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY ?? '';
@@ -72,6 +77,6 @@ export function loadRuntimeEnv(): {
     pairingCode: process.env.NEXUS_PAIRING_CODE ?? null,
     socketPath:
       process.env.NEXUS_RUNTIME_SOCKET ??
-      path.join(process.env.HOME ?? '/tmp', '.nexus-runtime.sock'),
+      path.join(process.env.HOME ?? os.homedir(), '.nexus-runtime.sock'),
   };
 }

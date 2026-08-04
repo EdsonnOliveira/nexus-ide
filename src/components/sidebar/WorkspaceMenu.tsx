@@ -1,6 +1,7 @@
 import { Check, FolderKanban, Plus } from 'lucide-react';
 import { memo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { ProjectAgentRunningIndicator } from '@/components/sidebar/ProjectListItem';
 import { WorkspaceMark } from '@/components/sidebar/WorkspaceMark';
 import {
   positionDropdownBelowAnchor,
@@ -152,12 +153,7 @@ function WorkspaceMenuComponent({
           ) : null}
         </span>
         <span>Todos os projetos</span>
-        {hasRunningAgent ? (
-          <span
-            className='project-item__agent project-item__agent--loading workspace-menu__agent'
-            aria-label='Agent em execução'
-          />
-        ) : null}
+        {hasRunningAgent ? <ProjectAgentRunningIndicator className='workspace-menu__agent' /> : null}
         {activeWorkspaceId === null ? <Check size={14} strokeWidth={2} aria-hidden /> : null}
       </button>
       {workspaces.length > 0 ? <div className='context-menu__separator' /> : null}
@@ -183,12 +179,7 @@ function WorkspaceMenuComponent({
               ) : null}
             </span>
             <span className='workspace-menu__label'>{workspace.name}</span>
-            {isAgentRunning ? (
-              <span
-                className='project-item__agent project-item__agent--loading workspace-menu__agent'
-                aria-label='Agent em execução'
-              />
-            ) : null}
+            {isAgentRunning ? <ProjectAgentRunningIndicator className='workspace-menu__agent' /> : null}
             {isActive ? (
               <Check size={14} strokeWidth={2} className='workspace-menu__check' aria-hidden />
             ) : null}
