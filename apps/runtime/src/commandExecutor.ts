@@ -43,7 +43,7 @@ import { getAgentSkillHints } from './agentSkills';
 
 const execFileAsync = promisify(execFile);
 
-const AGENT_IDLE_TIMEOUT_MS = 8 * 60 * 1000;
+const AGENT_IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const AGENT_IDLE_CHECK_MS = 15_000;
 const AGENT_STALL_EXIT_CODE = 124;
 

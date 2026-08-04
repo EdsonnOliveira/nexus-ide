@@ -20,7 +20,7 @@ export interface AgentPrintRunOptions {
 
 const execFileAsync = promisify(execFile);
 const STDOUT_WATCHDOG_MS = 45_000;
-const STDOUT_IDLE_WATCHDOG_MS = 300_000;
+const STDOUT_IDLE_WATCHDOG_MS = 7_200_000;
 const STDOUT_FLUSH_MS = 12;
 const STDOUT_FLUSH_MAX_CHARS = 32_000;
 const WARM_TTL_MS = 5 * 60_000;

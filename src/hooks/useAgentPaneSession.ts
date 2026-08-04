@@ -63,6 +63,7 @@ import {
   feedAgentStreamJsonChunk,
   finalizeStreamJsonTurn,
   forceSettleStreamJsonInFlightWork,
+  hasActiveStreamJsonToolOrTask,
   hasIncompleteStreamJsonTurnEnding,
   hasMeaningfulStreamJsonTurnOutput,
   hasPendingStreamJsonInteraction,
@@ -114,6 +115,7 @@ const STUCK_TURN_CHECK_MS = 5_000;
 const STREAM_JSON_ORPHAN_FINALIZE_MS = 2_000;
 const STREAM_JSON_INCOMPLETE_ORPHAN_FINALIZE_MS = 45_000;
 const STREAM_JSON_HUNG_IDLE_MS = 1_800_000;
+const STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS = 7_200_000;
 const STREAM_JSON_STALLED_OUTPUT_MS = 90_000;
 const STREAM_JSON_EMPTY_HUNG_IDLE_MS = 90_000;
 const STREAM_JSON_DEAD_PROCESS_FINALIZE_MS = 2_000;
@@ -3420,8 +3422,19 @@ export function useAgentPaneSession({
             }
           }
 
+          const hasActiveToolWork = hasActiveStreamJsonToolOrTask(streamJsonStateRef.current);
+
+          if (hasActiveToolWork && idleMs < STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS) {
+            if (idleMs >= STREAM_JSON_STALL_UI_MS) {
+              syncStreamJsonStallLiveStatus(idleMs);
+            }
+
+            return;
+          }
+
           if (
             idleMs >= STREAM_JSON_EMPTY_HUNG_IDLE_MS &&
+            !hasActiveToolWork &&
             !hasStreamJsonVisibleProgress(streamJsonStateRef.current) &&
             !hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current) &&
             !hasPendingStreamJsonInteraction(streamJsonStateRef.current)
@@ -3452,11 +3465,17 @@ export function useAgentPaneSession({
           }
 
           const stalledWithOutput =
+            !hasActiveToolWork &&
             idleMs >= STREAM_JSON_STALLED_OUTPUT_MS &&
             hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current) &&
-            !hasPendingStreamJsonInteraction(streamJsonStateRef.current);
+            !hasPendingStreamJsonInteraction(streamJsonStateRef.current) &&
+            !isAgentStreamJsonStateAwaitingCompletion(streamJsonStateRef.current);
 
-          if (idleMs >= STREAM_JSON_HUNG_IDLE_MS || stalledWithOutput) {
+          const hungIdleExceeded =
+            idleMs >=
+            (hasActiveToolWork ? STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS : STREAM_JSON_HUNG_IDLE_MS);
+
+          if (hungIdleExceeded || stalledWithOutput) {
             forceSettleStreamJsonInFlightWork(streamJsonStateRef.current);
             applyStreamJsonChunk('');
 
@@ -3487,7 +3506,7 @@ export function useAgentPaneSession({
             return;
           }
 
-          if (tryHandoffLongRunningDevShell(idleMs)) {
+          if (!hasActiveToolWork && tryHandoffLongRunningDevShell(idleMs)) {
             agentPrintRunActiveRef.current = false;
             window.nexus.agentPrint.stop(paneId);
             clearAgentPrintRunToken(paneId);

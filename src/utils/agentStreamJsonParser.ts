@@ -527,17 +527,23 @@ function pruneEmptyThoughtPlaceholders(state: AgentStreamJsonParserState): boole
   return true;
 }
 
-function hasActiveTurnProgressUi(state: AgentStreamJsonParserState): boolean {
+export function hasActiveStreamJsonToolOrTask(state: AgentStreamJsonParserState): boolean {
   if (state.runningToolRunStack.length > 0 || state.runningTaskStack.length > 0) {
+    return true;
+  }
+
+  return state.activities.some(
+    (entry) => (entry.kind === 'tool_run' || entry.kind === 'task') && Boolean(entry.streaming),
+  );
+}
+
+function hasActiveTurnProgressUi(state: AgentStreamJsonParserState): boolean {
+  if (hasActiveStreamJsonToolOrTask(state)) {
     return true;
   }
 
   return state.activities.some((entry) => {
     if (entry.kind === 'thought' && entry.streaming) {
-      return true;
-    }
-
-    if ((entry.kind === 'tool_run' || entry.kind === 'task') && entry.streaming) {
       return true;
     }
 
@@ -2109,16 +2115,13 @@ export function resolveStreamJsonStallLiveStatus(
     return null;
   }
 
-  if (state.runningToolRunStack.length > 0) {
-    return null;
-  }
+  if (hasActiveStreamJsonToolOrTask(state)) {
+    if (idleMs < 30_000) {
+      return null;
+    }
 
-  if (state.activities.some((entry) => entry.kind === 'tool_run' && entry.streaming)) {
-    return null;
-  }
-
-  if (state.activities.some((entry) => entry.kind === 'task' && entry.streaming)) {
-    return null;
+    const idleSeconds = Math.max(1, Math.round(idleMs / 1000));
+    return `Comando em execução… (${idleSeconds}s)`;
   }
 
   const idleSeconds = Math.max(1, Math.round(idleMs / 1000));
@@ -2398,10 +2401,13 @@ export function looksLikeMidProgressAgentResponse(text: string): boolean {
     /\b(vou |vamos |i'll |i will |let me |i am going to |i'm going to |next[,:]?\s|em seguida|agora vou|seguindo com|continu(?:ar|ando|e)\b)/i.test(
       tail,
     ) ||
-    /\b(atualizo|atualizando|subo|subindo|fa[cç]o|fazendo|verifico|verificando|testo|testando|leio|lendo|edito|editando|crio|criando|removo|removendo|adiciono|adicionando|implemento|implementando|aplico|aplicando|reinicio|reiniciando|configuro|configurando|ajusto|ajustando|valido|validando|confiro|conferindo|envio|enviando|rodo|rodando|executo|executando|abro|abrindo|fecho|fechando|monitoro|monitorando|acompanho|acompanhando|revogo|revogando)\b/i.test(
+    /\b(atualizo|atualizando|subo|subindo|fa[cç]o|fazendo|verifico|verificando|testo|testando|leio|lendo|edito|editando|crio|criando|removo|removendo|adiciono|adicionando|implemento|implementando|aplico|aplicando|reinicio|reiniciando|configuro|configurando|ajusto|ajustando|valido|validando|confiro|conferindo|envio|enviando|rodo|rodando|executo|executando|abro|abrindo|fecho|fechando|monitoro|monitorando|acompanho|acompanhando|revogo|revogando|aguardo|aguardando)\b/i.test(
       tail,
     ) ||
-    /\b(running|executing|checking|testing|reading|writing|updating|creating|sending|polling)\b/i.test(
+    /\b(running|executing|checking|testing|reading|writing|updating|creating|sending|polling|waiting)\b/i.test(
+      tail,
+    ) ||
+    /\b(em andamento|in progress|aguardando conclus[aã]o|waiting for completion|upload .+ (em andamento|in progress))\b/i.test(
       tail,
     );
 
