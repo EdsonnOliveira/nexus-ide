@@ -49,6 +49,7 @@ import {
   registerLocalFileProtocol,
   registerLocalFileScheme,
 } from './protocol/localFiles';
+import { applyChromeUserAgentToWebContents } from './services/browserChromeUserAgent';
 import { attachBrowserWebviewContextMenu } from './services/browserWebviewContextMenu';
 import { registerYouTubeSidebarWebviewSession } from './services/youtubeSidebarWebviewSession';
 import { ptyManager } from './services/ptyManager';
@@ -507,6 +508,8 @@ function registerWebviewHandlers(): void {
     if (contents.getType() !== 'webview') {
       return;
     }
+
+    applyChromeUserAgentToWebContents(contents);
 
     attachBrowserWebviewContextMenu(contents, {
       onOpenInAppTab: requestOpenBrowserTab,

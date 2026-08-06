@@ -28,7 +28,7 @@ import {
   handleAgentShellToolTerminalEvents,
   shouldOpenAgentShellToolTerminal,
 } from '@/utils/agentShellToolTerminal';
-import { isAgentSetupCommand } from '@/utils/parseAgentModeCommand';
+import { isAgentSetupCommand, parseAgentModeCommand } from '@/utils/parseAgentModeCommand';
 import { shouldMarkAgentAwaiting } from '@/utils/projectAgentStatus';
 import { cleanAgentPtyChunk } from '@/utils/stripAnsi';
 import {
@@ -1322,12 +1322,18 @@ export function useAgentPaneSession({
         return `@${root}/${relPath}`;
       });
       const fullPrompt = [prompt, ...resolvedImageRefs].filter(Boolean).join(' ').trim();
-      const resumeChatId = session.resumeChatIdByPane[paneId]?.trim() ?? null;
+      const storedResumeChatId = session.resumeChatIdByPane[paneId]?.trim() ?? null;
 
       if (!fullPrompt) {
         return false;
       }
 
+      if (modeChangedSinceLastPrint) {
+        session.clearResumeChatId(paneId);
+        cursorAgentContinueRef.current = false;
+      }
+
+      const resumeChatId = modeChangedSinceLastPrint ? null : storedResumeChatId;
       const hasCompletedTurn = turnsRef.current.some((turn) => !turn.running && !turn.pendingFollowUp);
 
       streamJsonStateRef.current = replaceAgentStreamJsonSession(paneIdRef.current);
@@ -1711,6 +1717,18 @@ export function useAgentPaneSession({
       }
 
       if (usesStreamJson && commandLine && isAgentSetupCommand(commandLine)) {
+        const modeCommand = parseAgentModeCommand(commandLine);
+
+        if (modeCommand) {
+          const lastPrintMode = session.agentPrintLastModeByPane[paneId];
+
+          if (lastPrintMode !== undefined && lastPrintMode !== modeCommand) {
+            session.clearResumeChatId(paneId);
+            cursorAgentContinueRef.current = false;
+            streamJsonStateRef.current.sessionId = null;
+          }
+        }
+
         return true;
       }
 

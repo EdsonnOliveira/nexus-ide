@@ -970,31 +970,30 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
     [activeTabItem?.id, isProjectActive, onSplitRatioCommit],
   );
 
-  const keptAliveTabs = useMemo(
-    () =>
-      project.tabs.filter((item) =>
-        shouldKeepTabAliveForProject(item, isProjectActive, agentSession),
-      ),
-    [agentSession, isProjectActive, project.tabs, runningShellTerminalCount],
-  );
+  const mountedTabs = useMemo(() => {
+    if (!activeTabItem) {
+      return [] as TabBarItem[];
+    }
+
+    return project.tabs.filter((item) => {
+      if (isProjectActive && item.id === activeTabItem.id) {
+        return true;
+      }
+
+      return shouldKeepTabAliveForProject(item, isProjectActive, agentSession);
+    });
+  }, [activeTabItem, agentSession, isProjectActive, project.tabs, runningShellTerminalCount]);
 
   if (!project.tabs.length || !activeTabItem) {
     return null;
   }
-
-  const activeIsKeptAlive = shouldKeepTabAliveForProject(
-    activeTabItem,
-    isProjectActive,
-    agentSession,
-  );
 
   return (
     <WorkspacePaneProvider value={workspacePaneContext}>
       <div
         className={`terminal-panel__view${isProjectActive ? ' terminal-panel__view--active' : ''}`}
       >
-        {isProjectActive && !activeIsKeptAlive ? renderTabLayout(activeTabItem) : null}
-        {keptAliveTabs.map((tabItem) => renderTabLayout(tabItem))}
+        {mountedTabs.map((tabItem) => renderTabLayout(tabItem))}
       </div>
     </WorkspacePaneProvider>
   );

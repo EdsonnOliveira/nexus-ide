@@ -105,7 +105,7 @@ function mergeAgentPromptAttachments(
 
     const current = merged.get(key);
 
-    if (!current || !current.dataUrl) {
+    if (!current || !current.dataUrl.startsWith('data:image/')) {
       merged.set(key, attachment);
     }
   }

@@ -355,7 +355,6 @@ class PtyManager {
     try {
       session.pty.resize(cols, rows);
     } catch {
-      this.sessions.delete(ptyId);
     }
   }
 
@@ -369,7 +368,6 @@ class PtyManager {
     try {
       session.pty.write(data);
     } catch {
-      this.sessions.delete(ptyId);
     }
   }
 

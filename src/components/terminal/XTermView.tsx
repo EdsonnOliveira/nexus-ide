@@ -1587,7 +1587,14 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
   useEffect(() => {
     void (async () => {
       if (ptyId) {
-        const exists = await window.nexus.terminal.has(ptyId);
+        let exists = await window.nexus.terminal.has(ptyId);
+
+        if (!exists) {
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, 40);
+          });
+          exists = await window.nexus.terminal.has(ptyId);
+        }
 
         if (exists) {
           ptyIdRef.current = ptyId;
@@ -1601,15 +1608,28 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
             const needsRestore = terminal.buffer.active.length <= 1;
 
             if (!alreadyReplayed || needsRestore) {
-              await restoreTerminalScrollback(
-                terminal,
-                ptyId,
-                paneIdRef.current,
-                parseStreamRef.current,
-                suppressShellPromptClearRef,
-                stickToBottomRef,
-                disposedRef,
-              );
+              if (needsRestore) {
+                await forceReplayTerminalScrollback(
+                  terminal,
+                  ptyId,
+                  paneIdRef.current,
+                  parseStreamRef.current,
+                  suppressShellPromptClearRef,
+                  stickToBottomRef,
+                  disposedRef,
+                );
+              } else {
+                await restoreTerminalScrollback(
+                  terminal,
+                  ptyId,
+                  paneIdRef.current,
+                  parseStreamRef.current,
+                  suppressShellPromptClearRef,
+                  stickToBottomRef,
+                  disposedRef,
+                );
+              }
+
               replayedScrollbackRef.current = { ptyId, terminal };
             }
           }
@@ -1677,7 +1697,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       return;
     }
 
-    const delay = isFocusedRef.current ? 0 : 120;
+    const delay = isFocusedRef.current ? 0 : 80;
 
     const timeoutId = window.setTimeout(() => {
       void (async () => {
@@ -1685,13 +1705,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
           return;
         }
 
-        const needsReplay = terminal.buffer.active.length <= 1;
-
-        if (
-          needsReplay &&
-          activePtyId &&
-          (await window.nexus.terminal.has(activePtyId))
-        ) {
+        if (activePtyId && (await window.nexus.terminal.has(activePtyId))) {
           if (generation !== scrollbackReplayGenerationRef.current) {
             return;
           }

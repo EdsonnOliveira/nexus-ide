@@ -11508,12 +11508,13 @@ body.workspace-split--resizing-row * {
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  visibility: hidden;
+  opacity: 0;
   pointer-events: none;
+  z-index: 0;
 }
 
 .terminal-panel__layout--active {
-  visibility: visible;
+  opacity: 1;
   pointer-events: auto;
   z-index: 1;
 }

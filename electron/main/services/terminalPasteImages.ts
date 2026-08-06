@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { resolveDirectoryPath } from './directoryListing';
@@ -47,7 +48,7 @@ export async function saveTerminalPasteImage(
   const resolvedProject = resolveDirectoryPath(projectPath);
   const paneSegment = sanitizePaneSegment(paneId);
   const targetDir = await ensureNexusProjectDir(resolvedProject, 'terminal-paste', paneSegment);
-  const fileName = `paste-${imageIndex}.${extension}`;
+  const fileName = `paste-${imageIndex}-${randomUUID()}.${extension}`;
   const absolutePath = path.join(targetDir, fileName);
 
   await writeFile(absolutePath, Buffer.from(base64, 'base64'));

@@ -81,6 +81,8 @@ function BrowserViewComponent({
   const screenshotTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onUrlChangeRef = useRef(onUrlChange);
   const normalizedUrlRef = useRef('');
+  const committedUrlRef = useRef('');
+  const suppressStoreLoadRef = useRef(false);
   const loadFailedRef = useRef(false);
   const pageReadyRef = useRef(false);
   const siteStatusRef = useRef<BrowserSiteStatus>('checking');
@@ -366,6 +368,7 @@ function BrowserViewComponent({
     }
 
     pageReadyRef.current = false;
+    committedUrlRef.current = targetUrl;
     webview.loadURL(targetUrl);
   }, []);
 
@@ -532,21 +535,15 @@ function BrowserViewComponent({
     }
 
     setInputUrl(normalizedUrl);
-    loadFailedRef.current = false;
-    pageReadyRef.current = false;
-    setSiteStatus('checking');
-    setZoomFactor(1);
-    zoomFactorRef.current = 1;
-    applyZoomFactor(1);
 
-    const webview = webviewRef.current;
-
-    if (!webview || !isRuntimeActive) {
+    if (!isLocalDevUrl(normalizedUrl)) {
       return;
     }
 
+    const webview = webviewRef.current;
+
     try {
-      const currentUrl = webview.getURL();
+      const currentUrl = webview?.getURL();
 
       if (currentUrl && normalizeBrowserUrl(currentUrl) === normalizedUrl) {
         return;
@@ -555,8 +552,66 @@ function BrowserViewComponent({
       return;
     }
 
+    loadFailedRef.current = false;
+    pageReadyRef.current = false;
+    setSiteStatus('checking');
+    setZoomFactor(1);
+    zoomFactorRef.current = 1;
+    applyZoomFactor(1);
+  }, [applyZoomFactor, normalizedUrl]);
+
+  useEffect(() => {
+    if (!normalizedUrl || !isRuntimeActive || !hasMountedGuest || !guestPreloadPath) {
+      return;
+    }
+
+    const webview = webviewRef.current;
+
+    if (!webview) {
+      return;
+    }
+
+    if (suppressStoreLoadRef.current) {
+      suppressStoreLoadRef.current = false;
+      committedUrlRef.current = normalizedUrl;
+      return;
+    }
+
+    try {
+      const currentUrl = webview.getURL();
+
+      if (
+        currentUrl &&
+        currentUrl !== 'about:blank' &&
+        normalizeBrowserUrl(currentUrl) === normalizedUrl
+      ) {
+        committedUrlRef.current = normalizedUrl;
+        return;
+      }
+    } catch {
+      return;
+    }
+
+    if (committedUrlRef.current === normalizedUrl) {
+      try {
+        const currentUrl = webview.getURL();
+
+        if (currentUrl && currentUrl !== 'about:blank') {
+          return;
+        }
+      } catch {
+        return;
+      }
+    }
+
+    committedUrlRef.current = normalizedUrl;
+
+    if (!isLocalDevUrl(normalizedUrl)) {
+      setSiteStatus('online');
+    }
+
     webview.loadURL(normalizedUrl);
-  }, [applyZoomFactor, isRuntimeActive, normalizedUrl]);
+  }, [guestPreloadPath, hasMountedGuest, isRuntimeActive, normalizedUrl]);
 
   useEffect(() => {
     if (!normalizedUrl || !isRuntimeActive) {
@@ -615,10 +670,17 @@ function BrowserViewComponent({
       return;
     }
 
-    setSiteStatus('checking');
+    if (isLocalDevUrl(normalized)) {
+      setSiteStatus('checking');
+    } else {
+      setSiteStatus('online');
+    }
+
     loadFailedRef.current = false;
     pageReadyRef.current = false;
     setInputUrl(normalized);
+    suppressStoreLoadRef.current = false;
+    committedUrlRef.current = normalized;
     onUrlChangeRef.current(normalized);
     webview.loadURL(normalized);
   }, []);
@@ -629,6 +691,24 @@ function BrowserViewComponent({
     if (!webview) {
       return;
     }
+
+    const syncGuestUrlToStore = (rawUrl: string) => {
+      if (isBrowserErrorPageUrl(rawUrl)) {
+        return;
+      }
+
+      const nextUrl = normalizeBrowserUrl(rawUrl);
+
+      if (!nextUrl || nextUrl === committedUrlRef.current) {
+        setInputUrl(nextUrl || rawUrl);
+        return;
+      }
+
+      setInputUrl(nextUrl);
+      committedUrlRef.current = nextUrl;
+      suppressStoreLoadRef.current = true;
+      onUrlChangeRef.current(nextUrl);
+    };
 
     const handleDomReady = () => {
       applyZoomFactor(zoomFactorRef.current);
@@ -641,25 +721,36 @@ function BrowserViewComponent({
 
     const handleNavigate = (event: Electron.DidNavigateEvent) => {
       loadFailedRef.current = false;
-      setInputUrl(event.url);
+      syncGuestUrlToStore(event.url);
       syncNavigationState();
 
       if (markOnlineIfSameTarget(event.url)) {
         return;
       }
 
-      setSiteStatus('checking');
+      if (isLocalDevUrl(event.url) || isLocalDevUrl(normalizedUrlRef.current)) {
+        setSiteStatus('checking');
+        return;
+      }
+
+      setSiteStatus('online');
     };
 
     const handleNavigateInPage = (event: Electron.DidNavigateInPageEvent) => {
-      setInputUrl(event.url);
+      syncGuestUrlToStore(event.url);
       syncNavigationState();
     };
 
     const handleStartLoading = () => {
       setIsLoading(true);
       loadFailedRef.current = false;
-      setSiteStatus((current) => (current === 'online' ? current : 'checking'));
+
+      if (isLocalDevUrl(normalizedUrlRef.current)) {
+        setSiteStatus((current) => (current === 'online' ? current : 'checking'));
+        return;
+      }
+
+      setSiteStatus('online');
     };
 
     const handleStopLoading = () => {
@@ -825,7 +916,13 @@ function BrowserViewComponent({
   const handleReload = useCallback(() => {
     loadFailedRef.current = false;
     pageReadyRef.current = false;
-    setSiteStatus('checking');
+
+    if (isLocalDevUrl(normalizedUrlRef.current)) {
+      setSiteStatus('checking');
+    } else {
+      setSiteStatus('online');
+    }
+
     webviewRef.current?.reload();
   }, []);
 
@@ -932,7 +1029,15 @@ function BrowserViewComponent({
 
     loadFailedRef.current = false;
     pageReadyRef.current = false;
-    setSiteStatus('checking');
+
+    if (isLocalDevUrl(normalizedUrl)) {
+      setSiteStatus('checking');
+    } else {
+      setSiteStatus('online');
+    }
+
+    suppressStoreLoadRef.current = false;
+    committedUrlRef.current = normalizedUrl;
     webviewRef.current?.loadURL(normalizedUrl);
   }, [normalizedUrl]);
 
@@ -1336,7 +1441,7 @@ function BrowserViewComponent({
                     key={`${sessionPartition}:${guestPreloadPath}`}
                     ref={webviewRef}
                     className='browser-panel__webview'
-                    src={normalizedUrl || undefined}
+                    src='about:blank'
                     partition={sessionPartition}
                     preload={guestPreloadPath}
                     allowpopups={'true' as unknown as boolean}
