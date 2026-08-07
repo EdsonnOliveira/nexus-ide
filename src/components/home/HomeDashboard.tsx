@@ -60,6 +60,7 @@ import {
 import {
   HOME_AGENT_CHANGE_EVENT,
   readHomeAgentQueue,
+  setHomeDashboardViewMode,
 } from '@/utils/homeDashboardAgents';
 import { findPaneTab } from '@/utils/tabGroups';
 
@@ -314,18 +315,12 @@ function HomeDashboardComponent() {
 
   const handleViewModeChange = useCallback((mode: HomeDashboardViewMode) => {
     setViewMode(mode);
-    try {
-      window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
-    } catch {
-    }
+    setHomeDashboardViewMode(mode);
   }, []);
 
   const handleShowAgentMode = useCallback(() => {
     setViewMode('agent');
-    try {
-      window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, 'agent');
-    } catch {
-    }
+    setHomeDashboardViewMode('agent');
   }, []);
 
   const clearPromptFlightTimers = useCallback(() => {

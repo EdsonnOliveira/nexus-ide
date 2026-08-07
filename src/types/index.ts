@@ -1039,6 +1039,7 @@ export interface NexusAPI {
     ) => Promise<TerminalPasteImageSaved>;
     listChildDirectories: (dirPath: string) => Promise<string[]>;
     listDirectoryEntries: (dirPath: string) => Promise<ProjectDirectoryEntry[]>;
+    statPath: (entryPath: string) => Promise<'file' | 'directory' | null>;
     resolveCdPath: (cwd: string, target: string) => Promise<string>;
     getTerminalHints: (cwd: string) => Promise<TerminalCommandHint[]>;
     getAgentSkillHints: (cwd: string) => Promise<TerminalCommandHint[]>;

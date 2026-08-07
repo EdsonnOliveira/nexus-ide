@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -6,6 +6,32 @@ export interface DirectoryEntry {
   name: string;
   path: string;
   type: 'file' | 'directory';
+}
+
+export type PathEntryKind = 'file' | 'directory';
+
+export function statPathEntry(entryPath: string): PathEntryKind | null {
+  const resolvedPath = path.resolve(entryPath);
+
+  if (!resolvedPath || !existsSync(resolvedPath)) {
+    return null;
+  }
+
+  try {
+    const stats = statSync(resolvedPath);
+
+    if (stats.isFile()) {
+      return 'file';
+    }
+
+    if (stats.isDirectory()) {
+      return 'directory';
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 const IGNORED_DIRECTORY_NAMES = new Set([

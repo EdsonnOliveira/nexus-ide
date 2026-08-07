@@ -1,6 +1,16 @@
 const HOME_AGENT_STORAGE_KEY = 'nexus.home-dashboard.project-agents';
+const HOME_VIEW_MODE_STORAGE_KEY = 'nexus.home-dashboard.view-mode';
 export const HOME_AGENT_CHANGE_EVENT = 'nexus-home-dashboard-project-agents';
 export const HOME_AGENT_FOCUS_EVENT = 'nexus-home-dashboard-focus-agent';
+
+export type HomeDashboardViewMode = 'dashboard' | 'agent';
+
+export function setHomeDashboardViewMode(mode: HomeDashboardViewMode): void {
+  try {
+    window.localStorage.setItem(HOME_VIEW_MODE_STORAGE_KEY, mode);
+  } catch {
+  }
+}
 
 export interface HomeAgentBinding {
   projectId: string;
@@ -195,6 +205,18 @@ export function bindHomeDashboardProjectAgent(projectId: string, paneId: string)
     window.dispatchEvent(new CustomEvent(HOME_AGENT_FOCUS_EVENT, { detail: { paneId } }));
     return;
   }
+
+  writeHomeAgentQueue([...queue, { projectId, paneId }]);
+  window.dispatchEvent(new Event(HOME_AGENT_CHANGE_EVENT));
+  window.dispatchEvent(new CustomEvent(HOME_AGENT_FOCUS_EVENT, { detail: { paneId } }));
+}
+
+export function moveAgentPaneToMaestro(projectId: string, paneId: string): void {
+  setHomeDashboardViewMode('agent');
+
+  const queue = readHomeAgentQueue().filter(
+    (binding) => !(binding.projectId === projectId && binding.paneId === paneId),
+  );
 
   writeHomeAgentQueue([...queue, { projectId, paneId }]);
   window.dispatchEvent(new Event(HOME_AGENT_CHANGE_EVENT));

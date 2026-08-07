@@ -18,8 +18,9 @@ import type {
   TerminalAgent,
 } from '@/types';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
+import { preferredAiProviderToCli } from '@/constants/aiProviders';
 import { isAgentPaneTab, isLegacyAgentTerminalTab, resolveAgentPaneRootPath, resolveAgentTabCli, terminalAgentToCli } from '@/utils/agentTabHelpers';
-import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
+import { buildAgentPaneLaunchCommand } from '@/utils/agentCliSession';
 import { buildCursorAgentResumeCommand } from '@/utils/cursorAgentResume';
 import { parseCursorAgentHistoryTranscript } from '@/utils/parseCursorAgentHistoryTranscript';
 import { hydrateAgentTurns } from '@/utils/agentPromptAttachments';
@@ -27,6 +28,7 @@ import { sanitizeAgentFollowUps, sanitizeAgentTurnHistory } from '@/utils/trimAg
 import { stopAgentPane } from '@/utils/agentPaneRegistry';
 import { normalizeBrowserUrl } from '@/utils/browserUrl';
 import { createBadgeColorIndex } from '@/utils/tabBadge';
+import { useAppSettingsStore } from '@/stores/useAppSettingsStore';
 import {
   collectProjectPanes,
   findPaneTab,
@@ -281,7 +283,10 @@ export function useTabActions(): TabStoreActions {
       const tabId = crypto.randomUUID();
       const badgeColorIndex = createBadgeColorIndex(project.tabs);
       const trimmed = command.trim();
-      const cliAgent = extractCliAgentCommand(trimmed) ?? terminalAgentToCli('cursor');
+      const preferredCli = preferredAiProviderToCli(
+        useAppSettingsStore.getState().preferredAiProvider,
+      );
+      const cliAgent = extractCliAgentCommand(trimmed) ?? preferredCli;
       const nextTab: AgentTab = {
         id: tabId,
         title: `Agent ${countPanesByType(project.tabs, 'agent') + 1}`,
@@ -313,7 +318,10 @@ export function useTabActions(): TabStoreActions {
       const tabId = crypto.randomUUID();
       const badgeColorIndex = createBadgeColorIndex(project.tabs);
       const trimmed = command.trim();
-      const cliAgent = extractCliAgentCommand(trimmed) ?? terminalAgentToCli('cursor');
+      const preferredCli = preferredAiProviderToCli(
+        useAppSettingsStore.getState().preferredAiProvider,
+      );
+      const cliAgent = extractCliAgentCommand(trimmed) ?? preferredCli;
       const nextTab: AgentTab = {
         id: tabId,
         title: `Agent ${countPanesByType(project.tabs, 'agent') + 1}`,
@@ -357,15 +365,18 @@ export function useTabActions(): TabStoreActions {
         return;
       }
 
-      const rawCommand = await resolveAgentLaunchCommand(project.path);
-      let cliAgent = extractCliAgentCommand(rawCommand.trim()) ?? 'cursor-agent';
+      const preferredCli = preferredAiProviderToCli(
+        useAppSettingsStore.getState().preferredAiProvider,
+      );
+      let cliAgent: string = preferredCli;
 
       if (isDedicatedAgent && pane.type === 'agent') {
-        cliAgent = extractCliAgentCommand(rawCommand.trim()) ?? pane.cliAgent;
+        cliAgent = extractCliAgentCommand(pane.cliAgent) ?? preferredCli;
       } else if (isTerminalAgent && pane.type === 'terminal') {
-        cliAgent = extractCliAgentCommand(rawCommand.trim()) ?? terminalAgentToCli(pane.agent);
+        cliAgent = terminalAgentToCli(pane.agent);
       }
 
+      const rawCommand = buildAgentPaneLaunchCommand(cliAgent);
       const launchCommand = rawCommand.trim() || cliAgent;
       const session = useTerminalSessionStore.getState();
 

@@ -5,6 +5,7 @@ import {
   Globe,
   History,
   Loader2,
+  PanelTop,
   Pencil,
   Pin,
   PinOff,
@@ -19,9 +20,11 @@ import {
   useAnchoredDropdownMenu,
 } from '@/hooks/useAnchoredDropdownMenu';
 import { cloudSupabase } from '@/lib/nexusCloud';
+import { useProjectStore } from '@/stores/useProjectStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useTabActions } from '@/stores/useTabStore';
 import type { CursorAgentHistoryEntry, Project, TabBarItem, TerminalTab } from '@/types';
+import { moveAgentPaneToMaestro } from '@/utils/homeDashboardAgents';
 import {
   resolveAgentPaneForTab,
   tabHasAgentSession,
@@ -101,6 +104,7 @@ function TabContextMenuComponent({
   const lastRestartCommands = useTerminalSessionStore((state) => state.lastRestartCommands);
   const restartingPaneIds = useTerminalSessionStore((state) => state.restartingPaneIds);
   const restartTerminalPane = useTerminalSessionStore((state) => state.restartTerminalPane);
+  const leaveActiveProject = useProjectStore((state) => state.leaveActiveProject);
   const { selectPane, replaceAgentTab, resumeAgentHistorySession } = useTabActions();
   const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
     onClose,
@@ -121,6 +125,7 @@ function TabContextMenuComponent({
     () => (showAgentHistory ? resolveAgentPaneForTab(tab, project, activeAgentByPane) : null),
     [activeAgentByPane, project, showAgentHistory, tab],
   );
+  const canMoveToMaestro = agentPane?.type === 'agent';
 
   const terminalRestartEntries = useMemo(
     () =>
@@ -267,6 +272,18 @@ function TabContextMenuComponent({
     [agentPane, replaceAgentTab, runAction],
   );
 
+  const handleMoveToMaestro = useCallback(
+    runAction(() => {
+      if (!agentPane || agentPane.type !== 'agent') {
+        return;
+      }
+
+      moveAgentPaneToMaestro(project.id, agentPane.id);
+      void leaveActiveProject();
+    }),
+    [agentPane, leaveActiveProject, project.id, runAction],
+  );
+
   const handleResumeSession = useCallback(
     (entry: CursorAgentHistoryEntry) => (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
@@ -355,6 +372,17 @@ function TabContextMenuComponent({
       {showAgentHistory ? (
         <>
           <div className='context-menu__separator' />
+          {canMoveToMaestro ? (
+            <button
+              type='button'
+              className='context-menu__item'
+              role='menuitem'
+              onMouseDown={handleMoveToMaestro}
+            >
+              <PanelTop size={14} strokeWidth={2} aria-hidden />
+              <span>Mover para o Maestro</span>
+            </button>
+          ) : null}
           <button
             type='button'
             className='context-menu__item'

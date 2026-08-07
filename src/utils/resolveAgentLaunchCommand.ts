@@ -1,24 +1,9 @@
-import { DEFAULT_CLI_AGENT_COMMAND } from '@/constants/cliAgentCommands';
-import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
+import { preferredAiProviderToCli } from '@/constants/aiProviders';
+import { useAppSettingsStore } from '@/stores/useAppSettingsStore';
 import { buildAgentPaneLaunchCommand } from '@/utils/agentCliSession';
 
-export async function resolveAgentLaunchCommand(projectPath: string | null): Promise<string> {
-  const lastAgentCommand = useTerminalSessionStore.getState().lastAgentCommand;
+export async function resolveAgentLaunchCommand(_projectPath: string | null): Promise<string> {
+  const preferredAiProvider = useAppSettingsStore.getState().preferredAiProvider;
 
-  if (lastAgentCommand) {
-    return buildAgentPaneLaunchCommand(lastAgentCommand);
-  }
-
-  if (!projectPath) {
-    return buildAgentPaneLaunchCommand(DEFAULT_CLI_AGENT_COMMAND);
-  }
-
-  const hints = await window.nexus.files.getTerminalHints(projectPath);
-  const cliHint = hints.find((hint) => hint.id.startsWith('cli-'));
-
-  if (cliHint) {
-    return buildAgentPaneLaunchCommand(cliHint.command.replace(/\n$/, ''));
-  }
-
-  return buildAgentPaneLaunchCommand(DEFAULT_CLI_AGENT_COMMAND);
+  return buildAgentPaneLaunchCommand(preferredAiProviderToCli(preferredAiProvider));
 }

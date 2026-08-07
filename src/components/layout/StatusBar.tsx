@@ -2,6 +2,7 @@ import { memo, useCallback, useMemo, useState, type MouseEvent } from 'react';
 import { Bug, Folder, GitBranch, Keyboard, Mic, Settings } from 'lucide-react';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { StatusBarBranchMenu } from '@/components/layout/StatusBarBranchMenu';
+import { SettingsModal } from '@/components/settings/SettingsModal';
 import { useGitBranch } from '@/hooks/useGitBranch';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useJarvisStore } from '@/stores/useJarvisStore';
@@ -47,6 +48,7 @@ function StatusBarComponent({ onToggleJarvis }: StatusBarProps) {
   const [branchMenu, setBranchMenu] = useState<BranchMenuState | null>(null);
   const [blockedCheckout, setBlockedCheckout] = useState<BlockedCheckoutState | null>(null);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const jarvisEnabled = useJarvisStore((state) => state.enabled);
   const jarvisPhase = useJarvisStore((state) => state.phase);
   const jarvisError = useJarvisStore((state) => state.lastError);
@@ -304,7 +306,12 @@ function StatusBarComponent({ onToggleJarvis }: StatusBarProps) {
             >
               <Mic size={12} />
             </button>
-            <button type='button' className='status-bar__btn app-button app-button--enter' aria-label='Configurações'>
+            <button
+              type='button'
+              className='status-bar__btn app-button app-button--enter'
+              aria-label='Configurações'
+              onClick={() => setSettingsOpen(true)}
+            >
               <Settings size={12} />
             </button>
           </div>
@@ -353,6 +360,8 @@ function StatusBarComponent({ onToggleJarvis }: StatusBarProps) {
           )}
         </AnimatedModal>
       ) : null}
+
+      {settingsOpen ? <SettingsModal onClose={() => setSettingsOpen(false)} /> : null}
     </>
   );
 }

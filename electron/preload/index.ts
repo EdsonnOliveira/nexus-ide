@@ -156,6 +156,8 @@ const nexusApi = {
       ipcRenderer.invoke('files:listChildDirectories', dirPath),
     listDirectoryEntries: (dirPath: string) =>
       ipcRenderer.invoke('files:listDirectoryEntries', dirPath),
+    statPath: (entryPath: string): Promise<'file' | 'directory' | null> =>
+      ipcRenderer.invoke('files:statPath', entryPath),
     resolveCdPath: (cwd: string, target: string): Promise<string> =>
       ipcRenderer.invoke('files:resolveCdPath', cwd, target),
     getTerminalHints: (cwd: string) => ipcRenderer.invoke('files:getTerminalHints', cwd),

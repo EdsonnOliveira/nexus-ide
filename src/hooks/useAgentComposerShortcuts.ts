@@ -43,18 +43,18 @@ export function useAgentComposerShortcuts({
   const handleStopOrSubmit = useCallback(() => {
     const trimmed = draft.trim();
 
-    if (isBusy && !trimmed && !hasPendingImages) {
-      onStop();
-      return;
-    }
-
     if (trimmed || hasPendingImages) {
       onSubmit();
       return;
     }
 
-    if (!isBusy && followUpCount > 0) {
+    if (followUpCount > 0) {
       onFlushNextFollowUp?.();
+      return;
+    }
+
+    if (isBusy) {
+      onStop();
     }
   }, [
     draft,

@@ -4,6 +4,7 @@ import {
   listDirectoryEntries,
   resolveCdPath,
   resolveDirectoryPath,
+  statPathEntry,
 } from '../services/directoryListing';
 import { getAgentFooterHints } from '../services/agentFooterHints';
 import { listCursorAgentHistory, loadCursorAgentSessionTranscript } from '../services/agentHistory';
@@ -39,6 +40,10 @@ export function registerFileHandlers(getWindow: () => Electron.BrowserWindow | n
 
   ipcMain.handle('files:listDirectoryEntries', async (_, dirPath: string) =>
     listDirectoryEntries(resolveDirectoryPath(dirPath)),
+  );
+
+  ipcMain.handle('files:statPath', async (_, entryPath: string) =>
+    statPathEntry(resolveFilePath(entryPath)),
   );
 
   ipcMain.handle('files:resolveCdPath', async (_, cwd: string, target: string) =>

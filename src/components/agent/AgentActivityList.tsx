@@ -230,8 +230,12 @@ const AgentResponseBody = memo(function AgentResponseBody({
         const absolutePath = resolveAgentActivityFilePath(projectPath, value);
 
         if (absolutePath) {
-          const fileName = absolutePath.split(/[/\\]/).pop() ?? value;
-          void openFileTab(absolutePath, fileName);
+          const entryKind = await window.nexus.files.statPath(absolutePath);
+
+          if (entryKind === 'file') {
+            const fileName = absolutePath.split(/[/\\]/).pop() ?? value;
+            void openFileTab(absolutePath, fileName);
+          }
         }
       }
     } catch {

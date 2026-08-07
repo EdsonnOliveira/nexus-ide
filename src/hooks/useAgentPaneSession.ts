@@ -123,6 +123,7 @@ const STREAM_JSON_IDLE_CHECK_MS = 500;
 const STREAM_JSON_RESPONSE_IDLE_FINALIZE_MS = 400;
 const STREAM_JSON_STALL_UI_MS = 4_000;
 const STREAM_JSON_LONG_SHELL_HANDOFF_MS = 45_000;
+const STREAM_JSON_READY_SHELL_HANDOFF_MS = 8_000;
 const STREAM_JSON_STARTUP_GRACE_MS = 45_000;
 const APPROVAL_CONFIRM_DELAY_MS = 450;
 const SUBMIT_GATE_TIMEOUT_MS = 20_000;
@@ -1158,10 +1159,6 @@ export function useAgentPaneSession({
   );
 
   const tryHandoffLongRunningDevShell = useCallback((idleMs: number): boolean => {
-    if (idleMs < STREAM_JSON_LONG_SHELL_HANDOFF_MS) {
-      return false;
-    }
-
     const streamingShell = [...streamJsonStateRef.current.activities]
       .reverse()
       .find(
@@ -1177,9 +1174,18 @@ export function useAgentPaneSession({
       return false;
     }
 
+    const hasReadyResponse = hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current);
+    const handoffAfterMs = hasReadyResponse
+      ? STREAM_JSON_READY_SHELL_HANDOFF_MS
+      : STREAM_JSON_LONG_SHELL_HANDOFF_MS;
+
+    if (idleMs < handoffAfterMs) {
+      return false;
+    }
+
     forceSettleStreamJsonInFlightWork(streamJsonStateRef.current);
 
-    if (!streamJsonStateRef.current.pendingResponseText.trim()) {
+    if (!streamJsonStateRef.current.pendingResponseText.trim() && !hasReadyResponse) {
       feedAgentStreamJsonChunk(
         streamJsonStateRef.current,
         `${JSON.stringify({
@@ -3492,6 +3498,14 @@ export function useAgentPaneSession({
 
           const hasActiveToolWork = hasActiveStreamJsonToolOrTask(streamJsonStateRef.current);
 
+          if (tryHandoffLongRunningDevShell(idleMs)) {
+            agentPrintRunActiveRef.current = false;
+            window.nexus.agentPrint.stop(paneId);
+            clearAgentPrintRunToken(paneId);
+            finalizeStreamJsonTurnFromEvent('longShell-handoff');
+            return;
+          }
+
           if (hasActiveToolWork && idleMs < STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS) {
             if (idleMs >= STREAM_JSON_STALL_UI_MS) {
               syncStreamJsonStallLiveStatus(idleMs);
@@ -3571,14 +3585,6 @@ export function useAgentPaneSession({
               finalizeActiveTurn(true);
             }
 
-            return;
-          }
-
-          if (!hasActiveToolWork && tryHandoffLongRunningDevShell(idleMs)) {
-            agentPrintRunActiveRef.current = false;
-            window.nexus.agentPrint.stop(paneId);
-            clearAgentPrintRunToken(paneId);
-            finalizeStreamJsonTurnFromEvent();
             return;
           }
 
