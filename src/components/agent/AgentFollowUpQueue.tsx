@@ -60,12 +60,14 @@ function AgentFollowUpQueueComponent({ items, onEdit, onSendNow, onRemove }: Age
         </div>
         <ul className='agent-view__follow-up-list'>
           {items.map((item) => {
-            const displayContent = resolvePromptDisplayContent(item.content);
-            const { hasSkillPrompt, skillChipLabel } = resolveAgentSkillDisplayState({
-              content: displayContent,
+            const { hasSkillPrompt, skillChipLabel, promptBody } = resolveAgentSkillDisplayState({
+              content: item.content,
               skillLabel: item.skillLabel,
               agentPrompt: item.agentPrompt,
             });
+            const displayContent = hasSkillPrompt
+              ? promptBody
+              : resolvePromptDisplayContent(item.content);
             const showSkillChip =
               hasSkillPrompt && shouldShowSkillChipAbovePrompt(displayContent, skillChipLabel);
             const isMultiline = displayContent.includes('\n') || displayContent.length > 72;
@@ -95,7 +97,7 @@ function AgentFollowUpQueueComponent({ items, onEdit, onSendNow, onRemove }: Age
                   ) : null}
                   {displayContent || !hasSkillPrompt ? (
                     <p
-                      className={`agent-view__follow-up-text${isMultiline ? ' agent-view__follow-up-text--multiline' : ''}${hasSkillPrompt ? ' agent-view__follow-up-text--skill' : ''}`}
+                      className={`agent-view__follow-up-text${isMultiline ? ' agent-view__follow-up-text--multiline' : ''}${hasSkillPrompt && !showSkillChip ? ' agent-view__follow-up-text--skill' : ''}`}
                     >
                       <AgentPromptImageMentionText text={displayContent} />
                     </p>

@@ -2,6 +2,7 @@ import type { TerminalCommandHint } from '@/types';
 import { resolvePromptDisplayContent } from '@/utils/agentPromptAttachments';
 
 const SKILL_SLASH_PATTERN = /^\/[^\s/]+(?:\/[^\s/]+)*$/;
+const SKILL_COMMAND_PATTERN = /^(\/[^\s/]+(?:\/[^\s/]+)*)/;
 
 export function isAgentSkillSlashCommand(value: string): boolean {
   return SKILL_SLASH_PATTERN.test(value.trim());
@@ -76,6 +77,59 @@ export function normalizeSkillToken(value: string): string {
   return value.trim().replace(/^\/+/, '').toLowerCase();
 }
 
+export function formatSkillChipLabel(value: string): string {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return '';
+  }
+
+  if (trimmed.startsWith('/')) {
+    return trimmed.match(SKILL_COMMAND_PATTERN)?.[1] ?? trimmed;
+  }
+
+  if (/^[^\s/]+(?:\/[^\s/]+)*$/.test(trimmed)) {
+    return `/${trimmed}`;
+  }
+
+  const withSlash = `/${trimmed}`;
+  return withSlash.match(SKILL_COMMAND_PATTERN)?.[1] ?? trimmed;
+}
+
+function stripSkillPrefixFromContent(content: string, skillChipLabel: string): string {
+  const trimmed = content.trim();
+
+  if (!trimmed || !skillChipLabel) {
+    return resolvePromptDisplayContent(trimmed);
+  }
+
+  const parsed = parseComposerSkillDraft(trimmed, []);
+
+  if (
+    parsed.hasSkill &&
+    normalizeSkillToken(parsed.skillLabel) === normalizeSkillToken(skillChipLabel)
+  ) {
+    return resolvePromptDisplayContent(parsed.body);
+  }
+
+  const skillCommand = formatSkillChipLabel(skillChipLabel);
+
+  if (
+    skillCommand &&
+    (trimmed === skillCommand ||
+      trimmed.startsWith(`${skillCommand} `) ||
+      normalizeSkillToken(trimmed) === normalizeSkillToken(skillCommand))
+  ) {
+    if (trimmed === skillCommand || normalizeSkillToken(trimmed) === normalizeSkillToken(skillCommand)) {
+      return '';
+    }
+
+    return resolvePromptDisplayContent(trimmed.slice(skillCommand.length).trimStart());
+  }
+
+  return resolvePromptDisplayContent(trimmed);
+}
+
 export function shouldShowSkillChipAbovePrompt(content: string, skillChipLabel: string): boolean {
   const chip = skillChipLabel.trim();
 
@@ -123,24 +177,46 @@ export function resolveAgentSkillDisplayState(user: {
 }): {
   hasSkillPrompt: boolean;
   skillChipLabel: string;
+  promptBody: string;
 } {
   const content = user.content.trim();
-  const skillLabel = user.skillLabel?.trim() ?? '';
+  const skillLabelRaw = user.skillLabel?.trim() ?? '';
   const agentPrompt = user.agentPrompt?.trim() ?? '';
+  const parsedFromPrompt = agentPrompt ? parseComposerSkillDraft(agentPrompt, []) : null;
+  const parsedFromContent = content ? parseComposerSkillDraft(content, []) : null;
 
-  if (skillLabel) {
-    return { hasSkillPrompt: true, skillChipLabel: skillLabel };
+  if (skillLabelRaw) {
+    const skillChipLabel = formatSkillChipLabel(skillLabelRaw);
+    const promptBody = stripSkillPrefixFromContent(
+      content || (parsedFromPrompt?.hasSkill ? parsedFromPrompt.body : ''),
+      skillChipLabel,
+    );
+
+    return { hasSkillPrompt: true, skillChipLabel, promptBody };
   }
 
-  if (agentPrompt) {
-    return { hasSkillPrompt: true, skillChipLabel: content || skillLabel };
+  if (parsedFromPrompt?.hasSkill) {
+    const skillChipLabel = parsedFromPrompt.skillLabel;
+    const promptBody = content
+      ? stripSkillPrefixFromContent(content, skillChipLabel)
+      : resolvePromptDisplayContent(parsedFromPrompt.body);
+
+    return { hasSkillPrompt: true, skillChipLabel, promptBody };
+  }
+
+  if (parsedFromContent?.hasSkill) {
+    return {
+      hasSkillPrompt: true,
+      skillChipLabel: parsedFromContent.skillLabel,
+      promptBody: resolvePromptDisplayContent(parsedFromContent.body),
+    };
   }
 
   if (isAgentSkillSlashCommand(content)) {
-    return { hasSkillPrompt: true, skillChipLabel: content };
+    return { hasSkillPrompt: true, skillChipLabel: content, promptBody: '' };
   }
 
-  return { hasSkillPrompt: false, skillChipLabel: '' };
+  return { hasSkillPrompt: false, skillChipLabel: '', promptBody: content };
 }
 
 export function resolveFollowUpEnqueueFields(prompt: string): {
@@ -188,7 +264,7 @@ export function resolveFollowUpAgentPrompt(item: {
   const skillLabel = item.skillLabel?.trim() ?? '';
 
   if (skillLabel && content && normalizeSkillToken(skillLabel) !== normalizeSkillToken(content)) {
-    return `${skillLabel} ${content}`;
+    return `${formatSkillChipLabel(skillLabel)} ${content}`;
   }
 
   return content;

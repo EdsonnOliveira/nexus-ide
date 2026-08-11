@@ -92,6 +92,7 @@ interface UseEmulatorSessionResult {
   pressBack: () => Promise<void>;
   rotate: () => Promise<void>;
   takeScreenshot: () => Promise<boolean>;
+  openNativeWindow: () => Promise<boolean>;
 }
 
 
@@ -1380,6 +1381,16 @@ export function useEmulatorSession({
     return window.nexus.emulator.screenshot(sessionId);
   }, [resolveSessionId]);
 
+  const openNativeWindow = useCallback(async () => {
+    const sessionId = resolveSessionId();
+
+    if (!sessionId || !window.nexus?.emulator?.openNativeWindow) {
+      return false;
+    }
+
+    return window.nexus.emulator.openNativeWindow(sessionId);
+  }, [resolveSessionId]);
+
   return {
     setupStatus,
     devices,
@@ -1413,5 +1424,6 @@ export function useEmulatorSession({
     pressBack,
     rotate,
     takeScreenshot,
+    openNativeWindow,
   };
 }

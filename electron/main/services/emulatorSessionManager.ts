@@ -20,6 +20,7 @@ import {
 } from './androidEmulatorSession';
 import { recordEmulatorDeviceUsage } from './emulatorDeviceUsageStore';
 import { createIosSimulatorSession } from './iosSimulatorSession';
+import { openNativeEmulatorWindow, hideNativeEmulatorWindow } from './openNativeEmulatorWindow';
 import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 
@@ -507,6 +508,10 @@ class EmulatorSessionManager {
         capturePaused: false,
       });
 
+      if (platform === 'ios') {
+        void hideNativeEmulatorWindow(platform, deviceId);
+      }
+
       return sessionId;
     } catch (error) {
       if (
@@ -734,6 +739,16 @@ class EmulatorSessionManager {
   async terminateApp(sessionId: string, appId: string): Promise<void> {
     const session = this.#sessions.get(sessionId);
     await session?.handle.terminateApp(appId);
+  }
+
+  async openNativeWindow(sessionId: string): Promise<boolean> {
+    const session = this.#sessions.get(sessionId);
+
+    if (!session) {
+      return false;
+    }
+
+    return openNativeEmulatorWindow(session.platform, session.deviceId);
   }
 
   setSessionLocalProjectId(sessionId: string, localProjectId: string | null): void {

@@ -3,6 +3,7 @@ import {
   Camera,
   Check,
   ChevronDown,
+  ExternalLink,
   Home,
   Loader2,
   Play,
@@ -288,6 +289,7 @@ function EmulatorViewComponent({
     pressBack,
     rotate,
     takeScreenshot,
+    openNativeWindow,
   } = useEmulatorSession({ tab, isRuntimeActive, isFocused, isVisible, onUpdateTab });
 
   const { addAgentTab } = useTabActions();
@@ -589,6 +591,10 @@ function EmulatorViewComponent({
       }, 2000);
     });
   }, [takeScreenshot]);
+
+  const handleOpenNativeWindow = useCallback(() => {
+    void openNativeWindow();
+  }, [openNativeWindow]);
 
   const handleZoomIn = useCallback(() => {
     setZoomFactor((current) => clampEmulatorZoom(current + EMULATOR_ZOOM_STEP, maxZoomFactor));
@@ -978,12 +984,23 @@ function EmulatorViewComponent({
         ) : null}
 
         {captureBackend && showControls ? (
-          <span
-            className={`emulator-view__stream-badge emulator-view__stream-badge--${captureBackend} app-button--enter`}
-            title={streamBadgeTitle}
-          >
-            {streamBadgeLabel}
-          </span>
+          <div className='emulator-view__stream-meta app-button--enter'>
+            <span
+              className={`emulator-view__stream-badge emulator-view__stream-badge--${captureBackend}`}
+              title={streamBadgeTitle}
+            >
+              {streamBadgeLabel}
+            </span>
+            <button
+              type='button'
+              className='emulator-view__stream-open app-button app-button--enter'
+              title='Abrir emulador'
+              aria-label='Abrir emulador'
+              onClick={handleOpenNativeWindow}
+            >
+              <ExternalLink size={13} strokeWidth={2.25} aria-hidden='true' />
+            </button>
+          </div>
         ) : null}
       </div>
 

@@ -268,10 +268,7 @@ function renderAgentToolActivityRow(
     const liveLabel = activity.label.trim();
 
     return (
-      <div
-        key={activity.id}
-        className='agent-view__file-row agent-view__file-row--live app-button--enter'
-      >
+      <div key='agent-live-status' className='agent-view__file-row agent-view__file-row--live'>
         <AgentActivityIcon kind={resolveAgentActivityIconFromLabel(liveLabel)} />
         <span className='agent-view__file-verb'>{liveLabel}</span>
       </div>

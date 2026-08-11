@@ -17,6 +17,7 @@ import {
   resolveSimulatorServerPath,
   resolveXcrunPath,
 } from './emulatorPaths';
+import { hideNativeEmulatorWindow } from './openNativeEmulatorWindow';
 import {
   createSimulatorServerStream,
   type SimulatorServerStreamController,
@@ -1016,12 +1017,14 @@ export async function createIosSimulatorSession(
     bootStatusProcess = child;
   });
   bootStatusProcess = null;
+  void hideNativeEmulatorWindow('ios', udid);
 
   if (isCancelled()) {
     throw new Error('Session cancelled');
   }
 
   await delay(1000);
+  void hideNativeEmulatorWindow('ios', udid);
 
   if (isCancelled()) {
     throw new Error('Session cancelled');

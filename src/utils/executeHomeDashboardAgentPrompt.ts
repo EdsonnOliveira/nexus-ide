@@ -1,6 +1,12 @@
 import type { Project } from '@/types';
-import { hasAgentPaneSubmit, submitAgentPanePrompt } from '@/utils/agentPaneRegistry';
-import { resolveAgentPaneRootPath } from '@/utils/agentTabHelpers';
+import type { AutomationAgentMode } from '@/constants/agentModes';
+import { isCursorAgentStreamJsonCli } from '@/utils/agentCliSession';
+import {
+  hasAgentPaneSubmit,
+  runAgentPaneCommand,
+  submitAgentPanePrompt,
+} from '@/utils/agentPaneRegistry';
+import { resolveAgentPaneRootPath, resolveAgentTabCli } from '@/utils/agentTabHelpers';
 import {
   buildAgentPromptImageMentionAppendFragment,
   hasAgentPromptImageMentions,
@@ -10,12 +16,14 @@ import { bindHomeDashboardProjectAgent } from '@/utils/homeDashboardAgents';
 import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
 import { findPaneTab } from '@/utils/tabGroups';
 import { resetAgentReadyDetectors } from '@/utils/terminalTaskCompletion';
+import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { waitForAgentPaneReady } from '@/utils/waitForAgentPaneReady';
 
 const SUBMIT_ATTEMPTS = 80;
 const SUBMIT_POLL_MS = 50;
 const READY_DELAY_MS = 220;
 const IMAGE_ATTACH_DELAY_MS = 120;
+const MODE_COMMAND_DELAY_MS = 120;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -40,6 +48,7 @@ interface ExecuteHomeDashboardAgentPromptOptions {
   prompt: string;
   imageDataUrls?: string[];
   preferredPaneId?: string | null;
+  agentMode?: AutomationAgentMode;
   addAgentTabForProject: (projectId: string, command: string) => Promise<string | null>;
   syncAgentWorkingDirectory?: (paneId: string, workingDirectory: string) => Promise<void>;
 }
@@ -49,6 +58,7 @@ export async function executeHomeDashboardAgentPrompt({
   prompt,
   imageDataUrls = [],
   preferredPaneId = null,
+  agentMode = 'agent',
   addAgentTabForProject,
   syncAgentWorkingDirectory,
 }: ExecuteHomeDashboardAgentPromptOptions): Promise<string | null> {
@@ -119,6 +129,16 @@ export async function executeHomeDashboardAgentPrompt({
 
   if (!finalPrompt.trim()) {
     return paneId;
+  }
+
+  const pane = findPaneTab(project.tabs, paneId);
+  const modeCommand = `/${agentMode}`;
+
+  if (pane?.type === 'agent' && isCursorAgentStreamJsonCli(resolveAgentTabCli(pane))) {
+    useTerminalSessionStore.getState().setLastCommand(paneId, modeCommand);
+  } else {
+    runAgentPaneCommand(paneId, `${modeCommand}\n`);
+    await delay(MODE_COMMAND_DELAY_MS);
   }
 
   await submitAgentPanePrompt(paneId, finalPrompt);

@@ -462,15 +462,7 @@ function hasBlockingActivityAfterResponse(
       continue;
     }
 
-    if (entry.kind === 'live_status') {
-      continue;
-    }
-
     if (entry.kind === 'thought' && !entry.label.trim()) {
-      continue;
-    }
-
-    if (entry.kind === 'status' && !entry.label.trim()) {
       continue;
     }
 

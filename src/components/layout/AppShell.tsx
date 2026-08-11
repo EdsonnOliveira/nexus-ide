@@ -32,6 +32,7 @@ import { useCloudStore } from '@/stores/useCloudStore';
 import { projectNeedsBackgroundHost } from '@/utils/paneAgentSession';
 import { useAgentShellTerminalStore } from '@/stores/useAgentShellTerminalStore';
 import { isAnyModalOpen, subscribeOverlayBlockingChange } from '@/utils/overlayBlocking';
+import { requestHomeAskFocus, getHomeDashboardViewMode } from '@/utils/homeDashboardAgents';
 
 const LazyHomeDashboard = lazy(() =>
   import('@/components/home/HomeDashboard').then((module) => ({
@@ -340,6 +341,15 @@ function AppShellComponent() {
     }
 
     const unsubscribe = window.nexus.onOpenGlobalSearch(() => {
+      if (
+        !useProjectStore.getState().activeProjectId &&
+        getHomeDashboardViewMode() === 'agent'
+      ) {
+        useGlobalSearchStore.getState().close();
+        requestHomeAskFocus();
+        return;
+      }
+
       toggleGlobalSearch();
     });
 

@@ -2320,13 +2320,23 @@ export function useAgentPaneSession({
 
         streamJsonStateRef.current = replaceAgentStreamJsonSession(paneIdRef.current);
 
+        const parsedFields = hasDisplayOverride ? null : resolveFollowUpEnqueueFields(trimmed);
+        const resolvedDisplayContent = hasDisplayOverride
+          ? displayContent
+          : (parsedFields?.content ?? displayContent);
         const resolvedSkillLabel =
           options?.skillLabel?.trim() ||
-          (isAgentSkillSlashCommand(displayContent) ? displayContent : undefined);
+          parsedFields?.skillLabel ||
+          (isAgentSkillSlashCommand(resolvedDisplayContent) ? resolvedDisplayContent : undefined);
+        const resolvedAgentPrompt = hasDisplayOverride
+          ? trimmed !== displayContent
+            ? trimmed
+            : undefined
+          : parsedFields?.agentPrompt;
 
         const resolvedUser = await resolveSubmitAgentUserMessage(
           agentRootPath,
-          displayContent,
+          resolvedDisplayContent,
           attachments,
         );
 
@@ -2335,7 +2345,7 @@ export function useAgentPaneSession({
           resolvedUser.attachments ?? attachments,
           resolvePaneAgentMode(paneIdRef.current),
           {
-            ...(trimmed !== displayContent ? { agentPrompt: trimmed } : {}),
+            ...(resolvedAgentPrompt ? { agentPrompt: resolvedAgentPrompt } : {}),
             ...(resolvedSkillLabel ? { skillLabel: resolvedSkillLabel } : {}),
           },
         );

@@ -113,6 +113,10 @@ export function registerEmulatorHandlers(getWindow: WindowGetter): void {
       await emulatorSessionManager.terminateApp(sessionId, appId);
     },
   );
+
+  ipcMain.handle('emulator:openNativeWindow', async (_event, sessionId: string) => {
+    return emulatorSessionManager.openNativeWindow(sessionId);
+  });
 }
 
 export async function cleanupEmulatorSessions(): Promise<void> {

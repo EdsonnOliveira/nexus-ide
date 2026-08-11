@@ -1305,6 +1305,7 @@ export interface NexusAPI {
     listApps: (sessionId: string) => Promise<Array<{ id: string; name: string }>>;
     launchApp: (sessionId: string, appId: string) => Promise<void>;
     terminateApp: (sessionId: string, appId: string) => Promise<void>;
+    openNativeWindow: (sessionId: string) => Promise<boolean>;
     onVideoChunk: (
       callback: (payload: {
         sessionId: string;

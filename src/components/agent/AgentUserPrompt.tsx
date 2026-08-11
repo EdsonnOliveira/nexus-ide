@@ -44,7 +44,7 @@ function AgentUserPromptComponent({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const [attachments, setAttachments] = useState(turn.user.attachments ?? []);
-  const [bubbleContent, setBubbleContent] = useState(resolvePromptDisplayContent(turn.user.content));
+  const [hydratedContent, setHydratedContent] = useState(resolvePromptDisplayContent(turn.user.content));
   const modeOption = useMemo(() => {
     const mode = turn.user.mode;
 
@@ -54,8 +54,17 @@ function AgentUserPromptComponent({
 
     return getAgentModeOption(mode) ?? null;
   }, [turn.user.mode]);
-  const { hasSkillPrompt, skillChipLabel } = resolveAgentSkillDisplayState(turn.user);
-  const isSkillOnly = isSkillOnlyPrompt(turn.user, bubbleContent, attachments.length);
+  const skillUser = useMemo(
+    () => ({
+      content: hydratedContent,
+      skillLabel: turn.user.skillLabel,
+      agentPrompt: turn.user.agentPrompt,
+    }),
+    [hydratedContent, turn.user.agentPrompt, turn.user.skillLabel],
+  );
+  const { hasSkillPrompt, skillChipLabel, promptBody } = resolveAgentSkillDisplayState(skillUser);
+  const bubbleContent = hasSkillPrompt ? promptBody : hydratedContent;
+  const isSkillOnly = isSkillOnlyPrompt(skillUser, bubbleContent, attachments.length);
   const showSkillChipAbove =
     hasSkillPrompt && !isSkillOnly && shouldShowSkillChipAbovePrompt(bubbleContent, skillChipLabel);
   const isMultilineBubble =
@@ -67,7 +76,7 @@ function AgentUserPromptComponent({
     let cancelled = false;
 
     setAttachments(turn.user.attachments ?? []);
-    setBubbleContent(resolvePromptDisplayContent(turn.user.content));
+    setHydratedContent(resolvePromptDisplayContent(turn.user.content));
 
     void hydrateAgentUserMessage(projectPath, turn.user).then((next) => {
       if (cancelled) {
@@ -75,7 +84,7 @@ function AgentUserPromptComponent({
       }
 
       setAttachments(next.attachments ?? []);
-      setBubbleContent(resolvePromptDisplayContent(next.content));
+      setHydratedContent(resolvePromptDisplayContent(next.content));
     });
 
     return () => {

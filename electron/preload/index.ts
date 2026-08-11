@@ -496,6 +496,7 @@ const nexusApi = {
     launchApp: (sessionId, appId) => ipcRenderer.invoke('emulator:launchApp', sessionId, appId),
     terminateApp: (sessionId, appId) =>
       ipcRenderer.invoke('emulator:terminateApp', sessionId, appId),
+    openNativeWindow: (sessionId) => ipcRenderer.invoke('emulator:openNativeWindow', sessionId),
     onVideoChunk: (callback) => {
       const listener = (
         _: Electron.IpcRendererEvent,

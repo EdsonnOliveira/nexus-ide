@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import type {
   AgentActivity,
   AgentQuestionAnswers,
@@ -594,6 +594,31 @@ function AgentActivityListComponent({
     });
   }, [running, visibleActivities]);
 
+  const needsWaitingStatus = running && !hasLiveProgressIndicator;
+  const [showWaitingStatus, setShowWaitingStatus] = useState(needsWaitingStatus);
+  const waitingLabel =
+    visibleActivities.length === 0 ? 'Thinking...' : 'Planning next moves...';
+
+  useEffect(() => {
+    if (needsWaitingStatus) {
+      setShowWaitingStatus(true);
+      return;
+    }
+
+    if (!running) {
+      setShowWaitingStatus(false);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setShowWaitingStatus(false);
+    }, 280);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [needsWaitingStatus, running]);
+
   const renderLiveActionGroup = (activities: AgentActivity[]): ReactNode => {
     const nodes: ReactNode[] = [];
     let toolGroup: AgentActivity[] = [];
@@ -700,15 +725,7 @@ function AgentActivityListComponent({
           <AgentTurnSummaryLine summary={summary} projectPath={projectPath} />
         </>
       ) : null}
-      {running && visibleActivities.length === 0 ? (
-        <AgentLiveStatus label='Thinking...' />
-      ) : null}
-      {running && visibleActivities.length > 0 && !hasLiveProgressIndicator ? (
-        <div className='agent-view__file-row agent-view__file-row--live app-button--enter'>
-          <AgentActivityIcon kind='thinking' />
-          <span className='agent-view__file-verb'>Planning next moves...</span>
-        </div>
-      ) : null}
+      {showWaitingStatus ? <AgentLiveStatus label={waitingLabel} /> : null}
       {showResponseActions ? (
         <AgentResponseActions
           projectId={projectId}

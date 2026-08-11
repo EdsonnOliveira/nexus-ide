@@ -44,7 +44,7 @@ export function buildAgentPromptImageMentionInsertion(
 export const AGENT_PROMPT_IMAGE_MENTION_REGEX = /\((?:imagem|img)\s+(\d+)\)/gi;
 
 export const AGENT_PROMPT_PATH_MENTION_REGEX =
-  /(?<=^|\s)@[^\s@]+(?:\s+(?:\(\d+\)\.[^\s@]+|[^\s@]+\.[^\s@]+))?/g;
+  /(?<=^|\s)@(?:[^\s@]+(?:\s+[^\s@]+)+\.[^\s.@]+|[^\s@]+)/g;
 
 export type AgentPromptImageMentionSegment =
   | { kind: 'text'; value: string }

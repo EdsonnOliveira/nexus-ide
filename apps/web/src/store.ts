@@ -97,6 +97,7 @@ interface WebState {
   setSyncing: (syncing: boolean) => void;
   setAgents: (agents: WebAgentSession[]) => void;
   addAgent: (agent: WebAgentSession) => void;
+  mergeHydratedAgents: (incoming: WebAgentSession[]) => void;
   patchAgentTurn: (
     agentId: string,
     patch: Partial<
@@ -144,6 +145,85 @@ function mapLastRunningTurn(
     .reverse();
 }
 
+function turnContentLength(turn: WebAgentTurn | undefined): number {
+  if (!turn) {
+    return 0;
+  }
+  const activitiesLen = turn.activities.reduce((sum, entry) => sum + entry.label.length, 0);
+  return turn.thought.length + turn.response.length + activitiesLen;
+}
+
+function mergeWebAgentSession(
+  existing: WebAgentSession,
+  incoming: WebAgentSession,
+): WebAgentSession {
+  const existingLast = existing.turns[existing.turns.length - 1];
+  const incomingLast = incoming.turns[incoming.turns.length - 1];
+  const existingLen = turnContentLength(existingLast);
+  const incomingLen = turnContentLength(incomingLast);
+
+  if (existing.turns.length > incoming.turns.length) {
+    return {
+      ...existing,
+      commandId: existing.commandId || incoming.commandId,
+      cursorSessionId: existing.cursorSessionId ?? incoming.cursorSessionId,
+    };
+  }
+
+  if (
+    existing.status === 'running' &&
+    incoming.status === 'running' &&
+    existing.turns.length === incoming.turns.length &&
+    existingLen >= incomingLen
+  ) {
+    return {
+      ...existing,
+      commandId: existing.commandId || incoming.commandId,
+      cursorSessionId: existing.cursorSessionId ?? incoming.cursorSessionId,
+    };
+  }
+
+  if (
+    incoming.status !== 'running' &&
+    existing.turns.length === incoming.turns.length &&
+    existingLen > incomingLen
+  ) {
+    return {
+      ...existing,
+      status: incoming.status,
+      commandId: existing.commandId || incoming.commandId,
+      cursorSessionId: existing.cursorSessionId ?? incoming.cursorSessionId,
+      turns: existing.turns.map((turn, index) =>
+        index === existing.turns.length - 1
+          ? {
+              ...turn,
+              status: incoming.status,
+              thoughtStreaming: false,
+              endedAt: turn.endedAt ?? Date.now(),
+              activities: turn.activities.map((entry) =>
+                entry.streaming ? { ...entry, streaming: undefined } : entry,
+              ),
+            }
+          : turn,
+      ),
+      terminals:
+        existing.terminals.length >= incoming.terminals.length
+          ? existing.terminals
+          : incoming.terminals,
+    };
+  }
+
+  return {
+    ...incoming,
+    modelId: existing.modelId,
+    modeId: existing.modeId,
+    terminals:
+      existing.terminals.length >= incoming.terminals.length
+        ? existing.terminals
+        : incoming.terminals,
+  };
+}
+
 export const useWebStore = create<WebState>((set) => ({
   session: null,
   user: null,
@@ -172,6 +252,22 @@ export const useWebStore = create<WebState>((set) => ({
         ? state.agents.map((item) => (item.id === agent.id ? agent : item))
         : [...state.agents, agent],
     })),
+  mergeHydratedAgents: (incoming) =>
+    set((state) => {
+      if (incoming.length === 0) {
+        return state;
+      }
+      const incomingById = new Map(incoming.map((agent) => [agent.id, agent]));
+      return {
+        agents: state.agents.map((agent) => {
+          const remote = incomingById.get(agent.id);
+          if (!remote) {
+            return agent;
+          }
+          return mergeWebAgentSession(agent, remote);
+        }),
+      };
+    }),
   patchAgentTurn: (agentId, patch) =>
     set((state) => ({
       agents: state.agents.map((agent) => {

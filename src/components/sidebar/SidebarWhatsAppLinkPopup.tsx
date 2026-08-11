@@ -74,7 +74,7 @@ function SidebarWhatsAppLinkPopupComponent({
       const parsed = parseSidebarWhatsAppLink(linkValue);
 
       if (!parsed) {
-        setError('Só aceitamos links oficiais do WhatsApp (wa.me, web.whatsapp.com, etc.).');
+        setError('Informe um número com DDI (ex.: +55 61 99919-1442) ou um link oficial do WhatsApp.');
         return;
       }
 
@@ -114,13 +114,15 @@ function SidebarWhatsAppLinkPopupComponent({
         </div>
 
         <label className='sidebar-whatsapp-popup__field'>
-          <span className='sidebar-whatsapp-popup__label'>Link da conversa</span>
+          <span className='sidebar-whatsapp-popup__label'>Número ou link</span>
           <input
             ref={inputRef}
-            type='url'
+            type='tel'
+            inputMode='tel'
+            autoComplete='tel'
             className='sidebar-whatsapp-popup__input'
             value={linkValue}
-            placeholder='https://wa.me/5511999999999 ou chat.whatsapp.com/...'
+            placeholder='Insira o numero ou url'
             onChange={(event) => handleLinkChange(event.target.value)}
           />
         </label>

@@ -2,6 +2,8 @@ import { ChevronDown, ChevronRight, FilePlus, FolderOpen, FolderPlus, GitBranch,
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ProjectGitDrawer } from '@/components/git/ProjectGitDrawer';
 import { ExplorerEntryContextMenu } from '@/components/explorer/ExplorerEntryContextMenu';
+import { ExplorerEnvEditorModal } from '@/components/explorer/ExplorerEnvEditorModal';
+import { ExplorerEnvHints } from '@/components/explorer/ExplorerEnvHints';
 import {
   ExplorerDirectoryIcon,
   ExplorerFileIcon,
@@ -12,6 +14,7 @@ import { EXPLORER_ENTRY_DRAG_MIME } from '@/constants/explorerDrag';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { usePendingExplorerCreateStore } from '@/stores/usePendingExplorerCreateStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
+import { useExplorerEnvHints } from '@/hooks/useExplorerEnvHints';
 import { useExplorerGitDecorations } from '@/hooks/useExplorerGitDecorations';
 import { useGitChangeCount } from '@/hooks/useGitChangeCount';
 import type { ExplorerGitDecoration } from '@/hooks/useExplorerGitDecorations';
@@ -29,6 +32,7 @@ import {
   type ExplorerSearchNode,
   type ExplorerSearchOptions,
 } from '@/utils/explorerSearch';
+import type { ExplorerEnvHint } from '@/utils/explorerEnvHints';
 import { resolveExplorerTargetDirectory } from '@/utils/explorerTarget';
 import {
   getDroppedFilePaths,
@@ -152,7 +156,7 @@ function canAcceptExplorerDragOver(event: React.DragEvent, isDirectory: boolean)
   return isExternalFileDrag(event.dataTransfer);
 }
 
-function getProjectKindBadgeLabel(kind: ProjectKind): string {
+function getExplorerKindBadgeLabel(kind: ProjectKind): string {
   if (kind === 'mobile') {
     return 'APP';
   }
@@ -469,7 +473,7 @@ const ExplorerTreeNode = memo(function ExplorerTreeNodeComponent({
             className='project-explorer__kind-badge'
             style={rootAccent ? { backgroundColor: rootAccent, color: '#000000' } : undefined}
           >
-            {getProjectKindBadgeLabel(projectKind)}
+            {getExplorerKindBadgeLabel(projectKind)}
           </span>
         ) : isDirectory ? (
           <ExplorerDirectoryIcon folderName={entry.name} expanded={expanded} />
@@ -611,7 +615,16 @@ function ProjectExplorerDrawerComponent({
   const [contextMenu, setContextMenu] = useState<ExplorerContextMenuState | null>(null);
   const [renameEntry, setRenameEntry] = useState<ProjectDirectoryEntry | null>(null);
   const [deleteEntry, setDeleteEntry] = useState<ProjectDirectoryEntry | null>(null);
+  const [activeEnvHint, setActiveEnvHint] = useState<ExplorerEnvHint | null>(null);
+  const [gitMoreActionsHost, setGitMoreActionsHost] = useState<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const envHints = useExplorerEnvHints(
+    rootPath,
+    rootEntries,
+    projectKinds,
+    treeRevision,
+    !isGitView,
+  );
 
   const canAddToChat = useMemo(() => {
     if (!project) {
@@ -1075,6 +1088,26 @@ function ProjectExplorerDrawerComponent({
     [onOpenFileCode],
   );
 
+  const handleOpenEnvHint = useCallback((hint: ExplorerEnvHint) => {
+    setActiveEnvHint(hint);
+  }, []);
+
+  const handleCloseEnvHint = useCallback(() => {
+    setActiveEnvHint(null);
+  }, []);
+
+  const handleOpenEnvHintAsTab = useCallback(
+    (hint: ExplorerEnvHint) => {
+      onOpenFileCode({
+        name: hint.fileName,
+        path: hint.filePath,
+        type: 'file',
+      });
+      setActiveEnvHint(null);
+    },
+    [onOpenFileCode],
+  );
+
   const visibleEntries = isSearching ? (searchResults ?? []) : rootEntries;
   const shouldAutoExpandSingleRootFolder = useMemo(() => {
     if (isSearching) {
@@ -1152,7 +1185,9 @@ function ProjectExplorerDrawerComponent({
                   <Search size={14} strokeWidth={2} />
                 </button>
               </>
-            ) : null}
+            ) : (
+              <div ref={setGitMoreActionsHost} className='project-explorer__header-git-more' />
+            )}
             <button
               type='button'
               className={`project-explorer__header-btn project-explorer__header-btn--git app-button app-button--enter${isGitView ? ' project-explorer__header-btn--active' : ''}`}
@@ -1174,6 +1209,7 @@ function ProjectExplorerDrawerComponent({
             embedded
             projectId={projectId}
             rootPath={rootPath}
+            moreActionsHost={gitMoreActionsHost}
             onOpenDiff={onOpenDiff}
           />
         ) : (
@@ -1281,8 +1317,17 @@ function ProjectExplorerDrawerComponent({
             : null}
           </div>
         </div>
+        {!isSearching ? <ExplorerEnvHints hints={envHints} onOpenHint={handleOpenEnvHint} /> : null}
           </>
         )}
+
+        {activeEnvHint ? (
+          <ExplorerEnvEditorModal
+            hint={activeEnvHint}
+            onClose={handleCloseEnvHint}
+            onOpenAsTab={handleOpenEnvHintAsTab}
+          />
+        ) : null}
 
         {createPromptMode ? (
           <ProjectPromptDialog

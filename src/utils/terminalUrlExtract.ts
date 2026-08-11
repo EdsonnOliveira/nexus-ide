@@ -1,4 +1,4 @@
-import { isLocalDevUrl } from '@/utils/browserSiteStatus';
+import { isLocalDevUrl, isSameLocalDevTarget } from '@/utils/browserSiteStatus';
 import { normalizeBrowserUrl } from '@/utils/browserUrl';
 
 export const TERMINAL_URL_HINT_LABEL_REFERENCE = 'http://localhost:3000';
@@ -224,6 +224,25 @@ function sortTerminalUrlHints(urls: string[]): string[] {
   });
 }
 
+export function isTerminalUrlHintRedundant(hintUrl: string, currentUrl: string): boolean {
+  if (!hintUrl || !currentUrl) {
+    return false;
+  }
+
+  const normalizedHint = normalizeBrowserUrl(hintUrl);
+  const normalizedCurrent = normalizeBrowserUrl(currentUrl);
+
+  if (!normalizedHint || !normalizedCurrent) {
+    return false;
+  }
+
+  if (normalizedHint === normalizedCurrent) {
+    return true;
+  }
+
+  return isSameLocalDevTarget(normalizedHint, normalizedCurrent);
+}
+
 export function extractTerminalUrls(text: string): string[] {
   const clean = joinWrappedTerminalUrlLines(text);
   const regex = new RegExp(TERMINAL_URL_REGEX.source, TERMINAL_URL_REGEX.flags);
@@ -245,8 +264,14 @@ export function extractTerminalUrls(text: string): string[] {
   return sortTerminalUrlHints(urls);
 }
 
-export function resolveTerminalUrlHints(urls: string[], limit = TERMINAL_URL_HINT_MAX_COUNT): string[] {
-  return sortTerminalUrlHints(urls).slice(0, limit);
+export function resolveTerminalUrlHints(
+  urls: string[],
+  currentUrl = '',
+  limit = TERMINAL_URL_HINT_MAX_COUNT,
+): string[] {
+  return sortTerminalUrlHints(urls)
+    .filter((url) => !isTerminalUrlHintRedundant(url, currentUrl))
+    .slice(0, limit);
 }
 
 export function formatTerminalUrlLabel(url: string): string {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useProjectStore } from '@/stores/useProjectStore';
 import type { TerminalTab } from '@/types';
 import { collectProjectPanes } from '@/utils/tabGroups';
-import { extractTerminalUrls, resolveTerminalUrlHints } from '@/utils/terminalUrlExtract';
+import { extractTerminalUrls, isTerminalUrlHintRedundant, resolveTerminalUrlHints } from '@/utils/terminalUrlExtract';
 
 const REFRESH_DEBOUNCE_MS = 350;
 
@@ -60,7 +60,7 @@ export function useProjectTerminalUrlHints(
       const text = await readTerminalPaneText(pane);
 
       for (const url of extractTerminalUrls(text)) {
-        if (url === currentUrl || collected.includes(url)) {
+        if (collected.includes(url) || isTerminalUrlHintRedundant(url, currentUrl)) {
           continue;
         }
 
@@ -68,7 +68,7 @@ export function useProjectTerminalUrlHints(
       }
     }
 
-    setHints(resolveTerminalUrlHints(collected));
+    setHints(resolveTerminalUrlHints(collected, currentUrl));
   }, [currentUrl, enabled, terminalPanes]);
 
   const scheduleCollect = useCallback(() => {

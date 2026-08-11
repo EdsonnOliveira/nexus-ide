@@ -650,6 +650,7 @@ interface ProjectGitDrawerProps {
   projectId: string;
   rootPath: string;
   embedded?: boolean;
+  moreActionsHost?: HTMLElement | null;
   onOpenDiff: (
     filePath: string,
     options: { staged: boolean; untracked?: boolean; repoPath?: string; agentPrompt?: string },
@@ -683,6 +684,7 @@ function ProjectGitDrawerComponent({
   projectId,
   rootPath,
   embedded = false,
+  moreActionsHost = null,
   onOpenDiff,
 }: ProjectGitDrawerProps) {
   const project = useProjectStore((state) => state.projects.find((item) => item.id === projectId) ?? null);
@@ -1178,9 +1180,24 @@ function ProjectGitDrawerComponent({
       ? `Nenhuma alteração neste repositório (${otherRepoChangeCount} em outros)`
       : 'Nenhuma alteração';
   const currentBranch = status.repo.branch ?? 'HEAD';
+  const showMoreInHeader = embedded;
+  const moreActionsButton = (
+    <button
+      ref={moreButtonRef}
+      type='button'
+      className={`${showMoreInHeader ? 'project-explorer__header-btn' : 'git-scm__icon-btn'} app-button app-button--enter`}
+      aria-label='Mais ações'
+      onClick={handleToggleMoreMenu}
+    >
+      <MoreHorizontal size={showMoreInHeader ? 14 : 15} strokeWidth={2} />
+    </button>
+  );
 
   return (
     <GitDrawerShell embedded={embedded} className='git-scm'>
+      {showMoreInHeader && moreActionsHost
+        ? createPortal(moreActionsButton, moreActionsHost)
+        : null}
       <div className='git-scm__toolbar'>
         {hasMultipleRepos ? (
           <button
@@ -1224,15 +1241,7 @@ function ProjectGitDrawerComponent({
             <List size={14} strokeWidth={2} />
           </button>
         </div>
-        <button
-          ref={moreButtonRef}
-          type='button'
-          className='git-scm__icon-btn app-button app-button--enter'
-          aria-label='Mais ações'
-          onClick={handleToggleMoreMenu}
-        >
-          <MoreHorizontal size={15} strokeWidth={2} />
-        </button>
+        {!showMoreInHeader ? moreActionsButton : null}
       </div>
 
       {repoAnchor ? (

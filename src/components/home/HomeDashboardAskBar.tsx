@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type ClipboardEvent as ReactClipboardEvent,
+  type CSSProperties,
   type DragEvent as ReactDragEvent,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -19,15 +20,21 @@ import {
   File,
   FileText,
   FolderKanban,
-  Globe,
   Image,
   Paperclip,
+  X,
 } from 'lucide-react';
+import { AgentComposerModeChip } from '@/components/agent/AgentComposerModeChip';
 import { AgentPromptImageMentionText } from '@/components/agent/AgentPromptImageBadges';
 import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
 import type { HomeDashboardViewMode } from '@/components/home/HomeDashboardModeSwitch';
+import {
+  AGENT_MODE_INPUT_PLACEHOLDERS,
+  getAgentModeOption,
+  type AutomationAgentMode,
+} from '@/constants/agentModes';
 import {
   positionDropdownAboveAnchor,
   positionDropdownBelowAnchor,
@@ -47,14 +54,18 @@ import {
 } from '@/utils/agentComposerDrop';
 import {
   AGENT_PROMPT_IMAGE_MENTION_REGEX,
+  buildAgentPromptImageMention,
   buildAgentPromptImageMentionInsertion,
+  getAgentPromptImageBadgeColor,
 } from '@/utils/agentPromptImageBadge';
 import {
   readDroppedImageDataUrls,
   readImagePathAsDataUrl,
 } from '@/utils/attachAgentPromptImage';
+import { cycleAgentMode } from '@/utils/cycleAgentMode';
 import { executeHomeDashboardAgentPrompt } from '@/utils/executeHomeDashboardAgentPrompt';
 import { isExternalFileDrag } from '@/utils/explorerExternalDrop';
+import { HOME_ASK_FOCUS_EVENT } from '@/utils/homeDashboardAgents';
 import { blobToDataUrl } from '@/utils/terminalClipboardImage';
 import { useProjectStore } from '@/stores/useProjectStore';
 
@@ -109,6 +120,7 @@ interface AskMentionMenuProps {
   activeIndex: number;
   isLoading: boolean;
   trigger: '@' | '/';
+  triggerRef: RefObject<HTMLButtonElement | null>;
   onClose: () => void;
   onSelect: (match: ComposerMentionMatch) => void;
 }
@@ -290,22 +302,27 @@ function AskMentionMenuPanelComponent({
   activeIndex,
   isLoading,
   trigger,
+  triggerRef,
   onClose,
   onSelect,
 }: Omit<AskMentionMenuProps, 'open'>) {
   const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
     onClose,
     (menu) => {
-      positionDropdownAboveAnchor(menu, anchorRect!, 'start');
+      positionDropdownAboveAnchor(menu, anchorRect!, 'end');
     },
     [anchorRect],
   );
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) {
-        requestClose();
+      const target = event.target as Node;
+
+      if (menuRef.current?.contains(target) || triggerRef.current?.contains(target)) {
+        return;
       }
+
+      requestClose();
     };
 
     const timeoutId = window.setTimeout(() => {
@@ -316,12 +333,12 @@ function AskMentionMenuPanelComponent({
       window.clearTimeout(timeoutId);
       window.removeEventListener('mousedown', handlePointerDown, true);
     };
-  }, [menuRef, requestClose]);
+  }, [menuRef, requestClose, triggerRef]);
 
   return createPortal(
     <div
       ref={menuRef}
-      className={`context-menu agent-view__composer-mention-menu overlay-popup ${animationClass}`}
+      className={`context-menu agent-view__composer-mention-menu overlay-popup overlay-popup--anchor-end ${animationClass}`}
       role='listbox'
       aria-label='Menções'
     >
@@ -372,6 +389,7 @@ function AskMentionMenuComponent({
   activeIndex,
   isLoading,
   trigger,
+  triggerRef,
   onClose,
   onSelect,
 }: AskMentionMenuProps) {
@@ -386,6 +404,7 @@ function AskMentionMenuComponent({
       activeIndex={activeIndex}
       isLoading={isLoading}
       trigger={trigger}
+      triggerRef={triggerRef}
       onClose={onClose}
       onSelect={onSelect}
     />
@@ -421,15 +440,17 @@ function HomeDashboardAskBarComponent({
   const { addAgentTabForProject, updateAgentTab } = useTabActions();
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const attachTriggerRef = useRef<HTMLButtonElement>(null);
+  const mentionTriggerRef = useRef<HTMLButtonElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef('');
   const pendingImagesRef = useRef<PendingAskImage[]>([]);
   const [projectId, setProjectId] = useState('');
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [caretIndex, setCaretIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
-  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const [agentMode, setAgentMode] = useState<AutomationAgentMode>('agent');
   const [pendingImages, setPendingImages] = useState<PendingAskImage[]>([]);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [attachAnchorRect, setAttachAnchorRect] = useState<DOMRect | null>(null);
@@ -451,6 +472,17 @@ function HomeDashboardAskBarComponent({
   }, [focusPromptInput, viewMode]);
 
   useEffect(() => {
+    const handleAskFocus = () => {
+      focusPromptInput();
+    };
+
+    window.addEventListener(HOME_ASK_FOCUS_EVENT, handleAskFocus);
+    return () => {
+      window.removeEventListener(HOME_ASK_FOCUS_EVENT, handleAskFocus);
+    };
+  }, [focusPromptInput]);
+
+  useEffect(() => {
     if (projects.length === 0) {
       if (projectId) {
         setProjectId('');
@@ -470,6 +502,27 @@ function HomeDashboardAskBarComponent({
     },
     [focusPromptInput],
   );
+
+  const handleProjectMenuOpenChange = useCallback((nextOpen: boolean) => {
+    setProjectMenuOpen(nextOpen);
+  }, []);
+
+  const handleCycleProject = useCallback(() => {
+    if (projects.length === 0 || submitting) {
+      return;
+    }
+
+    const currentIndex = projects.findIndex((project) => project.id === projectId);
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % projects.length;
+    const nextId = projects[nextIndex]?.id ?? '';
+
+    if (nextId) {
+      setProjectId(nextId);
+    }
+
+    setProjectMenuOpen(true);
+    focusPromptInput();
+  }, [focusPromptInput, projectId, projects, submitting]);
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === projectId) ?? null,
@@ -537,7 +590,10 @@ function HomeDashboardAskBarComponent({
       return;
     }
 
-    const rect = formRef.current?.getBoundingClientRect() ?? inputRef.current?.getBoundingClientRect();
+    const rect =
+      mentionTriggerRef.current?.getBoundingClientRect() ??
+      inputRef.current?.getBoundingClientRect() ??
+      formRef.current?.getBoundingClientRect();
 
     if (!rect) {
       return;
@@ -622,6 +678,21 @@ function HomeDashboardAskBarComponent({
     (prompt.trim().length > 0 || pendingImages.length > 0) && Boolean(projectId) && !submitting;
   const projectActionsDisabled = !projectId || submitting;
   const imageActionsDisabled = submitting;
+  const activeModeOption = getAgentModeOption(agentMode);
+  const askPlaceholder =
+    agentMode !== 'agent'
+      ? AGENT_MODE_INPUT_PLACEHOLDERS[agentMode]
+      : 'Pergunte algo ao Nexus...';
+
+  const handleClearMode = useCallback(() => {
+    setAgentMode('agent');
+    focusPromptInput();
+  }, [focusPromptInput]);
+
+  const handleCycleMode = useCallback(() => {
+    setAgentMode((current) => cycleAgentMode(current));
+    focusPromptInput();
+  }, [focusPromptInput]);
 
   useEffect(() => {
     const mentioned = new Set<number>();
@@ -704,6 +775,53 @@ function HomeDashboardAskBarComponent({
     [setPromptWithCaret],
   );
 
+  const removePendingImage = useCallback(
+    (imageId: string) => {
+      if (imageActionsDisabled) {
+        return;
+      }
+
+      const images = pendingImagesRef.current;
+      const index = images.findIndex((image) => image.id === imageId);
+
+      if (index < 0) {
+        return;
+      }
+
+      const kept = images.filter((image) => image.id !== imageId);
+      const mentionPattern = new RegExp(
+        AGENT_PROMPT_IMAGE_MENTION_REGEX.source,
+        AGENT_PROMPT_IMAGE_MENTION_REGEX.flags,
+      );
+      const nextPrompt = promptRef.current
+        .replace(mentionPattern, (full, rawNumber: string) => {
+          const oldNumber = Number.parseInt(rawNumber, 10);
+
+          if (!Number.isFinite(oldNumber) || oldNumber <= 0) {
+            return full;
+          }
+
+          if (oldNumber === index + 1) {
+            return '';
+          }
+
+          if (oldNumber > index + 1) {
+            return buildAgentPromptImageMention(oldNumber - 1);
+          }
+
+          return buildAgentPromptImageMention(oldNumber);
+        })
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/\n{3,}/g, '\n\n');
+
+      pendingImagesRef.current = kept;
+      promptRef.current = nextPrompt;
+      setPendingImages(kept);
+      setPromptWithCaret(nextPrompt, Math.min(caretIndex, nextPrompt.length));
+    },
+    [caretIndex, imageActionsDisabled, setPromptWithCaret],
+  );
+
   const handleSubmit = useCallback(async () => {
     const trimmed = prompt.trim();
     const project =
@@ -719,16 +837,9 @@ function HomeDashboardAskBarComponent({
       prompt,
       caretIndex,
       pendingImages,
-      webSearchEnabled,
       projectId,
     };
-    let nextPrompt = trimmed;
-
-    if (webSearchEnabled) {
-      nextPrompt = nextPrompt
-        ? `Pesquise na web quando necessário.\n\n${nextPrompt}`
-        : 'Pesquise na web quando necessário.';
-    }
+    const nextPrompt = trimmed;
 
     const flightSource = formRef.current ?? inputRef.current;
     const sourceRect = flightSource?.getBoundingClientRect();
@@ -753,7 +864,6 @@ function HomeDashboardAskBarComponent({
     setPrompt('');
     setCaretIndex(0);
     setPendingImages([]);
-    setWebSearchEnabled(false);
     setSubmitting(true);
     onAgentOpened?.();
 
@@ -763,6 +873,7 @@ function HomeDashboardAskBarComponent({
         prompt: nextPrompt,
         imageDataUrls,
         preferredPaneId: null,
+        agentMode,
         addAgentTabForProject,
         syncAgentWorkingDirectory: async (nextPaneId, workingDirectory) => {
           await updateAgentTab(nextPaneId, { workingDirectory });
@@ -777,14 +888,12 @@ function HomeDashboardAskBarComponent({
       setPrompt(snapshot.prompt);
       setCaretIndex(snapshot.caretIndex);
       setPendingImages(snapshot.pendingImages);
-      setWebSearchEnabled(snapshot.webSearchEnabled);
       setProjectId(snapshot.projectId);
       onPromptFlightCancel?.(flightId);
     } catch {
       setPrompt(snapshot.prompt);
       setCaretIndex(snapshot.caretIndex);
       setPendingImages(snapshot.pendingImages);
-      setWebSearchEnabled(snapshot.webSearchEnabled);
       setProjectId(snapshot.projectId);
       onPromptFlightCancel?.(flightId);
     } finally {
@@ -792,6 +901,7 @@ function HomeDashboardAskBarComponent({
     }
   }, [
     addAgentTabForProject,
+    agentMode,
     caretIndex,
     onAgentOpened,
     onPromptFlightCancel,
@@ -804,7 +914,6 @@ function HomeDashboardAskBarComponent({
     prompt,
     submitting,
     updateAgentTab,
-    webSearchEnabled,
   ]);
 
   const handleFormSubmit = useCallback(
@@ -849,12 +958,17 @@ function HomeDashboardAskBarComponent({
           return;
         }
 
-        if (event.key === 'Enter' || event.key === 'Tab') {
+        if (event.key === 'Enter' || (event.key === 'Tab' && !event.shiftKey)) {
           const activeMatch = mention.getActiveMatch();
 
           if (activeMatch) {
             event.preventDefault();
             handleMentionSelect(activeMatch);
+            return;
+          }
+
+          if (event.key === 'Tab') {
+            event.preventDefault();
             return;
           }
         }
@@ -866,12 +980,24 @@ function HomeDashboardAskBarComponent({
         }
       }
 
+      if (event.key === 'Tab' && event.shiftKey) {
+        event.preventDefault();
+        handleCycleMode();
+        return;
+      }
+
+      if (event.key === 'Tab' && !event.shiftKey) {
+        event.preventDefault();
+        handleCycleProject();
+        return;
+      }
+
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
         void handleSubmit();
       }
     },
-    [handleMentionSelect, handleSubmit, mention],
+    [handleCycleMode, handleCycleProject, handleMentionSelect, handleSubmit, mention],
   );
 
   const handlePaste = useCallback(
@@ -1114,15 +1240,6 @@ function HomeDashboardAskBarComponent({
     setPromptWithCaret(nextValue, nextCaret);
   }, [projectActionsDisabled, prompt, setPromptWithCaret]);
 
-  const handleToggleWebSearch = useCallback(() => {
-    if (submitting) {
-      return;
-    }
-
-    setWebSearchEnabled((current) => !current);
-    focusPromptInput();
-  }, [focusPromptInput, submitting]);
-
   return (
     <form
       ref={formRef}
@@ -1141,8 +1258,47 @@ function HomeDashboardAskBarComponent({
         className='home-dashboard__ask-project-wrap'
         triggerClassName='home-dashboard__ask-project'
         disabled={projects.length === 0 || submitting}
+        open={projectMenuOpen}
+        onOpenChange={handleProjectMenuOpenChange}
       />
       <div className='home-dashboard__ask-main'>
+        {pendingImages.length > 0 ? (
+          <div className='home-dashboard__ask-attachments app-button--enter' aria-label='Anexos'>
+            {pendingImages.map((image, index) => {
+              const imageNumber = index + 1;
+              const badgeColor = getAgentPromptImageBadgeColor(imageNumber);
+
+              return (
+                <div key={image.id} className='home-dashboard__ask-attachment app-button--enter'>
+                  <span
+                    className='home-dashboard__ask-attachment-index'
+                    style={{ '--prompt-image-badge-color': badgeColor } as CSSProperties}
+                    aria-hidden='true'
+                  >
+                    {imageNumber}
+                  </span>
+                  <span className='home-dashboard__ask-attachment-thumb-btn'>
+                    <img
+                      src={image.dataUrl}
+                      alt=''
+                      className='home-dashboard__ask-attachment-thumb'
+                      draggable={false}
+                    />
+                  </span>
+                  <button
+                    type='button'
+                    className='home-dashboard__ask-attachment-remove app-button app-button--enter'
+                    aria-label={`Remover imagem ${imageNumber}`}
+                    disabled={imageActionsDisabled}
+                    onClick={() => removePendingImage(image.id)}
+                  >
+                    <X size={12} strokeWidth={2.5} aria-hidden='true' />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
         <div className='home-dashboard__ask-input-wrap'>
           <div ref={mirrorRef} className='home-dashboard__ask-input-mirror' aria-hidden='true'>
             {prompt ? (
@@ -1153,7 +1309,7 @@ function HomeDashboardAskBarComponent({
               />
             ) : (
               <span className='home-dashboard__ask-input-mirror-placeholder'>
-                Pergunte algo ao Nexus...
+                {askPlaceholder}
               </span>
             )}
           </div>
@@ -1174,7 +1330,7 @@ function HomeDashboardAskBarComponent({
             onScroll={syncInputScroll}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            placeholder='Pergunte algo ao Nexus...'
+            placeholder={askPlaceholder}
             disabled={submitting}
             spellCheck={false}
             aria-label='Pergunte algo ao Nexus'
@@ -1182,6 +1338,13 @@ function HomeDashboardAskBarComponent({
         </div>
       </div>
       <div className='home-dashboard__ask-actions'>
+        {agentMode !== 'agent' && activeModeOption ? (
+          <AgentComposerModeChip
+            mode={agentMode}
+            option={activeModeOption}
+            onClear={handleClearMode}
+          />
+        ) : null}
         <button
           ref={attachTriggerRef}
           type='button'
@@ -1195,6 +1358,7 @@ function HomeDashboardAskBarComponent({
           <Paperclip size={16} strokeWidth={2} aria-hidden='true' />
         </button>
         <button
+          ref={mentionTriggerRef}
           type='button'
           className='home-dashboard__ask-action app-button'
           aria-label='Mencionar arquivo'
@@ -1202,16 +1366,6 @@ function HomeDashboardAskBarComponent({
           onClick={handleMentionClick}
         >
           <AtSign size={16} strokeWidth={2} aria-hidden='true' />
-        </button>
-        <button
-          type='button'
-          className={`home-dashboard__ask-action app-button${webSearchEnabled ? ' home-dashboard__ask-action--active' : ''}`}
-          aria-label='Pesquisar na web'
-          aria-pressed={webSearchEnabled}
-          disabled={submitting}
-          onClick={handleToggleWebSearch}
-        >
-          <Globe size={16} strokeWidth={2} aria-hidden='true' />
         </button>
         <button
           type='submit'
@@ -1237,6 +1391,7 @@ function HomeDashboardAskBarComponent({
         activeIndex={mention.activeIndex}
         isLoading={mention.isLoading}
         trigger={mention.mentionContext?.trigger ?? '@'}
+        triggerRef={mentionTriggerRef}
         onClose={handleCloseMentionMenu}
         onSelect={handleMentionSelect}
       />

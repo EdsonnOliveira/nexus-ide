@@ -74,15 +74,97 @@ function normalizeStatus(value: string): string {
     .toLowerCase();
 }
 
+function isDoneStatus(status: string | undefined): boolean {
+  if (!status?.trim()) {
+    return false;
+  }
+
+  const normalized = normalizeStatus(status);
+
+  return (
+    normalized === 'done' ||
+    normalized === 'concluido' ||
+    normalized === 'concluida' ||
+    normalized === 'resolved' ||
+    normalized === 'resolvido' ||
+    normalized === 'closed' ||
+    normalized === 'fechado' ||
+    normalized === 'fechada' ||
+    normalized === 'complete' ||
+    normalized === 'completed' ||
+    normalized === 'finalizado' ||
+    normalized.includes('conclu')
+  );
+}
+
+function isActiveStatus(status: string | undefined): boolean {
+  if (!status?.trim()) {
+    return true;
+  }
+
+  if (isDoneStatus(status)) {
+    return false;
+  }
+
+  const normalized = normalizeStatus(status);
+
+  if (
+    normalized === 'tarefas pendentes' ||
+    normalized === 'to do' ||
+    normalized === 'todo' ||
+    normalized === 'pendente' ||
+    normalized === 'a fazer' ||
+    normalized === 'open' ||
+    normalized === 'aberto' ||
+    normalized === 'backlog' ||
+    normalized.includes('pendente') ||
+    normalized === 'in progress' ||
+    normalized === 'em progresso' ||
+    normalized === 'em andamento' ||
+    normalized.includes('andamento') ||
+    normalized.includes('progress') ||
+    normalized === 'doing'
+  ) {
+    return true;
+  }
+
+  return !isDoneStatus(status);
+}
+
 export function isWebTaskCompleted(task: WebProjectTask): boolean {
-  if (task.source !== 'local') {
-    return false;
+  return isDoneStatus(task.status);
+}
+
+function matchesWebDefaultAssignee(
+  task: WebProjectTask,
+  jiraAccountName: string | undefined,
+): boolean {
+  const assignee = task.assignee?.trim();
+
+  if (!assignee) {
+    return true;
   }
-  const status = task.status?.trim();
-  if (!status) {
-    return false;
+
+  const account = jiraAccountName?.trim();
+
+  if (!account) {
+    return true;
   }
-  return normalizeStatus(status) === 'concluido' || normalizeStatus(status) === 'done';
+
+  return assignee === account;
+}
+
+function applyWebDefaultTaskFilters(
+  tasks: WebProjectTask[],
+  integration: WebTaskIntegration | null,
+): WebProjectTask[] {
+  const active = tasks.filter((task) => isActiveStatus(task.status));
+
+  if (integration?.platform !== 'jira') {
+    return active;
+  }
+
+  return active.filter((task) => matchesWebDefaultAssignee(task, integration.jiraAccountName));
 }
 
 export function getWebTaskTagBorderColor(label: string): string {
@@ -174,9 +256,8 @@ export function resolveCloudProjectTasks(project: CloudProject | null | undefine
     });
   }
 
-  return tasks
-    .filter((task) => !isWebTaskCompleted(task))
-    .sort((left, right) => {
+  return applyWebDefaultTaskFilters(tasks, resolveCloudTaskIntegration(project)).sort(
+    (left, right) => {
       if (right.updatedAt !== left.updatedAt) {
         return right.updatedAt - left.updatedAt;
       }
@@ -185,7 +266,8 @@ export function resolveCloudProjectTasks(project: CloudProject | null | undefine
         'pt-BR',
         { sensitivity: 'base' },
       );
-    });
+    },
+  );
 }
 
 export function resolveCloudTaskIntegration(

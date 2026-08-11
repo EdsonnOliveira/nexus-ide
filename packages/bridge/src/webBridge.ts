@@ -73,6 +73,7 @@ export function createWebBridge(config: NexusSupabaseConfig): NexusBridge {
 
       if (isDangerousPayload(command.payload)) {
         const inserted = await createCommand(client, {
+          ...(command.id ? { id: command.id } : {}),
           workspace_id: workspaceId,
           project_id: command.project_id ?? null,
           created_by: user.id,
@@ -99,6 +100,7 @@ export function createWebBridge(config: NexusSupabaseConfig): NexusBridge {
       }
 
       const inserted = await createCommand(client, {
+        ...(command.id ? { id: command.id } : {}),
         workspace_id: workspaceId,
         project_id: command.project_id ?? null,
         created_by: user.id,
@@ -115,12 +117,21 @@ export function createWebBridge(config: NexusSupabaseConfig): NexusBridge {
     },
 
     subscribeToExecution(id: string, onEvent: (payload: unknown) => void): Unsubscribe {
-      const channel = client
-        .channel(`execution:${id}`)
-        .on('broadcast', { event: 'nexus' }, (message) => {
-          onEvent(message.payload);
-        })
-        .subscribe();
+      const channel = client.channel(`execution:${id}`, {
+        config: {
+          broadcast: { self: false, ack: false },
+        },
+      });
+
+      channel.on('broadcast', { event: 'nexus' }, (message) => {
+        onEvent(message.payload);
+      });
+
+      channel.subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          return;
+        }
+      });
 
       return () => {
         void client.removeChannel(channel);

@@ -8,6 +8,7 @@ import {
   listOpenAgentSessionBundles,
   updateAgentSessionMeta,
 } from '@nexus/supabase';
+import type { Unsubscribe } from '@nexus/protocol';
 import { bridge, supabase } from '../lib/supabase';
 import { useWebStore, type WebAgentSession } from '../store';
 import nexusLogo from '../assets/nexus-logo-icon.png';
@@ -69,6 +70,7 @@ function formatUnknownError(error: unknown, fallback: string): string {
 const WEB_AGENT_STALL_MESSAGE =
   'Agent sem resposta (travou ou ficou sem atividade). Pare e tente de novo.';
 const WEB_AGENT_RECONCILE_MS = 20_000;
+const WEB_AGENT_CONTENT_POLL_MS = 4_000;
 const WEB_AGENT_CLIENT_STALL_MS = 12 * 60 * 1000;
 const WEB_AGENT_MAX_INCOMPLETE_CONTINUES = 3;
 const WEB_AGENT_INCOMPLETE_CONTINUE_PROMPT =
@@ -129,6 +131,7 @@ export function WebMaestroHome() {
   const setAgents = useWebStore((state) => state.setAgents);
   const addAgent = useWebStore((state) => state.addAgent);
   const addAgentTurn = useWebStore((state) => state.addAgentTurn);
+  const mergeHydratedAgents = useWebStore((state) => state.mergeHydratedAgents);
   const patchAgentTurn = useWebStore((state) => state.patchAgentTurn);
   const setAgentCursorSessionId = useWebStore((state) => state.setAgentCursorSessionId);
   const setAgentModelId = useWebStore((state) => state.setAgentModelId);
@@ -152,11 +155,15 @@ export function WebMaestroHome() {
   const [heroScrolled, setHeroScrolled] = useState(false);
   const parsersRef = useRef(new Map<string, WebStreamJsonState>());
   const agentActivityRef = useRef(new Map<string, number>());
+  const subscriptionsRef = useRef(new Map<string, Unsubscribe>());
+  const subscribedCommandIdsRef = useRef(new Map<string, string>());
+  const finishingAgentsRef = useRef(new Set<string>());
   const incompleteContinueCountRef = useRef(new Map<string, number>());
   const incompleteContinueInFlightRef = useRef(new Set<string>());
   const tryContinueIncompleteWebAgentRef = useRef<(agentId: string) => Promise<boolean>>(
     async () => false,
   );
+  const hydrateRunningAgentsRef = useRef<() => Promise<void>>(async () => {});
   const heroRef = useRef<HTMLElement>(null);
   const visibleAgents = useMemo(
     () =>
@@ -423,15 +430,67 @@ export function WebMaestroHome() {
     };
   }, [syncHeroChromeHeight, compact, devices.length]);
 
+  const unsubscribeAgent = useCallback((agentId: string) => {
+    const unsubscribe = subscriptionsRef.current.get(agentId);
+    if (unsubscribe) {
+      unsubscribe();
+      subscriptionsRef.current.delete(agentId);
+    }
+    subscribedCommandIdsRef.current.delete(agentId);
+    for (const key of Array.from(parsersRef.current.keys())) {
+      if (key.startsWith(`${agentId}:`)) {
+        parsersRef.current.delete(key);
+      }
+    }
+  }, []);
+
+  const finishAgentWithHydration = useCallback(
+    async (agentId: string, status: 'done' | 'error') => {
+      if (finishingAgentsRef.current.has(agentId)) {
+        return;
+      }
+      finishingAgentsRef.current.add(agentId);
+      try {
+        await hydrateRunningAgentsRef.current();
+        const continued =
+          status === 'done'
+            ? await tryContinueIncompleteWebAgentRef.current(agentId)
+            : false;
+        if (continued) {
+          finishingAgentsRef.current.delete(agentId);
+          return;
+        }
+        setAgentStatus(agentId, status);
+        void updateAgentSessionMeta(supabase, agentId, {
+          status: status === 'error' ? 'error' : 'active',
+        });
+        unsubscribeAgent(agentId);
+        finishingAgentsRef.current.delete(agentId);
+      } catch {
+        finishingAgentsRef.current.delete(agentId);
+        setAgentStatus(agentId, status);
+        unsubscribeAgent(agentId);
+      }
+    },
+    [setAgentStatus, unsubscribeAgent],
+  );
+
   const subscribeAgent = useCallback(
     (agentId: string, commandId: string) => {
+      if (!commandId) {
+        return;
+      }
+
+      finishingAgentsRef.current.delete(agentId);
+      unsubscribeAgent(agentId);
+
       const parserKey = `${agentId}:${commandId}`;
       parsersRef.current.set(parserKey, createWebStreamJsonState());
       if (!agentActivityRef.current.has(agentId)) {
         agentActivityRef.current.set(agentId, Date.now());
       }
 
-      bridge.subscribeToExecution(commandId, (payload) => {
+      const unsubscribe = bridge.subscribeToExecution(commandId, (payload) => {
         const envelope = payload as {
           type?: string;
           payload?: { chunk?: string; status?: string; format?: string; reason?: string };
@@ -460,13 +519,7 @@ export function WebMaestroHome() {
             });
           }
           if (update.done) {
-            void tryContinueIncompleteWebAgentRef.current(agentId).then((continued) => {
-              if (continued) {
-                return;
-              }
-              setAgentStatus(agentId, 'done');
-              void updateAgentSessionMeta(supabase, agentId, { status: 'active' });
-            });
+            void finishAgentWithHydration(agentId, 'done');
           }
         }
 
@@ -481,26 +534,14 @@ export function WebMaestroHome() {
           status === 'cancelled'
         ) {
           agentActivityRef.current.set(agentId, Date.now());
-          if (type === 'command.cancelled' || status === 'cancelled') {
-            setAgentStatus(agentId, 'done');
-            void updateAgentSessionMeta(supabase, agentId, { status: 'active' });
-          } else {
-            void tryContinueIncompleteWebAgentRef.current(agentId).then((continued) => {
-              if (continued) {
-                return;
-              }
-              setAgentStatus(agentId, 'done');
-              void updateAgentSessionMeta(supabase, agentId, { status: 'active' });
-            });
-          }
+          void finishAgentWithHydration(agentId, 'done');
         }
         if (type === 'failed' || type === 'agent.failed' || status === 'failed') {
           agentActivityRef.current.set(agentId, Date.now());
           if (reason === 'stalled') {
             patchAgentTurn(agentId, { response: WEB_AGENT_STALL_MESSAGE });
           }
-          setAgentStatus(agentId, 'error');
-          void updateAgentSessionMeta(supabase, agentId, { status: 'error' });
+          void finishAgentWithHydration(agentId, 'error');
         }
         if (type === 'agent.waiting_user') {
           agentActivityRef.current.set(agentId, Date.now());
@@ -508,8 +549,17 @@ export function WebMaestroHome() {
           void updateAgentSessionMeta(supabase, agentId, { status: 'waiting_user' });
         }
       });
+
+      subscriptionsRef.current.set(agentId, unsubscribe);
+      subscribedCommandIdsRef.current.set(agentId, commandId);
     },
-    [patchAgentTurn, setAgentCursorSessionId, setAgentStatus],
+    [
+      finishAgentWithHydration,
+      patchAgentTurn,
+      setAgentCursorSessionId,
+      setAgentStatus,
+      unsubscribeAgent,
+    ],
   );
 
   useEffect(() => {
@@ -570,6 +620,87 @@ export function WebMaestroHome() {
   }, [activeWorkspaceId, selectedProjectId, selectedDeviceId, setAgents, subscribeAgent]);
 
   useEffect(() => {
+    const hydrateRunningAgents = async () => {
+      const workspaceId = resolveStoreWorkspaceId();
+      if (!workspaceId) {
+        return;
+      }
+      const hasRunning = useWebStore
+        .getState()
+        .agents.some((agent) => agent.status === 'running' && agent.source !== 'desktop_pane');
+      const hasDoneWithoutContent = useWebStore.getState().agents.some((agent) => {
+        if (agent.source === 'desktop_pane' || agent.status === 'running') {
+          return false;
+        }
+        const lastTurn = agent.turns[agent.turns.length - 1];
+        return Boolean(lastTurn) && !lastTurn?.thought?.trim() && !lastTurn?.response?.trim();
+      });
+      if (!hasRunning && !hasDoneWithoutContent) {
+        return;
+      }
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!user) {
+          return;
+        }
+        const bundles = await listOpenAgentSessionBundles(supabase, workspaceId, user.id);
+        const hydrated = hydrateWebAgentsFromBundles(bundles).filter(
+          (agent) => agent.source !== 'desktop_pane',
+        );
+        mergeHydratedAgents(hydrated);
+        const mergedAgents = useWebStore.getState().agents;
+        for (const agent of mergedAgents) {
+          if (agent.source === 'desktop_pane' || finishingAgentsRef.current.has(agent.id)) {
+            continue;
+          }
+          if (agent.status === 'running' && agent.commandId) {
+            if (subscribedCommandIdsRef.current.get(agent.id) !== agent.commandId) {
+              const lastTurn = agent.turns[agent.turns.length - 1];
+              agentActivityRef.current.set(
+                agent.id,
+                lastTurn?.createdAt ?? agent.createdAt,
+              );
+              subscribeAgent(agent.id, agent.commandId);
+            }
+          } else if (agent.status !== 'running') {
+            unsubscribeAgent(agent.id);
+          }
+        }
+      } catch {
+      }
+    };
+
+    hydrateRunningAgentsRef.current = hydrateRunningAgents;
+
+    const intervalId = window.setInterval(() => {
+      void hydrateRunningAgents();
+    }, WEB_AGENT_CONTENT_POLL_MS);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void hydrateRunningAgents();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    void hydrateRunningAgents();
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [mergeHydratedAgents, subscribeAgent, unsubscribeAgent]);
+
+  useEffect(() => {
+    return () => {
+      for (const agentId of Array.from(subscriptionsRef.current.keys())) {
+        unsubscribeAgent(agentId);
+      }
+    };
+  }, [unsubscribeAgent]);
+
+  useEffect(() => {
     const reconcileRunningAgents = async () => {
       const runningAgents = useWebStore
         .getState()
@@ -607,25 +738,15 @@ export function WebMaestroHome() {
             executionStatus === 'completed' ||
             executionStatus === 'cancelled'
           ) {
-            if (
-              executionStatus === 'completed' &&
-              (await tryContinueIncompleteWebAgentRef.current(agent.id))
-            ) {
-              continue;
-            }
-            agentActivityRef.current.set(agent.id, Date.now());
-            setAgentStatus(agent.id, 'done');
-            void updateAgentSessionMeta(supabase, agent.id, { status: 'active' });
+            await finishAgentWithHydration(agent.id, 'done');
             continue;
           }
 
           if (executionStatus === 'failed') {
-            agentActivityRef.current.set(agent.id, Date.now());
             if (stalled) {
               patchAgentTurn(agent.id, { response: WEB_AGENT_STALL_MESSAGE });
             }
-            setAgentStatus(agent.id, 'error');
-            void updateAgentSessionMeta(supabase, agent.id, { status: 'error' });
+            await finishAgentWithHydration(agent.id, 'error');
             continue;
           }
         } catch {
@@ -645,8 +766,7 @@ export function WebMaestroHome() {
 
         agentActivityRef.current.set(agent.id, Date.now());
         patchAgentTurn(agent.id, { response: WEB_AGENT_STALL_MESSAGE });
-        setAgentStatus(agent.id, 'error');
-        void updateAgentSessionMeta(supabase, agent.id, { status: 'error' });
+        await finishAgentWithHydration(agent.id, 'error');
 
         const deviceId = resolveDeviceId();
         if (!deviceId) {
@@ -684,7 +804,7 @@ export function WebMaestroHome() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [patchAgentTurn, resolveDeviceId, setAgentStatus]);
+  }, [finishAgentWithHydration, patchAgentTurn, resolveDeviceId]);
 
   const handleProjectChange = useCallback(
     (projectId: string | null) => {
@@ -757,23 +877,7 @@ export function WebMaestroHome() {
           model_id: 'auto',
         });
         createdSessionId = agentId;
-        const commandId = await bridge.executeCommand({
-          workspace_id: workspaceId,
-          project_id: selectedProjectId,
-          target_device_id: deviceId,
-          agent_id: agentId,
-          type: 'agent_prompt',
-          payload: {
-            prompt: trimmedPrompt,
-            ...(imageDataUrls.length > 0 ? { image_data_urls: imageDataUrls } : {}),
-            ...(fileAttachments.length > 0 ? { file_attachments: fileAttachments } : {}),
-            agent_command: 'cursor-agent',
-            model: 'auto',
-            session_id: agentId,
-          },
-          idempotency_key: crypto.randomUUID(),
-        });
-
+        const commandId = crypto.randomUUID();
         const createdAt = Date.now();
         addAgent({
           id: agentId,
@@ -816,13 +920,30 @@ export function WebMaestroHome() {
         });
         setAgentFilterProjectId(selectedProjectId);
         setFocusedAgentId(agentId);
-
         agentActivityRef.current.set(agentId, createdAt);
         incompleteContinueCountRef.current.set(agentId, 0);
         subscribeAgent(agentId, commandId);
+        await bridge.executeCommand({
+          id: commandId,
+          workspace_id: workspaceId,
+          project_id: selectedProjectId,
+          target_device_id: deviceId,
+          agent_id: agentId,
+          type: 'agent_prompt',
+          payload: {
+            prompt: trimmedPrompt,
+            ...(imageDataUrls.length > 0 ? { image_data_urls: imageDataUrls } : {}),
+            ...(fileAttachments.length > 0 ? { file_attachments: fileAttachments } : {}),
+            agent_command: 'cursor-agent',
+            model: 'auto',
+            session_id: agentId,
+          },
+          idempotency_key: crypto.randomUUID(),
+        });
         return true;
       } catch (error) {
         if (createdSessionId) {
+          unsubscribeAgent(createdSessionId);
           try {
             await closeAgentSession(supabase, createdSessionId);
           } catch {
@@ -841,6 +962,7 @@ export function WebMaestroHome() {
       resolveDeviceId,
       selectedProjectId,
       subscribeAgent,
+      unsubscribeAgent,
     ],
   );
 
@@ -878,26 +1000,7 @@ export function WebMaestroHome() {
             'O Mac selecionado está em outro workspace do projeto. Selecione o Mac correto.',
           );
         }
-        const commandId = await bridge.executeCommand({
-          workspace_id: workspaceId,
-          project_id: agent.projectId,
-          target_device_id: deviceId,
-          agent_id: agentId,
-          type: 'agent_prompt',
-          payload: {
-            prompt,
-            ...(imageDataUrls.length > 0 ? { image_data_urls: imageDataUrls } : {}),
-            ...(fileAttachments.length > 0 ? { file_attachments: fileAttachments } : {}),
-            agent_command: 'cursor-agent',
-            model: agent.modelId || 'auto',
-            mode: agent.modeId && agent.modeId !== 'agent' ? agent.modeId : undefined,
-            session_id: agent.id,
-            resume_chat_id: agent.cursorSessionId,
-            continue_session: !agent.cursorSessionId,
-          },
-          idempotency_key: crypto.randomUUID(),
-        });
-
+        const commandId = crypto.randomUUID();
         addAgentTurn(agentId, {
           id: crypto.randomUUID(),
           prompt,
@@ -922,6 +1025,26 @@ export function WebMaestroHome() {
           incompleteContinueCountRef.current.set(agentId, 0);
         }
         subscribeAgent(agentId, commandId);
+        await bridge.executeCommand({
+          id: commandId,
+          workspace_id: workspaceId,
+          project_id: agent.projectId,
+          target_device_id: deviceId,
+          agent_id: agentId,
+          type: 'agent_prompt',
+          payload: {
+            prompt,
+            ...(imageDataUrls.length > 0 ? { image_data_urls: imageDataUrls } : {}),
+            ...(fileAttachments.length > 0 ? { file_attachments: fileAttachments } : {}),
+            agent_command: 'cursor-agent',
+            model: agent.modelId || 'auto',
+            mode: agent.modeId && agent.modeId !== 'agent' ? agent.modeId : undefined,
+            session_id: agent.id,
+            resume_chat_id: agent.cursorSessionId,
+            continue_session: !agent.cursorSessionId,
+          },
+          idempotency_key: crypto.randomUUID(),
+        });
         return true;
       } catch (error) {
         window.alert(formatUnknownError(error, 'Falha ao enviar follow-up'));

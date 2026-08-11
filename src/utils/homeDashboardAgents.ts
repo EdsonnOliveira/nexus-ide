@@ -2,14 +2,31 @@ const HOME_AGENT_STORAGE_KEY = 'nexus.home-dashboard.project-agents';
 const HOME_VIEW_MODE_STORAGE_KEY = 'nexus.home-dashboard.view-mode';
 export const HOME_AGENT_CHANGE_EVENT = 'nexus-home-dashboard-project-agents';
 export const HOME_AGENT_FOCUS_EVENT = 'nexus-home-dashboard-focus-agent';
+export const HOME_ASK_FOCUS_EVENT = 'nexus-home-dashboard-focus-ask';
 
 export type HomeDashboardViewMode = 'dashboard' | 'agent';
+
+export function getHomeDashboardViewMode(): HomeDashboardViewMode {
+  try {
+    const raw = window.localStorage.getItem(HOME_VIEW_MODE_STORAGE_KEY);
+    if (raw === 'agent' || raw === 'dashboard') {
+      return raw;
+    }
+  } catch {
+  }
+
+  return 'agent';
+}
 
 export function setHomeDashboardViewMode(mode: HomeDashboardViewMode): void {
   try {
     window.localStorage.setItem(HOME_VIEW_MODE_STORAGE_KEY, mode);
   } catch {
   }
+}
+
+export function requestHomeAskFocus(): void {
+  window.dispatchEvent(new Event(HOME_ASK_FOCUS_EVENT));
 }
 
 export interface HomeAgentBinding {

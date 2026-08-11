@@ -1,5 +1,5 @@
 import { Check, ChevronDown } from 'lucide-react';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   positionDropdownBelowAnchor,
@@ -82,6 +82,29 @@ function AnchoredSelectMenuComponent<T extends string>({
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [requestClose]);
+
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    const activeItem = menu?.querySelector<HTMLElement>('.context-menu__item--active');
+
+    if (!menu || !activeItem) {
+      return;
+    }
+
+    const itemTop = activeItem.offsetTop;
+    const itemBottom = itemTop + activeItem.offsetHeight;
+    const viewTop = menu.scrollTop;
+    const viewBottom = viewTop + menu.clientHeight;
+
+    if (itemBottom > viewBottom) {
+      menu.scrollTop = itemBottom - menu.clientHeight;
+      return;
+    }
+
+    if (itemTop < viewTop) {
+      menu.scrollTop = itemTop;
+    }
+  }, [menuRef, value]);
 
   const handleSelect = useCallback(
     (nextValue: T | '') => (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -166,6 +189,8 @@ interface AnchoredSelectProps<T extends string = string> {
   triggerClassName?: string;
   menuClassName?: string;
   leadingIcon?: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 function AnchoredSelectComponent<T extends string = string>({
@@ -181,10 +206,14 @@ function AnchoredSelectComponent<T extends string = string>({
   triggerClassName,
   menuClassName,
   leadingIcon,
+  open: openProp,
+  onOpenChange,
 }: AnchoredSelectProps<T>) {
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+  const isControlled = openProp !== undefined;
+  const open = isControlled ? openProp : uncontrolledOpen;
 
   const selectedOption = useMemo(() => {
     if (value === '') {
@@ -202,29 +231,61 @@ function AnchoredSelectComponent<T extends string = string>({
     return selectedOption?.labelNode ?? selectedOption?.label ?? placeholder;
   }, [allowEmpty, emptyLabel, placeholder, selectedOption, value]);
 
+  const setOpenState = useCallback(
+    (nextOpen: boolean) => {
+      if (!isControlled) {
+        setUncontrolledOpen(nextOpen);
+      }
+
+      onOpenChange?.(nextOpen);
+    },
+    [isControlled, onOpenChange],
+  );
+
+  const openMenu = useCallback(() => {
+    if (disabled) {
+      return;
+    }
+
+    closeAllAnchoredDropdowns();
+    const rect = triggerRef.current?.getBoundingClientRect() ?? null;
+    setAnchorRect(rect);
+    setOpenState(Boolean(rect));
+  }, [disabled, setOpenState]);
+
+  const handleClose = useCallback(() => {
+    setAnchorRect(null);
+    setOpenState(false);
+  }, [setOpenState]);
+
   const handleToggle = useCallback(() => {
     if (disabled) {
       return;
     }
 
-    setOpen((current) => {
-      if (current) {
-        setAnchorRect(null);
-        return false;
-      }
+    if (open) {
+      handleClose();
+      return;
+    }
 
-      closeAllAnchoredDropdowns();
+    openMenu();
+  }, [disabled, handleClose, open, openMenu]);
 
-      const rect = triggerRef.current?.getBoundingClientRect() ?? null;
-      setAnchorRect(rect);
-      return Boolean(rect);
-    });
-  }, [disabled]);
+  useEffect(() => {
+    if (!open) {
+      setAnchorRect(null);
+      return;
+    }
 
-  const handleClose = useCallback(() => {
-    setOpen(false);
-    setAnchorRect(null);
-  }, []);
+    const rect = triggerRef.current?.getBoundingClientRect() ?? null;
+
+    if (!rect) {
+      setOpenState(false);
+      return;
+    }
+
+    setAnchorRect(rect);
+  }, [open, setOpenState]);
 
   useEffect(() => {
     if (disabled && open) {

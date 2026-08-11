@@ -141,23 +141,21 @@ export function buildAgentComposerMentionsInsertion(
     return { nextDraft: draft, nextCaret: selectionStart };
   }
 
-  let nextDraft = draft;
-  let caret = selectionStart;
-  let selectionEndCursor = selectionEnd;
-
-  for (const mention of mentions) {
-    const result = buildAgentComposerMentionInsertion(
-      nextDraft,
-      caret,
-      selectionEndCursor,
-      mention,
+  if (mentions.length === 1) {
+    return buildAgentComposerMentionInsertion(
+      draft,
+      selectionStart,
+      selectionEnd,
+      mentions[0]!,
     );
-    nextDraft = result.nextDraft;
-    caret = result.nextCaret;
-    selectionEndCursor = caret;
   }
 
-  return { nextDraft, nextCaret: caret };
+  return buildAgentComposerMentionInsertion(
+    draft,
+    selectionStart,
+    selectionEnd,
+    mentions.join('\n'),
+  );
 }
 
 export function buildAgentComposerMentionsAppendFragment(
@@ -168,7 +166,10 @@ export function buildAgentComposerMentionsAppendFragment(
     return '';
   }
 
-  const joined = mentions.map((mention) => `${mention} `).join('');
+  const joined =
+    mentions.length === 1
+      ? `${mentions[0]!} `
+      : `${mentions.join('\n')}\n`;
 
   if (!currentDraft.trim()) {
     return joined;

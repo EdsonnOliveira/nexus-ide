@@ -497,7 +497,7 @@ function buildEmulatorArgs(avdName: string): string[] {
   const args = [
     '-avd',
     avdName,
-    '-no-window',
+    '-qt-hide-window',
     '-no-audio',
     '-no-boot-anim',
     '-no-snapshot-save',

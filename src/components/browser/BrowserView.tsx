@@ -360,17 +360,42 @@ function BrowserViewComponent({
     return false;
   }, [applyLocalProbeResult]);
 
-  const reloadWebviewForTarget = useCallback((targetUrl: string) => {
-    const webview = webviewRef.current;
+  const loadWebviewUrl = useCallback((webview: WebviewTag, targetUrl: string) => {
+    try {
+      const result = webview.loadURL(targetUrl) as unknown;
 
-    if (!webview || !targetUrl) {
-      return;
+      if (
+        result &&
+        typeof result === 'object' &&
+        'catch' in result &&
+        typeof (result as Promise<void>).catch === 'function'
+      ) {
+        void (result as Promise<void>).catch(() => undefined);
+      }
+    } catch {
+      return false;
     }
 
-    pageReadyRef.current = false;
-    committedUrlRef.current = targetUrl;
-    webview.loadURL(targetUrl);
+    return true;
   }, []);
+
+  const reloadWebviewForTarget = useCallback(
+    (targetUrl: string) => {
+      const webview = webviewRef.current;
+
+      if (!webview || !targetUrl) {
+        return;
+      }
+
+      pageReadyRef.current = false;
+      committedUrlRef.current = targetUrl;
+
+      if (!loadWebviewUrl(webview, targetUrl)) {
+        committedUrlRef.current = '';
+      }
+    },
+    [loadWebviewUrl],
+  );
 
   const shouldReloadWebview = useCallback(
     (targetUrl: string, options: { wasOffline: boolean; hadFailedLoad: boolean }) => {
@@ -577,41 +602,94 @@ function BrowserViewComponent({
       return;
     }
 
-    try {
-      const currentUrl = webview.getURL();
+    let cancelled = false;
+    let readyHandler: (() => void) | null = null;
 
-      if (
-        currentUrl &&
-        currentUrl !== 'about:blank' &&
-        normalizeBrowserUrl(currentUrl) === normalizedUrl
-      ) {
-        committedUrlRef.current = normalizedUrl;
+    const clearReadyHandler = () => {
+      if (!readyHandler) {
         return;
       }
-    } catch {
-      return;
-    }
 
-    if (committedUrlRef.current === normalizedUrl) {
+      webview.removeEventListener('dom-ready', readyHandler);
+      readyHandler = null;
+    };
+
+    const isAlreadyOnTarget = (): boolean | null => {
       try {
         const currentUrl = webview.getURL();
 
-        if (currentUrl && currentUrl !== 'about:blank') {
-          return;
+        if (
+          currentUrl &&
+          currentUrl !== 'about:blank' &&
+          normalizeBrowserUrl(currentUrl) === normalizedUrl
+        ) {
+          return true;
         }
+
+        if (committedUrlRef.current === normalizedUrl && currentUrl && currentUrl !== 'about:blank') {
+          return true;
+        }
+
+        return false;
       } catch {
+        return null;
+      }
+    };
+
+    const waitForReadyThenLoad = () => {
+      if (readyHandler) {
         return;
       }
-    }
 
-    committedUrlRef.current = normalizedUrl;
+      readyHandler = () => {
+        clearReadyHandler();
 
-    if (!isLocalDevUrl(normalizedUrl)) {
-      setSiteStatus('online');
-    }
+        if (cancelled) {
+          return;
+        }
 
-    webview.loadURL(normalizedUrl);
-  }, [guestPreloadPath, hasMountedGuest, isRuntimeActive, normalizedUrl]);
+        loadTarget();
+      };
+
+      webview.addEventListener('dom-ready', readyHandler);
+    };
+
+    const loadTarget = () => {
+      if (cancelled) {
+        return;
+      }
+
+      const alreadyOnTarget = isAlreadyOnTarget();
+
+      if (alreadyOnTarget === true) {
+        committedUrlRef.current = normalizedUrl;
+        return;
+      }
+
+      if (alreadyOnTarget === null) {
+        waitForReadyThenLoad();
+        return;
+      }
+
+      committedUrlRef.current = normalizedUrl;
+
+      if (!isLocalDevUrl(normalizedUrl)) {
+        setSiteStatus('online');
+      }
+
+      if (!loadWebviewUrl(webview, normalizedUrl)) {
+        committedUrlRef.current = '';
+        waitForReadyThenLoad();
+      }
+    };
+
+    loadTarget();
+
+    return () => {
+      cancelled = true;
+      clearReadyHandler();
+    };
+  }, [guestPreloadPath, hasMountedGuest, isRuntimeActive, loadWebviewUrl, normalizedUrl]);
 
   useEffect(() => {
     if (!normalizedUrl || !isRuntimeActive) {
@@ -662,28 +740,34 @@ function BrowserViewComponent({
     }
   }, []);
 
-  const navigateTo = useCallback((nextUrl: string) => {
-    const webview = webviewRef.current;
-    const normalized = normalizeBrowserUrl(nextUrl);
+  const navigateTo = useCallback(
+    (nextUrl: string) => {
+      const webview = webviewRef.current;
+      const normalized = normalizeBrowserUrl(nextUrl);
 
-    if (!webview || !normalized) {
-      return;
-    }
+      if (!webview || !normalized) {
+        return;
+      }
 
-    if (isLocalDevUrl(normalized)) {
-      setSiteStatus('checking');
-    } else {
-      setSiteStatus('online');
-    }
+      if (isLocalDevUrl(normalized)) {
+        setSiteStatus('checking');
+      } else {
+        setSiteStatus('online');
+      }
 
-    loadFailedRef.current = false;
-    pageReadyRef.current = false;
-    setInputUrl(normalized);
-    suppressStoreLoadRef.current = false;
-    committedUrlRef.current = normalized;
-    onUrlChangeRef.current(normalized);
-    webview.loadURL(normalized);
-  }, []);
+      loadFailedRef.current = false;
+      pageReadyRef.current = false;
+      setInputUrl(normalized);
+      suppressStoreLoadRef.current = false;
+      committedUrlRef.current = normalized;
+      onUrlChangeRef.current(normalized);
+
+      if (!loadWebviewUrl(webview, normalized)) {
+        committedUrlRef.current = '';
+      }
+    },
+    [loadWebviewUrl],
+  );
 
   useEffect(() => {
     const webview = webviewRef.current;
@@ -713,6 +797,45 @@ function BrowserViewComponent({
     const handleDomReady = () => {
       applyZoomFactor(zoomFactorRef.current);
       syncNavigationState();
+
+      const targetUrl = normalizedUrlRef.current;
+
+      if (!targetUrl || suppressStoreLoadRef.current) {
+        return;
+      }
+
+      try {
+        const currentUrl = webview.getURL();
+
+        if (
+          currentUrl &&
+          currentUrl !== 'about:blank' &&
+          !isBrowserErrorPageUrl(currentUrl)
+        ) {
+          if (
+            normalizeBrowserUrl(currentUrl) === targetUrl ||
+            committedUrlRef.current === targetUrl
+          ) {
+            committedUrlRef.current = targetUrl;
+          }
+
+          return;
+        }
+      } catch {}
+
+      if (committedUrlRef.current === targetUrl) {
+        return;
+      }
+
+      committedUrlRef.current = targetUrl;
+
+      if (!isLocalDevUrl(targetUrl)) {
+        setSiteStatus('online');
+      }
+
+      if (!loadWebviewUrl(webview, targetUrl)) {
+        committedUrlRef.current = '';
+      }
     };
 
     const handleDevToolsClosed = () => {
@@ -844,6 +967,7 @@ function BrowserViewComponent({
     guestPreloadPath,
     handlePasswordInputFocus,
     hasMountedGuest,
+    loadWebviewUrl,
     markOnlineIfSameTarget,
     syncNavigationState,
     tryRunPendingBrowserAutofill,
@@ -914,17 +1038,46 @@ function BrowserViewComponent({
   }, []);
 
   const handleReload = useCallback(() => {
+    const webview = webviewRef.current;
+    const targetUrl = normalizedUrlRef.current;
+
+    if (!webview || !targetUrl) {
+      return;
+    }
+
     loadFailedRef.current = false;
     pageReadyRef.current = false;
 
-    if (isLocalDevUrl(normalizedUrlRef.current)) {
+    if (isLocalDevUrl(targetUrl)) {
       setSiteStatus('checking');
     } else {
       setSiteStatus('online');
     }
 
-    webviewRef.current?.reload();
-  }, []);
+    try {
+      const currentUrl = webview.getURL();
+
+      if (!currentUrl || currentUrl === 'about:blank' || isBrowserErrorPageUrl(currentUrl)) {
+        committedUrlRef.current = targetUrl;
+
+        if (!loadWebviewUrl(webview, targetUrl)) {
+          committedUrlRef.current = '';
+        }
+
+        return;
+      }
+    } catch {
+      committedUrlRef.current = targetUrl;
+
+      if (!loadWebviewUrl(webview, targetUrl)) {
+        committedUrlRef.current = '';
+      }
+
+      return;
+    }
+
+    webview.reload();
+  }, [loadWebviewUrl]);
 
   const isFocusedRef = useRef(isFocused);
   const isVisibleRef = useRef(isVisible);
@@ -1038,8 +1191,16 @@ function BrowserViewComponent({
 
     suppressStoreLoadRef.current = false;
     committedUrlRef.current = normalizedUrl;
-    webviewRef.current?.loadURL(normalizedUrl);
-  }, [normalizedUrl]);
+    const webview = webviewRef.current;
+
+    if (!webview) {
+      return;
+    }
+
+    if (!loadWebviewUrl(webview, normalizedUrl)) {
+      committedUrlRef.current = '';
+    }
+  }, [loadWebviewUrl, normalizedUrl]);
 
   useEffect(() => {
     if (!isRuntimeActive || !isLocalDevUrl(normalizedUrl)) {
@@ -1232,10 +1393,9 @@ function BrowserViewComponent({
 
   const handleTerminalUrlHintClick = useCallback(
     (hintUrl: string) => {
-      onUrlChange(hintUrl);
-      setInputUrl(hintUrl);
+      navigateTo(hintUrl);
     },
-    [onUrlChange],
+    [navigateTo],
   );
 
   return (

@@ -72,13 +72,14 @@ function resolveTurnPreview(
   attachments: AgentPromptAttachment[];
 } {
   const promptText = resolvePromptDisplayContent(turn.user.content);
-  const { hasSkillPrompt, skillChipLabel } = resolveAgentSkillDisplayState(turn.user);
-  const skillOnly = isSkillOnlyPrompt(turn.user, promptText, attachments.length);
+  const { hasSkillPrompt, skillChipLabel, promptBody } = resolveAgentSkillDisplayState(turn.user);
+  const displayPromptText = hasSkillPrompt ? promptBody : promptText;
+  const skillOnly = isSkillOnlyPrompt(turn.user, displayPromptText, attachments.length);
   const showSkillChip =
-    hasSkillPrompt && (skillOnly || shouldShowSkillChipAbovePrompt(promptText, skillChipLabel));
+    hasSkillPrompt && (skillOnly || shouldShowSkillChipAbovePrompt(displayPromptText, skillChipLabel));
   const rawTitleSource = skillOnly
     ? ''
-    : promptText || (!showSkillChip && hasSkillPrompt ? skillChipLabel : '') || 'Prompt';
+    : displayPromptText || (!showSkillChip && hasSkillPrompt ? skillChipLabel : '') || 'Prompt';
   const titleSource =
     attachments.length > 0 ? stripImageMentions(rawTitleSource) : rawTitleSource;
   const responseLead = turn.summary?.responseLead?.trim() ?? '';
