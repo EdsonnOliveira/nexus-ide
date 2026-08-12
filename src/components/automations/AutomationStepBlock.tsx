@@ -4,11 +4,13 @@ import { AppCheckbox } from '@/components/overlay/AppCheckbox';
 import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { AGENT_MODE_OPTIONS } from '@/constants/agentModes';
+import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useProjectStore } from '@/stores/useProjectStore';
 import type { EmulatorDevice } from '@/types';
 import type { AutomationAgentMode, AutomationHttpMethod, AutomationStep } from '@/types/automation';
 import { HTTP_METHODS } from '@/utils/apiCollectionUtils';
 import { getAutomationStepLabel } from '@/utils/automationLabels';
+import { getSuggestedProjectLocalDevUrl } from '@/utils/projectLocalDevUrl';
 
 interface AutomationStepBlockProps {
   step: AutomationStep;
@@ -69,6 +71,22 @@ function AutomationStepBlockComponent({
 
     return state.projects.find((project) => project.id === activeId)?.path ?? null;
   });
+  const projects = useProjectStore((state) => state.projects);
+  const activeProjectId = useProjectStore((state) => state.activeProjectId);
+  const activeWorkspaceId = useProjectStore((state) => state.activeWorkspaceId);
+  const notifiedAgentPaneByProject = useProjectNotificationStore(
+    (state) => state.notifiedAgentPaneByProject,
+  );
+  const suggestedBrowserUrl = useMemo(
+    () =>
+      getSuggestedProjectLocalDevUrl(
+        projects,
+        activeProjectId,
+        activeWorkspaceId,
+        notifiedAgentPaneByProject,
+      ),
+    [activeProjectId, activeWorkspaceId, notifiedAgentPaneByProject, projects],
+  );
   const [agentModelOptions, setAgentModelOptions] = useState<Array<{ id: string; label: string }>>([]);
   const [emulatorDevices, setEmulatorDevices] = useState<EmulatorDevice[]>([]);
   const [isLoadingEmulatorDevices, setIsLoadingEmulatorDevices] = useState(false);
@@ -332,7 +350,7 @@ function AutomationStepBlockComponent({
             <span>URL</span>
             <input
               value={step.url ?? ''}
-              placeholder='http://localhost:3000'
+              placeholder={suggestedBrowserUrl}
               onChange={(event) => onChange({ ...step, url: event.target.value })}
             />
           </label>

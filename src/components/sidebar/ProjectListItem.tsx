@@ -16,6 +16,8 @@ interface ProjectListItemProps {
   hasAgentDraft?: boolean;
   enterIndex?: number;
   enterAnimationKey?: number;
+  shortcutHint?: number | null;
+  showShortcutHint?: boolean;
   onSelect: (id: string) => void;
   onContextMenu: (project: Project, x: number, y: number) => void;
 }
@@ -50,6 +52,8 @@ function ProjectListItemComponent({
   hasAgentDraft = false,
   enterIndex = 0,
   enterAnimationKey = 0,
+  shortcutHint = null,
+  showShortcutHint = false,
   onSelect,
   onContextMenu,
 }: ProjectListItemProps) {
@@ -145,6 +149,17 @@ function ProjectListItemComponent({
     () => `project-item__ping project-item__ping--${getProjectPingTone(project.color)}`,
     [project.color],
   );
+  const visibleShortcutHint =
+    showShortcutHint && shortcutHint != null && shortcutHint >= 1 ? shortcutHint : null;
+  const shortcutHintNode =
+    visibleShortcutHint != null ? (
+      <span
+        className={`project-item__shortcut-hint app-button--enter${visibleShortcutHint > 9 ? ' project-item__shortcut-hint--wide' : ''}`}
+        aria-hidden='true'
+      >
+        {visibleShortcutHint}
+      </span>
+    ) : null;
 
   return (
     <button
@@ -165,6 +180,7 @@ function ProjectListItemComponent({
             onError={handleLogoError}
           />
           {hasNotification ? <span className={pingClassName} aria-hidden='true' /> : null}
+          {shortcutHintNode}
         </span>
       ) : (
         <span className='project-item__icon-wrap'>
@@ -172,6 +188,7 @@ function ProjectListItemComponent({
             <ProjectIconMark icon={project.icon} />
           </span>
           {hasNotification ? <span className={pingClassName} aria-hidden='true' /> : null}
+          {shortcutHintNode}
         </span>
       )}
       <span className='project-item__name'>{project.name}</span>

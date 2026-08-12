@@ -117,6 +117,7 @@ const STREAM_JSON_INCOMPLETE_ORPHAN_FINALIZE_MS = 45_000;
 const STREAM_JSON_HUNG_IDLE_MS = 1_800_000;
 const STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS = 7_200_000;
 const STREAM_JSON_STALLED_OUTPUT_MS = 90_000;
+const STREAM_JSON_READY_OUTPUT_FINALIZE_MS = 8_000;
 const STREAM_JSON_EMPTY_HUNG_IDLE_MS = 90_000;
 const STREAM_JSON_DEAD_PROCESS_FINALIZE_MS = 2_000;
 const STREAM_JSON_IDLE_CHECK_MS = 500;
@@ -1074,12 +1075,17 @@ export function useAgentPaneSession({
         return true;
       }
 
-      if (processRunning) {
+      if (hasActiveStreamJsonToolOrTask(streamJsonStateRef.current)) {
         return false;
+      }
+
+      if (streamJsonStateRef.current.responseId) {
+        ensureStreamJsonStallProgressUi(streamJsonStateRef.current);
       }
 
       if (!tryMarkStreamJsonReadyToFinalize(streamJsonStateRef.current)) {
         if (
+          !processRunning &&
           !hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current) &&
           tryScheduleStreamJsonAutoRetryRef.current(() => {
             clearAgentPrintRunToken(paneIdRef.current);
@@ -1211,8 +1217,15 @@ export function useAgentPaneSession({
       streamJsonSettleTimerRef.current = null;
 
       void window.nexus.agentPrint.isRunning(paneIdRef.current).then((processRunning) => {
+        const idleMs = Date.now() - lastStreamJsonChunkAtRef.current;
+
         if (processRunning) {
-          const idleMs = Date.now() - lastStreamJsonChunkAtRef.current;
+          if (
+            idleMs >= STREAM_JSON_READY_OUTPUT_FINALIZE_MS &&
+            tryFinalizeSettledStreamJsonTurn(true, 'settleTimer-running')
+          ) {
+            return;
+          }
 
           if (idleMs >= STREAM_JSON_STALL_UI_MS) {
             syncStreamJsonStallLiveStatus(idleMs);
@@ -3516,6 +3529,14 @@ export function useAgentPaneSession({
             return;
           }
 
+          if (
+            !hasActiveToolWork &&
+            idleMs >= STREAM_JSON_READY_OUTPUT_FINALIZE_MS &&
+            tryFinalizeSettledStreamJsonTurn(true, 'idleInterval-ready')
+          ) {
+            return;
+          }
+
           if (hasActiveToolWork && idleMs < STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS) {
             if (idleMs >= STREAM_JSON_STALL_UI_MS) {
               syncStreamJsonStallLiveStatus(idleMs);
@@ -3554,6 +3575,10 @@ export function useAgentPaneSession({
             finalizeActiveTurn(true);
             clearAgentPrintRunToken(paneId);
             return;
+          }
+
+          if (!hasActiveToolWork && idleMs >= STREAM_JSON_READY_OUTPUT_FINALIZE_MS) {
+            forceSettleStreamJsonInFlightWork(streamJsonStateRef.current);
           }
 
           const stalledWithOutput =

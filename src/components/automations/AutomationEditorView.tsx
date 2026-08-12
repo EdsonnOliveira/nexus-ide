@@ -19,6 +19,8 @@ import type { Automation, AutomationStep, AutomationStepType } from '@/types/aut
 import {
   AUTOMATION_MAX_STEPS,
 } from '@/types/automation';
+import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
+import { useProjectStore } from '@/stores/useProjectStore';
 import { isAutomationStepEmpty, serializeAutomationPrompt } from '@/utils/automationPrompt';
 import { getAutomationStepLabel } from '@/utils/automationLabels';
 import { canAddAutomationStep } from '@/utils/createDefaultAutomation';
@@ -29,6 +31,7 @@ import {
   normalizeAutomationSteps,
   type AutomationStepGroup,
 } from '@/utils/normalizeAutomation';
+import { getSuggestedProjectLocalDevUrl } from '@/utils/projectLocalDevUrl';
 
 interface AutomationEditorViewProps {
   draft: Automation;
@@ -40,7 +43,7 @@ interface AutomationEditorViewProps {
   onDelete?: () => void;
 }
 
-function createStep(type: AutomationStepType): AutomationStep {
+function createStep(type: AutomationStepType, suggestedBrowserUrl?: string): AutomationStep {
   if (type === 'api') {
     return {
       id: crypto.randomUUID(),
@@ -60,6 +63,15 @@ function createStep(type: AutomationStepType): AutomationStep {
       type,
       openMode: 'separate',
       autoStartEmulator: true,
+    };
+  }
+
+  if (type === 'browser') {
+    return {
+      id: crypto.randomUUID(),
+      type,
+      openMode: 'separate',
+      url: suggestedBrowserUrl ?? '',
     };
   }
 
@@ -125,6 +137,22 @@ function AutomationEditorViewComponent({
   const canvasRef = useRef<HTMLDivElement>(null);
   const scrollToBottomRef = useRef(false);
   const prevStepsLengthRef = useRef(draft.steps.length);
+  const projects = useProjectStore((state) => state.projects);
+  const activeProjectId = useProjectStore((state) => state.activeProjectId);
+  const activeWorkspaceId = useProjectStore((state) => state.activeWorkspaceId);
+  const notifiedAgentPaneByProject = useProjectNotificationStore(
+    (state) => state.notifiedAgentPaneByProject,
+  );
+  const suggestedBrowserUrl = useMemo(
+    () =>
+      getSuggestedProjectLocalDevUrl(
+        projects,
+        activeProjectId,
+        activeWorkspaceId,
+        notifiedAgentPaneByProject,
+      ),
+    [activeProjectId, activeWorkspaceId, notifiedAgentPaneByProject, projects],
+  );
 
   const promptText = useMemo(() => serializeAutomationPrompt(draft), [draft]);
 
@@ -165,10 +193,10 @@ function AutomationEditorViewComponent({
           return current;
         }
 
-        return patchDraftSteps(current, [...current.steps, createStep(type)]);
+        return patchDraftSteps(current, [...current.steps, createStep(type, suggestedBrowserUrl)]);
       });
     },
-    [onChange],
+    [onChange, suggestedBrowserUrl],
   );
 
   const stepGroups = useMemo(() => groupAutomationSteps(draft.steps), [draft.steps]);

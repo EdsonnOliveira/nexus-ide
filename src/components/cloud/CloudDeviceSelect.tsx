@@ -9,6 +9,60 @@ import {
 } from '@/hooks/useAnchoredDropdownMenu';
 import { useCloudStore } from '@/stores/useCloudStore';
 
+interface CloudDeviceSelectMenuProps {
+  devices: ReturnType<typeof useCloudStore.getState>['devices'];
+  selectedDeviceId: string | null;
+  anchorRect: DOMRect;
+  onClose: () => void;
+  onSelect: (deviceId: string) => void;
+}
+
+function CloudDeviceSelectMenuComponent({
+  devices,
+  selectedDeviceId,
+  anchorRect,
+  onClose,
+  onSelect,
+}: CloudDeviceSelectMenuProps) {
+  const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
+    onClose,
+    (menu) => {
+      positionDropdownBelowAnchor(menu, anchorRect, 'end');
+    },
+    [anchorRect],
+  );
+
+  return (
+    <div ref={menuRef} className={`context-menu ${animationClass}`}>
+      {devices.map((device) => {
+        const online = isDeviceOnline(device.last_seen_at);
+        const active = device.id === selectedDeviceId;
+        return (
+          <button
+            key={device.id}
+            type='button'
+            className={`context-menu__item app-button ${active ? 'context-menu__item--active' : ''}`}
+            disabled={!device.is_enabled}
+            onClick={() => {
+              onSelect(device.id);
+              requestClose();
+            }}
+          >
+            <span className={`dot ${online ? 'dot--online' : 'dot--offline'}`} />
+            <span>
+              {sanitizeDeviceName(device.name)}
+              <span className='muted'> — {online ? 'Online' : 'Offline'}</span>
+            </span>
+            {active ? <Check size={14} /> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const CloudDeviceSelectMenu = memo(CloudDeviceSelectMenuComponent);
+
 function CloudDeviceSelectComponent() {
   const configured = useCloudStore((state) => state.configured);
   const devices = useCloudStore((state) => state.devices);
@@ -35,15 +89,11 @@ function CloudDeviceSelectComponent() {
     setAnchorRect(null);
   }, []);
 
-  const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
-    handleClose,
-    (menu) => {
-      if (!anchorRect) {
-        return;
-      }
-      positionDropdownBelowAnchor(menu, anchorRect, 'end');
+  const handleSelect = useCallback(
+    (deviceId: string) => {
+      setSelectedDeviceId(deviceId);
     },
-    [anchorRect],
+    [setSelectedDeviceId],
   );
 
   if (!configured || devices.length === 0) {
@@ -76,31 +126,13 @@ function CloudDeviceSelectComponent() {
       </button>
       {open && anchorRect
         ? createPortal(
-            <div ref={menuRef} className={`context-menu ${animationClass}`}>
-              {devices.map((device) => {
-                const online = isDeviceOnline(device.last_seen_at);
-                const active = device.id === selectedDeviceId;
-                return (
-                  <button
-                    key={device.id}
-                    type='button'
-                    className={`context-menu__item app-button ${active ? 'context-menu__item--active' : ''}`}
-                    disabled={!device.is_enabled}
-                    onClick={() => {
-                      setSelectedDeviceId(device.id);
-                      requestClose();
-                    }}
-                  >
-                    <span className={`dot ${online ? 'dot--online' : 'dot--offline'}`} />
-                    <span>
-                      {sanitizeDeviceName(device.name)}
-                      <span className='muted'> — {online ? 'Online' : 'Offline'}</span>
-                    </span>
-                    {active ? <Check size={14} /> : null}
-                  </button>
-                );
-              })}
-            </div>,
+            <CloudDeviceSelectMenu
+              devices={devices}
+              selectedDeviceId={selectedDeviceId}
+              anchorRect={anchorRect}
+              onClose={handleClose}
+              onSelect={handleSelect}
+            />,
             document.body,
           )
         : null}

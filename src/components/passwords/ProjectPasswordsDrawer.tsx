@@ -239,6 +239,7 @@ function ProjectPasswordsDrawerComponent({ projectId }: ProjectPasswordsDrawerPr
       />
       {view === 'editor' ? (
         <PasswordEditorModal
+          projectId={projectId}
           draft={draft}
           isExisting={editingId !== null}
           onChange={setDraft}

@@ -2088,6 +2088,18 @@ export function ensureStreamJsonStallProgressUi(state: AgentStreamJsonParserStat
     changed = true;
   }
 
+  if (
+    hasMeaningfulStreamJsonTurnOutput(state) &&
+    !hasIncompleteStreamJsonEnding(state) &&
+    !hasActiveStreamJsonToolOrTask(state)
+  ) {
+    if (clearStreamJsonLiveStatus(state)) {
+      changed = true;
+    }
+
+    return changed;
+  }
+
   if (hasStreamingThoughtContent(state) || findStreamingThoughtActivity(state)?.streaming) {
     if (clearStreamJsonLiveStatus(state)) {
       changed = true;
@@ -2125,8 +2137,19 @@ export function resolveStreamJsonStallLiveStatus(
   }
 
   const idleSeconds = Math.max(1, Math.round(idleMs / 1000));
+  const hasStreamingResponse =
+    Boolean(state.responseId) ||
+    state.activities.some((entry) => entry.kind === 'response' && Boolean(entry.streaming));
 
-  if (state.pendingResponseText.trim() || state.responseId) {
+  if (
+    hasMeaningfulStreamJsonTurnOutput(state) &&
+    !hasIncompleteStreamJsonEnding(state) &&
+    !hasStreamingResponse
+  ) {
+    return null;
+  }
+
+  if (hasStreamingResponse) {
     if (idleMs < 30_000) {
       return null;
     }

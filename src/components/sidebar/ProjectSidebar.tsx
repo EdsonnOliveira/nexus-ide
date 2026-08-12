@@ -8,6 +8,7 @@ import { useProjectNotificationStore } from '@/stores/useProjectNotificationStor
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
 import { useAgentComposerDraftStore } from '@/stores/useAgentComposerDraftStore';
+import { useLocalDayKey } from '@/hooks/useLocalDayKey';
 import { ProjectAgentRunningIndicator, ProjectListItem } from '@/components/sidebar/ProjectListItem';
 import { WorkspaceMark } from '@/components/sidebar/WorkspaceMark';
 import { useDailyGeneration } from '@/components/home/dailyGenerationContext';
@@ -47,11 +48,13 @@ import { WorkspaceDeleteDialog } from '@/components/sidebar/WorkspaceDeleteDialo
 import type {
   ContextMenuState,
   MailMailboxRef,
+  Project,
   ProjectPromptMode,
   Workspace,
   WorkspaceContextMenuState,
 } from '@/types';
 import { buildRunningAgentProjectIdSet } from '@/utils/projectAgentStatus';
+import { splitSidebarProjectsByTodayActivity } from '@/utils/projectActivitySignals';
 import { buildRunningAutomationProjectIdSet } from '@/utils/projectAutomationStatus';
 import {
   buildSidebarProjects,
@@ -131,6 +134,8 @@ function ProjectSidebarComponent() {
     () => new Set(runningAgentProjectIdsStable.keys()),
     [runningAgentProjectIdsStable],
   );
+  const localDayKey = useLocalDayKey();
+
   const executingAutomationByProject = useAutomationExecutionStore(
     (state) => state.executingAutomationByProject,
   );
@@ -221,9 +226,34 @@ function ProjectSidebarComponent() {
     [activeProjectId, filteredProjects, notifiedAgentPaneByProject, projects, selectingProjectId],
   );
 
+  const { today: todaySidebarProjects, others: otherSidebarProjects } = useMemo(
+    () => splitSidebarProjectsByTodayActivity(sidebarProjects),
+    [localDayKey, sidebarProjects],
+  );
+
+  const showTodaySections = todaySidebarProjects.length > 0;
+
+  const orderedSidebarProjects = useMemo(() => {
+    if (!showTodaySections) {
+      return sidebarProjects;
+    }
+
+    return [...todaySidebarProjects, ...otherSidebarProjects];
+  }, [otherSidebarProjects, showTodaySections, sidebarProjects, todaySidebarProjects]);
+
+  const shortcutIndexByProjectId = useMemo(() => {
+    const map = new Map<string, number>();
+
+    sidebarProjects.forEach((project, index) => {
+      map.set(project.id, index + 1);
+    });
+
+    return map;
+  }, [sidebarProjects]);
+
   const hiddenNotifiedProjects = useMemo(
-    () => getHiddenNotifiedProjects(projects, sidebarProjects, notifiedAgentPaneByProject),
-    [sidebarProjects, notifiedAgentPaneByProject, projects],
+    () => getHiddenNotifiedProjects(projects, orderedSidebarProjects, notifiedAgentPaneByProject),
+    [orderedSidebarProjects, notifiedAgentPaneByProject, projects],
   );
 
   const notifiedWorkspaceIds = useMemo(
@@ -817,11 +847,47 @@ function ProjectSidebarComponent() {
     })();
   }, [activeProjectId, pendingFlagAccess, selectProject, updateProject]);
 
-  useProjectIndexShortcuts({ filteredProjects: sidebarProjects, onSelectProject: handleSelectProject });
+  const showProjectIndexHints = useProjectIndexShortcuts({
+    filteredProjects: sidebarProjects,
+    onSelectProject: handleSelectProject,
+  });
 
   const handleContextMenu = useCallback((project: { id: string }, x: number, y: number) => {
     setContextMenu({ projectId: project.id, x, y });
   }, []);
+
+  const renderSidebarProject = useCallback(
+    (project: Project, index: number) => (
+      <ProjectListItem
+        key={project.id}
+        project={project}
+        isActive={project.id === activeProjectId}
+        isFlagged={Boolean(project.flag)}
+        hasNotification={Boolean(notifiedAgentPaneByProject[project.id])}
+        isAgentRunning={runningAgentProjectIds.has(project.id)}
+        isAutomationRunning={runningAutomationProjectIds.has(project.id)}
+        hasAgentDraft={Boolean(projectIdsWithDraft[project.id])}
+        enterIndex={index}
+        enterAnimationKey={projectListAnimationKey}
+        shortcutHint={shortcutIndexByProjectId.get(project.id) ?? null}
+        showShortcutHint={showProjectIndexHints}
+        onSelect={handleSelectProject}
+        onContextMenu={handleContextMenu}
+      />
+    ),
+    [
+      activeProjectId,
+      handleContextMenu,
+      handleSelectProject,
+      notifiedAgentPaneByProject,
+      projectIdsWithDraft,
+      projectListAnimationKey,
+      runningAgentProjectIds,
+      runningAutomationProjectIds,
+      shortcutIndexByProjectId,
+      showProjectIndexHints,
+    ],
+  );
 
   const handleCloseContextMenu = useCallback(() => {
     setContextMenu(null);
@@ -1089,22 +1155,24 @@ function ProjectSidebarComponent() {
       </div>
 
       <div className='sidebar__list'>
-        {sidebarProjects.map((project, index) => (
-          <ProjectListItem
-            key={project.id}
-            project={project}
-            isActive={project.id === activeProjectId}
-            isFlagged={Boolean(project.flag)}
-            hasNotification={Boolean(notifiedAgentPaneByProject[project.id])}
-            isAgentRunning={runningAgentProjectIds.has(project.id)}
-            isAutomationRunning={runningAutomationProjectIds.has(project.id)}
-            hasAgentDraft={Boolean(projectIdsWithDraft[project.id])}
-            enterIndex={index}
-            enterAnimationKey={projectListAnimationKey}
-            onSelect={handleSelectProject}
-            onContextMenu={handleContextMenu}
-          />
-        ))}
+        {showTodaySections ? (
+          <>
+            <section className='sidebar__section' aria-label='Hoje'>
+              <div className='sidebar__section-label'>Hoje</div>
+              {todaySidebarProjects.map((project, index) => renderSidebarProject(project, index))}
+            </section>
+            {otherSidebarProjects.length > 0 ? (
+              <section className='sidebar__section' aria-label='Outros'>
+                <div className='sidebar__section-label'>Outros</div>
+                {otherSidebarProjects.map((project, index) =>
+                  renderSidebarProject(project, todaySidebarProjects.length + index),
+                )}
+              </section>
+            ) : null}
+          </>
+        ) : (
+          orderedSidebarProjects.map((project, index) => renderSidebarProject(project, index))
+        )}
       </div>
 
       <div className='sidebar__footer'>

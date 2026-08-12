@@ -5277,6 +5277,38 @@ input {
   gap: 4px;
 }
 
+.sidebar__section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sidebar__section + .sidebar__section {
+  margin-top: 6px;
+}
+
+.sidebar__section-label {
+  padding: 4px 8px 2px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted, rgba(148, 163, 184, 0.82));
+  user-select: none;
+  animation: sidebar-project-in var(--motion-in, 180ms) var(--motion-ease-out, ease-out) both;
+}
+
+.sidebar--collapsed .sidebar__section {
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+}
+
+.sidebar--collapsed .sidebar__section-label {
+  display: none;
+}
+
 @keyframes sidebar-project-in {
   from {
     opacity: 0;
@@ -8772,6 +8804,35 @@ input {
   border-radius: 8px;
   object-fit: cover;
   flex-shrink: 0;
+}
+
+.project-item__shortcut-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.project-item__shortcut-hint--wide {
+  font-size: 10px;
+  letter-spacing: -0.04em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-item__shortcut-hint.app-button--enter {
+    animation: none;
+  }
 }
 
 .project-item__ping {

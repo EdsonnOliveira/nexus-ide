@@ -4,11 +4,13 @@ import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { AppCheckbox } from '@/components/overlay/AppCheckbox';
 import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
 import { PasswordFieldActionLabel } from '@/components/passwords/PasswordFieldActionLabel';
+import { useProjectStore } from '@/stores/useProjectStore';
 import type { PasswordFieldAction } from '@/types/password';
 import {
   PASSWORD_FIELD_ACTION_OPTIONS,
   normalizePasswordFieldAction,
 } from '@/utils/createDefaultPasswordCollection';
+import { resolveOpenBrowserUrl } from '@/utils/passwordBrowserUrl';
 import { isSensitivePasswordFieldLabel } from '@/utils/passwordLabels';
 
 const PASSWORD_FIELD_ACTION_SELECT_OPTIONS = PASSWORD_FIELD_ACTION_OPTIONS.map((option) => ({
@@ -133,6 +135,7 @@ function PasswordFieldRowComponent({
 const PasswordFieldRow = memo(PasswordFieldRowComponent);
 
 interface PasswordEditorModalProps {
+  projectId: string;
   draft: PasswordDraft;
   isExisting: boolean;
   onChange: Dispatch<SetStateAction<PasswordDraft>>;
@@ -142,6 +145,7 @@ interface PasswordEditorModalProps {
 }
 
 function PasswordEditorModalComponent({
+  projectId,
   draft,
   isExisting,
   onChange,
@@ -180,13 +184,30 @@ function PasswordEditorModalComponent({
 
   const handleBrowserAutofillToggle = useCallback(
     (checked: boolean) => {
-      onChange((current) => ({
-        ...current,
-        browserAutofillEnabled: checked,
-        browserUrl: checked ? current.browserUrl : '',
-      }));
+      onChange((current) => {
+        if (!checked) {
+          return {
+            ...current,
+            browserAutofillEnabled: false,
+            browserUrl: '',
+          };
+        }
+
+        const project = useProjectStore
+          .getState()
+          .projects.find((item) => item.id === projectId);
+        const openUrl = project
+          ? resolveOpenBrowserUrl(project.tabs, project.activeTabId)
+          : '';
+
+        return {
+          ...current,
+          browserAutofillEnabled: true,
+          browserUrl: openUrl || current.browserUrl,
+        };
+      });
     },
-    [onChange],
+    [onChange, projectId],
   );
 
   const handleBrowserUrlChange = useCallback(

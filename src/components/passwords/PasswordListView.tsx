@@ -4,6 +4,7 @@ import { PasswordContextMenu } from '@/components/passwords/PasswordContextMenu'
 import { EmptyState } from '@/components/overlay/EmptyState';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { usePasswordAutofillStore } from '@/stores/usePasswordAutofillStore';
+import { useProjectStore } from '@/stores/useProjectStore';
 import { useTabActions } from '@/stores/useTabStore';
 import type { PasswordCollection } from '@/types/password';
 import { normalizeBrowserUrl } from '@/utils/browserUrl';
@@ -59,6 +60,7 @@ function PasswordListViewComponent({
   const setActiveCollection = usePasswordAutofillStore((state) => state.setActiveCollection);
   const requestBrowserAutofill = usePasswordAutofillStore((state) => state.requestBrowserAutofill);
   const requestCredentialPicker = usePasswordAutofillStore((state) => state.requestCredentialPicker);
+  const setSidePanel = useProjectStore((state) => state.setSidePanel);
   const { openBrowserTab } = useTabActions();
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PasswordCollection | null>(null);
@@ -119,8 +121,18 @@ function PasswordListViewComponent({
           return;
         }
       });
+
+      setSidePanel(null);
     },
-    [openBrowserTab, projectId, requestBrowserAutofill, requestCredentialPicker, setActiveCollection, showCopyFeedback],
+    [
+      openBrowserTab,
+      projectId,
+      requestBrowserAutofill,
+      requestCredentialPicker,
+      setActiveCollection,
+      setSidePanel,
+      showCopyFeedback,
+    ],
   );
 
   const handleContextMenu = useCallback(

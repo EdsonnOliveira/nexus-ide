@@ -1049,8 +1049,8 @@ function buildInitialCategoryGroup(
     label,
     projectId: projectId ?? undefined,
     items: [
-      buildSingleSlashCommandResult(command),
       ...limitResults(suggestions, INITIAL_SUGGESTIONS_LIMIT),
+      buildSingleSlashCommandResult(command),
     ],
   };
 }

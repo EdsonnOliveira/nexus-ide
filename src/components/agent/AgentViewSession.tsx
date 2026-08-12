@@ -324,11 +324,14 @@ function AgentViewSessionComponent({
         return;
       }
 
-      const isSelectableTranscriptContent = Boolean(
-        target.closest(
-          '.agent-view__transcript, .agent-view__user-bubble, .agent-view__response-body, .agent-view__thought-prose, .agent-view__thought-block, .agent-view__plan-review-body, .agent-view__question-card',
-        ),
-      );
+      const isEmptyArea = Boolean(target.closest('.agent-view__empty'));
+      const isSelectableTranscriptContent =
+        !isEmptyArea &&
+        Boolean(
+          target.closest(
+            '.agent-view__transcript, .agent-view__user-bubble, .agent-view__response-body, .agent-view__thought-prose, .agent-view__thought-block, .agent-view__plan-review-body, .agent-view__question-card',
+          ),
+        );
 
       if (isSelectableTranscriptContent) {
         skipComposerFocusRef.current = true;
