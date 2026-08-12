@@ -109,7 +109,7 @@ class AgentPrintRunner {
   }
 
   private emit(channel: string, payload: unknown): void {
-    if (!this.window || this.window.isDestroyed()) {
+    if (!this.window || this.window.isDestroyed() || this.window.webContents.isDestroyed()) {
       return;
     }
 

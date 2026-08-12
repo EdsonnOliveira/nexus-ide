@@ -76,6 +76,7 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 
 app.setName(DOCK_APP_NAME);
 app.setPath('userData', path.join(app.getPath('appData'), 'nexus-ide'));
+app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
 
 if (!app.requestSingleInstanceLock()) {
   console.error('[main] another instance is already running — quitting');
@@ -83,14 +84,91 @@ if (!app.requestSingleInstanceLock()) {
   process.exit(0);
 }
 
-function shouldRecoverRendererProcess(reason: string): boolean {
-  return reason === 'crashed' || reason === 'oom' || reason === 'abnormal-exit';
+const SESSION_FLUSH_TIMEOUT_MS = 5000;
+const CRASH_QUIT_GRACE_MS = 12_000;
+const MEMORY_CHECK_INTERVAL_MS = 60_000;
+const MEMORY_RELOAD_THRESHOLD_KB = 3 * 1024 * 1024;
+const MEMORY_RELOAD_COOLDOWN_MS = 5 * 60_000;
+const RECOVERY_TOAST_DELAY_MS = 900;
+
+let win: BrowserWindow | null = null;
+let isQuitting = false;
+let rendererReloadTimer: ReturnType<typeof setTimeout> | null = null;
+let flushMode: 'quit' | 'close' = 'quit';
+let isSessionFlushing = false;
+let sessionFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let lastRendererFailureAt = 0;
+let lastMemoryReloadAt = 0;
+let pendingRecoveryMessage: string | null = null;
+let memoryWatchTimer: ReturnType<typeof setInterval> | null = null;
+
+if (VITE_DEV_SERVER_URL) {
+  const exitForDevRestart = () => {
+    isQuitting = true;
+    app.exit(0);
+  };
+
+  process.on('SIGTERM', exitForDevRestart);
+  process.on('SIGINT', exitForDevRestart);
 }
 
-function scheduleRendererRecovery(webContents: Electron.WebContents, source: string): void {
-  if (isQuitting || !win || win.isDestroyed() || win.webContents !== webContents) {
+function shouldRecoverRendererProcess(reason: string): boolean {
+  return (
+    reason === 'crashed' ||
+    reason === 'oom' ||
+    reason === 'abnormal-exit' ||
+    reason === 'killed'
+  );
+}
+
+function recoveryMessageFor(source: string): string {
+  if (source === 'memory-pressure') {
+    return 'O Nexus recarregou a janela para liberar memória.';
+  }
+
+  return 'O Nexus recuperou a janela depois de um fechamento inesperado.';
+}
+
+function noteRendererFailure(): void {
+  lastRendererFailureAt = Date.now();
+}
+
+function sendToWindow(channel: string, ...args: unknown[]): void {
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
     return;
   }
+
+  try {
+    win.webContents.send(channel, ...args);
+  } catch (error) {
+    console.error(`[main] send failed (${channel})`, error);
+  }
+}
+
+function deliverPendingRecoveryMessage(): void {
+  if (!pendingRecoveryMessage) {
+    return;
+  }
+
+  const message = pendingRecoveryMessage;
+  pendingRecoveryMessage = null;
+
+  setTimeout(() => {
+    sendToWindow('app:renderer-recovered', message);
+  }, RECOVERY_TOAST_DELAY_MS);
+}
+
+function scheduleRendererRecovery(webContents: Electron.WebContents | null, source: string): void {
+  if (isQuitting || !win || win.isDestroyed()) {
+    return;
+  }
+
+  if (webContents && win.webContents !== webContents) {
+    return;
+  }
+
+  noteRendererFailure();
+  pendingRecoveryMessage = recoveryMessageFor(source);
 
   if (rendererReloadTimer) {
     clearTimeout(rendererReloadTimer);
@@ -99,13 +177,62 @@ function scheduleRendererRecovery(webContents: Electron.WebContents, source: str
   rendererReloadTimer = setTimeout(() => {
     rendererReloadTimer = null;
 
-    if (isQuitting || !win || win.isDestroyed() || win.webContents.isDestroyed()) {
+    if (isQuitting || !win || win.isDestroyed()) {
+      return;
+    }
+
+    if (win.webContents.isDestroyed()) {
+      console.warn(`[window] recreating window after ${source}`);
+      const appIcon = applyAppBranding();
+      win.destroy();
+      void createWindow(appIcon);
       return;
     }
 
     console.warn(`[window] recovering renderer after ${source}`);
     win.webContents.reload();
   }, 300);
+}
+
+function checkRendererMemory(): void {
+  if (isQuitting || !win || win.isDestroyed() || win.webContents.isDestroyed()) {
+    return;
+  }
+
+  if (Date.now() - lastMemoryReloadAt < MEMORY_RELOAD_COOLDOWN_MS) {
+    return;
+  }
+
+  const rendererPid = win.webContents.getOSProcessId();
+  const metric = app.getAppMetrics().find((entry) => entry.pid === rendererPid);
+  const workingSetKb = metric?.memory.workingSetSize ?? 0;
+
+  if (workingSetKb < MEMORY_RELOAD_THRESHOLD_KB) {
+    return;
+  }
+
+  lastMemoryReloadAt = Date.now();
+  console.warn(`[window] renderer memory ${workingSetKb} KB — scheduling reload`);
+  scheduleRendererRecovery(win.webContents, 'memory-pressure');
+}
+
+function startMemoryWatch(): void {
+  if (memoryWatchTimer) {
+    return;
+  }
+
+  memoryWatchTimer = setInterval(() => {
+    checkRendererMemory();
+  }, MEMORY_CHECK_INTERVAL_MS);
+}
+
+function stopMemoryWatch(): void {
+  if (!memoryWatchTimer) {
+    return;
+  }
+
+  clearInterval(memoryWatchTimer);
+  memoryWatchTimer = null;
 }
 
 function registerProcessDiagnostics(): void {
@@ -119,6 +246,7 @@ function registerProcessDiagnostics(): void {
 
   app.on('render-process-gone', (_event, webContents, details) => {
     console.error('[main] render-process-gone', details);
+    noteRendererFailure();
 
     if (shouldRecoverRendererProcess(details.reason)) {
       scheduleRendererRecovery(webContents, details.reason);
@@ -132,13 +260,6 @@ function registerProcessDiagnostics(): void {
 
 registerProcessDiagnostics();
 
-let win: BrowserWindow | null = null;
-let isQuitting = false;
-let rendererReloadTimer: ReturnType<typeof setTimeout> | null = null;
-let flushMode: 'quit' | 'close' = 'quit';
-let isSessionFlushing = false;
-let sessionFlushTimer: ReturnType<typeof setTimeout> | null = null;
-const SESSION_FLUSH_TIMEOUT_MS = 5000;
 const preload = path.join(__dirname, '../preload/index.cjs');
 
 function completeSessionFlush(): void {
@@ -186,7 +307,7 @@ function requestSessionFlush(mode: 'quit' | 'close'): void {
     completeSessionFlush();
   }, SESSION_FLUSH_TIMEOUT_MS);
 
-  win.webContents.send('app:flush-session');
+  sendToWindow('app:flush-session');
 }
 
 const indexHtml = path.join(RENDERER_DIST, 'index.html');
@@ -272,10 +393,15 @@ async function createWindow(appIcon?: NativeImage) {
 
   win.webContents.on('render-process-gone', (_event, details) => {
     console.error('[window] render-process-gone', details);
+    noteRendererFailure();
 
     if (shouldRecoverRendererProcess(details.reason)) {
       scheduleRendererRecovery(win!.webContents, details.reason);
     }
+  });
+
+  win.webContents.on('did-finish-load', () => {
+    deliverPendingRecoveryMessage();
   });
 
   win.once('ready-to-show', () => {
@@ -490,6 +616,7 @@ app.whenReady().then(() => {
   const appIcon = applyAppBranding();
   createWindow(appIcon);
   registerShortcuts();
+  startMemoryWatch();
   setImmediate(() => {
     startManagedRuntime();
   });
@@ -552,13 +679,27 @@ app.on('window-all-closed', () => {
   void cleanupEmulatorSessions();
 
   if (process.platform !== 'darwin') {
+    stopMemoryWatch();
     stopManagedRuntime();
     app.quit();
   }
 });
 
 app.on('before-quit', (event) => {
-  if (isQuitting || !win || win.isDestroyed()) {
+  if (isQuitting) {
+    stopMemoryWatch();
+    return;
+  }
+
+  const recoveringFromCrash = Date.now() - lastRendererFailureAt < CRASH_QUIT_GRACE_MS;
+
+  if (recoveringFromCrash && win && !win.isDestroyed()) {
+    event.preventDefault();
+    scheduleRendererRecovery(win.webContents, 'quit-during-crash');
+    return;
+  }
+
+  if (!win || win.isDestroyed()) {
     return;
   }
 
@@ -573,6 +714,7 @@ app.on('activate', () => {
 });
 
 app.on('will-quit', () => {
+  stopMemoryWatch();
   globalShortcut.unregisterAll();
   ptyManager.killAll();
   agentPrintRunner.stopAll();

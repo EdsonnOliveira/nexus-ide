@@ -326,6 +326,15 @@ const nexusApi = {
     ipcRenderer.on('app:flush-session', listener);
     return () => ipcRenderer.off('app:flush-session', listener);
   },
+  onRendererRecovered: (callback: (message: string) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, message: string) => {
+      if (typeof message === 'string' && message.length > 0) {
+        callback(message);
+      }
+    };
+    ipcRenderer.on('app:renderer-recovered', listener);
+    return () => ipcRenderer.off('app:renderer-recovered', listener);
+  },
   systemNotifications: {
     list: (limit?: number) => ipcRenderer.invoke('systemNotifications:list', limit),
     getAppIcon: (appId: string, appLabel?: string) =>

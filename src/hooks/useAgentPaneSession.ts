@@ -1266,8 +1266,14 @@ export function useAgentPaneSession({
 
         if (streamJsonStallLabelRef.current) {
           streamJsonStallLabelRef.current = '';
-          clearStreamJsonLiveStatus(streamJsonStateRef.current);
-          clearedStall = true;
+
+          if (clearStreamJsonLiveStatus(streamJsonStateRef.current)) {
+            clearedStall = true;
+          }
+
+          if (ensureStreamJsonStallProgressUi(streamJsonStateRef.current)) {
+            clearedStall = true;
+          }
         }
       }
 

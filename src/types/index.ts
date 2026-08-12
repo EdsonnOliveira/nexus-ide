@@ -1172,6 +1172,7 @@ export interface NexusAPI {
   onBrowserReload: (callback: () => void) => () => void;
   onBrowserFocusUrl: (callback: () => void) => () => void;
   onFlushSession: (callback: () => void) => () => void;
+  onRendererRecovered: (callback: (message: string) => void) => () => void;
   music: {
     getNowPlaying: () => Promise<AppleMusicNowPlaying>;
     getPlaylists: () => Promise<AppleMusicPlaylist[]>;

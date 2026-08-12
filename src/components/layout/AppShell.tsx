@@ -33,6 +33,7 @@ import { projectNeedsBackgroundHost } from '@/utils/paneAgentSession';
 import { useAgentShellTerminalStore } from '@/stores/useAgentShellTerminalStore';
 import { isAnyModalOpen, subscribeOverlayBlockingChange } from '@/utils/overlayBlocking';
 import { requestHomeAskFocus, getHomeDashboardViewMode } from '@/utils/homeDashboardAgents';
+import { useToastStore } from '@/stores/useToastStore';
 
 const LazyHomeDashboard = lazy(() =>
   import('@/components/home/HomeDashboard').then((module) => ({
@@ -330,6 +331,18 @@ function AppShellComponent() {
           console.error('[app-shell] flush session failed', error);
         })
         .finally(finish);
+    });
+
+    return unsubscribe;
+  }, [nexusReady]);
+
+  useEffect(() => {
+    if (!nexusReady) {
+      return;
+    }
+
+    const unsubscribe = window.nexus.onRendererRecovered((message) => {
+      useToastStore.getState().showToast(message);
     });
 
     return unsubscribe;

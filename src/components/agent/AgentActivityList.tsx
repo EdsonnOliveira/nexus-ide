@@ -595,24 +595,19 @@ function AgentActivityListComponent({
   }, [running, visibleActivities]);
 
   const needsWaitingStatus = running && !hasLiveProgressIndicator;
-  const [showWaitingStatus, setShowWaitingStatus] = useState(needsWaitingStatus);
+  const [showWaitingStatus, setShowWaitingStatus] = useState(false);
   const waitingLabel =
     visibleActivities.length === 0 ? 'Thinking...' : 'Planning next moves...';
 
   useEffect(() => {
-    if (needsWaitingStatus) {
-      setShowWaitingStatus(true);
-      return;
-    }
-
-    if (!running) {
+    if (!running || !needsWaitingStatus) {
       setShowWaitingStatus(false);
       return;
     }
 
     const timeoutId = window.setTimeout(() => {
-      setShowWaitingStatus(false);
-    }, 280);
+      setShowWaitingStatus(true);
+    }, 320);
 
     return () => {
       window.clearTimeout(timeoutId);

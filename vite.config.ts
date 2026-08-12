@@ -14,6 +14,14 @@ const external = Object.keys(
 
 const nexusElectronBinary = path.join(__dirname, 'build/Nexus.app/Contents/MacOS/Electron');
 const agentRunningMarker = path.join(os.tmpdir(), 'nexus-ide-agent-running');
+const ELECTRON_RESTART_DEBOUNCE_MS = 400;
+const ELECTRON_EXIT_TIMEOUT_MS = 1500;
+
+type ViteElectronProcess = NodeJS.Process & { electronApp?: ChildProcess | null };
+
+function getViteProcess(): ViteElectronProcess {
+  return process as ViteElectronProcess;
+}
 
 function isInAppAgentRunning(): boolean {
   try {
@@ -23,16 +31,120 @@ function isInAppAgentRunning(): boolean {
   }
 }
 
-function stopBundledElectronApp(): void {
-  const running = (process as NodeJS.Process & { electronApp?: ChildProcess | null }).electronApp;
+function isChildAlive(child: ChildProcess | null | undefined): boolean {
+  return Boolean(child && child.exitCode === null && child.signalCode === null);
+}
 
-  if (!running || running.killed) {
+function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<void> {
+  if (!isChildAlive(child)) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(killTimer);
+      clearTimeout(hardTimer);
+      child.removeListener('exit', finish);
+      resolve();
+    };
+
+    const killTimer = setTimeout(() => {
+      child.kill('SIGKILL');
+    }, timeoutMs);
+
+    const hardTimer = setTimeout(finish, timeoutMs + 500);
+
+    child.once('exit', finish);
+  });
+}
+
+async function stopBundledElectronApp(): Promise<void> {
+  const viteProcess = getViteProcess();
+  const running = viteProcess.electronApp;
+
+  if (!running) {
     return;
   }
 
   running.removeAllListeners('exit');
-  running.kill();
-  (process as NodeJS.Process & { electronApp?: ChildProcess | null }).electronApp = null;
+  const exited = waitForChildExit(running, ELECTRON_EXIT_TIMEOUT_MS);
+
+  if (isChildAlive(running)) {
+    running.kill('SIGTERM');
+  }
+
+  await exited;
+  viteProcess.electronApp = null;
+}
+
+let electronRestartTimer: ReturnType<typeof setTimeout> | null = null;
+let electronRestarting = false;
+let electronRestartQueued = false;
+
+async function restartBundledElectron(startup: () => void): Promise<void> {
+  if (electronRestarting) {
+    electronRestartQueued = true;
+    return;
+  }
+
+  electronRestarting = true;
+
+  try {
+    do {
+      electronRestartQueued = false;
+
+      if (process.platform === 'darwin' && existsSync(nexusElectronBinary)) {
+        const running = getViteProcess().electronApp;
+
+        if (isChildAlive(running) && isInAppAgentRunning()) {
+          console.warn('[vite] skipping Electron restart while in-app agent is running');
+          return;
+        }
+
+        await stopBundledElectronApp();
+
+        const child = spawn(
+          nexusElectronBinary,
+          ['.', '--no-sandbox', '--remote-debugging-port=9222'],
+          {
+            cwd: process.cwd(),
+            stdio: 'inherit',
+            env: { ...process.env, NODE_OPTIONS: undefined },
+          },
+        );
+
+        child.on('exit', () => {
+          getViteProcess().electronApp = null;
+        });
+
+        getViteProcess().electronApp = child;
+        continue;
+      }
+
+      void startup();
+      return;
+    } while (electronRestartQueued);
+  } finally {
+    electronRestarting = false;
+  }
+}
+
+function scheduleBundledElectronRestart(startup: () => void): void {
+  if (electronRestartTimer) {
+    clearTimeout(electronRestartTimer);
+  }
+
+  electronRestartTimer = setTimeout(() => {
+    electronRestartTimer = null;
+    void restartBundledElectron(startup);
+  }, ELECTRON_RESTART_DEBOUNCE_MS);
 }
 
 export default defineConfig(({ command }) => {
@@ -68,38 +180,7 @@ export default defineConfig(({ command }) => {
           input: 'electron/main/index.ts',
           plugins: [notBundle()],
           onstart({ startup }) {
-            if (process.platform === 'darwin' && existsSync(nexusElectronBinary)) {
-              const running = (process as NodeJS.Process & { electronApp?: ChildProcess | null })
-                .electronApp;
-
-              if (running && !running.killed && isInAppAgentRunning()) {
-                console.warn(
-                  '[vite] skipping Electron restart while in-app agent is running',
-                );
-                return;
-              }
-
-              stopBundledElectronApp();
-
-              const child = spawn(
-                nexusElectronBinary,
-                ['.', '--no-sandbox', '--remote-debugging-port=9222'],
-                {
-                  cwd: process.cwd(),
-                  stdio: 'inherit',
-                  env: { ...process.env, NODE_OPTIONS: undefined },
-                },
-              );
-
-              child.on('exit', () => {
-                process.electronApp = null;
-              });
-
-              process.electronApp = child;
-              return;
-            }
-
-            void startup();
+            scheduleBundledElectronRestart(startup);
           },
           options: {
             build: {
