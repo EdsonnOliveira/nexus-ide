@@ -85,6 +85,7 @@ function BrowserViewComponent({
   const suppressStoreLoadRef = useRef(false);
   const loadFailedRef = useRef(false);
   const pageReadyRef = useRef(false);
+  const offlineProbeMissesRef = useRef(0);
   const siteStatusRef = useRef<BrowserSiteStatus>('checking');
   const zoomFactorRef = useRef(1);
   const normalizedUrl = useMemo(() => normalizeBrowserUrl(url), [url]);
@@ -330,6 +331,7 @@ function BrowserViewComponent({
   const applyLocalProbeResult = useCallback((reachable: boolean) => {
     if (reachable) {
       loadFailedRef.current = false;
+      offlineProbeMissesRef.current = 0;
       setSiteStatus('online');
       return;
     }
@@ -353,7 +355,6 @@ function BrowserViewComponent({
     ) {
       loadFailedRef.current = false;
       pageReadyRef.current = true;
-      setSiteStatus('online');
       return true;
     }
 
@@ -362,7 +363,12 @@ function BrowserViewComponent({
 
   const loadWebviewUrl = useCallback((webview: WebviewTag, targetUrl: string) => {
     try {
-      const result = webview.loadURL(targetUrl) as unknown;
+      const options = isLocalDevUrl(targetUrl)
+        ? { extraHeaders: 'Cache-Control: no-cache\nPragma: no-cache\n' }
+        : undefined;
+      const result = (
+        options ? webview.loadURL(targetUrl, options) : webview.loadURL(targetUrl)
+      ) as unknown;
 
       if (
         result &&
@@ -848,6 +854,14 @@ function BrowserViewComponent({
       syncNavigationState();
 
       if (markOnlineIfSameTarget(event.url)) {
+        if (
+          isLocalDevUrl(event.url) &&
+          siteStatusRef.current === 'checking' &&
+          pageReadyRef.current
+        ) {
+          void validateSiteStatus(normalizedUrlRef.current);
+        }
+
         return;
       }
 
@@ -886,11 +900,7 @@ function BrowserViewComponent({
       syncNavigationState();
 
       const currentUrl = webview.getURL();
-
-      if (markOnlineIfSameTarget(currentUrl)) {
-        tryRunPendingBrowserAutofill(currentUrl);
-        return;
-      }
+      markOnlineIfSameTarget(currentUrl);
 
       void validateSiteStatus(normalizedUrlRef.current).then(() => {
         tryRunPendingBrowserAutofill(currentUrl || normalizedUrlRef.current);
@@ -1049,34 +1059,18 @@ function BrowserViewComponent({
     pageReadyRef.current = false;
 
     if (isLocalDevUrl(targetUrl)) {
-      setSiteStatus('checking');
+      if (siteStatusRef.current !== 'online') {
+        setSiteStatus('checking');
+      }
     } else {
       setSiteStatus('online');
     }
 
-    try {
-      const currentUrl = webview.getURL();
+    committedUrlRef.current = targetUrl;
 
-      if (!currentUrl || currentUrl === 'about:blank' || isBrowserErrorPageUrl(currentUrl)) {
-        committedUrlRef.current = targetUrl;
-
-        if (!loadWebviewUrl(webview, targetUrl)) {
-          committedUrlRef.current = '';
-        }
-
-        return;
-      }
-    } catch {
-      committedUrlRef.current = targetUrl;
-
-      if (!loadWebviewUrl(webview, targetUrl)) {
-        committedUrlRef.current = '';
-      }
-
-      return;
+    if (!loadWebviewUrl(webview, targetUrl)) {
+      committedUrlRef.current = '';
     }
-
-    webview.reload();
   }, [loadWebviewUrl]);
 
   const isFocusedRef = useRef(isFocused);
@@ -1184,7 +1178,9 @@ function BrowserViewComponent({
     pageReadyRef.current = false;
 
     if (isLocalDevUrl(normalizedUrl)) {
-      setSiteStatus('checking');
+      if (siteStatusRef.current !== 'online') {
+        setSiteStatus('checking');
+      }
     } else {
       setSiteStatus('online');
     }
@@ -1215,10 +1211,6 @@ function BrowserViewComponent({
         return;
       }
 
-      if (siteStatusRef.current === 'online' && pageReadyRef.current) {
-        return;
-      }
-
       const reachable = await probeSiteReachable(normalizedUrl);
 
       if (cancelled) {
@@ -1227,14 +1219,29 @@ function BrowserViewComponent({
 
       const currentStatus = siteStatusRef.current;
 
+      if (reachable) {
+        offlineProbeMissesRef.current = 0;
+      }
+
       if ((currentStatus === 'offline' || currentStatus === 'checking') && reachable) {
         handleServerBecameReachable(normalizedUrl, currentStatus);
         return;
       }
 
       if (currentStatus === 'online' && !reachable) {
+        offlineProbeMissesRef.current += 1;
+
+        if (offlineProbeMissesRef.current < 2) {
+          return;
+        }
+
         loadFailedRef.current = true;
         pageReadyRef.current = false;
+        applyLocalProbeResult(false);
+        return;
+      }
+
+      if (currentStatus === 'checking' && !reachable) {
         applyLocalProbeResult(false);
       }
     };

@@ -1086,6 +1086,34 @@ function AgentComposerComponent({
     inputRef.current?.focus();
   }, [inputRef, onDraftChange, skillDraft.body, skillDraft.skillCommand]);
 
+  const handleSelectSkill = useCallback(
+    (hint: TerminalCommandHint) => {
+      const skillCommand = `/${hint.label.trim().replace(/^\/+/, '')}`;
+      const body = skillDraft.hasSkill ? skillDraft.body : draft;
+      const trimmedBody = body.trimStart();
+      const nextValue = trimmedBody ? `${skillCommand} ${trimmedBody}` : `${skillCommand} `;
+
+      onDraftChange(nextValue);
+
+      window.requestAnimationFrame(() => {
+        const textarea = inputRef.current;
+
+        if (!textarea) {
+          return;
+        }
+
+        const parsed = parseComposerSkillDraft(nextValue, skillHints);
+        const nextCaretInInput = parsed.hasSkill ? trimmedBody.length : nextValue.length;
+
+        textarea.focus({ preventScroll: true });
+        textarea.setSelectionRange(nextCaretInInput, nextCaretInInput);
+        setCaretIndex(nextCaretInInput);
+        resizeComposerInput(textarea);
+      });
+    },
+    [draft, inputRef, onDraftChange, skillDraft.body, skillDraft.hasSkill, skillHints],
+  );
+
   const handleDraftChange = useCallback(
     (event: ChangeEvent<HTMLTextAreaElement>) => {
       if (!promptHistoryNavigatingRef.current) {
@@ -1325,6 +1353,7 @@ function AgentComposerComponent({
                 cwd={projectPath}
                 isVisible={isVisible}
                 onRunCommand={onRunCommand}
+                onSelectSkill={handleSelectSkill}
                 onAttachImage={() => void handleAttachImage()}
                 onAttachFile={() => void handleAttachFile()}
                 onRequestComposerFocus={() => inputRef.current?.focus({ preventScroll: true })}

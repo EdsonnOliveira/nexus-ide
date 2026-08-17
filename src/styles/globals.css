@@ -14260,11 +14260,19 @@ html.cmd-pressed .markdown-preview a.markdown-preview__link:hover {
 .browser-panel__device-frame-host--hidden,
 .browser-panel__device-frame--hidden {
   position: absolute;
-  width: 1px;
-  height: 1px;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
   opacity: 0;
   pointer-events: none;
+  z-index: 0;
+}
+
+.browser-panel__split-page--checking .browser-panel__site-state,
+.browser-panel__split-page--offline .browser-panel__site-state {
+  position: relative;
+  z-index: 1;
 }
 
 .browser-panel__split-page--online .browser-panel__device-frame:not(.browser-panel__device-frame--preset) {

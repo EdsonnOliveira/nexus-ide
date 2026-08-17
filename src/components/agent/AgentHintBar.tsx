@@ -101,6 +101,7 @@ interface AgentComposerPlusMenuProps {
   cwd: string;
   isVisible: boolean;
   onRunCommand: (command: string) => void;
+  onSelectSkill?: (hint: TerminalCommandHint) => void;
   onAttachImage: () => void;
   onAttachFile: () => void;
   onRemoveAgent?: () => void;
@@ -118,6 +119,7 @@ function AgentComposerPlusMenuComponent({
   cwd,
   isVisible,
   onRunCommand,
+  onSelectSkill,
   onAttachImage,
   onAttachFile,
   onRemoveAgent,
@@ -194,11 +196,22 @@ function AgentComposerPlusMenuComponent({
   }, [onRequestComposerFocus]);
 
   const handleSelect = useCallback(
-    (command: string) => {
-      onRunCommand(command);
+    (hint: TerminalCommandHint) => {
+      if (hint.hintKind === 'skill') {
+        if (onSelectSkill) {
+          onSelectSkill(hint);
+        } else {
+          onRunCommand(hint.command);
+        }
+
+        handleClose();
+        return;
+      }
+
+      onRunCommand(hint.command);
       handleClose();
     },
-    [handleClose, onRunCommand],
+    [handleClose, onRunCommand, onSelectSkill],
   );
 
   const handleAttachImage = useCallback(() => {
@@ -387,7 +400,7 @@ interface AgentComposerPlusMenuPanelProps {
   menuPlacement: 'above' | 'below';
   menuAlign: 'start' | 'end';
   onClose: () => void;
-  onSelect: (command: string) => void;
+  onSelect: (hint: TerminalCommandHint) => void;
   onAttachImage: () => void;
   onAttachFile: () => void;
   onRemoveAgent?: () => void;
@@ -454,7 +467,10 @@ function AgentComposerPlusMenuPanelComponent({
         key={hint.id}
         type='button'
         className={`context-menu__item app-button${isMode ? ' agent-view__composer-plus-item--mode' : ''}${isActive ? ' context-menu__item--active' : ''}`}
-        onClick={() => onSelect(hint.command)}
+        onMouseDown={(event) => {
+          event.preventDefault();
+        }}
+        onClick={() => onSelect(hint)}
       >
         <AgentHintLeading hint={hint} />
         <span className='agent-view__composer-plus-item-label'>{shortenMenuLabel(hint.label)}</span>

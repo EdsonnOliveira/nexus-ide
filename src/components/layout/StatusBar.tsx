@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useState, type MouseEvent } from 'react';
-import { Bug, Folder, GitBranch, Keyboard, Mic, Settings } from 'lucide-react';
+import { Folder, GitBranch, Mic, Settings } from 'lucide-react';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { StatusBarBranchMenu } from '@/components/layout/StatusBarBranchMenu';
 import { SettingsModal } from '@/components/settings/SettingsModal';
@@ -288,12 +288,6 @@ function StatusBarComponent({ onToggleJarvis }: StatusBarProps) {
 
         <div className='status-bar__right'>
           <div className='status-bar__actions'>
-            <button type='button' className='status-bar__btn app-button app-button--enter' aria-label='Depurar'>
-              <Bug size={12} />
-            </button>
-            <button type='button' className='status-bar__btn app-button app-button--enter' aria-label='Atalhos'>
-              <Keyboard size={12} />
-            </button>
             <button
               type='button'
               className={jarvisButtonClassName}

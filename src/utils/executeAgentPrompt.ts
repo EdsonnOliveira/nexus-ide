@@ -1,7 +1,9 @@
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import type { Project } from '@/types';
+import { isCursorAgentStreamJsonCli } from '@/utils/agentCliSession';
 import { submitAgentPanePrompt, hasAgentPaneSubmit } from '@/utils/agentPaneRegistry';
+import { resolveAgentTabCli } from '@/utils/agentTabHelpers';
 import { attachAgentPromptImagesToPane } from '@/utils/attachAgentPromptImage';
 import { collectOpenAgentPanes } from '@/utils/collectOpenAgentPanes';
 import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
@@ -13,6 +15,10 @@ import { waitForAgentPaneReady } from '@/utils/waitForAgentPaneReady';
 const PANE_FOCUS_DELAY_MS = 100;
 const SETUP_COMMAND_DELAY_MS = 220;
 const PROMPT_EXTRA_DELAY_MS = 320;
+const WRITABLE_POLL_MS = 50;
+const WRITABLE_ATTEMPTS = 80;
+const SUBMIT_ATTEMPTS = 40;
+const SUBMIT_POLL_MS = 50;
 const AGENT_SUBMIT_KEY = '\r';
 
 function delay(ms: number): Promise<void> {
@@ -21,42 +27,52 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-async function waitForWritablePane(paneId: string, attempts = 150): Promise<'agent-ui' | 'terminal' | null> {
-  return new Promise((resolve) => {
-    let remaining = attempts;
+async function waitForWritablePane(paneId: string): Promise<'agent-ui' | 'terminal' | null> {
+  for (let attempt = 0; attempt < WRITABLE_ATTEMPTS; attempt += 1) {
+    if (hasAgentPaneSubmit(paneId)) {
+      const project = useProjectStore.getState().getActiveProject();
+      const pane = project ? findPaneTab(project.tabs, paneId) : null;
 
-    const tryResolve = async () => {
-      if (hasAgentPaneSubmit(paneId)) {
-        const project = useProjectStore.getState().getActiveProject();
-        const pane = project ? findPaneTab(project.tabs, paneId) : null;
+      if (pane?.type === 'agent') {
+        if (isCursorAgentStreamJsonCli(resolveAgentTabCli(pane))) {
+          return 'agent-ui';
+        }
 
-        if (pane?.type === 'agent' && pane.ptyId && (await window.nexus.terminal.has(pane.ptyId))) {
-          resolve('agent-ui');
-          return;
+        if (pane.ptyId && (await window.nexus.terminal.has(pane.ptyId))) {
+          return 'agent-ui';
         }
       }
+    }
 
-      const handle = getTerminalHandle(paneId);
+    const handle = getTerminalHandle(paneId);
 
-      if (handle?.isWritable()) {
-        resolve('terminal');
-        return;
-      }
+    if (handle?.isWritable()) {
+      return 'terminal';
+    }
 
-      remaining -= 1;
+    await delay(WRITABLE_POLL_MS);
+  }
 
-      if (remaining <= 0) {
-        resolve(null);
-        return;
-      }
+  return null;
+}
 
-      window.requestAnimationFrame(() => {
-        void tryResolve();
-      });
-    };
+async function submitAgentUiPrompt(paneId: string, prompt: string): Promise<boolean> {
+  for (let attempt = 0; attempt < SUBMIT_ATTEMPTS; attempt += 1) {
+    if (!hasAgentPaneSubmit(paneId)) {
+      await delay(SUBMIT_POLL_MS);
+      continue;
+    }
 
-    void tryResolve();
-  });
+    const submitted = await submitAgentPanePrompt(paneId, prompt);
+
+    if (submitted) {
+      return true;
+    }
+
+    await delay(SUBMIT_POLL_MS);
+  }
+
+  return false;
 }
 
 interface ExecuteAgentPromptOptions {
@@ -136,7 +152,7 @@ export async function executeAgentPrompt({
     }
 
     if (trimmedPrompt) {
-      return await submitAgentPanePrompt(paneId, trimmedPrompt);
+      return await submitAgentUiPrompt(paneId, trimmedPrompt);
     }
 
     return true;
