@@ -11,8 +11,10 @@ export type VercelDeploymentState =
 
 export interface VercelActiveDeployment {
   uid: string;
+  credentialId: string;
   projectId: string;
   projectName: string;
+  accountLabel: string;
   branch: string;
   commitSha: string;
   commitMessage: string;
@@ -28,6 +30,7 @@ export interface VercelActiveDeployment {
 
 const VERCEL_API_BASE = 'https://api.vercel.com';
 const REQUEST_TIMEOUT_MS = 20_000;
+const MAX_LISTED_DEPLOYS = 20;
 
 interface VercelApiError extends Error {
   statusCode?: number;
@@ -411,6 +414,8 @@ function buildCommitUrl(meta: VercelDeploymentMeta | undefined): string | null {
 
 async function mapDeploymentRecord(
   token: string,
+  credentialId: string,
+  accountLabel: string,
   deployment: VercelDeploymentRecord,
 ): Promise<VercelActiveDeployment | null> {
   const uid = deployment.uid?.trim();
@@ -428,8 +433,10 @@ async function mapDeploymentRecord(
 
   return {
     uid,
+    credentialId,
     projectId,
     projectName: project?.name?.trim() || deployment.name?.trim() || 'Projeto',
+    accountLabel,
     branch: readBranch(deployment.meta),
     commitSha,
     commitMessage: readCommitMessage(deployment.meta),
@@ -459,7 +466,35 @@ export async function validateVercelToken(token: string): Promise<boolean> {
   }
 }
 
-export async function listRecentVercelDeployments(token: string): Promise<VercelActiveDeployment[]> {
+export async function resolveVercelAccountLabel(token: string): Promise<string> {
+  const trimmed = token.trim();
+
+  if (!trimmed) {
+    return 'Conta Vercel';
+  }
+
+  try {
+    const response = await requestJson<{
+      user?: { name?: string; username?: string; email?: string };
+    }>(trimmed, '/v2/user');
+    const user = response.user;
+
+    return (
+      user?.name?.trim() ||
+      user?.username?.trim() ||
+      user?.email?.trim() ||
+      'Conta Vercel'
+    );
+  } catch {
+    return 'Conta Vercel';
+  }
+}
+
+export async function listRecentVercelDeployments(
+  token: string,
+  credentialId = '',
+  accountLabel = 'Conta Vercel',
+): Promise<VercelActiveDeployment[]> {
   const trimmed = token.trim();
 
   if (!trimmed) {
@@ -496,12 +531,43 @@ export async function listRecentVercelDeployments(token: string): Promise<Vercel
   }
 
   const mapped = await Promise.all(
-    [...records.values()].map((deployment) => mapDeploymentRecord(trimmed, deployment)),
+    [...records.values()].map((deployment) =>
+      mapDeploymentRecord(trimmed, credentialId, accountLabel, deployment),
+    ),
   );
 
-  return mapped
-    .filter((deployment): deployment is VercelActiveDeployment => deployment !== null)
-    .sort((left, right) => right.createdAt - left.createdAt);
+  return mapped.filter((deployment): deployment is VercelActiveDeployment => deployment !== null);
+}
+
+function isInProgressState(state: VercelDeploymentState): boolean {
+  return state === 'BUILDING' || state === 'QUEUED' || state === 'INITIALIZING';
+}
+
+export function mergeVercelDeployments(
+  deployments: VercelActiveDeployment[],
+): VercelActiveDeployment[] {
+  const unique = new Map<string, VercelActiveDeployment>();
+
+  for (const deployment of deployments) {
+    const key = `${deployment.credentialId}:${deployment.uid}`;
+
+    if (!unique.has(key)) {
+      unique.set(key, deployment);
+    }
+  }
+
+  return [...unique.values()]
+    .sort((left, right) => {
+      const leftActive = isInProgressState(left.state) ? 1 : 0;
+      const rightActive = isInProgressState(right.state) ? 1 : 0;
+
+      if (leftActive !== rightActive) {
+        return rightActive - leftActive;
+      }
+
+      return right.createdAt - left.createdAt;
+    })
+    .slice(0, MAX_LISTED_DEPLOYS);
 }
 
 export async function listActiveVercelDeployments(token: string): Promise<VercelActiveDeployment[]> {

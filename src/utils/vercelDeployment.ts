@@ -185,3 +185,7 @@ export function getVercelDeploymentPreviewUrl(url: string | null): string | null
 export function isVercelFailedDeployment(state: VercelDeploymentState): boolean {
   return state === 'ERROR' || state === 'BLOCKED';
 }
+
+export function isVercelInProgressDeployment(state: VercelDeploymentState): boolean {
+  return state === 'BUILDING' || state === 'QUEUED' || state === 'INITIALIZING';
+}

@@ -9,6 +9,7 @@ import {
   shell,
   type NativeImage,
 } from 'electron';
+import { appendFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { registerApiHandlers } from './ipc/api';
@@ -33,6 +34,7 @@ import { registerCalendarHandlers } from './ipc/calendar';
 import { registerMacParakeetHandlers } from './ipc/macParakeet';
 import { registerJarvisHandlers } from './ipc/jarvis';
 import { registerVercelHandlers } from './ipc/vercel';
+import { registerRenderHandlers } from './ipc/render';
 import { registerCursorUsageHandlers } from './ipc/cursorUsage';
 import { registerWhatsAppHandlers } from './ipc/whatsapp';
 import { registerSessionHandlers } from './ipc/session';
@@ -78,8 +80,23 @@ app.setName(DOCK_APP_NAME);
 app.setPath('userData', path.join(app.getPath('appData'), 'nexus-ide'));
 app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
 
+function logLifecycle(message: string, extra?: unknown): void {
+  const line = extra === undefined
+    ? `[lifecycle] ${message}`
+    : `[lifecycle] ${message} ${JSON.stringify(extra)}`;
+  console.error(line);
+
+  try {
+    appendFileSync(
+      path.join(app.getPath('userData'), 'main.log'),
+      `${new Date().toISOString()} ${line}\n`,
+    );
+  } catch {
+  }
+}
+
 if (!app.requestSingleInstanceLock()) {
-  console.error('[main] another instance is already running — quitting');
+  logLifecycle('another instance is already running — quitting');
   app.quit();
   process.exit(0);
 }
@@ -99,17 +116,23 @@ let isSessionFlushing = false;
 let sessionFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let lastRendererFailureAt = 0;
 let lastMemoryReloadAt = 0;
+let lastQuitAttemptAt = 0;
+let quitFlushAttempts = 0;
 let pendingRecoveryMessage: string | null = null;
 let memoryWatchTimer: ReturnType<typeof setInterval> | null = null;
 
 if (VITE_DEV_SERVER_URL) {
-  const exitForDevRestart = () => {
+  const exitForDevRestart = (signal: string) => {
+    logLifecycle(`received ${signal} — exiting for dev restart`);
     isQuitting = true;
     app.exit(0);
   };
 
-  process.on('SIGTERM', exitForDevRestart);
-  process.on('SIGINT', exitForDevRestart);
+  process.on('SIGTERM', () => exitForDevRestart('SIGTERM'));
+  process.on('SIGINT', () => exitForDevRestart('SIGINT'));
+  process.on('SIGHUP', () => {
+    logLifecycle('ignored SIGHUP');
+  });
 }
 
 function shouldRecoverRendererProcess(reason: string): boolean {
@@ -124,6 +147,10 @@ function shouldRecoverRendererProcess(reason: string): boolean {
 function recoveryMessageFor(source: string): string {
   if (source === 'memory-pressure') {
     return 'O Nexus recarregou a janela para liberar memória.';
+  }
+
+  if (source === 'quit-flush-timeout') {
+    return 'O Nexus travou ao sair e foi recuperado. Cmd+Q de novo para fechar.';
   }
 
   return 'O Nexus recuperou a janela depois de um fechamento inesperado.';
@@ -182,14 +209,15 @@ function scheduleRendererRecovery(webContents: Electron.WebContents | null, sour
     }
 
     if (win.webContents.isDestroyed()) {
-      console.warn(`[window] recreating window after ${source}`);
+      logLifecycle(`recreating window after ${source}`);
       const appIcon = applyAppBranding();
-      win.destroy();
+      const dying = win;
+      dying.destroy();
       void createWindow(appIcon);
       return;
     }
 
-    console.warn(`[window] recovering renderer after ${source}`);
+    logLifecycle(`recovering renderer after ${source}`);
     win.webContents.reload();
   }, 300);
 }
@@ -212,7 +240,7 @@ function checkRendererMemory(): void {
   }
 
   lastMemoryReloadAt = Date.now();
-  console.warn(`[window] renderer memory ${workingSetKb} KB — scheduling reload`);
+  logLifecycle(`renderer memory ${workingSetKb} KB — scheduling reload`);
   scheduleRendererRecovery(win.webContents, 'memory-pressure');
 }
 
@@ -237,15 +265,15 @@ function stopMemoryWatch(): void {
 
 function registerProcessDiagnostics(): void {
   process.on('uncaughtException', (error) => {
-    console.error('[main] uncaughtException', error);
+    logLifecycle('uncaughtException', String(error?.stack ?? error));
   });
 
   process.on('unhandledRejection', (reason) => {
-    console.error('[main] unhandledRejection', reason);
+    logLifecycle('unhandledRejection', String(reason));
   });
 
   app.on('render-process-gone', (_event, webContents, details) => {
-    console.error('[main] render-process-gone', details);
+    logLifecycle('render-process-gone', details);
     noteRendererFailure();
 
     if (shouldRecoverRendererProcess(details.reason)) {
@@ -254,13 +282,24 @@ function registerProcessDiagnostics(): void {
   });
 
   app.on('child-process-gone', (_event, details) => {
-    console.error('[main] child-process-gone', details);
+    logLifecycle('child-process-gone', details);
   });
 }
 
 registerProcessDiagnostics();
 
 const preload = path.join(__dirname, '../preload/index.cjs');
+
+function cancelPendingSessionFlush(): void {
+  isSessionFlushing = false;
+  flushMode = 'quit';
+  isQuitting = false;
+
+  if (sessionFlushTimer) {
+    clearTimeout(sessionFlushTimer);
+    sessionFlushTimer = null;
+  }
+}
 
 function completeSessionFlush(): void {
   if (!isSessionFlushing) {
@@ -275,9 +314,16 @@ function completeSessionFlush(): void {
   }
 
   const mode = flushMode;
-  isQuitting = true;
+  logLifecycle(`session flush complete mode=${mode}`);
 
   if (mode === 'close') {
+    if (process.platform === 'darwin' && win && !win.isDestroyed()) {
+      win.hide();
+      flushMode = 'quit';
+      return;
+    }
+
+    isQuitting = true;
     ptyManager.killAll();
     agentPrintRunner.stopAll();
     testRunnerSession.stopAll();
@@ -287,6 +333,7 @@ function completeSessionFlush(): void {
     return;
   }
 
+  isQuitting = true;
   app.quit();
 }
 
@@ -303,7 +350,30 @@ function requestSessionFlush(mode: 'quit' | 'close'): void {
   }
 
   sessionFlushTimer = setTimeout(() => {
-    console.warn('[session] flush timeout — forcing close');
+    if (flushMode === 'quit') {
+      const now = Date.now();
+
+      if (now - lastQuitAttemptAt > 15_000) {
+        quitFlushAttempts = 0;
+      }
+
+      quitFlushAttempts += 1;
+      lastQuitAttemptAt = now;
+
+      if (quitFlushAttempts < 2 && win && !win.isDestroyed()) {
+        logLifecycle('session flush timeout — canceling quit and recovering');
+        cancelPendingSessionFlush();
+        scheduleRendererRecovery(win.webContents, 'quit-flush-timeout');
+        win.show();
+        win.focus();
+        return;
+      }
+
+      logLifecycle('session flush timeout — forcing quit after retry');
+    } else {
+      logLifecycle('session flush timeout — forcing close');
+    }
+
     completeSessionFlush();
   }, SESSION_FLUSH_TIMEOUT_MS);
 
@@ -392,7 +462,7 @@ async function createWindow(appIcon?: NativeImage) {
   });
 
   win.webContents.on('render-process-gone', (_event, details) => {
-    console.error('[window] render-process-gone', details);
+    logLifecycle('window render-process-gone', details);
     noteRendererFailure();
 
     if (shouldRecoverRendererProcess(details.reason)) {
@@ -410,12 +480,20 @@ async function createWindow(appIcon?: NativeImage) {
   });
 
   if (VITE_DEV_SERVER_URL) {
-    await win.loadURL(VITE_DEV_SERVER_URL);
+    try {
+      await win.loadURL(VITE_DEV_SERVER_URL);
+    } catch (error) {
+      logLifecycle('loadURL failed', String(error));
+    }
   } else {
-    await win.loadFile(indexHtml);
+    try {
+      await win.loadFile(indexHtml);
+    } catch (error) {
+      logLifecycle('loadFile failed', String(error));
+    }
   }
 
-  if (!win.isVisible()) {
+  if (!win.isDestroyed() && !win.isVisible()) {
     win.show();
     win.focus();
   }
@@ -428,11 +506,18 @@ async function createWindow(appIcon?: NativeImage) {
     return { action: 'deny' };
   });
 
+  const createdWindow = win;
+
   win.on('closed', () => {
+    if (win !== createdWindow) {
+      return;
+    }
+
     ptyManager.setWindow(null);
     agentPrintRunner.setWindow(null);
     testRunnerSession.setWindow(null);
     win = null;
+    logLifecycle('window closed');
   });
 
   win.on('close', (event) => {
@@ -440,6 +525,7 @@ async function createWindow(appIcon?: NativeImage) {
       return;
     }
 
+    logLifecycle('window close requested');
     event.preventDefault();
     requestSessionFlush('close');
   });
@@ -497,6 +583,16 @@ function isBrowserFocusUrlShortcut(input: Electron.Input): boolean {
   return primaryModifier && !input.alt && !input.shift;
 }
 
+function isQuitShortcut(input: Electron.Input): boolean {
+  if (input.type !== 'keyDown' || input.key.toLowerCase() !== 'q') {
+    return false;
+  }
+
+  const primaryModifier = process.platform === 'darwin' ? input.meta : input.control;
+
+  return primaryModifier && !input.alt && !input.shift;
+}
+
 function isAppReloadShortcut(input: Electron.Input): boolean {
   if (input.type !== 'keyDown' || input.key.toLowerCase() !== 'r') {
     return false;
@@ -534,6 +630,10 @@ function registerWindowShortcuts(window: BrowserWindow): void {
   window.webContents.on('before-input-event', (event, input) => {
     if (!window.isFocused()) {
       return;
+    }
+
+    if (isQuitShortcut(input)) {
+      logLifecycle('Cmd+Q from main window');
     }
 
     if (isAppReloadShortcut(input)) {
@@ -604,6 +704,7 @@ app.whenReady().then(() => {
   registerMacParakeetHandlers();
   registerJarvisHandlers();
   registerVercelHandlers();
+  registerRenderHandlers();
   registerCursorUsageHandlers();
   registerWhatsAppHandlers();
   registerEmulatorHandlers(() => win);
@@ -643,6 +744,11 @@ function registerWebviewHandlers(): void {
     });
 
     contents.on('before-input-event', (event, input) => {
+      if (isQuitShortcut(input)) {
+        event.preventDefault();
+        logLifecycle('blocked Cmd+Q from webview');
+        return;
+      }
       if (isBrowserReloadShortcut(input)) {
         event.preventDefault();
         requestBrowserReloadFromShortcut();
@@ -671,21 +777,29 @@ function registerWebviewHandlers(): void {
 }
 
 app.on('window-all-closed', () => {
+  logLifecycle('window-all-closed');
+
+  if (process.platform === 'darwin') {
+    return;
+  }
+
   globalShortcut.unregisterAll();
   ptyManager.killAll();
   agentPrintRunner.stopAll();
   testRunnerSession.stopAll();
   stopDesktopControlServer();
   void cleanupEmulatorSessions();
-
-  if (process.platform !== 'darwin') {
-    stopMemoryWatch();
-    stopManagedRuntime();
-    app.quit();
-  }
+  stopMemoryWatch();
+  stopManagedRuntime();
+  app.quit();
 });
 
 app.on('before-quit', (event) => {
+  const windowCount = BrowserWindow.getAllWindows().length;
+  logLifecycle(
+    `before-quit isQuitting=${isQuitting} windows=${windowCount} visible=${Boolean(win && !win.isDestroyed() && win.isVisible())}`,
+  );
+
   if (isQuitting) {
     stopMemoryWatch();
     return;
@@ -707,10 +821,20 @@ app.on('before-quit', (event) => {
   requestSessionFlush('quit');
 });
 
+app.on('quit', (_event, exitCode) => {
+  logLifecycle(`quit exitCode=${exitCode}`);
+});
+
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow(applyAppBranding());
+  logLifecycle('activate');
+
+  if (win && !win.isDestroyed()) {
+    win.show();
+    win.focus();
+    return;
   }
+
+  createWindow(applyAppBranding());
 });
 
 app.on('will-quit', () => {
@@ -733,5 +857,6 @@ app.on('second-instance', () => {
     win.restore();
   }
 
+  win.show();
   win.focus();
 });

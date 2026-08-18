@@ -778,8 +778,10 @@ export type VercelDeploymentState =
 
 export interface VercelActiveDeployment {
   uid: string;
+  credentialId: string;
   projectId: string;
   projectName: string;
+  accountLabel: string;
   branch: string;
   commitSha: string;
   commitMessage: string;
@@ -791,6 +793,60 @@ export interface VercelActiveDeployment {
   readyAt: number | null;
   commitUrl: string | null;
   projectAvatarUrl: string | null;
+}
+
+export type VercelAddKeyResult = 'saved' | 'invalid' | 'duplicate' | 'empty';
+
+export interface VercelCredentialSummary {
+  id: string;
+  label: string;
+}
+
+export type RenderDeploymentState =
+  | 'created'
+  | 'queued'
+  | 'build_in_progress'
+  | 'update_in_progress'
+  | 'pre_deploy_in_progress'
+  | 'live'
+  | 'deactivated'
+  | 'build_failed'
+  | 'update_failed'
+  | 'pre_deploy_failed'
+  | 'canceled';
+
+export type RenderAddKeyResult = 'saved' | 'invalid' | 'duplicate' | 'empty';
+
+export interface RenderCredentialSummary {
+  id: string;
+  label: string;
+}
+
+export interface RenderDeploymentLogsQuery {
+  credentialId: string;
+  ownerId: string;
+  serviceId: string;
+  createdAt: number;
+  readyAt: number | null;
+}
+
+export interface RenderActiveDeployment {
+  uid: string;
+  credentialId: string;
+  ownerId: string;
+  projectId: string;
+  projectName: string;
+  accountLabel: string;
+  branch: string;
+  commitSha: string;
+  commitMessage: string;
+  state: RenderDeploymentState;
+  url: string | null;
+  dashboardUrl: string | null;
+  createdAt: number;
+  buildingAt: number | null;
+  readyAt: number | null;
+  commitUrl: string | null;
 }
 
 export type MobileReleaseKind = 'android-aab' | 'android-apk' | 'ios-testflight';
@@ -1264,12 +1320,26 @@ export interface NexusAPI {
   vercel: {
     getTokenConfigured: () => Promise<boolean>;
     getToken: () => Promise<string | null>;
+    listKeys: () => Promise<VercelCredentialSummary[]>;
+    getKeyToken: (id: string) => Promise<string | null>;
+    addKey: (token: string) => Promise<VercelAddKeyResult>;
     saveToken: (token: string) => Promise<boolean>;
+    removeKey: (id: string) => Promise<void>;
     clearToken: () => Promise<void>;
     validateToken: (token: string) => Promise<boolean>;
     getActiveDeployment: () => Promise<VercelActiveDeployment | null>;
     listDeployments: () => Promise<VercelActiveDeployment[]>;
-    getDeploymentLogs: (deploymentUid: string) => Promise<string>;
+    getDeploymentLogs: (deploymentUid: string, credentialId?: string) => Promise<string>;
+  };
+  render: {
+    getKeysConfigured: () => Promise<boolean>;
+    listKeys: () => Promise<RenderCredentialSummary[]>;
+    getKeyToken: (id: string) => Promise<string | null>;
+    addKey: (token: string) => Promise<RenderAddKeyResult>;
+    removeKey: (id: string) => Promise<void>;
+    getActiveDeployment: () => Promise<RenderActiveDeployment | null>;
+    listDeployments: () => Promise<RenderActiveDeployment[]>;
+    getDeploymentLogs: (query: RenderDeploymentLogsQuery) => Promise<string>;
   };
   cursorUsage: {
     getCurrentPeriod: (force?: boolean) => Promise<CursorPeriodUsageSnapshot>;

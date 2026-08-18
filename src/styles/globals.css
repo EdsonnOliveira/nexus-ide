@@ -6026,6 +6026,10 @@ input {
   animation-delay: 300ms;
 }
 
+.sidebar__actions .sidebar__action-btn.app-button--enter:nth-child(6) {
+  animation-delay: 360ms;
+}
+
 .sidebar__action-btn--active {
   color: var(--text-primary);
   background: var(--bg-tab-active);
@@ -6569,6 +6573,61 @@ input {
 .sidebar-vercel-popup__clear:hover:not(:disabled) {
   background: rgba(239, 68, 68, 0.22);
   color: #fff;
+}
+
+.sidebar-render-popup__keys {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.sidebar-render-popup__key {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.sidebar-render-popup__key-label {
+  min-width: 0;
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-render-popup__key-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.sidebar-render-popup__remove {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.sidebar-render-popup__remove:hover:not(:disabled) {
+  background: var(--bg-tab-hover);
+  color: #fca5a5;
 }
 
 .sidebar-vercel-deploy-card {
@@ -14669,6 +14728,12 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   border: 1px solid var(--popup-border);
   box-shadow: var(--popup-shadow);
   pointer-events: auto;
+}
+
+.overlay-popup-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-overlay) - 1);
 }
 
 .agent-cursor-usage__popover.overlay-popup,

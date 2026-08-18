@@ -87,6 +87,8 @@ async function stopBundledElectronApp(): Promise<void> {
 let electronRestartTimer: ReturnType<typeof setTimeout> | null = null;
 let electronRestarting = false;
 let electronRestartQueued = false;
+let unexpectedExitCount = 0;
+let lastElectronSpawnAt = 0;
 
 async function restartBundledElectron(startup: () => void): Promise<void> {
   if (electronRestarting) {
@@ -109,19 +111,50 @@ async function restartBundledElectron(startup: () => void): Promise<void> {
         }
 
         await stopBundledElectronApp();
+        lastElectronSpawnAt = Date.now();
 
         const child = spawn(
           nexusElectronBinary,
           ['.', '--no-sandbox', '--remote-debugging-port=9222'],
           {
             cwd: process.cwd(),
-            stdio: 'inherit',
+            detached: true,
+            stdio: ['ignore', 'pipe', 'pipe'],
             env: { ...process.env, NODE_OPTIONS: undefined },
           },
         );
 
-        child.on('exit', () => {
+        child.stdout?.on('data', (chunk) => {
+          process.stdout.write(chunk);
+        });
+        child.stderr?.on('data', (chunk) => {
+          process.stderr.write(chunk);
+        });
+        child.unref();
+
+        child.on('exit', (code, signal) => {
           getViteProcess().electronApp = null;
+          console.warn(`[vite] Electron exited code=${code} signal=${signal ?? 'none'}`);
+
+          if (electronRestarting) {
+            return;
+          }
+
+          const now = Date.now();
+
+          if (now - lastElectronSpawnAt > 15_000) {
+            unexpectedExitCount = 0;
+          }
+
+          unexpectedExitCount += 1;
+
+          if (unexpectedExitCount > 5) {
+            console.error('[vite] Electron exited repeatedly — not respawning');
+            return;
+          }
+
+          console.warn('[vite] respawning Electron after unexpected exit');
+          scheduleBundledElectronRestart(startup);
         });
 
         getViteProcess().electronApp = child;

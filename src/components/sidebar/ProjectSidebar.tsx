@@ -28,13 +28,18 @@ import { SidebarMailInboxPopup } from '@/components/sidebar/SidebarMailInboxPopu
 import { SidebarMailPanel } from '@/components/sidebar/SidebarMailPanel';
 import { SidebarCalendarEvents } from '@/components/sidebar/SidebarCalendarEvents';
 import { SidebarVercelDeployCard } from '@/components/sidebar/SidebarVercelDeployCard';
+import { SidebarRenderDeployCard } from '@/components/sidebar/SidebarRenderDeployCard';
 import { SidebarMobileReleaseCard } from '@/components/sidebar/SidebarMobileReleaseCard';
 import { SidebarVercelDeploysPopup } from '@/components/sidebar/SidebarVercelDeploysPopup';
+import { SidebarRenderDeploysPopup } from '@/components/sidebar/SidebarRenderDeploysPopup';
 import { SidebarVercelIcon } from '@/components/sidebar/SidebarVercelIcon';
+import { SidebarRenderIcon } from '@/components/sidebar/SidebarRenderIcon';
 import { SidebarVercelTokenPopup } from '@/components/sidebar/SidebarVercelTokenPopup';
+import { SidebarRenderKeysPopup } from '@/components/sidebar/SidebarRenderKeysPopup';
 import { WorkspaceMenu } from '@/components/sidebar/WorkspaceMenu';
 import { WorkspaceContextMenu } from '@/components/sidebar/WorkspaceContextMenu';
 import { useVercelDeployments } from '@/hooks/useVercelDeployments';
+import { useRenderDeployments } from '@/hooks/useRenderDeployments';
 import { useMobileReleases } from '@/hooks/useMobileReleases';
 import { useMobileReleaseCloudSync } from '@/hooks/useMobileReleaseCloudSync';
 import {
@@ -150,6 +155,7 @@ function ProjectSidebarComponent() {
   const whatsappButtonRef = useRef<HTMLButtonElement>(null);
   const mailButtonRef = useRef<HTMLButtonElement>(null);
   const vercelButtonRef = useRef<HTMLButtonElement>(null);
+  const renderButtonRef = useRef<HTMLButtonElement>(null);
   const skipWorkspaceListAnimationRef = useRef(true);
   const flagStartupCheckedRef = useRef(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
@@ -165,7 +171,8 @@ function ProjectSidebarComponent() {
   const [mailPopupOpensOnSave, setMailPopupOpensOnSave] = useState(true);
   const [vercelPopupMode, setVercelPopupMode] = useState<'deploys' | 'token' | null>(null);
   const [vercelPopupAnchor, setVercelPopupAnchor] = useState<DOMRect | null>(null);
-  const vercelReopenDeploysAfterTokenRef = useRef(false);
+  const [renderPopupMode, setRenderPopupMode] = useState<'deploys' | 'keys' | null>(null);
+  const [renderPopupAnchor, setRenderPopupAnchor] = useState<DOMRect | null>(null);
   const [musicPlayerOpen, setMusicPlayerOpen] = useState(false);
   const musicPlayerOpenTick = useGlobalSearchStore((state) => state.musicPlayerOpenTick);
   const [projectListAnimationKey, setProjectListAnimationKey] = useState(0);
@@ -176,6 +183,13 @@ function ProjectSidebarComponent() {
     refreshTokenConfigured: refreshVercelTokenConfigured,
     dismiss: dismissVercelDeployCard,
   } = useVercelDeployments(true);
+  const {
+    keysConfigured: renderKeysConfigured,
+    activeDeployment: renderActiveDeployment,
+    refresh: refreshRenderDeployments,
+    refreshKeysConfigured: refreshRenderKeysConfigured,
+    dismiss: dismissRenderDeployCard,
+  } = useRenderDeployments(true);
   const { visibleReleases: visibleMobileReleases, dismissRelease: dismissMobileRelease } =
     useMobileReleases();
   useMobileReleaseCloudSync(true);
@@ -585,19 +599,12 @@ function ProjectSidebarComponent() {
   }, []);
 
   const handleCloseVercelPopup = useCallback(() => {
-    if (vercelReopenDeploysAfterTokenRef.current) {
-      vercelReopenDeploysAfterTokenRef.current = false;
-      openVercelPopup('deploys');
-      return;
-    }
-
     setVercelPopupMode(null);
     setVercelPopupAnchor(null);
-  }, [openVercelPopup]);
+  }, []);
 
   const handleVercelClick = useCallback(() => {
     if (vercelPopupMode) {
-      vercelReopenDeploysAfterTokenRef.current = false;
       setVercelPopupMode(null);
       setVercelPopupAnchor(null);
       return;
@@ -619,21 +626,60 @@ function ProjectSidebarComponent() {
   );
 
   const handleVercelConfigure = useCallback(() => {
-    vercelReopenDeploysAfterTokenRef.current = true;
     openVercelPopup('token');
   }, [openVercelPopup]);
 
-  const handleVercelTokenSaved = useCallback(() => {
+  const handleVercelKeysChanged = useCallback(() => {
     void refreshVercelTokenConfigured();
     void refreshVercelDeployments();
-    vercelReopenDeploysAfterTokenRef.current = true;
   }, [refreshVercelDeployments, refreshVercelTokenConfigured]);
 
-  const handleVercelTokenCleared = useCallback(() => {
-    vercelReopenDeploysAfterTokenRef.current = false;
-    void refreshVercelTokenConfigured();
-    void refreshVercelDeployments();
-  }, [refreshVercelDeployments, refreshVercelTokenConfigured]);
+  const openRenderPopup = useCallback((mode: 'deploys' | 'keys') => {
+    const rect = renderButtonRef.current?.getBoundingClientRect();
+
+    if (!rect) {
+      return;
+    }
+
+    setRenderPopupAnchor(rect);
+    setRenderPopupMode(mode);
+  }, []);
+
+  const handleCloseRenderPopup = useCallback(() => {
+    setRenderPopupMode(null);
+    setRenderPopupAnchor(null);
+  }, []);
+
+  const handleRenderClick = useCallback(() => {
+    if (renderPopupMode) {
+      setRenderPopupMode(null);
+      setRenderPopupAnchor(null);
+      return;
+    }
+
+    openRenderPopup(renderKeysConfigured ? 'deploys' : 'keys');
+  }, [openRenderPopup, renderPopupMode, renderKeysConfigured]);
+
+  const handleRenderContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (!renderKeysConfigured) {
+        return;
+      }
+
+      event.preventDefault();
+      openRenderPopup('keys');
+    },
+    [openRenderPopup, renderKeysConfigured],
+  );
+
+  const handleRenderConfigure = useCallback(() => {
+    openRenderPopup('keys');
+  }, [openRenderPopup]);
+
+  const handleRenderKeysChanged = useCallback(() => {
+    void refreshRenderKeysConfigured();
+    void refreshRenderDeployments();
+  }, [refreshRenderDeployments, refreshRenderKeysConfigured]);
 
   useEffect(() => {
     setMailPanelOpen(false);
@@ -1204,6 +1250,14 @@ function ProjectSidebarComponent() {
           />
         ) : null}
 
+        {renderActiveDeployment ? (
+          <SidebarRenderDeployCard
+            deployment={renderActiveDeployment}
+            onDismiss={dismissRenderDeployCard}
+            onConfigure={handleRenderConfigure}
+          />
+        ) : null}
+
         <SidebarCalendarEvents />
 
         <button type='button' className='sidebar__add app-button app-button--enter' title='Adicionar projeto' onClick={handleAddProject}>
@@ -1264,6 +1318,17 @@ function ProjectSidebarComponent() {
           >
             <SidebarVercelIcon size={14} />
           </button>
+          <button
+            ref={renderButtonRef}
+            type='button'
+            className={`sidebar__action-btn app-button app-button--enter${renderPopupMode ? ' sidebar__action-btn--active' : ''}`}
+            aria-label='Render'
+            title='Render'
+            onClick={handleRenderClick}
+            onContextMenu={handleRenderContextMenu}
+          >
+            <SidebarRenderIcon size={14} />
+          </button>
         </div>
       </div>
 
@@ -1310,10 +1375,24 @@ function ProjectSidebarComponent() {
       {vercelPopupMode === 'token' && vercelPopupAnchor ? (
         <SidebarVercelTokenPopup
           anchorRect={vercelPopupAnchor}
-          tokenConfigured={vercelTokenConfigured}
           onClose={handleCloseVercelPopup}
-          onSaved={handleVercelTokenSaved}
-          onCleared={handleVercelTokenCleared}
+          onChanged={handleVercelKeysChanged}
+        />
+      ) : null}
+
+      {renderPopupMode === 'deploys' && renderPopupAnchor ? (
+        <SidebarRenderDeploysPopup
+          anchorRect={renderPopupAnchor}
+          onClose={handleCloseRenderPopup}
+          onConfigure={handleRenderConfigure}
+        />
+      ) : null}
+
+      {renderPopupMode === 'keys' && renderPopupAnchor ? (
+        <SidebarRenderKeysPopup
+          anchorRect={renderPopupAnchor}
+          onClose={handleCloseRenderPopup}
+          onChanged={handleRenderKeysChanged}
         />
       ) : null}
 

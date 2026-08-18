@@ -323,7 +323,6 @@ function AgentActivityListComponent({
 
     let lastResponseIndex = -1;
     let lastThoughtIndex = -1;
-    let lastProgressIndex = -1;
 
     for (let index = 0; index < visibleActivities.length; index += 1) {
       const entry = visibleActivities[index];
@@ -334,23 +333,11 @@ function AgentActivityListComponent({
 
       if (entry.kind === 'response' && getSanitizedResponseLabel(entry.label)) {
         lastResponseIndex = index;
-        lastProgressIndex = index;
         continue;
       }
 
       if (entry.kind === 'question' || entry.kind === 'plan') {
         lastResponseIndex = index;
-        lastProgressIndex = index;
-        continue;
-      }
-
-      if (
-        entry.kind === 'tool_run' ||
-        entry.kind === 'file_edit' ||
-        entry.kind === 'file_read' ||
-        entry.kind === 'task'
-      ) {
-        lastProgressIndex = index;
         continue;
       }
 
@@ -359,7 +346,7 @@ function AgentActivityListComponent({
       }
     }
 
-    return lastThoughtIndex > lastResponseIndex && lastThoughtIndex >= lastProgressIndex;
+    return lastThoughtIndex > lastResponseIndex;
   }, [running, visibleActivities]);
 
   const incompleteClosingMessage = INCOMPLETE_THOUGHT_CLOSING_MESSAGE;

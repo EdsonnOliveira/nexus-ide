@@ -116,8 +116,6 @@ const STREAM_JSON_ORPHAN_FINALIZE_MS = 2_000;
 const STREAM_JSON_INCOMPLETE_ORPHAN_FINALIZE_MS = 45_000;
 const STREAM_JSON_HUNG_IDLE_MS = 1_800_000;
 const STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS = 7_200_000;
-const STREAM_JSON_STALLED_OUTPUT_MS = 90_000;
-const STREAM_JSON_READY_OUTPUT_FINALIZE_MS = 8_000;
 const STREAM_JSON_EMPTY_HUNG_IDLE_MS = 90_000;
 const STREAM_JSON_DEAD_PROCESS_FINALIZE_MS = 2_000;
 const STREAM_JSON_IDLE_CHECK_MS = 500;
@@ -1003,6 +1001,10 @@ export function useAgentPaneSession({
         return false;
       }
 
+      if (processRunning) {
+        return false;
+      }
+
       feedAgentStreamJsonChunk(streamJsonStateRef.current, '');
 
       if (
@@ -1220,13 +1222,6 @@ export function useAgentPaneSession({
         const idleMs = Date.now() - lastStreamJsonChunkAtRef.current;
 
         if (processRunning) {
-          if (
-            idleMs >= STREAM_JSON_READY_OUTPUT_FINALIZE_MS &&
-            tryFinalizeSettledStreamJsonTurn(true, 'settleTimer-running')
-          ) {
-            return;
-          }
-
           if (idleMs >= STREAM_JSON_STALL_UI_MS) {
             syncStreamJsonStallLiveStatus(idleMs);
           }
@@ -1248,6 +1243,8 @@ export function useAgentPaneSession({
     (chunk: string): boolean => {
       if (chunk) {
         clearStreamJsonSettleTimer();
+        hasStreamJsonChunkRef.current = true;
+        lastStreamJsonChunkAtRef.current = Date.now();
       }
 
       const streamUpdate = feedAgentStreamJsonChunk(streamJsonStateRef.current, chunk);
@@ -1261,8 +1258,6 @@ export function useAgentPaneSession({
       let clearedStall = false;
 
       if (hasMeaningfulProgress) {
-        hasStreamJsonChunkRef.current = true;
-        lastStreamJsonChunkAtRef.current = Date.now();
 
         if (streamJsonStallLabelRef.current) {
           streamJsonStallLabelRef.current = '';
@@ -1491,8 +1486,10 @@ export function useAgentPaneSession({
         streamJsonStateRef.current.sessionId?.trim() ||
         session.resumeChatIdByPane[paneId]?.trim() ||
         null;
+      const canContinueWithoutId =
+        !resumeChatId && (cursorAgentContinueRef.current || hasStreamJsonChunkRef.current);
 
-      if (!resumeChatId) {
+      if (!resumeChatId && !canContinueWithoutId) {
         return false;
       }
 
@@ -1517,11 +1514,15 @@ export function useAgentPaneSession({
       lastStreamJsonChunkAtRef.current = Date.now();
       bindAgentPrintRunToken(paneId, runToken);
       hasStreamJsonChunkRef.current = true;
-      session.setResumeChatId(paneId, resumeChatId);
+
+      if (resumeChatId) {
+        session.setResumeChatId(paneId, resumeChatId);
+        streamJsonStateRef.current.sessionId = resumeChatId;
+      }
+
       session.setAgentBusy(paneId, true);
       session.markAwaitingResponse(paneId);
       cursorAgentContinueRef.current = true;
-      streamJsonStateRef.current.sessionId = resumeChatId;
 
       const continueTurnId =
         turnsRef.current.find((turn) => turn.running)?.id ?? null;
@@ -1549,7 +1550,7 @@ export function useAgentPaneSession({
           model,
           mode,
           resumeChatId,
-          continueSession: false,
+          continueSession: !resumeChatId,
           runToken,
         });
         streamJsonIncompleteContinueRef.current = false;
@@ -3535,14 +3536,6 @@ export function useAgentPaneSession({
             return;
           }
 
-          if (
-            !hasActiveToolWork &&
-            idleMs >= STREAM_JSON_READY_OUTPUT_FINALIZE_MS &&
-            tryFinalizeSettledStreamJsonTurn(true, 'idleInterval-ready')
-          ) {
-            return;
-          }
-
           if (hasActiveToolWork && idleMs < STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS) {
             if (idleMs >= STREAM_JSON_STALL_UI_MS) {
               syncStreamJsonStallLiveStatus(idleMs);
@@ -3583,22 +3576,11 @@ export function useAgentPaneSession({
             return;
           }
 
-          if (!hasActiveToolWork && idleMs >= STREAM_JSON_READY_OUTPUT_FINALIZE_MS) {
-            forceSettleStreamJsonInFlightWork(streamJsonStateRef.current);
-          }
-
-          const stalledWithOutput =
-            !hasActiveToolWork &&
-            idleMs >= STREAM_JSON_STALLED_OUTPUT_MS &&
-            hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current) &&
-            !hasPendingStreamJsonInteraction(streamJsonStateRef.current) &&
-            !isAgentStreamJsonStateAwaitingCompletion(streamJsonStateRef.current);
-
           const hungIdleExceeded =
             idleMs >=
             (hasActiveToolWork ? STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS : STREAM_JSON_HUNG_IDLE_MS);
 
-          if (hungIdleExceeded || stalledWithOutput) {
+          if (hungIdleExceeded) {
             forceSettleStreamJsonInFlightWork(streamJsonStateRef.current);
             applyStreamJsonChunk('');
 
@@ -3619,9 +3601,7 @@ export function useAgentPaneSession({
             }
 
             if (streamJsonStateRef.current.shouldFinalize) {
-              finalizeStreamJsonTurnFromEvent(
-                stalledWithOutput ? 'stalledOutput-shouldFinalize' : 'hungIdle-shouldFinalize',
-              );
+              finalizeStreamJsonTurnFromEvent('hungIdle-shouldFinalize');
             } else {
               finalizeActiveTurn(true);
             }
@@ -3736,6 +3716,14 @@ export function useAgentPaneSession({
                 : STREAM_JSON_ORPHAN_FINALIZE_MS;
 
         if (idleMs < orphanThreshold) {
+          return;
+        }
+
+        if (
+          tryContinueIncompleteStreamJsonTurnRef.current(() => {
+            clearAgentPrintRunToken(paneId);
+          })
+        ) {
           return;
         }
 

@@ -1,37 +1,37 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, Copy } from 'lucide-react';
+import { Check, Copy, Trash2 } from 'lucide-react';
 import { SidebarVercelIcon } from '@/components/sidebar/SidebarVercelIcon';
 import {
   positionDropdownAboveAnchor,
   useAnchoredDropdownMenu,
 } from '@/hooks/useAnchoredDropdownMenu';
+import type { VercelCredentialSummary } from '@/types';
 
 const COPY_FEEDBACK_MS = 1500;
 
 interface SidebarVercelTokenPopupProps {
   anchorRect: DOMRect;
-  tokenConfigured: boolean;
   onClose: () => void;
-  onSaved: () => void;
-  onCleared: () => void;
+  onChanged: () => void;
 }
 
 function SidebarVercelTokenPopupComponent({
   anchorRect,
-  tokenConfigured,
   onClose,
-  onSaved,
-  onCleared,
+  onChanged,
 }: SidebarVercelTokenPopupProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const copyFeedbackTimeoutRef = useRef<number | null>(null);
+  const copiedKeyTimeoutRef = useRef<number | null>(null);
+  const [keys, setKeys] = useState<VercelCredentialSummary[]>([]);
   const [tokenValue, setTokenValue] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [clearing, setClearing] = useState(false);
-  const [loadingToken, setLoadingToken] = useState(tokenConfigured);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [loadingKeys, setLoadingKeys] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
   const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
     onClose,
     (menu) => positionDropdownAboveAnchor(menu, anchorRect, 'start'),
@@ -39,45 +39,42 @@ function SidebarVercelTokenPopupComponent({
     'modal',
   );
 
-  useEffect(() => {
-    let cancelled = false;
-
-    if (!tokenConfigured || !window.nexus?.vercel?.getToken) {
-      setLoadingToken(false);
+  const loadKeys = useCallback(async () => {
+    if (!window.nexus?.vercel?.listKeys) {
+      setLoadingKeys(false);
       return;
     }
 
-    setLoadingToken(true);
-
-    void window.nexus.vercel.getToken().then((token) => {
-      if (cancelled) {
-        return;
-      }
-
-      if (token) {
-        setTokenValue(token);
-      }
-
-      setLoadingToken(false);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [tokenConfigured]);
+    try {
+      const items = await window.nexus.vercel.listKeys();
+      setKeys(items);
+    } catch {
+      setKeys([]);
+    } finally {
+      setLoadingKeys(false);
+    }
+  }, []);
 
   useEffect(() => {
-    if (loadingToken) {
+    void loadKeys();
+  }, [loadKeys]);
+
+  useEffect(() => {
+    if (loadingKeys) {
       return;
     }
 
     inputRef.current?.focus();
-  }, [loadingToken]);
+  }, [loadingKeys]);
 
   useEffect(() => {
     return () => {
       if (copyFeedbackTimeoutRef.current !== null) {
         window.clearTimeout(copyFeedbackTimeoutRef.current);
+      }
+
+      if (copiedKeyTimeoutRef.current !== null) {
+        window.clearTimeout(copiedKeyTimeoutRef.current);
       }
     };
   }, []);
@@ -94,12 +91,12 @@ function SidebarVercelTokenPopupComponent({
     };
 
     const timeoutId = window.setTimeout(() => {
-      window.addEventListener('mousedown', handlePointerDown);
+      window.addEventListener('mousedown', handlePointerDown, true);
     }, 0);
 
     return () => {
       window.clearTimeout(timeoutId);
-      window.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('mousedown', handlePointerDown, true);
     };
   }, [menuRef, requestClose]);
 
@@ -122,7 +119,7 @@ function SidebarVercelTokenPopupComponent({
     async (event: React.FormEvent<HTMLFormElement>) => {
       event.preventDefault();
 
-      if (!window.nexus?.vercel) {
+      if (!window.nexus?.vercel?.addKey) {
         return;
       }
 
@@ -137,40 +134,53 @@ function SidebarVercelTokenPopupComponent({
       setError(null);
 
       try {
-        const saved = await window.nexus.vercel.saveToken(trimmed);
+        const result = await window.nexus.vercel.addKey(trimmed);
 
-        if (!saved) {
+        if (result === 'invalid' || result === 'empty') {
           setError('Token inválido ou sem permissão na Vercel.');
           return;
         }
 
-        onSaved();
-        requestClose();
+        if (result === 'duplicate') {
+          setError('Esse token já foi adicionado.');
+          return;
+        }
+
+        setTokenValue('');
+        await loadKeys();
+        onChanged();
+      } catch {
+        setError('Não foi possível salvar o token.');
       } finally {
         setSaving(false);
       }
     },
-    [onSaved, requestClose, tokenValue],
+    [loadKeys, onChanged, tokenValue],
   );
 
-  const handleClear = useCallback(async () => {
-    if (!window.nexus?.vercel) {
-      return;
-    }
+  const handleRemove = useCallback(
+    async (id: string) => {
+      if (!window.nexus?.vercel?.removeKey) {
+        return;
+      }
 
-    setClearing(true);
-    setError(null);
+      setRemovingId(id);
+      setError(null);
 
-    try {
-      await window.nexus.vercel.clearToken();
-      onCleared();
-      requestClose();
-    } finally {
-      setClearing(false);
-    }
-  }, [onCleared, requestClose]);
+      try {
+        await window.nexus.vercel.removeKey(id);
+        await loadKeys();
+        onChanged();
+      } catch {
+        setError('Não foi possível remover o token.');
+      } finally {
+        setRemovingId(null);
+      }
+    },
+    [loadKeys, onChanged],
+  );
 
-  const handleCopy = useCallback(async () => {
+  const handleCopyInput = useCallback(async () => {
     const trimmed = tokenValue.trim();
 
     if (!trimmed) {
@@ -194,91 +204,175 @@ function SidebarVercelTokenPopupComponent({
     }
   }, [tokenValue]);
 
+  const handleCopyKey = useCallback(async (id: string) => {
+    if (!window.nexus?.vercel?.getKeyToken) {
+      return;
+    }
+
+    try {
+      const token = await window.nexus.vercel.getKeyToken(id);
+
+      if (!token) {
+        setError('Não foi possível copiar o token.');
+        return;
+      }
+
+      await navigator.clipboard.writeText(token);
+      setCopiedKeyId(id);
+
+      if (copiedKeyTimeoutRef.current !== null) {
+        window.clearTimeout(copiedKeyTimeoutRef.current);
+      }
+
+      copiedKeyTimeoutRef.current = window.setTimeout(() => {
+        setCopiedKeyId(null);
+        copiedKeyTimeoutRef.current = null;
+      }, COPY_FEEDBACK_MS);
+    } catch {
+      setError('Não foi possível copiar o token.');
+    }
+  }, []);
+
   const canCopy = tokenValue.trim().length > 0;
+  const busy = saving || removingId !== null || loadingKeys;
 
   return createPortal(
-    <div
-      ref={menuRef}
-      className={`overlay-popup sidebar-vercel-popup overlay-popup--anchor-start ${animationClass}`}
-    >
-      <form className='sidebar-vercel-popup__form' onSubmit={(event) => void handleSubmit(event)}>
-        <div className='sidebar-vercel-popup__header'>
-          <span className='sidebar-vercel-popup__badge' aria-hidden='true'>
-            <SidebarVercelIcon size={14} />
-          </span>
-          <div className='sidebar-vercel-popup__intro'>
-            <span className='sidebar-vercel-popup__title'>Token da Vercel</span>
-            <span className='sidebar-vercel-popup__subtitle'>
-              Monitore deploys em andamento de toda a sua conta.
+    <>
+      <div
+        className='overlay-popup-scrim'
+        onMouseDown={(event) => {
+          event.preventDefault();
+          requestClose();
+        }}
+      />
+      <div
+        ref={menuRef}
+        className={`overlay-popup sidebar-vercel-popup overlay-popup--anchor-start ${animationClass}`}
+      >
+        <form className='sidebar-vercel-popup__form' onSubmit={(event) => void handleSubmit(event)}>
+          <div className='sidebar-vercel-popup__header'>
+            <span className='sidebar-vercel-popup__badge' aria-hidden='true'>
+              <SidebarVercelIcon size={14} />
             </span>
-          </div>
-        </div>
-
-        <label className='sidebar-vercel-popup__field'>
-          <span className='sidebar-vercel-popup__label'>Access Token</span>
-          <div className='sidebar-vercel-popup__input-row'>
-            <input
-              ref={inputRef}
-              type='text'
-              className='sidebar-vercel-popup__input'
-              value={tokenValue}
-              placeholder={loadingToken ? 'Carregando...' : 'vercel_...'}
-              autoComplete='off'
-              spellCheck={false}
-              disabled={loadingToken}
-              onChange={(event) => {
-                setTokenValue(event.target.value);
-
-                if (error) {
-                  setError(null);
-                }
-              }}
-            />
-            <button
-              type='button'
-              className={`sidebar-vercel-popup__copy app-button app-button--enter${copied ? ' sidebar-vercel-popup__copy--copied' : ''}`}
-              aria-label={copied ? 'Token copiado' : 'Copiar token'}
-              title={copied ? 'Copiado' : 'Copiar'}
-              disabled={!canCopy || loadingToken || saving || clearing}
-              onClick={() => void handleCopy()}
-            >
-              <span
-                className={`sidebar-vercel-popup__copy-icon${copied ? ' sidebar-vercel-popup__copy-icon--copied' : ''}`}
-                aria-hidden='true'
-              >
-                <Copy size={13} strokeWidth={2.25} className='sidebar-vercel-popup__copy-icon-copy' />
-                <Check
-                  size={13}
-                  strokeWidth={2.25}
-                  className='sidebar-vercel-popup__copy-icon-check'
-                />
+            <div className='sidebar-vercel-popup__intro'>
+              <span className='sidebar-vercel-popup__title'>Tokens da Vercel</span>
+              <span className='sidebar-vercel-popup__subtitle'>
+                Adicione um ou mais tokens para monitorar deploys de todas as contas.
               </span>
-            </button>
+            </div>
           </div>
-        </label>
 
-        {error ? <span className='sidebar-vercel-popup__error'>{error}</span> : null}
+          {keys.length > 0 ? (
+            <ul className='sidebar-render-popup__keys'>
+              {keys.map((key) => {
+                const keyCopied = copiedKeyId === key.id;
 
-        <button
-          type='submit'
-          className='sidebar-vercel-popup__submit app-button app-button--enter'
-          disabled={saving || clearing || loadingToken}
-        >
-          {saving ? 'Salvando...' : 'Salvar'}
-        </button>
+                return (
+                  <li key={key.id} className='sidebar-render-popup__key'>
+                    <span className='sidebar-render-popup__key-label' title={key.label}>
+                      {key.label}
+                    </span>
+                    <div className='sidebar-render-popup__key-actions'>
+                      <button
+                        type='button'
+                        className={`sidebar-vercel-popup__copy app-button app-button--enter${keyCopied ? ' sidebar-vercel-popup__copy--copied' : ''}`}
+                        aria-label={keyCopied ? 'Token copiado' : 'Copiar token'}
+                        title={keyCopied ? 'Copiado' : 'Copiar'}
+                        disabled={busy}
+                        onClick={() => void handleCopyKey(key.id)}
+                      >
+                        <span
+                          className={`sidebar-vercel-popup__copy-icon${keyCopied ? ' sidebar-vercel-popup__copy-icon--copied' : ''}`}
+                          aria-hidden='true'
+                        >
+                          <Copy
+                            size={13}
+                            strokeWidth={2.25}
+                            className='sidebar-vercel-popup__copy-icon-copy'
+                          />
+                          <Check
+                            size={13}
+                            strokeWidth={2.25}
+                            className='sidebar-vercel-popup__copy-icon-check'
+                          />
+                        </span>
+                      </button>
+                      <button
+                        type='button'
+                        className='sidebar-render-popup__remove app-button app-button--enter'
+                        aria-label={`Remover ${key.label}`}
+                        title='Remover'
+                        disabled={busy}
+                        onClick={() => void handleRemove(key.id)}
+                      >
+                        <Trash2 size={13} strokeWidth={2.25} />
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
 
-        {tokenConfigured ? (
+          <label className='sidebar-vercel-popup__field'>
+            <span className='sidebar-vercel-popup__label'>Access Token</span>
+            <div className='sidebar-vercel-popup__input-row'>
+              <input
+                ref={inputRef}
+                type='text'
+                className='sidebar-vercel-popup__input'
+                value={tokenValue}
+                placeholder={loadingKeys ? 'Carregando...' : 'vercel_...'}
+                autoComplete='off'
+                spellCheck={false}
+                disabled={loadingKeys}
+                onChange={(event) => {
+                  setTokenValue(event.target.value);
+
+                  if (error) {
+                    setError(null);
+                  }
+                }}
+              />
+              <button
+                type='button'
+                className={`sidebar-vercel-popup__copy app-button app-button--enter${copied ? ' sidebar-vercel-popup__copy--copied' : ''}`}
+                aria-label={copied ? 'Token copiado' : 'Copiar token'}
+                title={copied ? 'Copiado' : 'Copiar'}
+                disabled={!canCopy || busy}
+                onClick={() => void handleCopyInput()}
+              >
+                <span
+                  className={`sidebar-vercel-popup__copy-icon${copied ? ' sidebar-vercel-popup__copy-icon--copied' : ''}`}
+                  aria-hidden='true'
+                >
+                  <Copy
+                    size={13}
+                    strokeWidth={2.25}
+                    className='sidebar-vercel-popup__copy-icon-copy'
+                  />
+                  <Check
+                    size={13}
+                    strokeWidth={2.25}
+                    className='sidebar-vercel-popup__copy-icon-check'
+                  />
+                </span>
+              </button>
+            </div>
+          </label>
+
+          {error ? <span className='sidebar-vercel-popup__error'>{error}</span> : null}
+
           <button
-            type='button'
-            className='sidebar-vercel-popup__clear app-button app-button--enter'
-            disabled={saving || clearing || loadingToken}
-            onClick={() => void handleClear()}
+            type='submit'
+            className='sidebar-vercel-popup__submit app-button app-button--enter'
+            disabled={busy}
           >
-            {clearing ? 'Removendo...' : 'Remover token'}
+            {saving ? 'Adicionando...' : 'Adicionar'}
           </button>
-        ) : null}
-      </form>
-    </div>,
+        </form>
+      </div>
+    </>,
     document.body,
   );
 }

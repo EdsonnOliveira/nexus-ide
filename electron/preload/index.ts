@@ -468,13 +468,27 @@ const nexusApi = {
   vercel: {
     getTokenConfigured: () => ipcRenderer.invoke('vercel:getTokenConfigured'),
     getToken: (): Promise<string | null> => ipcRenderer.invoke('vercel:getToken'),
+    listKeys: () => ipcRenderer.invoke('vercel:listKeys'),
+    getKeyToken: (id) => ipcRenderer.invoke('vercel:getKeyToken', id),
+    addKey: (token) => ipcRenderer.invoke('vercel:addKey', token),
     saveToken: (token) => ipcRenderer.invoke('vercel:saveToken', token),
+    removeKey: (id) => ipcRenderer.invoke('vercel:removeKey', id),
     clearToken: () => ipcRenderer.invoke('vercel:clearToken'),
     validateToken: (token) => ipcRenderer.invoke('vercel:validateToken', token),
     getActiveDeployment: () => ipcRenderer.invoke('vercel:getActiveDeployment'),
     listDeployments: () => ipcRenderer.invoke('vercel:listDeployments'),
-    getDeploymentLogs: (deploymentUid) =>
-      ipcRenderer.invoke('vercel:getDeploymentLogs', deploymentUid),
+    getDeploymentLogs: (deploymentUid, credentialId) =>
+      ipcRenderer.invoke('vercel:getDeploymentLogs', deploymentUid, credentialId),
+  },
+  render: {
+    getKeysConfigured: () => ipcRenderer.invoke('render:getKeysConfigured'),
+    listKeys: () => ipcRenderer.invoke('render:listKeys'),
+    getKeyToken: (id) => ipcRenderer.invoke('render:getKeyToken', id),
+    addKey: (token) => ipcRenderer.invoke('render:addKey', token),
+    removeKey: (id) => ipcRenderer.invoke('render:removeKey', id),
+    getActiveDeployment: () => ipcRenderer.invoke('render:getActiveDeployment'),
+    listDeployments: () => ipcRenderer.invoke('render:listDeployments'),
+    getDeploymentLogs: (query) => ipcRenderer.invoke('render:getDeploymentLogs', query),
   },
   cursorUsage: {
     getCurrentPeriod: (force) => ipcRenderer.invoke('cursorUsage:getCurrentPeriod', force),

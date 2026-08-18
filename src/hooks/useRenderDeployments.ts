@@ -1,49 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { upsertUserVercelToken, upsertVercelDeploySnapshot } from '@nexus/supabase';
-import { cloudSupabase } from '@/lib/nexusCloud';
-import type { VercelActiveDeployment } from '@/types';
-import { isVercelInProgressDeployment } from '@/utils/vercelDeployment';
+import type { RenderActiveDeployment } from '@/types';
+import { isRenderInProgressDeployment } from '@/utils/renderDeployment';
 
 const ACTIVE_POLL_MS = 5_000;
 const IDLE_POLL_MS = 30_000;
 const HIDDEN_POLL_MS = 120_000;
-const DISMISSED_DEPLOY_UID_STORAGE_KEY = 'nexus-vercel-dismissed-deploy-uid';
-
-async function syncVercelDeploySnapshot(
-  activeDeployment: VercelActiveDeployment | null,
-  deployments: VercelActiveDeployment[],
-): Promise<void> {
-  if (!cloudSupabase) {
-    return;
-  }
-
-  try {
-    const {
-      data: { session },
-    } = await cloudSupabase.auth.getSession();
-
-    if (!session?.user?.id) {
-      return;
-    }
-
-    if (window.nexus?.vercel?.getToken) {
-      try {
-        const token = await window.nexus.vercel.getToken();
-        if (typeof token === 'string' && token.trim()) {
-          await upsertUserVercelToken(cloudSupabase, session.user.id, token.trim());
-        }
-      } catch {}
-    }
-
-    await upsertVercelDeploySnapshot(cloudSupabase, {
-      user_id: session.user.id,
-      active_deployment: activeDeployment,
-      deployments,
-    });
-  } catch {
-    return;
-  }
-}
+const DISMISSED_DEPLOY_UID_STORAGE_KEY = 'nexus-render-dismissed-deploy-uid';
 
 function readDismissedDeployUid(): string | null {
   try {
@@ -66,40 +28,40 @@ function writeDismissedDeployUid(uid: string | null): void {
   }
 }
 
-export function useVercelDeployments(enabled: boolean) {
-  const [tokenConfigured, setTokenConfigured] = useState(false);
-  const [activeDeployment, setActiveDeployment] = useState<VercelActiveDeployment | null>(null);
+export function useRenderDeployments(enabled: boolean) {
+  const [keysConfigured, setKeysConfigured] = useState(false);
+  const [activeDeployment, setActiveDeployment] = useState<RenderActiveDeployment | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dismissedUid, setDismissedUid] = useState<string | null>(() => readDismissedDeployUid());
   const requestIdRef = useRef(0);
 
-  const refreshTokenConfigured = useCallback(async () => {
-    if (!window.nexus?.vercel) {
-      setTokenConfigured(false);
+  const refreshKeysConfigured = useCallback(async () => {
+    if (!window.nexus?.render) {
+      setKeysConfigured(false);
       return false;
     }
 
     try {
-      const configured = await window.nexus.vercel.getTokenConfigured();
-      setTokenConfigured(configured);
+      const configured = await window.nexus.render.getKeysConfigured();
+      setKeysConfigured(configured);
       return configured;
     } catch {
-      setTokenConfigured(false);
+      setKeysConfigured(false);
       return false;
     }
   }, []);
 
   const refresh = useCallback(async () => {
-    if (!window.nexus?.vercel) {
+    if (!window.nexus?.render) {
       setActiveDeployment(null);
-      setTokenConfigured(false);
+      setKeysConfigured(false);
       return null;
     }
 
     try {
-      const configured = await window.nexus.vercel.getTokenConfigured();
-      setTokenConfigured(configured);
+      const configured = await window.nexus.render.getKeysConfigured();
+      setKeysConfigured(configured);
 
       if (!configured) {
         setActiveDeployment(null);
@@ -107,7 +69,7 @@ export function useVercelDeployments(enabled: boolean) {
         return null;
       }
     } catch {
-      setTokenConfigured(false);
+      setKeysConfigured(false);
       setActiveDeployment(null);
       setError(null);
       return null;
@@ -118,7 +80,7 @@ export function useVercelDeployments(enabled: boolean) {
     setLoading(true);
 
     try {
-      const deployments = await window.nexus.vercel.listDeployments();
+      const deployments = await window.nexus.render.listDeployments();
       const deployment = deployments[0] ?? null;
 
       if (requestIdRef.current === requestId) {
@@ -126,13 +88,11 @@ export function useVercelDeployments(enabled: boolean) {
         setError(null);
       }
 
-      void syncVercelDeploySnapshot(deployment, deployments);
-
       return deployment;
     } catch {
       if (requestIdRef.current === requestId) {
         setActiveDeployment(null);
-        setError('Não foi possível consultar deploys na Vercel');
+        setError('Não foi possível consultar deploys na Render');
       }
 
       return null;
@@ -148,11 +108,11 @@ export function useVercelDeployments(enabled: boolean) {
       return;
     }
 
-    void refreshTokenConfigured();
-  }, [enabled, refreshTokenConfigured]);
+    void refreshKeysConfigured();
+  }, [enabled, refreshKeysConfigured]);
 
   useEffect(() => {
-    if (!enabled || !tokenConfigured) {
+    if (!enabled || !keysConfigured) {
       setActiveDeployment(null);
       return;
     }
@@ -181,7 +141,7 @@ export function useVercelDeployments(enabled: boolean) {
 
       timer = window.setTimeout(() => {
         void refresh().then((deployment) => {
-          schedule(Boolean(deployment && isVercelInProgressDeployment(deployment.state)));
+          schedule(Boolean(deployment && isRenderInProgressDeployment(deployment.state)));
         });
       }, delayMs);
     };
@@ -192,14 +152,14 @@ export function useVercelDeployments(enabled: boolean) {
       }
 
       void refresh().then((deployment) => {
-        schedule(Boolean(deployment && isVercelInProgressDeployment(deployment.state)));
+        schedule(Boolean(deployment && isRenderInProgressDeployment(deployment.state)));
       });
     }, 2_500);
 
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         void refresh().then((deployment) => {
-          schedule(Boolean(deployment && isVercelInProgressDeployment(deployment.state)));
+          schedule(Boolean(deployment && isRenderInProgressDeployment(deployment.state)));
         });
         return;
       }
@@ -218,7 +178,7 @@ export function useVercelDeployments(enabled: boolean) {
         window.clearTimeout(timer);
       }
     };
-  }, [enabled, refresh, tokenConfigured]);
+  }, [enabled, refresh, keysConfigured]);
 
   const dismiss = useCallback(() => {
     const uid = activeDeployment?.uid;
@@ -251,13 +211,13 @@ export function useVercelDeployments(enabled: boolean) {
   })();
 
   return {
-    tokenConfigured,
+    keysConfigured,
     activeDeployment: visibleDeployment,
     loading,
     error,
     dismissedUid,
     refresh,
-    refreshTokenConfigured,
+    refreshKeysConfigured,
     dismiss,
     setDismissedUid,
   };

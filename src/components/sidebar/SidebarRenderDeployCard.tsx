@@ -1,44 +1,59 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GitBranch, GitCommit, X } from 'lucide-react';
-import { SidebarVercelIcon } from '@/components/sidebar/SidebarVercelIcon';
-import { SidebarVercelDeploysPopup } from '@/components/sidebar/SidebarVercelDeploysPopup';
-import { useVercelDeploymentLogsCopy } from '@/hooks/useVercelDeploymentLogsCopy';
-import type { VercelActiveDeployment, VercelDeploymentState } from '@/types';
+import { SidebarRenderIcon } from '@/components/sidebar/SidebarRenderIcon';
+import { SidebarRenderDeploysPopup } from '@/components/sidebar/SidebarRenderDeploysPopup';
+import { useRenderDeploymentLogsCopy } from '@/hooks/useRenderDeploymentLogsCopy';
+import type { RenderActiveDeployment, RenderDeploymentState } from '@/types';
+import { playVercelDeployNotificationSound } from '@/utils/vercelDeployNotificationSound';
 import {
-  getVercelDeploySoundKind,
-  playVercelDeployNotificationSound,
-} from '@/utils/vercelDeployNotificationSound';
-import {
-  formatVercelCommitSha,
-  formatVercelDeployElapsed,
-  formatVercelDeployFinishedAt,
-  getVercelDeploymentStatusClassName,
-  getVercelDeploymentStatusLabel,
-  getVercelDeploymentStatusPingClassName,
-  isVercelFailedDeployment,
-} from '@/utils/vercelDeployment';
+  formatRenderCommitSha,
+  formatRenderDeployElapsed,
+  formatRenderDeployFinishedAt,
+  getRenderDeploySoundKind,
+  getRenderDeploymentStatusClassName,
+  getRenderDeploymentStatusLabel,
+  getRenderDeploymentStatusPingClassName,
+  isRenderFailedDeployment,
+  isRenderInProgressDeployment,
+} from '@/utils/renderDeployment';
 
 const DEPLOY_SOUND_INTERVAL_MS = 5_000;
 
-interface SidebarVercelDeployCardProps {
-  deployment: VercelActiveDeployment;
+interface SidebarRenderDeployCardProps {
+  deployment: RenderActiveDeployment;
   onDismiss: () => void;
   onConfigure?: () => void;
 }
 
-function SidebarVercelDeployCardComponent({
+function SidebarRenderDeployCardComponent({
   deployment,
   onDismiss,
   onConfigure,
-}: SidebarVercelDeployCardProps) {
+}: SidebarRenderDeployCardProps) {
   const [now, setNow] = useState(() => Date.now());
   const [deploysPopupOpen, setDeploysPopupOpen] = useState(false);
   const [deploysPopupAnchor, setDeploysPopupAnchor] = useState<DOMRect | null>(null);
-  const previousStateRef = useRef<VercelDeploymentState | null>(null);
-  const soundKind = useMemo(() => getVercelDeploySoundKind(deployment.state), [deployment.state]);
+  const previousStateRef = useRef<RenderDeploymentState | null>(null);
+  const soundKind = useMemo(() => getRenderDeploySoundKind(deployment.state), [deployment.state]);
   const statusPingClassName = useMemo(
-    () => getVercelDeploymentStatusPingClassName(deployment.state),
+    () => getRenderDeploymentStatusPingClassName(deployment.state),
     [deployment.state],
+  );
+  const logsQuery = useMemo(
+    () => ({
+      credentialId: deployment.credentialId,
+      ownerId: deployment.ownerId,
+      serviceId: deployment.projectId,
+      createdAt: deployment.createdAt,
+      readyAt: deployment.readyAt,
+    }),
+    [
+      deployment.createdAt,
+      deployment.credentialId,
+      deployment.ownerId,
+      deployment.projectId,
+      deployment.readyAt,
+    ],
   );
 
   useEffect(() => {
@@ -64,7 +79,7 @@ function SidebarVercelDeployCardComponent({
   }, [deployment.state, soundKind]);
 
   useEffect(() => {
-    if (deployment.state !== 'BUILDING') {
+    if (!isRenderInProgressDeployment(deployment.state)) {
       return;
     }
 
@@ -78,7 +93,7 @@ function SidebarVercelDeployCardComponent({
   }, [deployment.state]);
 
   const commitLabel = useMemo(() => {
-    const sha = formatVercelCommitSha(deployment.commitSha);
+    const sha = formatRenderCommitSha(deployment.commitSha);
     const message = deployment.commitMessage.trim();
 
     if (message) {
@@ -88,22 +103,21 @@ function SidebarVercelDeployCardComponent({
     return sha;
   }, [deployment.commitMessage, deployment.commitSha]);
 
-  const statusLabel = getVercelDeploymentStatusLabel(deployment.state);
-  const statusClassName = getVercelDeploymentStatusClassName(deployment.state);
-  const canCopyLogs = isVercelFailedDeployment(deployment.state);
-  const { copyLogs, loading: logsLoading, copied: logsCopied } = useVercelDeploymentLogsCopy(
-    deployment.uid,
-    deployment.credentialId,
+  const statusLabel = getRenderDeploymentStatusLabel(deployment.state);
+  const statusClassName = getRenderDeploymentStatusClassName(deployment.state);
+  const canCopyLogs = isRenderFailedDeployment(deployment.state);
+  const { copyLogs, loading: logsLoading, copied: logsCopied } = useRenderDeploymentLogsCopy(
+    logsQuery,
   );
   const statusDisplayLabel = logsCopied ? 'Copiado' : logsLoading ? 'Copiando...' : statusLabel;
   const eyebrowLabel = useMemo(() => {
-    if (deployment.state === 'BUILDING') {
+    if (isRenderInProgressDeployment(deployment.state)) {
       const startedAt = deployment.buildingAt ?? deployment.createdAt;
-      return formatVercelDeployElapsed(startedAt, now);
+      return formatRenderDeployElapsed(startedAt, now);
     }
 
     const finishedAt = deployment.readyAt ?? deployment.createdAt;
-    return formatVercelDeployFinishedAt(finishedAt, now);
+    return formatRenderDeployFinishedAt(finishedAt, now);
   }, [
     deployment.buildingAt,
     deployment.createdAt,
@@ -165,7 +179,7 @@ function SidebarVercelDeployCardComponent({
       >
       <div className='sidebar-vercel-deploy-card__header'>
         <span className='sidebar-vercel-deploy-card__project-icon' aria-hidden='true'>
-          <SidebarVercelIcon size={14} />
+          <SidebarRenderIcon size={14} />
         </span>
         <div className='sidebar-vercel-deploy-card__meta'>
           <span className='sidebar-vercel-deploy-card__eyebrow'>{eyebrowLabel}</span>
@@ -232,7 +246,7 @@ function SidebarVercelDeployCardComponent({
       </section>
 
       {deploysPopupOpen && deploysPopupAnchor ? (
-        <SidebarVercelDeploysPopup
+        <SidebarRenderDeploysPopup
           anchorRect={deploysPopupAnchor}
           onClose={handleCloseDeploysPopup}
           onConfigure={onConfigure ? handleConfigure : undefined}
@@ -242,4 +256,4 @@ function SidebarVercelDeployCardComponent({
   );
 }
 
-export const SidebarVercelDeployCard = memo(SidebarVercelDeployCardComponent);
+export const SidebarRenderDeployCard = memo(SidebarRenderDeployCardComponent);

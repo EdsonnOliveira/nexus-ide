@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { RenderDeploymentLogsQuery } from '@/types';
 
 const COPY_FEEDBACK_MS = 1500;
 
-export function useVercelDeploymentLogsCopy(deploymentUid: string, credentialId?: string) {
+export function useRenderDeploymentLogsCopy(query: RenderDeploymentLogsQuery) {
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const copyFeedbackTimeoutRef = useRef<number | null>(null);
@@ -19,14 +20,14 @@ export function useVercelDeploymentLogsCopy(deploymentUid: string, credentialId?
     async (event?: React.MouseEvent) => {
       event?.stopPropagation();
 
-      if (loading || !window.nexus?.vercel) {
+      if (loading || !window.nexus?.render) {
         return;
       }
 
       setLoading(true);
 
       try {
-        const logs = await window.nexus.vercel.getDeploymentLogs(deploymentUid, credentialId);
+        const logs = await window.nexus.render.getDeploymentLogs(query);
         const text = logs.trim() || 'Nenhum log disponível para este deploy.';
 
         await navigator.clipboard.writeText(text);
@@ -46,7 +47,7 @@ export function useVercelDeploymentLogsCopy(deploymentUid: string, credentialId?
         setLoading(false);
       }
     },
-    [credentialId, deploymentUid, loading],
+    [loading, query],
   );
 
   return { copyLogs, loading, copied };

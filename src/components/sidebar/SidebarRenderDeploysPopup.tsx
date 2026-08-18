@@ -1,27 +1,28 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { GitBranch, GitCommit, Rocket, Settings2 } from 'lucide-react';
-import { SidebarVercelIcon } from '@/components/sidebar/SidebarVercelIcon';
+import { SidebarRenderIcon } from '@/components/sidebar/SidebarRenderIcon';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import {
   positionDropdownAboveAnchor,
   useAnchoredDropdownMenu,
 } from '@/hooks/useAnchoredDropdownMenu';
-import { useVercelDeploymentLogsCopy } from '@/hooks/useVercelDeploymentLogsCopy';
-import type { VercelActiveDeployment } from '@/types';
+import { useRenderDeploymentLogsCopy } from '@/hooks/useRenderDeploymentLogsCopy';
+import type { RenderActiveDeployment } from '@/types';
 import {
-  formatVercelCommitSha,
-  formatVercelDeployElapsed,
-  formatVercelDeployFinishedAt,
-  getVercelDeploymentPreviewUrl,
-  getVercelDeploymentStatusClassName,
-  getVercelDeploymentStatusLabel,
-  getVercelProjectColor,
-  getVercelProjectInitial,
-  isVercelFailedDeployment,
-} from '@/utils/vercelDeployment';
+  formatRenderCommitSha,
+  formatRenderDeployElapsed,
+  formatRenderDeployFinishedAt,
+  getRenderDeploymentOpenUrl,
+  getRenderDeploymentStatusClassName,
+  getRenderDeploymentStatusLabel,
+  getRenderProjectColor,
+  getRenderProjectInitial,
+  isRenderFailedDeployment,
+  isRenderInProgressDeployment,
+} from '@/utils/renderDeployment';
 
-interface SidebarVercelDeploysPopupProps {
+interface SidebarRenderDeploysPopupProps {
   anchorRect: DOMRect;
   onClose: () => void;
   onConfigure?: () => void;
@@ -37,34 +38,54 @@ function DeployListSkeleton() {
   );
 }
 
-interface SidebarVercelDeployListItemProps {
-  deployment: VercelActiveDeployment;
+interface SidebarRenderDeployListItemProps {
+  deployment: RenderActiveDeployment;
   now: number;
-  onOpen: (deployment: VercelActiveDeployment) => void;
+  onOpen: (deployment: RenderActiveDeployment) => void;
 }
 
-function SidebarVercelDeployListItem({ deployment, now, onOpen }: SidebarVercelDeployListItemProps) {
-  const canCopyLogs = isVercelFailedDeployment(deployment.state);
-  const { copyLogs, loading: logsLoading, copied: logsCopied } = useVercelDeploymentLogsCopy(
-    deployment.uid,
-    deployment.credentialId,
+function SidebarRenderDeployListItem({
+  deployment,
+  now,
+  onOpen,
+}: SidebarRenderDeployListItemProps) {
+  const logsQuery = useMemo(
+    () => ({
+      credentialId: deployment.credentialId,
+      ownerId: deployment.ownerId,
+      serviceId: deployment.projectId,
+      createdAt: deployment.createdAt,
+      readyAt: deployment.readyAt,
+    }),
+    [
+      deployment.createdAt,
+      deployment.credentialId,
+      deployment.ownerId,
+      deployment.projectId,
+      deployment.readyAt,
+    ],
+  );
+  const canCopyLogs = isRenderFailedDeployment(deployment.state);
+  const { copyLogs, loading: logsLoading, copied: logsCopied } = useRenderDeploymentLogsCopy(
+    logsQuery,
   );
 
-  const commitSha = formatVercelCommitSha(deployment.commitSha);
+  const commitSha = formatRenderCommitSha(deployment.commitSha);
   const commitMessage = deployment.commitMessage.trim();
   const commitLabel = commitMessage ? `${commitSha} · ${commitMessage}` : commitSha;
-  const statusLabel = getVercelDeploymentStatusLabel(deployment.state);
-  const statusClassName = getVercelDeploymentStatusClassName(deployment.state);
+  const statusLabel = getRenderDeploymentStatusLabel(deployment.state);
+  const statusClassName = getRenderDeploymentStatusClassName(deployment.state);
   const statusDisplayLabel = logsCopied ? 'Copiado' : logsLoading ? 'Copiando...' : statusLabel;
-  const timeLabel =
-    deployment.state === 'BUILDING'
-      ? formatVercelDeployElapsed(deployment.buildingAt ?? deployment.createdAt, now)
-      : formatVercelDeployFinishedAt(deployment.readyAt ?? deployment.createdAt, now);
-  const canOpen = Boolean(getVercelDeploymentPreviewUrl(deployment.url) || deployment.commitUrl);
+  const timeLabel = isRenderInProgressDeployment(deployment.state)
+    ? formatRenderDeployElapsed(deployment.buildingAt ?? deployment.createdAt, now)
+    : formatRenderDeployFinishedAt(deployment.readyAt ?? deployment.createdAt, now);
+  const canOpen = Boolean(
+    getRenderDeploymentOpenUrl(deployment.url, deployment.dashboardUrl) || deployment.commitUrl,
+  );
   const itemClassName = `sidebar-vercel-deploys-popup__item app-button app-button--enter${canCopyLogs && logsCopied ? ' sidebar-vercel-deploys-popup__item--copied app-button--enter' : ''}`;
 
-  const projectInitial = getVercelProjectInitial(deployment.projectName);
-  const projectColor = getVercelProjectColor(deployment.projectId, deployment.projectName);
+  const projectInitial = getRenderProjectInitial(deployment.projectName);
+  const projectColor = getRenderProjectColor(deployment.projectId, deployment.projectName);
 
   const projectIcon = (
     <span
@@ -99,7 +120,10 @@ function SidebarVercelDeployListItem({ deployment, now, onOpen }: SidebarVercelD
           <span className='sidebar-vercel-deploys-popup__time'>{timeLabel}</span>
         </span>
         <span className='sidebar-vercel-deploys-popup__item-bottom'>
-          <span className='sidebar-vercel-deploys-popup__meta' title={`${deployment.accountLabel} · ${deployment.branch} · ${commitLabel}`}>
+          <span
+            className='sidebar-vercel-deploys-popup__meta'
+            title={`${deployment.accountLabel} · ${deployment.branch} · ${commitLabel}`}
+          >
             <span className='sidebar-vercel-deploys-popup__meta-segment'>
               <GitBranch
                 size={11}
@@ -152,14 +176,14 @@ function SidebarVercelDeployListItem({ deployment, now, onOpen }: SidebarVercelD
   );
 }
 
-const SidebarVercelDeployListItemMemo = memo(SidebarVercelDeployListItem);
+const SidebarRenderDeployListItemMemo = memo(SidebarRenderDeployListItem);
 
-function SidebarVercelDeploysPopupComponent({
+function SidebarRenderDeploysPopupComponent({
   anchorRect,
   onClose,
   onConfigure,
-}: SidebarVercelDeploysPopupProps) {
-  const [deployments, setDeployments] = useState<VercelActiveDeployment[]>([]);
+}: SidebarRenderDeploysPopupProps) {
+  const [deployments, setDeployments] = useState<RenderActiveDeployment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -174,17 +198,17 @@ function SidebarVercelDeploysPopupComponent({
     let cancelled = false;
 
     const loadDeployments = async () => {
-      if (!window.nexus?.vercel) {
+      if (!window.nexus?.render) {
         if (!cancelled) {
           setLoading(false);
-          setError('Integração Vercel indisponível');
+          setError('Integração Render indisponível');
         }
 
         return;
       }
 
       try {
-        const items = await window.nexus.vercel.listDeployments();
+        const items = await window.nexus.render.listDeployments();
 
         if (!cancelled) {
           setDeployments(items);
@@ -193,7 +217,7 @@ function SidebarVercelDeploysPopupComponent({
       } catch {
         if (!cancelled) {
           setDeployments([]);
-          setError('Não foi possível carregar deploys na Vercel');
+          setError('Não foi possível carregar deploys na Render');
         }
       } finally {
         if (!cancelled) {
@@ -255,15 +279,15 @@ function SidebarVercelDeploysPopupComponent({
     };
   }, [requestClose]);
 
-  const handleOpenDeployment = useCallback((deployment: VercelActiveDeployment) => {
+  const handleOpenDeployment = useCallback((deployment: RenderActiveDeployment) => {
     if (!window.nexus?.tasks) {
       return;
     }
 
-    const previewUrl = getVercelDeploymentPreviewUrl(deployment.url);
+    const openUrl = getRenderDeploymentOpenUrl(deployment.url, deployment.dashboardUrl);
 
-    if (previewUrl) {
-      void window.nexus.tasks.openExternalUrl(previewUrl);
+    if (openUrl) {
+      void window.nexus.tasks.openExternalUrl(openUrl);
       return;
     }
 
@@ -283,14 +307,19 @@ function SidebarVercelDeploysPopupComponent({
 
     if (deployments.length === 0) {
       return (
-        <EmptyState icon={Rocket} message='Nenhum deploy encontrado' compact className='sidebar-vercel-deploys-popup__empty' />
+        <EmptyState
+          icon={Rocket}
+          message='Nenhum deploy encontrado'
+          compact
+          className='sidebar-vercel-deploys-popup__empty'
+        />
       );
     }
 
     return (
       <ul className='sidebar-vercel-deploys-popup__list'>
         {deployments.map((deployment) => (
-          <SidebarVercelDeployListItemMemo
+          <SidebarRenderDeployListItemMemo
             key={`${deployment.credentialId}:${deployment.uid}`}
             deployment={deployment}
             now={now}
@@ -316,18 +345,18 @@ function SidebarVercelDeploysPopupComponent({
       >
       <div className='sidebar-vercel-deploys-popup__header'>
         <span className='sidebar-vercel-deploys-popup__badge' aria-hidden='true'>
-          <SidebarVercelIcon size={14} />
+          <SidebarRenderIcon size={14} />
         </span>
         <div className='sidebar-vercel-deploys-popup__intro'>
-          <span className='sidebar-vercel-deploys-popup__title'>Deploys Vercel</span>
+          <span className='sidebar-vercel-deploys-popup__title'>Deploys Render</span>
           <span className='sidebar-vercel-deploys-popup__subtitle'>Últimos deploys das suas contas</span>
         </div>
         {onConfigure ? (
           <button
             type='button'
             className='sidebar-vercel-deploys-popup__settings app-button app-button--enter'
-            aria-label='Configurar tokens da Vercel'
-            title='Configurar tokens'
+            aria-label='Configurar API keys da Render'
+            title='Configurar API keys'
             onClick={onConfigure}
           >
             <Settings2 size={14} strokeWidth={2} />
@@ -341,4 +370,4 @@ function SidebarVercelDeploysPopupComponent({
   );
 }
 
-export const SidebarVercelDeploysPopup = memo(SidebarVercelDeploysPopupComponent);
+export const SidebarRenderDeploysPopup = memo(SidebarRenderDeploysPopupComponent);

@@ -2283,6 +2283,20 @@ export function tryMarkStreamJsonReadyToFinalize(state: AgentStreamJsonParserSta
     return false;
   }
 
+  if (
+    state.activities.some(
+      (entry) =>
+        entry.kind === 'thought' ||
+        entry.kind === 'file_read' ||
+        entry.kind === 'file_edit' ||
+        entry.kind === 'tool_run' ||
+        entry.kind === 'task',
+    ) &&
+    !findLastResponseLabel(state.activities, state.pendingResponseText)
+  ) {
+    return false;
+  }
+
   if (!hasMeaningfulStreamJsonTurnOutput(state)) {
     return false;
   }
@@ -2562,7 +2576,11 @@ function hasIncompleteStreamJsonEnding(
     lastThoughtIndex = index;
   }
 
-  if (lastThoughtIndex > lastResponseIndex && lastThoughtIndex >= lastProgressIndex) {
+  if (lastThoughtIndex > lastResponseIndex) {
+    return true;
+  }
+
+  if (lastProgressIndex > lastResponseIndex) {
     return true;
   }
 
