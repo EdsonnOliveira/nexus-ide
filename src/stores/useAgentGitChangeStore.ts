@@ -13,7 +13,7 @@ import type { AgentGitChangeGroup } from '@/types/agentGit';
 import { emitGitProjectRefresh, emitGitRepoRefresh } from '@/utils/gitRepoRefresh';
 import type { GitFlatChange } from '@/utils/gitFlatChanges';
 import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
-import { findGitFlatChangeByPath } from '@/utils/gitPaths';
+import { findGitFlatChangeByPath, gitChangePathsMatch } from '@/utils/gitPaths';
 import { schedulePersistAgentGitGroups } from '@/utils/persistAgentGitGroups';
 import { sanitizeAgentPrompt } from '@/utils/terminalShellPrompt';
 
@@ -32,13 +32,8 @@ interface AgentGitChangeState {
   lastPromptByPane: Record<string, string>;
   focusedGroupId: string | null;
   rememberPrompt: (paneId: string, prompt: string) => void;
-  beginTurn: (
-    paneId: string,
-    projectId: string,
-    prompt: string,
-    repoPath: string,
-  ) => Promise<void>;
-  finalizeTurn: (paneId: string) => Promise<void>;
+  beginTurn: (paneId: string, projectId: string, prompt: string, repoPath: string) => Promise<void>;
+  finalizeTurn: (paneId: string, editedPaths?: string[]) => Promise<void>;
   clearPendingTurn: (paneId: string) => PendingAgentGitTurn | null;
   removeGroups: (projectId: string, groupIds: string[]) => void;
   clearProject: (projectId: string) => void;
@@ -60,16 +55,17 @@ function delay(ms: number): Promise<void> {
 async function waitForPendingSnapshot(
   paneId: string,
   readPending: () => Record<string, PendingAgentGitTurn>,
+  hasRememberedPrompt: () => boolean,
 ): Promise<PendingAgentGitTurn | null> {
   for (let attempt = 0; attempt < PENDING_SNAPSHOT_MAX_ATTEMPTS; attempt += 1) {
     const pending = readPending()[paneId];
 
-    if (!pending) {
-      return null;
+    if (pending?.snapshot !== null && pending) {
+      return pending;
     }
 
-    if (pending.snapshot !== null) {
-      return pending;
+    if (!pending && !hasRememberedPrompt()) {
+      return null;
     }
 
     await delay(PENDING_SNAPSHOT_WAIT_MS);
@@ -78,7 +74,10 @@ async function waitForPendingSnapshot(
   return readPending()[paneId] ?? null;
 }
 
-async function refreshProjectGitCounts(projectId: string, fallbackRepoPath?: string | null): Promise<void> {
+async function refreshProjectGitCounts(
+  projectId: string,
+  fallbackRepoPath?: string | null,
+): Promise<void> {
   const project = useProjectStore.getState().projects.find((entry) => entry.id === projectId);
 
   if (project) {
@@ -152,21 +151,36 @@ function createGroupFromDelta(
   };
 }
 
+function filterSnapshotByEditedPaths(
+  snapshot: GitFlatChange[],
+  editedPaths: string[] | undefined,
+): GitFlatChange[] {
+  if (!editedPaths || editedPaths.length === 0) {
+    return snapshot;
+  }
+
+  return snapshot.filter((change) =>
+    editedPaths.some((path) => gitChangePathsMatch(path, change.path)),
+  );
+}
+
 async function createFallbackGroup(
   paneId: string,
   prompt: string,
   projectId: string,
   repoPath: string,
+  editedPaths?: string[],
 ): Promise<AgentGitChangeGroup | null> {
   const snapshot = await captureGitSnapshot(repoPath);
-  const additions = snapshot.reduce((sum, change) => sum + change.additions, 0);
-  const deletions = snapshot.reduce((sum, change) => sum + change.deletions, 0);
+  const files = filterSnapshotByEditedPaths(snapshot, editedPaths);
+  const additions = files.reduce((sum, change) => sum + change.additions, 0);
+  const deletions = files.reduce((sum, change) => sum + change.deletions, 0);
 
   return createGroupFromDelta(paneId, projectId, prompt, {
-    files: snapshot,
+    files,
     additions,
     deletions,
-    fileCount: snapshot.length,
+    fileCount: files.length,
   });
 }
 
@@ -184,27 +198,62 @@ function buildIncrementalDelta(
   };
 }
 
-function resolveTurnDelta(beforeSnapshot: GitFlatChange[], afterSnapshot: GitFlatChange[]): GitSnapshotDelta {
+function mergeHintedFiles(
+  files: GitFlatChange[],
+  afterSnapshot: GitFlatChange[],
+  editedPaths: string[] | undefined,
+): GitFlatChange[] {
+  if (!editedPaths || editedPaths.length === 0) {
+    return files;
+  }
+
+  const byPath = new Map(files.map((file) => [file.path, file]));
+
+  for (const hintPath of editedPaths) {
+    const live = findGitFlatChangeByPath(afterSnapshot, hintPath);
+
+    if (!live || byPath.has(live.path)) {
+      continue;
+    }
+
+    byPath.set(live.path, live);
+  }
+
+  return [...byPath.values()];
+}
+
+function resolveTurnDelta(
+  beforeSnapshot: GitFlatChange[],
+  afterSnapshot: GitFlatChange[],
+  editedPaths?: string[],
+): GitSnapshotDelta {
   const strictDelta = diffGitSnapshots(beforeSnapshot, afterSnapshot);
 
   if (strictDelta.fileCount > 0) {
-    return buildIncrementalDelta(beforeSnapshot, strictDelta.files);
+    return buildIncrementalDelta(
+      beforeSnapshot,
+      mergeHintedFiles(strictDelta.files, afterSnapshot, editedPaths),
+    );
   }
 
   const looseDelta = diffGitSnapshotsLoose(beforeSnapshot, afterSnapshot);
 
   if (looseDelta.fileCount > 0) {
-    return buildIncrementalDelta(beforeSnapshot, looseDelta.files);
+    return buildIncrementalDelta(
+      beforeSnapshot,
+      mergeHintedFiles(looseDelta.files, afterSnapshot, editedPaths),
+    );
   }
 
   const beforePaths = new Set(beforeSnapshot.map((change) => change.path));
   const newFiles = afterSnapshot.filter((change) => !beforePaths.has(change.path));
+  const merged = mergeHintedFiles(newFiles, afterSnapshot, editedPaths);
 
   return {
-    files: newFiles,
-    additions: newFiles.reduce((sum, change) => sum + change.additions, 0),
-    deletions: newFiles.reduce((sum, change) => sum + change.deletions, 0),
-    fileCount: newFiles.length,
+    files: merged,
+    additions: merged.reduce((sum, change) => sum + change.additions, 0),
+    deletions: merged.reduce((sum, change) => sum + change.deletions, 0),
+    fileCount: merged.length,
   };
 }
 
@@ -262,8 +311,12 @@ export const useAgentGitChangeStore = create<AgentGitChangeState>((set, get) => 
       });
     }
   },
-  finalizeTurn: async (paneId) => {
-    let pending = await waitForPendingSnapshot(paneId, () => get().pendingTurnByPane);
+  finalizeTurn: async (paneId, editedPaths) => {
+    const pending = await waitForPendingSnapshot(
+      paneId,
+      () => get().pendingTurnByPane,
+      () => Boolean(get().lastPromptByPane[paneId]),
+    );
     let repoPathForRefresh: string | null = pending?.repoPath ?? null;
     const projectIdForRefresh = pending?.projectId ?? findProjectIdByPaneId(paneId);
 
@@ -284,6 +337,7 @@ export const useAgentGitChangeStore = create<AgentGitChangeState>((set, get) => 
                 fallbackPrompt,
                 projectId,
                 repoPath,
+                editedPaths,
               );
 
               if (fallbackGroup) {
@@ -322,12 +376,12 @@ export const useAgentGitChangeStore = create<AgentGitChangeState>((set, get) => 
 
     try {
       let afterSnapshot = await captureGitSnapshot(pending.repoPath);
-      let delta = resolveTurnDelta(beforeSnapshot, afterSnapshot);
+      let delta = resolveTurnDelta(beforeSnapshot, afterSnapshot, editedPaths);
 
       if (delta.fileCount === 0) {
         await delay(FINALIZE_SNAPSHOT_RETRY_DELAY_MS);
         afterSnapshot = await captureGitSnapshot(pending.repoPath);
-        delta = resolveTurnDelta(beforeSnapshot, afterSnapshot);
+        delta = resolveTurnDelta(beforeSnapshot, afterSnapshot, editedPaths);
       }
 
       const group = createGroupFromDelta(paneId, pending.projectId, pending.prompt, delta);

@@ -55,3 +55,91 @@ export function findMarkdownPreviewImage(target: EventTarget | null): HTMLImageE
 
   return img;
 }
+
+function canvasPngBlob(img: HTMLImageElement): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    const width = img.naturalWidth || img.width;
+    const height = img.naturalHeight || img.height;
+
+    if (!width || !height) {
+      resolve(null);
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+
+    if (!context) {
+      resolve(null);
+      return;
+    }
+
+    try {
+      context.drawImage(img, 0, 0);
+    } catch {
+      resolve(null);
+      return;
+    }
+
+    canvas.toBlob((blob) => resolve(blob), 'image/png');
+  });
+}
+
+async function blobFromImageSrc(src: string): Promise<Blob | null> {
+  try {
+    const response = await fetch(src);
+    const blob = await response.blob();
+
+    if (!blob.type.startsWith('image/') && !src.startsWith('data:image/')) {
+      return null;
+    }
+
+    return blob;
+  } catch {
+    return null;
+  }
+}
+
+export async function copyHtmlImageToClipboard(img: HTMLImageElement): Promise<boolean> {
+  const src = img.currentSrc || img.src;
+
+  if (!src) {
+    return false;
+  }
+
+  let blob = await canvasPngBlob(img);
+
+  if (!blob) {
+    blob = await blobFromImageSrc(src);
+  }
+
+  if (!blob) {
+    return false;
+  }
+
+  const type = blob.type.startsWith('image/') ? blob.type : 'image/png';
+
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ [type]: blob })]);
+    return true;
+  } catch {
+    if (type === 'image/png') {
+      return false;
+    }
+
+    try {
+      const pngBlob = await canvasPngBlob(img);
+
+      if (!pngBlob) {
+        return false;
+      }
+
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}

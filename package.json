@@ -1,6 +1,6 @@
 {
   "name": "nexus-ide",
-  "version": "1.0.49",
+  "version": "1.0.50",
   "private": true,
   "description": "Nexus IDE — AI-powered desktop IDE",
   "engines": {
@@ -13,7 +13,8 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "node scripts/patch-electron-branding.mjs && env -u NODE_OPTIONS vite",
+    "dev": "node scripts/dev-supervisor.mjs",
+    "dev:vite": "node scripts/patch-electron-branding.mjs && env -u NODE_OPTIONS vite",
     "dev:web": "npm run dev -w @nexus/web",
     "runtime": "node scripts/assert-nexus-supabase.mjs && tsx apps/runtime/src/index.ts",
     "runtime:dev": "node scripts/assert-nexus-supabase.mjs && tsx watch apps/runtime/src/index.ts",

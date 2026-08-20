@@ -5,6 +5,7 @@ import {
   resolveAgentActivityIconFromLabel,
   resolveAgentActivityIconKind,
 } from '@/components/agent/AgentActivityIcon';
+import { AgentThoughtBlock } from '@/components/agent/AgentThoughtBlock';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useTabActions } from '@/stores/useTabStore';
 import type { AgentActivity, AgentTurnSummaryCommandRef } from '@/types';
@@ -52,8 +53,7 @@ function AgentFileActivityRowComponent({
     () => (filePath ? resolveAgentActivityFilePath(projectPath, filePath) : null),
     [filePath, projectPath],
   );
-  const verb =
-    verbOverride ?? (activity.kind === 'file_read' ? 'Read' : 'Edited');
+  const verb = verbOverride ?? (activity.kind === 'file_read' ? 'Read' : 'Edited');
   const iconKind = useMemo(
     () =>
       resolveAgentActivityIconKind({
@@ -265,18 +265,25 @@ function renderAgentToolActivityRow(
       );
     }
 
-    const liveLabel = activity.label.trim();
-
     return (
-      <div key='agent-live-status' className='agent-view__file-row agent-view__file-row--live'>
-        <AgentActivityIcon kind={resolveAgentActivityIconFromLabel(liveLabel)} />
-        <span className='agent-view__file-verb'>{liveLabel}</span>
-      </div>
+      <AgentThoughtBlock
+        key={activity.id}
+        activity={{
+          ...activity,
+          kind: 'thought',
+          streaming: true,
+          label: '',
+        }}
+        forceCollapsed
+      />
     );
   }
 
   if (activity.kind === 'status' && /^Ran\b/i.test(activity.label.trim())) {
-    const command = activity.label.trim().replace(/^Ran\s+/i, '').trim();
+    const command = activity.label
+      .trim()
+      .replace(/^Ran\s+/i, '')
+      .trim();
 
     return (
       <div key={activity.id} className='agent-view__file-row app-button--enter'>
@@ -306,9 +313,7 @@ function AgentToolActivityScrollListComponent({
     const detail = findLiveToolBatchDetailActivity(activities);
     const showDetail = shouldShowLiveToolBatchDetail(detail, summary);
     const detailRow =
-      showDetail && detail
-        ? renderAgentToolActivityRow(detail, projectPath, true)
-        : null;
+      showDetail && detail ? renderAgentToolActivityRow(detail, projectPath, true) : null;
 
     if (!summary && !detailRow) {
       return null;
@@ -318,7 +323,7 @@ function AgentToolActivityScrollListComponent({
       Boolean(summary) &&
       (Boolean(detail?.streaming) ||
         detail?.kind === 'live_status' ||
-        /^(?:Executando|Running|Exploring|Editing|Planning|Thinking|Aguardando|Agent executando)\b/i.test(
+        /^(?:Executando|Running|Exploring|Editing|Planning|Thinking|Aguardando|Agent executando|Comando)\b/i.test(
           summary ?? '',
         ));
 
@@ -372,7 +377,9 @@ interface AgentCommandActivityScrollListProps {
   commands: AgentTurnSummaryCommandRef[];
 }
 
-function AgentCommandActivityScrollListComponent({ commands }: AgentCommandActivityScrollListProps) {
+function AgentCommandActivityScrollListComponent({
+  commands,
+}: AgentCommandActivityScrollListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const scrollable = commands.length > AGENT_FILE_ACTIVITY_VISIBLE_ROWS;
 

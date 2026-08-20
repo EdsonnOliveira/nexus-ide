@@ -17,6 +17,7 @@ export async function invokeSendPush(input: {
   title: string;
   body: string;
   dedupeKey?: string;
+  clearDedupeKeys?: string[];
   data?: Record<string, unknown>;
 }): Promise<void> {
   const url = Deno.env.get('SUPABASE_URL') ?? '';

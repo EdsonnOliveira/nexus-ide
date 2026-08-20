@@ -1219,7 +1219,10 @@ export interface NexusAPI {
     onRepoChange: (callback: (repoPath: string) => void) => () => void;
   };
   homeDashboard: {
-    getStats: (projectPaths: string[]) => Promise<HomeDashboardActivityComparison>;
+    getStats: (
+      projectPaths: string[],
+      provider?: 'cursor' | 'claude',
+    ) => Promise<HomeDashboardActivityComparison>;
     recordActivity: (kind: HomeDashboardActivityKind) => Promise<void>;
   };
   onToggleExplorer: (callback: () => void) => () => void;

@@ -1,11 +1,25 @@
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from 'react';
+import { createPortal } from 'react-dom';
 import type {
   AgentActivity,
   AgentQuestionAnswers,
   AgentTurnSummary,
   AgentTurnUsage,
 } from '@/types';
-import { useMarkdownCodeHighlight, useDeferredMarkdownHtml } from '@/hooks/useMarkdownCodeHighlight';
+import {
+  useMarkdownCodeHighlight,
+  useDeferredMarkdownHtml,
+} from '@/hooks/useMarkdownCodeHighlight';
 import {
   AgentActivityIcon,
   resolveAgentActivityIconFromLabel,
@@ -36,7 +50,8 @@ import {
   isValidReadFileTarget,
 } from '@/utils/agentTranscriptParser';
 import { looksLikeTruncatedAgentResponse } from '@/utils/agentStreamJsonParser';
-import { findMarkdownPreviewImage } from '@/utils/downloadImageSrc';
+import { parseAgentLiveFileStatus } from '@/utils/agentActivityLabel';
+import { copyHtmlImageToClipboard, findMarkdownPreviewImage } from '@/utils/downloadImageSrc';
 import { normalizeMarkdownSource } from '@/utils/markdownText';
 import { useTabActions } from '@/stores/useTabStore';
 
@@ -51,7 +66,10 @@ interface AgentActivityListProps {
   projectPath: string;
   paneId: string;
   isLatestTurn?: boolean;
-  onSubmitQuestion?: (activityId: string, answers: AgentQuestionAnswers) => boolean | Promise<boolean>;
+  onSubmitQuestion?: (
+    activityId: string,
+    answers: AgentQuestionAnswers,
+  ) => boolean | Promise<boolean>;
 }
 
 function getSanitizedResponseLabel(label: string): string {
@@ -113,10 +131,7 @@ function isRenderableActivity(activity: AgentActivity, running: boolean): boolea
   return true;
 }
 
-function collectRelatedFilesForTask(
-  activities: AgentActivity[],
-  taskId: string,
-): string[] {
+function collectRelatedFilesForTask(activities: AgentActivity[], taskId: string): string[] {
   const taskIndex = activities.findIndex((entry) => entry.id === taskId);
 
   if (taskIndex < 0) {
@@ -132,7 +147,12 @@ function collectRelatedFilesForTask(
       continue;
     }
 
-    if (entry.kind === 'task' || entry.kind === 'response' || entry.kind === 'question' || entry.kind === 'plan') {
+    if (
+      entry.kind === 'task' ||
+      entry.kind === 'response' ||
+      entry.kind === 'question' ||
+      entry.kind === 'plan'
+    ) {
       break;
     }
 
@@ -145,11 +165,18 @@ function collectRelatedFilesForTask(
 }
 
 function findAgentResponseInlineCode(element: EventTarget | null): HTMLElement | null {
-  if (!(element instanceof HTMLElement)) {
+  const node =
+    element instanceof HTMLElement
+      ? element
+      : element instanceof Node
+        ? element.parentElement
+        : null;
+
+  if (!node) {
     return null;
   }
 
-  const code = element.closest('code');
+  const code = node.closest('code');
 
   if (!code || code.classList.contains('hljs') || code.closest('pre')) {
     return null;
@@ -166,83 +193,146 @@ const AgentResponseBody = memo(function AgentResponseBody({
   projectPath: string;
 }) {
   const html = useDeferredMarkdownHtml(content, projectPath);
-  const bodyRef = useMarkdownCodeHighlight<HTMLDivElement>(html);
+  const bodyRef = useMarkdownCodeHighlight<HTMLDivElement>(html, projectPath);
   const copiedTimeoutRef = useRef<number | null>(null);
+  const imageCopiedTimeoutRef = useRef<number | null>(null);
   const { openFileTab } = useTabActions();
   const [preview, setPreview] = useState<{ src: string; fileName: string | null } | null>(null);
+  const [copiedBadge, setCopiedBadge] = useState<{ x: number; y: number; key: number } | null>(
+    null,
+  );
 
-  const handleClick = useCallback(async (event: MouseEvent<HTMLDivElement>) => {
+  const handleContextMenu = useCallback(async (event: MouseEvent<HTMLDivElement>) => {
     const image = findMarkdownPreviewImage(event.target);
 
-    if (image) {
-      event.preventDefault();
-      event.stopPropagation();
-      setPreview({
-        src: image.currentSrc || image.src,
-        fileName:
-          image.getAttribute('data-image-ref') ||
-          image.getAttribute('data-image-path') ||
-          image.getAttribute('alt') ||
-          null,
-      });
+    if (!image) {
       return;
     }
 
-    const code = findAgentResponseInlineCode(event.target);
-
-    if (!code) {
-      return;
-    }
-
-    const value = code.textContent?.trim() ?? '';
-
-    if (!value) {
-      return;
-    }
-
+    const mouseX = event.clientX;
+    const mouseY = event.clientY;
     event.preventDefault();
     event.stopPropagation();
 
-    try {
-      await navigator.clipboard.writeText(value);
+    const copied = await copyHtmlImageToClipboard(image);
 
-      if (copiedTimeoutRef.current !== null) {
-        window.clearTimeout(copiedTimeoutRef.current);
+    if (!copied) {
+      return;
+    }
+
+    if (imageCopiedTimeoutRef.current !== null) {
+      window.clearTimeout(imageCopiedTimeoutRef.current);
+    }
+
+    setCopiedBadge({ x: mouseX, y: mouseY, key: Date.now() });
+    imageCopiedTimeoutRef.current = window.setTimeout(() => {
+      setCopiedBadge(null);
+      imageCopiedTimeoutRef.current = null;
+    }, 1600);
+  }, []);
+
+  const handleClick = useCallback(
+    async (event: MouseEvent<HTMLDivElement>) => {
+      const image = findMarkdownPreviewImage(event.target);
+
+      if (image) {
+        event.preventDefault();
+        event.stopPropagation();
+        setPreview({
+          src: image.currentSrc || image.src,
+          fileName:
+            image.getAttribute('data-image-ref') ||
+            image.getAttribute('data-image-path') ||
+            image.getAttribute('alt') ||
+            null,
+        });
+        return;
       }
 
-      code.classList.add('markdown-preview__inline-code--copied');
-      code.setAttribute('title', 'Copiado');
+      const code = findAgentResponseInlineCode(event.target);
 
-      copiedTimeoutRef.current = window.setTimeout(() => {
-        code.classList.remove('markdown-preview__inline-code--copied');
-        code.removeAttribute('title');
-        copiedTimeoutRef.current = null;
-      }, 1600);
+      if (!code) {
+        return;
+      }
 
-      if (
+      const value = code.textContent?.trim() ?? '';
+
+      if (!value) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const isPathBadge =
         code.classList.contains('markdown-preview__inline-code--path') &&
         (/[/\\]/.test(value) ||
           /\.\w{1,10}$/.test(value) ||
           value.startsWith('~/') ||
           value.startsWith('./') ||
-          value.startsWith('../'))
-      ) {
+          value.startsWith('../'));
+
+      if (event.metaKey && isPathBadge) {
         const absolutePath = resolveAgentActivityFilePath(projectPath, value);
 
         if (absolutePath) {
           const entryKind = await window.nexus.files.statPath(absolutePath);
 
-          if (entryKind === 'file') {
-            const fileName = absolutePath.split(/[/\\]/).pop() ?? value;
-            void openFileTab(absolutePath, fileName);
+          if (entryKind === 'file' || entryKind === 'directory') {
+            void window.nexus.files.revealInFolder(absolutePath);
           }
         }
+
+        return;
       }
-    } catch {
-      code.classList.remove('markdown-preview__inline-code--copied');
-      code.removeAttribute('title');
-    }
-  }, [openFileTab, projectPath]);
+
+      try {
+        await navigator.clipboard.writeText(value);
+
+        if (copiedTimeoutRef.current !== null) {
+          window.clearTimeout(copiedTimeoutRef.current);
+        }
+
+        code.classList.add('markdown-preview__inline-code--copied');
+        code.setAttribute('title', 'Copiado');
+
+        copiedTimeoutRef.current = window.setTimeout(() => {
+          code.classList.remove('markdown-preview__inline-code--copied');
+          code.removeAttribute('title');
+          copiedTimeoutRef.current = null;
+        }, 1600);
+
+        if (isPathBadge) {
+          const absolutePath = resolveAgentActivityFilePath(projectPath, value);
+
+          if (absolutePath) {
+            const entryKind = await window.nexus.files.statPath(absolutePath);
+
+            if (entryKind === 'file') {
+              const fileName = absolutePath.split(/[/\\]/).pop() ?? value;
+              void openFileTab(absolutePath, fileName);
+            }
+          }
+        }
+      } catch {
+        code.classList.remove('markdown-preview__inline-code--copied');
+        code.removeAttribute('title');
+      }
+    },
+    [openFileTab, projectPath],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (copiedTimeoutRef.current !== null) {
+        window.clearTimeout(copiedTimeoutRef.current);
+      }
+
+      if (imageCopiedTimeoutRef.current !== null) {
+        window.clearTimeout(imageCopiedTimeoutRef.current);
+      }
+    };
+  }, []);
 
   return (
     <>
@@ -250,6 +340,7 @@ const AgentResponseBody = memo(function AgentResponseBody({
         ref={bodyRef}
         className='agent-view__response-body markdown-preview markdown-preview--monokai'
         onClick={(event) => void handleClick(event)}
+        onContextMenu={(event) => void handleContextMenu(event)}
         dangerouslySetInnerHTML={{ __html: html }}
       />
       {preview ? (
@@ -259,6 +350,18 @@ const AgentResponseBody = memo(function AgentResponseBody({
           onClose={() => setPreview(null)}
         />
       ) : null}
+      {copiedBadge
+        ? createPortal(
+            <span
+              className='markdown-preview__img-copied-badge'
+              style={{ left: copiedBadge.x, top: copiedBadge.y }}
+            >
+              Copiado
+            </span>,
+            document.body,
+            String(copiedBadge.key),
+          )
+        : null}
     </>
   );
 });
@@ -351,10 +454,7 @@ function AgentActivityListComponent({
 
   const incompleteClosingMessage = INCOMPLETE_THOUGHT_CLOSING_MESSAGE;
 
-  const finalResponseText = useMemo(
-    () => extractAgentFinalResponseText(activities),
-    [activities],
-  );
+  const finalResponseText = useMemo(() => extractAgentFinalResponseText(activities), [activities]);
 
   const showCopyPill = !running && finalResponseText.length > 0;
   const editedFilesForCard = useMemo(
@@ -365,11 +465,11 @@ function AgentActivityListComponent({
     !running &&
     Boolean(
       editedFilesForCard.length > 0 ||
-        (summary &&
-          ((summary.editedFiles?.length ?? 0) > 0 ||
-            summary.editedFileCount > 0 ||
-            summary.additions > 0 ||
-            summary.deletions > 0)),
+      (summary &&
+        ((summary.editedFiles?.length ?? 0) > 0 ||
+          summary.editedFileCount > 0 ||
+          summary.additions > 0 ||
+          summary.deletions > 0)),
     );
   const showResponseActions = showCopyPill || showChangesPill;
   const activityChunks = useMemo(
@@ -393,133 +493,146 @@ function AgentActivityListComponent({
   );
 
   const renderSingleActivity = (activity: AgentActivity): ReactNode => {
-        if (activity.kind === 'thought') {
-          const thoughtIndex = visibleActivities.findIndex((entry) => entry.id === activity.id);
-          const following = thoughtIndex >= 0 ? visibleActivities.slice(thoughtIndex + 1) : [];
-          const hasProgressAfter = following.some((entry) => {
-            if (entry.kind === 'response') {
-              return true;
-            }
-
-            if (entry.kind === 'file_read' || entry.kind === 'file_edit') {
-              return Boolean(entry.filePath?.trim());
-            }
-
-            if (entry.kind === 'tool_run') {
-              return Boolean(entry.label.trim() || entry.toolCommand?.trim());
-            }
-
-            if (entry.kind === 'task') {
-              return Boolean(entry.label.trim());
-            }
-
-            return false;
-          });
-          const collapseEmptyPlaceholder =
-            !activity.streaming && !activity.label.trim() && hasProgressAfter;
-
-          return (
-            <AgentThoughtBlock
-              key={activity.id}
-              activity={activity}
-              defaultExpanded={Boolean(activity.streaming)}
-              forceCollapsed={collapseEmptyPlaceholder}
-            />
-          );
+    if (activity.kind === 'thought') {
+      const thoughtIndex = visibleActivities.findIndex((entry) => entry.id === activity.id);
+      const following = thoughtIndex >= 0 ? visibleActivities.slice(thoughtIndex + 1) : [];
+      const hasProgressAfter = following.some((entry) => {
+        if (entry.kind === 'response') {
+          return true;
         }
 
-        if (activity.kind === 'section') {
-          return (
-            <div key={activity.id} className='agent-view__section app-button--enter'>
-              {activity.label}
-            </div>
-          );
+        if (entry.kind === 'file_read' || entry.kind === 'file_edit') {
+          return Boolean(entry.filePath?.trim());
         }
 
-        if (activity.kind === 'status') {
-          if (/^Ran\b/i.test(activity.label.trim())) {
-            return null;
-          }
-
-          return (
-            <div key={activity.id} className='agent-view__status-line app-button--enter'>
-              <AgentActivityIcon kind={resolveAgentActivityIconFromLabel(activity.label)} />
-              <span>{activity.label}</span>
-            </div>
-          );
+        if (entry.kind === 'tool_run') {
+          return Boolean(entry.label.trim() || entry.toolCommand?.trim());
         }
 
-        if (activity.kind === 'tool_run' || activity.kind === 'live_status') {
-          return null;
+        if (entry.kind === 'task') {
+          return Boolean(entry.label.trim());
         }
 
-        if (activity.kind === 'file_edit' || activity.kind === 'file_read') {
-          return null;
-        }
+        return false;
+      });
+      const collapseEmptyPlaceholder =
+        !activity.streaming && !activity.label.trim() && hasProgressAfter;
 
-        if (activity.kind === 'response') {
-          const label = getSanitizedResponseLabel(activity.label);
+      return (
+        <AgentThoughtBlock
+          key={activity.id}
+          activity={activity}
+          projectPath={projectPath}
+          defaultExpanded={Boolean(activity.streaming)}
+          forceCollapsed={collapseEmptyPlaceholder}
+        />
+      );
+    }
 
-          if (!label) {
-            return null;
-          }
+    if (activity.kind === 'section') {
+      return (
+        <div key={activity.id} className='agent-view__section app-button--enter'>
+          {activity.label}
+        </div>
+      );
+    }
 
-          const isLastResponse = activity.id === lastResponseId;
-          const split =
-            isLastResponse && showSummary && summary && !hasSettledActionSummaries
-              ? splitAgentResponseForSummary(label, summary.responseLead)
-              : null;
-
-          if (split) {
-            return (
-              <Fragment key={activity.id}>
-                {renderResponseBlock(activity, split.lead, running, projectPath, 'agent-view__response--lead')}
-                <AgentTurnSummaryLine summary={summary!} projectPath={projectPath} />
-                {renderResponseBlock(activity, split.rest, running, projectPath, 'agent-view__response--tail')}
-              </Fragment>
-            );
-          }
-
-          return renderResponseBlock(activity, label, running, projectPath);
-        }
-
-        if (activity.kind === 'question') {
-          return (
-            <AgentQuestionCard
-              key={activity.id}
-              activity={activity}
-              interactive={
-                Boolean(onSubmitQuestion) &&
-                isLatestTurn &&
-                !running &&
-                activity.questionStatus === 'pending'
-              }
-              onSubmit={onSubmitQuestion ?? (async () => false)}
-            />
-          );
-        }
-
-        if (activity.kind === 'plan') {
-          return <AgentPlanReviewDock key={activity.id} activity={activity} mode='archive' />;
-        }
-
-        if (activity.kind === 'task') {
-          const taskIndex = visibleActivities.findIndex((entry) => entry.id === activity.id);
-          const previous = taskIndex > 0 ? visibleActivities[taskIndex - 1] : null;
-          const showToolsHeader = previous?.kind !== 'task';
-
-          return (
-            <AgentTaskActivityCard
-              key={activity.id}
-              activity={activity}
-              projectPath={projectPath}
-              relatedFiles={collectRelatedFilesForTask(visibleActivities, activity.id)}
-              showToolsHeader={showToolsHeader}
-            />
-          );
-        }
-
+    if (activity.kind === 'status') {
+      if (/^Ran\b/i.test(activity.label.trim())) {
         return null;
+      }
+
+      return (
+        <div key={activity.id} className='agent-view__status-line app-button--enter'>
+          <AgentActivityIcon kind={resolveAgentActivityIconFromLabel(activity.label)} />
+          <span>{activity.label}</span>
+        </div>
+      );
+    }
+
+    if (activity.kind === 'tool_run' || activity.kind === 'live_status') {
+      return null;
+    }
+
+    if (activity.kind === 'file_edit' || activity.kind === 'file_read') {
+      return null;
+    }
+
+    if (activity.kind === 'response') {
+      const label = getSanitizedResponseLabel(activity.label);
+
+      if (!label) {
+        return null;
+      }
+
+      const isLastResponse = activity.id === lastResponseId;
+      const split =
+        isLastResponse && showSummary && summary && !hasSettledActionSummaries
+          ? splitAgentResponseForSummary(label, summary.responseLead)
+          : null;
+
+      if (split) {
+        return (
+          <Fragment key={activity.id}>
+            {renderResponseBlock(
+              activity,
+              split.lead,
+              running,
+              projectPath,
+              'agent-view__response--lead',
+            )}
+            <AgentTurnSummaryLine summary={summary!} projectPath={projectPath} />
+            {renderResponseBlock(
+              activity,
+              split.rest,
+              running,
+              projectPath,
+              'agent-view__response--tail',
+            )}
+          </Fragment>
+        );
+      }
+
+      return renderResponseBlock(activity, label, running, projectPath);
+    }
+
+    if (activity.kind === 'question') {
+      return (
+        <AgentQuestionCard
+          key={activity.id}
+          activity={activity}
+          interactive={
+            Boolean(onSubmitQuestion) &&
+            isLatestTurn &&
+            !running &&
+            activity.questionStatus === 'pending'
+          }
+          onSubmit={onSubmitQuestion ?? (async () => false)}
+        />
+      );
+    }
+
+    if (activity.kind === 'plan') {
+      return <AgentPlanReviewDock key={activity.id} activity={activity} mode='archive' />;
+    }
+
+    if (activity.kind === 'task') {
+      const taskIndex = visibleActivities.findIndex((entry) => entry.id === activity.id);
+      const previous = taskIndex > 0 ? visibleActivities[taskIndex - 1] : null;
+      const showToolsHeader = previous?.kind !== 'task';
+
+      return (
+        <AgentTaskActivityCard
+          key={activity.id}
+          activity={activity}
+          projectPath={projectPath}
+          relatedFiles={collectRelatedFilesForTask(visibleActivities, activity.id)}
+          showToolsHeader={showToolsHeader}
+        />
+      );
+    }
+
+    return null;
   };
 
   const emptyResponseFallback = useMemo(() => {
@@ -583,8 +696,7 @@ function AgentActivityListComponent({
 
   const needsWaitingStatus = running && !hasLiveProgressIndicator;
   const [showWaitingStatus, setShowWaitingStatus] = useState(false);
-  const waitingLabel =
-    visibleActivities.length === 0 ? 'Thinking...' : 'Planning next moves...';
+  const waitingLabel = visibleActivities.length === 0 ? 'Thinking...' : 'Planning next moves...';
 
   useEffect(() => {
     if (!running || !needsWaitingStatus) {
@@ -623,13 +735,35 @@ function AgentActivityListComponent({
 
     for (const activity of activities) {
       if (activity.kind === 'thought') {
+        const hadTools = toolGroup.length > 0 || nodes.length > 0;
         flushTools(activity.id);
         nodes.push(
           <AgentThoughtBlock
             key={activity.id}
             activity={activity}
+            projectPath={projectPath}
             defaultExpanded={Boolean(activity.streaming || activity.label.trim())}
-            forceCollapsed={!activity.streaming && !activity.label.trim()}
+            forceCollapsed={
+              (!activity.streaming && !activity.label.trim()) ||
+              (Boolean(activity.streaming) && !activity.label.trim() && hadTools)
+            }
+          />,
+        );
+        continue;
+      }
+
+      if (activity.kind === 'live_status' && !parseAgentLiveFileStatus(activity.label)) {
+        flushTools(activity.id);
+        nodes.push(
+          <AgentThoughtBlock
+            key={activity.id}
+            activity={{
+              ...activity,
+              kind: 'thought',
+              streaming: true,
+              label: '',
+            }}
+            forceCollapsed
           />,
         );
         continue;
@@ -657,6 +791,7 @@ function AgentActivityListComponent({
               <AgentThoughtBlock
                 key={activity.id}
                 activity={activity}
+                projectPath={projectPath}
                 defaultExpanded
                 forceCollapsed={false}
               />

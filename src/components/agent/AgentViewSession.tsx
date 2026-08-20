@@ -289,14 +289,13 @@ function AgentViewSessionComponent({
       !isFocused ||
       !isVisible ||
       hasPendingQuestion ||
-      hasPendingPlan ||
       skipComposerFocusRef.current
     ) {
       return;
     }
 
     inputRef.current?.focus({ preventScroll: true });
-  }, [hasPendingPlan, hasPendingQuestion, isFocused, isVisible]);
+  }, [hasPendingQuestion, isFocused, isVisible]);
 
   useEffect(() => {
     focusComposer();
@@ -309,7 +308,7 @@ function AgentViewSessionComponent({
       if (!(target instanceof Element)) {
         onFocusPane();
         window.requestAnimationFrame(() => {
-          if (!hasPendingQuestion && !hasPendingPlan) {
+          if (!hasPendingQuestion) {
             inputRef.current?.focus({ preventScroll: true });
           }
         });
@@ -344,12 +343,12 @@ function AgentViewSessionComponent({
 
       onFocusPane();
       window.requestAnimationFrame(() => {
-        if (!hasPendingQuestion && !hasPendingPlan) {
+        if (!hasPendingQuestion) {
           inputRef.current?.focus({ preventScroll: true });
         }
       });
     },
-    [hasPendingPlan, hasPendingQuestion, onFocusPane],
+    [hasPendingQuestion, onFocusPane],
   );
 
   const handleSubmit = useCallback(

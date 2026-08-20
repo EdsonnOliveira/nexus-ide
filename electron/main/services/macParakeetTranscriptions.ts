@@ -21,6 +21,7 @@ import {
   refreshAutoCalendarTitlesForItems,
 } from './macParakeetCalendarTitleMatch';
 import { translateMacParakeetConclusionToPortuguese } from './macParakeetConclusionPt';
+import { ensureEchoDesktopOpen } from './echoDesktop';
 
 const PARAKEET_AI_API_URL = 'https://www.parakeet-ai.com';
 const PARAKEET_AI_DATA_DIR = join(homedir(), 'Library', 'Application Support', 'parakeetai-desktop');
@@ -1116,6 +1117,8 @@ export async function startMacParakeetCallFromEvent(
   if (platform() !== 'darwin') {
     return { ok: false, reason: 'unsupported' };
   }
+
+  void ensureEchoDesktopOpen();
 
   if (!isMacParakeetInstalled()) {
     await openMacParakeetApp();

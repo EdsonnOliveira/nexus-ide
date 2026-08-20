@@ -262,8 +262,8 @@ const nexusApi = {
     },
   },
   homeDashboard: {
-    getStats: (projectPaths: string[]) =>
-      ipcRenderer.invoke('homeDashboard:getStats', projectPaths),
+    getStats: (projectPaths: string[], provider?: 'cursor' | 'claude') =>
+      ipcRenderer.invoke('homeDashboard:getStats', projectPaths, provider),
     recordActivity: (kind: 'prompts' | 'agentExecutions') =>
       ipcRenderer.invoke('homeDashboard:recordActivity', kind),
   },

@@ -1229,6 +1229,39 @@ function buildTerminalTargetResults(project: Project): GlobalSearchResult[] {
   return results;
 }
 
+function buildTerminalQuickCommandResults(project: Project, query: string): GlobalSearchResult[] {
+  const commands = project.terminalQuickCommands ?? [];
+  const results: GlobalSearchResult[] = [];
+
+  for (const entry of commands) {
+    const command = entry.command.trim().replace(/\n$/, '');
+
+    if (!command) {
+      continue;
+    }
+
+    if (!matchesQuery([entry.label, command], query)) {
+      continue;
+    }
+
+    results.push({
+      id: `terminal-command:${project.id}:${entry.id}`,
+      kind: 'terminal-target',
+      title: entry.label || command,
+      subtitle: entry.label && entry.label !== command ? command : 'Comando salvo',
+      projectId: project.id,
+      payload: {
+        projectId: project.id,
+        paneId: null,
+        createNew: true,
+        command,
+      },
+    });
+  }
+
+  return results;
+}
+
 function buildTaskTargetResults(project: Project): GlobalSearchResult[] {
   return [
     {
@@ -1409,9 +1442,35 @@ export async function searchSlashQuery(
     case 'agent':
       items = project ? buildAgentTargetResults(project) : [];
       break;
-    case 'terminal':
-      items = project ? buildTerminalTargetResults(project) : [];
-      break;
+    case 'terminal': {
+      if (!project) {
+        return { groups: [] };
+      }
+
+      const targetItems = buildTerminalTargetResults(project);
+      const savedItems = buildTerminalQuickCommandResults(project, filterText);
+      const groups: GlobalSearchResultGroup[] = [
+        {
+          id: 'slash-results',
+          kind: 'results',
+          label: project.name,
+          projectId: project.id,
+          items: targetItems,
+        },
+      ];
+
+      if (savedItems.length > 0) {
+        groups.push({
+          id: 'slash-terminal-commands',
+          kind: 'results',
+          label: 'Comandos salvos',
+          projectId: project.id,
+          items: savedItems,
+        });
+      }
+
+      return { groups };
+    }
     case 'browser':
       items = [];
       break;

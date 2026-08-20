@@ -1,9 +1,14 @@
-import { aggregateGitDailyStats } from './git';
+import {
+  aggregateProviderGitDailyStats,
+  scanAiProviderActivity,
+  type DashboardAiProvider,
+} from './aiProviderActivityStats';
 import {
   formatLocalDateKeyFromMs,
-  getHomeActivityMetricsForDay,
   getLocalDayBoundsMs,
 } from './homeActivityStore';
+
+export type { DashboardAiProvider };
 
 export interface HomeDashboardDayStats {
   commits: number;
@@ -27,82 +32,67 @@ interface StatsCacheEntry {
 
 let statsCache: StatsCacheEntry | null = null;
 
-function emptyDayStats(): HomeDashboardDayStats {
-  return {
-    commits: 0,
-    linesChanged: 0,
-    agentExecutions: 0,
-    prompts: 0,
-  };
+export function resolveDashboardAiProvider(value: unknown): DashboardAiProvider {
+  return value === 'claude' ? 'claude' : 'cursor';
 }
 
-function buildStatsCacheKey(projectPaths: string[], referenceMs: number): string {
-  const dayKey = formatLocalDateKeyFromMs(referenceMs);
-  const pathsKey = [...new Set(projectPaths.filter(Boolean))].sort().join('|');
-  return `${dayKey}:${pathsKey}`;
-}
-
-async function resolveDayStats(
+function buildStatsCacheKey(
   projectPaths: string[],
-  dayStartMs: number,
-  dayEndMs: number,
-  dayKey: string,
-): Promise<HomeDashboardDayStats> {
-  const gitStats = await aggregateGitDailyStats(projectPaths, dayStartMs, dayEndMs);
-  const activityStats = getHomeActivityMetricsForDay(dayKey);
-
-  return {
-    commits: gitStats.commits,
-    linesChanged: gitStats.linesChanged,
-    agentExecutions: activityStats.agentExecutions,
-    prompts: activityStats.prompts,
-  };
+  provider: DashboardAiProvider,
+  referenceMs: number,
+): string {
+  const dayKey = formatLocalDateKeyFromMs(referenceMs);
+  const pathsKey = Array.from(new Set(projectPaths.filter(Boolean))).sort().join('|');
+  return `${dayKey}:${provider}:${pathsKey}`;
 }
 
 export async function getHomeDashboardActivityComparison(
   projectPaths: string[],
+  provider: DashboardAiProvider = 'cursor',
   referenceMs = Date.now(),
 ): Promise<HomeDashboardActivityComparison> {
-  const uniquePaths = [...new Set(projectPaths.filter(Boolean))];
-  const cacheKey = buildStatsCacheKey(uniquePaths, referenceMs);
+  const uniquePaths = Array.from(new Set(projectPaths.filter(Boolean)));
+  const cacheKey = buildStatsCacheKey(uniquePaths, provider, referenceMs);
   const cached = statsCache;
 
   if (cached && cached.key === cacheKey && cached.expiresAt > referenceMs) {
     return cached.value;
   }
 
-  if (uniquePaths.length === 0) {
-    const emptyComparison = {
-      today: emptyDayStats(),
-      yesterday: emptyDayStats(),
-    };
-
-    statsCache = {
-      key: cacheKey,
-      expiresAt: referenceMs + STATS_CACHE_TTL_MS,
-      value: emptyComparison,
-    };
-
-    return emptyComparison;
-  }
-
   const todayBounds = getLocalDayBoundsMs(referenceMs);
-  const yesterdayReference = todayBounds.startMs - 1;
-  const yesterdayBounds = getLocalDayBoundsMs(yesterdayReference);
+  const yesterdayBounds = getLocalDayBoundsMs(todayBounds.startMs - 1);
   const todayKey = formatLocalDateKeyFromMs(referenceMs);
-  const yesterdayKey = formatLocalDateKeyFromMs(yesterdayReference);
-
-  const [today, yesterday] = await Promise.all([
-    resolveDayStats(uniquePaths, todayBounds.startMs, todayBounds.endMs, todayKey),
-    resolveDayStats(
-      uniquePaths,
+  const yesterdayKey = formatLocalDateKeyFromMs(todayBounds.startMs - 1);
+  const providerScan = await scanAiProviderActivity(
+    provider,
+    yesterdayBounds.startMs,
+    todayBounds.endMs,
+  );
+  const gitPaths = Array.from(new Set(uniquePaths.concat(providerScan.gitPaths)));
+  const [todayGit, yesterdayGit] = await Promise.all([
+    aggregateProviderGitDailyStats(gitPaths, todayBounds.startMs, todayBounds.endMs),
+    aggregateProviderGitDailyStats(
+      gitPaths,
       yesterdayBounds.startMs,
       yesterdayBounds.endMs,
-      yesterdayKey,
     ),
   ]);
-
-  const value = { today, yesterday };
+  const todayActivity = providerScan.activityByDay[todayKey];
+  const yesterdayActivity = providerScan.activityByDay[yesterdayKey];
+  const value = {
+    today: {
+      commits: todayGit.commits,
+      linesChanged: todayGit.linesChanged,
+      agentExecutions: todayActivity?.agentExecutions ?? 0,
+      prompts: todayActivity?.prompts ?? 0,
+    },
+    yesterday: {
+      commits: yesterdayGit.commits,
+      linesChanged: yesterdayGit.linesChanged,
+      agentExecutions: yesterdayActivity?.agentExecutions ?? 0,
+      prompts: yesterdayActivity?.prompts ?? 0,
+    },
+  };
 
   statsCache = {
     key: cacheKey,

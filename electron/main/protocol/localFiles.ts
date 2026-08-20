@@ -25,6 +25,7 @@ export function registerLocalFileScheme(): void {
         secure: true,
         standard: true,
         supportFetchAPI: true,
+        corsEnabled: true,
         bypassCSP: true,
         stream: true,
       },
@@ -41,6 +42,10 @@ function resolveFilePath(requestUrl: string): string | null {
     }
 
     let filePath = decodeURIComponent(url.pathname);
+
+    if (url.hostname) {
+      filePath = `/${url.hostname}${filePath.startsWith('/') ? filePath : `/${filePath}`}`;
+    }
 
     if (!filePath || filePath === '/') {
       return null;

@@ -19,7 +19,8 @@ export interface AgentPrintRunOptions {
 }
 
 const execFileAsync = promisify(execFile);
-const STDOUT_WATCHDOG_MS = 45_000;
+const STDOUT_WATCHDOG_MS = 120_000;
+const STDOUT_STARTUP_EXTEND_MS = 90_000;
 const STDOUT_IDLE_WATCHDOG_MS = 7_200_000;
 const STDOUT_FLUSH_MS = 12;
 const STDOUT_FLUSH_MAX_CHARS = 32_000;
@@ -362,7 +363,7 @@ class AgentPrintRunner {
       });
     };
 
-    const armStartupWatchdog = () => {
+    const armStartupWatchdog = (timeoutMs = STDOUT_WATCHDOG_MS) => {
       this.clearWatchdog(options.paneId);
       this.watchdogs.set(
         options.paneId,
@@ -374,10 +375,10 @@ class AgentPrintRunner {
           const stderr = stderrBuffer.trim();
           finishWithError(
             stderr
-              ? `Agent sem stdout após ${Math.round(STDOUT_WATCHDOG_MS / 1000)}s. ${stderr.slice(0, 500)}`
-              : `Agent sem stdout após ${Math.round(STDOUT_WATCHDOG_MS / 1000)}s. Pare e tente de novo.`,
+              ? `Agent sem stdout após ${Math.round(timeoutMs / 1000)}s. ${stderr.slice(0, 500)}`
+              : `Agent sem stdout após ${Math.round(timeoutMs / 1000)}s. Pare e tente de novo.`,
           );
-        }, STDOUT_WATCHDOG_MS),
+        }, timeoutMs),
       );
     };
 
@@ -408,6 +409,12 @@ class AgentPrintRunner {
     child.stdout.on('data', (chunk) => forwardStdout(chunk));
     child.stderr.on('data', (chunk) => {
       stderrBuffer = `${stderrBuffer}${chunk.toString('utf8')}`.slice(-4096);
+
+      if (stdoutSeen || closed) {
+        return;
+      }
+
+      armStartupWatchdog(STDOUT_STARTUP_EXTEND_MS);
     });
 
     child.on('close', (code) => {

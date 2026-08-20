@@ -554,5 +554,16 @@ export function applyAutoProjectToken(query: string, activeProjectName: string |
     }
   }
 
+  const commandWithPayloadMatch = trimmed.match(/^\/([a-z]+)\s+([^@\s].*)$/is);
+
+  if (commandWithPayloadMatch && !trimmed.includes('@')) {
+    const command = commandWithPayloadMatch[1].toLowerCase() as SlashCommandId;
+    const payload = commandWithPayloadMatch[2];
+
+    if (SLASH_COMMANDS.includes(command) && getSlashCommandMeta(command).requiresProject) {
+      return `/${command} @${activeProjectName} ${payload}`;
+    }
+  }
+
   return query;
 }

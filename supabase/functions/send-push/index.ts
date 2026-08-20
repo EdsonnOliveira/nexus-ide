@@ -12,6 +12,7 @@ interface SendPushBody {
   title?: string;
   body?: string;
   dedupeKey?: string;
+  clearDedupeKeys?: string[];
   data?: Record<string, unknown>;
 }
 
@@ -143,6 +144,18 @@ Deno.serve(async (req: Request) => {
   const rows = (subscriptions as SubscriptionRow[] | null) ?? [];
   if (rows.length === 0) {
     return jsonResponse({ ok: true, sent: 0 });
+  }
+
+  const clearDedupeKeys = (body.clearDedupeKeys ?? [])
+    .map((key) => key.trim())
+    .filter(Boolean);
+  if (clearDedupeKeys.length > 0) {
+    await admin
+      .from('push_notification_log')
+      .delete()
+      .eq('user_id', userId)
+      .eq('kind', kind)
+      .in('dedupe_key', clearDedupeKeys);
   }
 
   const dedupeKey = body.dedupeKey?.trim();

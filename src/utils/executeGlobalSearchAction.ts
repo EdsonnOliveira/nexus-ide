@@ -98,20 +98,20 @@ async function runTerminalCommand(
 
   if (creatingNew) {
     resetAgentReadyDetectors('');
-    await tabActions.addTab('terminal');
+    await tabActions.addTab('terminal', { launchCommand: trimmed });
     await delay(PANE_FOCUS_DELAY_MS);
 
     const project = useProjectStore.getState().getActiveProject();
     paneId = project?.activeTabId ?? null;
-  }
 
-  if (!paneId) {
+    if (paneId) {
+      await tabActions.selectPane(paneId);
+    }
+
     return;
   }
 
-  if (creatingNew) {
-    useTerminalSessionStore.getState().setPendingLaunchCommand(paneId, trimmed);
-    await tabActions.selectPane(paneId);
+  if (!paneId) {
     return;
   }
 
@@ -416,7 +416,12 @@ export async function executeSlashCommand(
       : null;
   const terminalTarget =
     selectedResult?.kind === 'terminal-target'
-      ? (selectedResult.payload as { projectId: string; paneId: string | null; createNew: boolean })
+      ? (selectedResult.payload as {
+          projectId: string;
+          paneId: string | null;
+          createNew: boolean;
+          command?: string;
+        })
       : null;
 
   if (
@@ -478,12 +483,13 @@ export async function executeSlashCommand(
         paneId: null,
         createNew: true,
       };
+      const command = (target.command ?? slash.payload ?? slash.filterText).trim();
 
-      await runTerminalCommand(slash.projectId, slash.payload || slash.filterText, tabActions, {
+      await runTerminalCommand(slash.projectId, command, tabActions, {
         paneId: target.paneId,
         createNew: target.createNew,
       });
-      return Boolean((slash.payload || slash.filterText).trim());
+      return Boolean(command);
     }
     case 'browser': {
       if (!slash.projectId) {

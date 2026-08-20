@@ -11000,6 +11000,7 @@ input {
   border-bottom: 1px solid rgba(255, 255, 255, 0.03);
   color: var(--text-secondary);
   text-align: left;
+  cursor: pointer;
   transition: background var(--motion-out) var(--motion-ease-out);
 }
 
@@ -13149,6 +13150,19 @@ html.cmd-pressed .markdown-preview a.markdown-preview__link:hover {
   cursor: zoom-in;
 }
 
+.markdown-preview .markdown-preview__img-wrap {
+  position: relative;
+  display: block;
+  width: fit-content;
+  max-width: min(100%, 720px);
+  margin: 10px 0 14px;
+}
+
+.markdown-preview .markdown-preview__img-wrap .markdown-preview__img {
+  margin: 0;
+  max-width: 100%;
+}
+
 .markdown-preview img:hover,
 .markdown-preview .markdown-preview__img:hover {
   border-color: rgba(255, 255, 255, 0.18);
@@ -13156,7 +13170,8 @@ html.cmd-pressed .markdown-preview a.markdown-preview__link:hover {
 }
 
 .markdown-preview p > img:only-child,
-.markdown-preview p > .markdown-preview__img:only-child {
+.markdown-preview p > .markdown-preview__img:only-child,
+.markdown-preview p > .markdown-preview__img-wrap:only-child {
   margin-top: 4px;
 }
 
@@ -17618,13 +17633,15 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   background: rgba(255, 255, 255, 0.08);
 }
 
-.app-checkbox--checked {
+.app-checkbox--checked,
+.app-checkbox--indeterminate {
   border-color: var(--accent-purple-border);
   background: var(--accent-purple-soft);
   color: #c4b5fd;
 }
 
-.app-checkbox--checked:hover:not(:disabled) {
+.app-checkbox--checked:hover:not(:disabled),
+.app-checkbox--indeterminate:hover:not(:disabled) {
   background: rgba(139, 92, 246, 0.3);
   filter: brightness(1.05);
 }
@@ -18206,7 +18223,18 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 6px;
+}
+
+.agent-view__follow-up-item-body > .agent-view__user-skill {
+  align-self: flex-start;
+  width: max-content;
+  max-width: 100%;
+}
+
+.agent-view__follow-up-item-body > .agent-view__follow-up-text {
+  width: 100%;
 }
 
 .agent-view__follow-up-text {
@@ -18424,7 +18452,9 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 .agent-view__composer-skill-badge {
   display: inline-flex;
   align-items: center;
+  align-self: flex-start;
   gap: 4px;
+  width: max-content;
   max-width: 100%;
 }
 
@@ -19766,6 +19796,8 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   align-items: center;
   gap: 4px;
   height: 20px;
+  width: max-content;
+  max-width: 100%;
   padding: 0 8px 0 6px;
   border-radius: 999px;
   flex-shrink: 0;
@@ -21406,6 +21438,31 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 
 @media (prefers-reduced-motion: reduce) {
   .agent-view__response-body.markdown-preview code:not(.hljs).markdown-preview__inline-code--copied::after {
+    animation: none;
+  }
+}
+
+.markdown-preview__img-copied-badge {
+  position: fixed;
+  z-index: 80;
+  padding: 2px 7px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, #22c55e 32%, transparent);
+  background: color-mix(in srgb, #14532d 88%, #272822);
+  color: #86efac;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 5px));
+  animation: app-button-in var(--motion-in) var(--motion-ease-in);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .markdown-preview__img-copied-badge {
     animation: none;
   }
 }

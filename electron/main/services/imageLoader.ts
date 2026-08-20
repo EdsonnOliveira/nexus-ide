@@ -5,6 +5,7 @@ import { basename, extname, join } from 'node:path';
 import path from 'node:path';
 
 export const MAX_IMAGE_DATA_URL_BYTES = 4 * 1024 * 1024;
+export const MAX_MARKDOWN_IMAGE_DATA_URL_BYTES = 16 * 1024 * 1024;
 
 const MIME_TYPES: Record<string, string> = {
   '.png': 'image/png',
@@ -50,7 +51,10 @@ export function bufferToDataUrlIfWithinLimit(
   return bufferToDataUrl(buffer, filePath);
 }
 
-export async function readImageAsDataUrl(filePath: string): Promise<string | null> {
+export async function readImageAsDataUrl(
+  filePath: string,
+  maxBytes = MAX_IMAGE_DATA_URL_BYTES,
+): Promise<string | null> {
   const resolvedPath = path.resolve(filePath);
 
   if (!resolvedPath || !existsSync(resolvedPath)) {
@@ -60,7 +64,7 @@ export async function readImageAsDataUrl(filePath: string): Promise<string | nul
   try {
     const fileStats = await stat(resolvedPath);
 
-    if (!fileStats.isFile() || fileStats.size > MAX_IMAGE_DATA_URL_BYTES) {
+    if (!fileStats.isFile() || fileStats.size > maxBytes) {
       return null;
     }
   } catch {
@@ -68,7 +72,7 @@ export async function readImageAsDataUrl(filePath: string): Promise<string | nul
   }
 
   const buffer = await readFile(resolvedPath);
-  return bufferToDataUrlIfWithinLimit(buffer, resolvedPath);
+  return bufferToDataUrlIfWithinLimit(buffer, resolvedPath, maxBytes);
 }
 
 export function normalizeImageRef(imageRef: string): string {
@@ -81,7 +85,10 @@ export function normalizeImageRef(imageRef: string): string {
   if (/^nexus-file:\/\//i.test(trimmed)) {
     try {
       const url = new URL(trimmed);
-      trimmed = decodeURIComponent(url.pathname);
+      const pathname = decodeURIComponent(url.pathname);
+      trimmed = url.hostname
+        ? `/${url.hostname}${pathname.startsWith('/') ? pathname : `/${pathname}`}`
+        : pathname;
     } catch {
       trimmed = decodeURIComponent(trimmed.replace(/^nexus-file:\/\//i, ''));
     }
@@ -155,12 +162,16 @@ function isPathInsideRoot(filePath: string, root: string): boolean {
   return resolved === rootResolved || resolved.startsWith(`${rootResolved}${path.sep}`);
 }
 
-function isAllowedAbsoluteImagePath(filePath: string, projectRoot: string): boolean {
-  if (isPathInsideRoot(filePath, projectRoot)) {
+function isAllowedAbsoluteImagePath(filePath: string, projectRoot: string | null): boolean {
+  if (projectRoot && isPathInsideRoot(filePath, projectRoot)) {
     return true;
   }
 
-  return isPathInsideRoot(filePath, os.tmpdir());
+  if (isPathInsideRoot(filePath, os.tmpdir())) {
+    return true;
+  }
+
+  return isPathInsideRoot(filePath, os.homedir());
 }
 
 export async function resolveProjectImageAsDataUrl(
@@ -182,11 +193,6 @@ export async function resolveProjectImageAsDataUrl(
   }
 
   const projectRoot = projectPath?.trim() ? path.resolve(projectPath.trim()) : null;
-
-  if (!projectRoot) {
-    return null;
-  }
-
   const candidates: string[] = [];
 
   if (path.isAbsolute(normalized)) {
@@ -195,7 +201,7 @@ export async function resolveProjectImageAsDataUrl(
     if (isAllowedAbsoluteImagePath(absolute, projectRoot)) {
       candidates.push(absolute);
     }
-  } else {
+  } else if (projectRoot) {
     candidates.push(path.resolve(projectRoot, normalized));
 
     const name = basename(normalized);
@@ -213,17 +219,19 @@ export async function resolveProjectImageAsDataUrl(
       continue;
     }
 
-    const dataUrl = await readImageAsDataUrl(candidate);
+    const dataUrl = await readImageAsDataUrl(candidate, MAX_MARKDOWN_IMAGE_DATA_URL_BYTES);
 
     if (dataUrl) {
       return dataUrl;
     }
   }
 
-  const found = await findImageByBasename(projectRoot, basename(normalized));
+  if (projectRoot) {
+    const found = await findImageByBasename(projectRoot, basename(normalized));
 
-  if (found && isPathInsideRoot(found, projectRoot)) {
-    return readImageAsDataUrl(found);
+    if (found && isPathInsideRoot(found, projectRoot)) {
+      return readImageAsDataUrl(found, MAX_MARKDOWN_IMAGE_DATA_URL_BYTES);
+    }
   }
 
   return null;

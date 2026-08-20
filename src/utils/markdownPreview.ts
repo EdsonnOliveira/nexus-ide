@@ -50,9 +50,14 @@ function isLikelyImagePath(value: string): boolean {
 }
 
 function resolveMarkdownImageSrc(src: string): string | null {
-  const trimmed = src.trim().replace(/&amp;/g, '&');
+  const trimmed = src
+    .trim()
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '')
+    .replace(/&gt;/g, '')
+    .replace(/^<|>$/g, '');
 
-  if (!trimmed || /[\s<>"']/.test(trimmed)) {
+  if (!trimmed || /[<>"']/.test(trimmed)) {
     return null;
   }
 
@@ -69,11 +74,20 @@ function resolveMarkdownImageSrc(src: string): string | null {
   }
 
   if (/^file:\/\/.+\.(png|jpe?g|gif|webp|bmp|svg)(?:\?.*)?$/i.test(trimmed)) {
-    return trimmed;
+    try {
+      const url = new URL(trimmed);
+      const filePath = decodeURIComponent(url.pathname);
+
+      if (filePath && filePath !== '/') {
+        return toNexusFileUrl(filePath);
+      }
+    } catch {
+      return toNexusFileUrl(decodeURIComponent(trimmed.replace(/^file:\/\//i, '')));
+    }
   }
 
   if (/^[A-Za-z]:[\\/].+\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(trimmed)) {
-    return `file://${trimmed.replace(/\\/g, '/')}`;
+    return toNexusFileUrl(trimmed.replace(/\\/g, '/'));
   }
 
   if (isLikelyImagePath(trimmed) && trimmed.startsWith('/')) {
@@ -87,13 +101,19 @@ function resolveMarkdownImageSrc(src: string): string | null {
   return null;
 }
 
+function wrapMarkdownImage(imgHtml: string): string {
+  return `<span class="markdown-preview__img-wrap">${imgHtml}</span>`;
+}
+
 function renderMarkdownImage(alt: string, src: string): string {
   const resolved = resolveMarkdownImageSrc(src);
   const safeAlt = escapeAttr(alt);
   const safeRef = escapeAttr(src.trim());
 
   if (resolved) {
-    return `<img class="markdown-preview__img" src="${escapeAttr(resolved)}" alt="${safeAlt}" data-image-ref="${safeRef}" loading="lazy" />`;
+    return wrapMarkdownImage(
+      `<img class="markdown-preview__img" src="${escapeAttr(resolved)}" alt="${safeAlt}" data-image-ref="${safeRef}" loading="lazy" />`,
+    );
   }
 
   const trimmed = src.trim();
@@ -102,7 +122,9 @@ function renderMarkdownImage(alt: string, src: string): string {
     isLikelyImagePath(trimmed) ||
     (trimmed.length > 0 && !/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !/[\s<>"']/.test(trimmed))
   ) {
-    return `<img class="markdown-preview__img markdown-preview__img--pending" alt="${safeAlt}" data-image-path="${safeRef}" loading="lazy" />`;
+    return wrapMarkdownImage(
+      `<img class="markdown-preview__img markdown-preview__img--pending" alt="${safeAlt}" data-image-path="${safeRef}" loading="lazy" />`,
+    );
   }
 
   const label = safeAlt || safeRef;
@@ -138,11 +160,14 @@ function autolinkMarkdownUrls(value: string): string {
 
 function applyInlineMarkdown(value: string): string {
   let html = value;
-  html = html.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_, alt: string, src: string) =>
-    renderMarkdownImage(alt, src),
+  html = html.replace(
+    /!\[([^\]]*)\]\((?:&lt;([^&]+)&gt;|([^)\s]+))(?:\s+(?:&quot;[^&]*&quot;|"[^"]*"))?\)/g,
+    (_, alt: string, bracketSrc: string | undefined, plainSrc: string | undefined) =>
+      renderMarkdownImage(alt, bracketSrc ?? plainSrc ?? ''),
   );
-  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)(?:\s+"[^"]*")?\)/gi, (_, label: string, href: string) =>
-    renderMarkdownPreviewLink(href, label),
+  html = html.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^)\s]+)(?:\s+"[^"]*")?\)/gi,
+    (_, label: string, href: string) => renderMarkdownPreviewLink(href, label),
   );
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
@@ -250,9 +275,10 @@ function looksLikeCodeLine(line: string): boolean {
     return false;
   }
 
-  if (/^\s*(export|import|const|let|var|function|class|interface|type|return|if|else|for|while|switch|case|await|async|new|throw|default)\b/.test(
-    trimmed,
-  )
+  if (
+    /^\s*(export|import|const|let|var|function|class|interface|type|return|if|else|for|while|switch|case|await|async|new|throw|default)\b/.test(
+      trimmed,
+    )
   ) {
     return true;
   }
@@ -276,7 +302,11 @@ function looksLikeCodeLine(line: string): boolean {
   }
 
   if (/;/.test(structural)) {
-    if (/^\s*(const|let|var|return|import|export|throw|break|continue|case|default)\b/.test(structural)) {
+    if (
+      /^\s*(const|let|var|return|import|export|throw|break|continue|case|default)\b/.test(
+        structural,
+      )
+    ) {
       return true;
     }
 
@@ -309,7 +339,10 @@ function looksLikeCodeLine(line: string): boolean {
 }
 
 function isTableRow(line: string): boolean {
-  const trimmed = line.trim().replace(/^\*\*(.+)\*\*$/, '$1').trim();
+  const trimmed = line
+    .trim()
+    .replace(/^\*\*(.+)\*\*$/, '$1')
+    .trim();
 
   if (!trimmed.includes('|')) {
     return false;
@@ -337,7 +370,10 @@ function isTableRow(line: string): boolean {
 }
 
 function parseTableCells(line: string): string[] {
-  const trimmed = line.trim().replace(/^\*\*(.+)\*\*$/, '$1').trim();
+  const trimmed = line
+    .trim()
+    .replace(/^\*\*(.+)\*\*$/, '$1')
+    .trim();
 
   if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
     return trimmed
@@ -475,7 +511,11 @@ function isMermaidDiagramContentLine(line: string): boolean {
     return true;
   }
 
-  if (/^(subgraph|end|classDef|style|linkStyle|click|direction|participant|actor|note)\b/i.test(trimmed)) {
+  if (
+    /^(subgraph|end|classDef|style|linkStyle|click|direction|participant|actor|note)\b/i.test(
+      trimmed,
+    )
+  ) {
     return true;
   }
 
@@ -507,7 +547,11 @@ function looksLikeProseLine(trimmed: string): boolean {
     return false;
   }
 
-  if (/^\s*(export|import|const|let|var|function|class|interface|type|return|if|else|for|while|switch|case|await|async)\b/.test(trimmed)) {
+  if (
+    /^\s*(export|import|const|let|var|function|class|interface|type|return|if|else|for|while|switch|case|await|async)\b/.test(
+      trimmed,
+    )
+  ) {
     return false;
   }
 
@@ -569,7 +613,10 @@ function shouldAutoCloseMarkdownFence(line: string, codeLineCount: number): bool
   return false;
 }
 
-function collectCodeBlock(lines: string[], startIndex: number): { block: string[]; nextIndex: number } {
+function collectCodeBlock(
+  lines: string[],
+  startIndex: number,
+): { block: string[]; nextIndex: number } {
   const block: string[] = [];
   let index = startIndex;
 
@@ -609,13 +656,17 @@ function inferMarkdownCodeLanguage(code: string): string {
     return 'mermaid';
   }
 
-  if (/^\s*#!\/usr\/bin\/env\s+bash/m.test(code) || /^\s*(npm|yarn|pnpm|npx|git|cd|curl)\b/m.test(code)) {
+  if (
+    /^\s*#!\/usr\/bin\/env\s+bash/m.test(code) ||
+    /^\s*(npm|yarn|pnpm|npx|git|cd|curl)\b/m.test(code)
+  ) {
     return 'bash';
   }
 
   if (
     /^\s*(def|class)\s+\w+/m.test(code) ||
-    (/:\s*$/.test(code.split('\n')[0] ?? '') && !/^\s*(export|import|const|let|var|function|class)\b/.test(code))
+    (/:\s*$/.test(code.split('\n')[0] ?? '') &&
+      !/^\s*(export|import|const|let|var|function|class)\b/.test(code))
   ) {
     return 'python';
   }
@@ -643,7 +694,10 @@ function renderHighlightedCodeBlock(rawCode: string, language: string): string {
   return `<pre class="hljs"><code class="hljs${langClass}">${highlightedCode}</code></pre>`;
 }
 
-function collectMermaidBlock(lines: string[], startIndex: number): { block: string[]; nextIndex: number } {
+function collectMermaidBlock(
+  lines: string[],
+  startIndex: number,
+): { block: string[]; nextIndex: number } {
   const block: string[] = [];
   let index = startIndex;
   const opensFence = /^```\s*mermaid/i.test(lines[startIndex]?.trim() ?? '');
@@ -760,7 +814,9 @@ function renderMarkdownBlocks(source: string): string {
 
       const highlightedCode = highlightMarkdownCodeBlock(rawCode, resolvedLanguage);
       const langClass = resolvedLanguage ? ` language-${resolvedLanguage}` : '';
-      blocks.push(`<pre class="hljs"><code class="hljs${langClass}">${highlightedCode}</code></pre>`);
+      blocks.push(
+        `<pre class="hljs"><code class="hljs${langClass}">${highlightedCode}</code></pre>`,
+      );
       continue;
     }
 

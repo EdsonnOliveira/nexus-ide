@@ -104,7 +104,7 @@ async function ensureDevice(
   if (pairingCode) {
     const { data: beforePair } = await client
       .from('devices')
-      .select('id, name, owner_id, workspace_id, status')
+      .select('id, name, owner_id, workspace_id, status, last_seen_at')
       .eq('id', identity.deviceId)
       .maybeSingle();
     const claimed = await claimDevicePairing(client, {
@@ -122,6 +122,7 @@ async function ensureDevice(
         name: claimed.name,
         owner_id: claimed.owner_id,
         workspace_id: claimed.workspace_id,
+        last_seen_at: beforePair.last_seen_at,
       });
     }
   } else {
@@ -152,6 +153,7 @@ async function ensureDevice(
           name,
           owner_id: existing.owner_id,
           workspace_id: existing.workspace_id,
+          last_seen_at: existing.last_seen_at,
         });
       }
     } else {
@@ -299,7 +301,7 @@ async function main(): Promise<void> {
     try {
       const { data: beforeHeartbeat } = await client
         .from('devices')
-        .select('id, name, owner_id, workspace_id, status')
+        .select('id, name, owner_id, workspace_id, status, last_seen_at')
         .eq('id', deviceId)
         .maybeSingle();
       await touchHeartbeat(client, deviceId, {
@@ -312,6 +314,7 @@ async function main(): Promise<void> {
           name: beforeHeartbeat.name,
           owner_id: beforeHeartbeat.owner_id,
           workspace_id: beforeHeartbeat.workspace_id,
+          last_seen_at: beforeHeartbeat.last_seen_at,
         });
       }
     } catch (error) {
@@ -411,9 +414,9 @@ async function main(): Promise<void> {
     void poll();
   }, POLL_MS);
 
-  void runPushMaintenance();
+  void runPushMaintenance(deviceId);
   setInterval(() => {
-    void runPushMaintenance().catch((error) => {
+    void runPushMaintenance(deviceId).catch((error) => {
       console.error('[nexus-runtime] push maintenance failed', error);
     });
   }, PUSH_MAINTENANCE_MS);

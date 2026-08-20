@@ -1,10 +1,18 @@
 import { ipcMain } from 'electron';
 import { recordHomeActivityMetric } from '../services/homeActivityStore';
-import { getHomeDashboardActivityComparison } from '../services/homeDashboardStats';
+import {
+  getHomeDashboardActivityComparison,
+  resolveDashboardAiProvider,
+} from '../services/homeDashboardStats';
 
 export function registerHomeDashboardHandlers(): void {
-  ipcMain.handle('homeDashboard:getStats', async (_, projectPaths: string[]) =>
-    getHomeDashboardActivityComparison(Array.isArray(projectPaths) ? projectPaths : []),
+  ipcMain.handle(
+    'homeDashboard:getStats',
+    async (_, projectPaths: string[], provider?: unknown) =>
+      getHomeDashboardActivityComparison(
+        Array.isArray(projectPaths) ? projectPaths : [],
+        resolveDashboardAiProvider(provider),
+      ),
   );
 
   ipcMain.handle(

@@ -163,6 +163,7 @@ export interface GlobalSearchTerminalTargetPayload {
   projectId: string;
   paneId: string | null;
   createNew: boolean;
+  command?: string;
 }
 
 export interface GlobalSearchTaskTargetPayload {

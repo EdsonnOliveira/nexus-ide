@@ -1,7 +1,6 @@
 import { rmSync, existsSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { electronSimple } from 'vite-plugin-electron/multi-env';
@@ -13,7 +12,6 @@ const external = Object.keys(
 );
 
 const nexusElectronBinary = path.join(__dirname, 'build/Nexus.app/Contents/MacOS/Electron');
-const agentRunningMarker = path.join(os.tmpdir(), 'nexus-ide-agent-running');
 const ELECTRON_RESTART_DEBOUNCE_MS = 400;
 const ELECTRON_EXIT_TIMEOUT_MS = 1500;
 
@@ -23,9 +21,12 @@ function getViteProcess(): ViteElectronProcess {
   return process as ViteElectronProcess;
 }
 
-function isInAppAgentRunning(): boolean {
+function isNexusElectronRunning(): boolean {
   try {
-    return existsSync(agentRunningMarker);
+    const result = spawnSync('pgrep', ['-f', 'nexus-ide/build/Nexus.app/Contents/MacOS/Electron'], {
+      encoding: 'utf8',
+    });
+    return result.status === 0 && Boolean(result.stdout?.trim());
   } catch {
     return false;
   }
@@ -90,7 +91,34 @@ let electronRestartQueued = false;
 let unexpectedExitCount = 0;
 let lastElectronSpawnAt = 0;
 
-async function restartBundledElectron(startup: () => void): Promise<void> {
+let electronWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+let lastBundledStartup: (() => void) | null = null;
+
+function startElectronWatchdog(startup: () => void): void {
+  lastBundledStartup = startup;
+
+  if (electronWatchdogTimer) {
+    return;
+  }
+
+  electronWatchdogTimer = setInterval(() => {
+    if (electronRestarting || !lastBundledStartup) {
+      return;
+    }
+
+    if (isChildAlive(getViteProcess().electronApp) || isNexusElectronRunning()) {
+      return;
+    }
+
+    console.warn('[vite] Electron missing — watchdog respawn');
+    scheduleBundledElectronRestart(lastBundledStartup, { force: true });
+  }, 5000);
+}
+
+async function restartBundledElectron(
+  startup: () => void,
+  options: { force?: boolean } = {},
+): Promise<void> {
   if (electronRestarting) {
     electronRestartQueued = true;
     return;
@@ -104,13 +132,22 @@ async function restartBundledElectron(startup: () => void): Promise<void> {
 
       if (process.platform === 'darwin' && existsSync(nexusElectronBinary)) {
         const running = getViteProcess().electronApp;
+        const force = Boolean(options.force);
 
-        if (isChildAlive(running) && isInAppAgentRunning()) {
-          console.warn('[vite] skipping Electron restart while in-app agent is running');
+        if (!force && (isChildAlive(running) || isNexusElectronRunning())) {
+          console.warn('[vite] Electron already running — not restarting');
           return;
         }
 
         await stopBundledElectronApp();
+
+        if (force && isNexusElectronRunning()) {
+          spawnSync('pkill', ['-f', 'nexus-ide/build/Nexus.app/Contents/MacOS/Electron'], {
+            encoding: 'utf8',
+          });
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+
         lastElectronSpawnAt = Date.now();
 
         const child = spawn(
@@ -119,17 +156,11 @@ async function restartBundledElectron(startup: () => void): Promise<void> {
           {
             cwd: process.cwd(),
             detached: true,
-            stdio: ['ignore', 'pipe', 'pipe'],
+            stdio: 'ignore',
             env: { ...process.env, NODE_OPTIONS: undefined },
           },
         );
 
-        child.stdout?.on('data', (chunk) => {
-          process.stdout.write(chunk);
-        });
-        child.stderr?.on('data', (chunk) => {
-          process.stderr.write(chunk);
-        });
         child.unref();
 
         child.on('exit', (code, signal) => {
@@ -154,14 +185,16 @@ async function restartBundledElectron(startup: () => void): Promise<void> {
           }
 
           console.warn('[vite] respawning Electron after unexpected exit');
-          scheduleBundledElectronRestart(startup);
+          scheduleBundledElectronRestart(startup, { force: true });
         });
 
         getViteProcess().electronApp = child;
+        startElectronWatchdog(startup);
         continue;
       }
 
       void startup();
+      startElectronWatchdog(startup);
       return;
     } while (electronRestartQueued);
   } finally {
@@ -169,14 +202,17 @@ async function restartBundledElectron(startup: () => void): Promise<void> {
   }
 }
 
-function scheduleBundledElectronRestart(startup: () => void): void {
+function scheduleBundledElectronRestart(
+  startup: () => void,
+  options: { force?: boolean } = {},
+): void {
   if (electronRestartTimer) {
     clearTimeout(electronRestartTimer);
   }
 
   electronRestartTimer = setTimeout(() => {
     electronRestartTimer = null;
-    void restartBundledElectron(startup);
+    void restartBundledElectron(startup, options);
   }, ELECTRON_RESTART_DEBOUNCE_MS);
 }
 
@@ -252,6 +288,10 @@ export default defineConfig(({ command }) => {
       }),
     ],
     clearScreen: false,
+    server: {
+      port: 5260,
+      strictPort: true,
+    },
     optimizeDeps: {
       include: [
         'react',

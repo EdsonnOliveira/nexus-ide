@@ -6,6 +6,7 @@ export async function notifyPush(input: {
   title: string;
   body: string;
   dedupeKey?: string;
+  clearDedupeKeys?: string[];
   data?: Record<string, unknown>;
 }): Promise<void> {
   try {

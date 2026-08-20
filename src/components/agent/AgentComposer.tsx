@@ -384,7 +384,7 @@ function AgentComposerComponent({
   onCancelEdit,
 }: AgentComposerProps) {
   const agentConfig = TERMINAL_AGENTS[terminalAgent];
-  const interactionPending = questionPending || planPending;
+  const interactionPending = questionPending;
   const images = useTerminalPasteImageStore((state) => state.imagesByPane[paneId] ?? EMPTY_PASTE_IMAGES);
   const removeImage = useTerminalPasteImageStore((state) => state.removeImage);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -803,7 +803,7 @@ function AgentComposerComponent({
     }
 
     if (planPending) {
-      return 'Planeje e desenhe antes de...';
+      return 'Adicione instruções ao plano…';
     }
 
     if (activeMode !== 'agent') {

@@ -1,7 +1,8 @@
 import { notifyPush } from './notifyPush';
 import { getServiceSupabaseClient } from './webPushSend';
 
-const OFFLINE_AFTER_MS = 90_000;
+const OFFLINE_AFTER_MS = 5 * 60_000;
+const OFFLINE_NOTIFY_MAX_AGE_MS = 30 * 60_000;
 const VERCEL_API_BASE = 'https://api.vercel.com';
 
 type DeployState = 'READY' | 'ERROR' | string;
@@ -14,12 +15,32 @@ interface ActiveDeployment {
   createdAt: number;
 }
 
-function hourBucket(date = new Date()): string {
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(date.getUTCDate()).padStart(2, '0');
-  const hour = String(date.getUTCHours()).padStart(2, '0');
-  return `${year}${month}${day}${hour}`;
+function presenceDedupeKey(deviceId: string, state: 'online' | 'offline'): string {
+  return `device:${deviceId}:${state}`;
+}
+
+function lastSeenAgeMs(lastSeenAt: string | null | undefined): number | null {
+  if (!lastSeenAt) {
+    return null;
+  }
+  const lastSeenMs = new Date(lastSeenAt).getTime();
+  if (!Number.isFinite(lastSeenMs)) {
+    return null;
+  }
+  return Date.now() - lastSeenMs;
+}
+
+function shouldNotifyMacOnline(lastSeenAt: string | null | undefined): boolean {
+  const ageMs = lastSeenAgeMs(lastSeenAt);
+  return ageMs == null || ageMs >= OFFLINE_AFTER_MS;
+}
+
+function shouldNotifyMacOffline(lastSeenAt: string | null | undefined): boolean {
+  const ageMs = lastSeenAgeMs(lastSeenAt);
+  if (ageMs == null) {
+    return false;
+  }
+  return ageMs >= OFFLINE_AFTER_MS && ageMs <= OFFLINE_NOTIFY_MAX_AGE_MS;
 }
 
 function normalizeState(state?: string, readyState?: string): DeployState {
@@ -136,11 +157,14 @@ export async function notifyMacOnline(device: {
   name?: string | null;
   owner_id: string;
   workspace_id: string;
+  last_seen_at?: string | null;
 }): Promise<void> {
+  if (!shouldNotifyMacOnline(device.last_seen_at)) {
+    return;
+  }
   const deviceId = String(device.id);
   const ownerId = String(device.owner_id);
   const name = String(device.name || 'Mac');
-  const bucket = hourBucket();
   const recipientIds = await resolveDevicePushRecipients(ownerId, String(device.workspace_id));
   for (const userId of recipientIds) {
     await notifyPush({
@@ -148,35 +172,44 @@ export async function notifyMacOnline(device: {
       kind: 'device',
       title: 'Mac online',
       body: `${name} ficou online`,
-      dedupeKey: `device:${deviceId}:online:${bucket}`,
+      dedupeKey: presenceDedupeKey(deviceId, 'online'),
+      clearDedupeKeys: [presenceDedupeKey(deviceId, 'offline')],
       data: { deviceId, name },
     });
   }
 }
 
-async function checkDevicesOffline(): Promise<void> {
+async function checkDevicesOffline(skipDeviceId?: string): Promise<void> {
   const admin = getServiceSupabaseClient();
   if (!admin) {
     return;
   }
   const cutoff = new Date(Date.now() - OFFLINE_AFTER_MS).toISOString();
-  const { data: devices } = await admin
+  let query = admin
     .from('devices')
     .select('id, name, owner_id, workspace_id, status, last_seen_at')
     .eq('status', 'online')
     .lt('last_seen_at', cutoff);
+  if (skipDeviceId) {
+    query = query.neq('id', skipDeviceId);
+  }
+  const { data: devices } = await query;
 
-  const bucket = hourBucket();
   for (const device of devices ?? []) {
     const deviceId = String(device.id);
     const ownerId = String(device.owner_id);
     const name = String(device.name || 'Mac');
-    const { error } = await admin
+    const { data: updated, error } = await admin
       .from('devices')
       .update({ status: 'offline', updated_at: new Date().toISOString() })
       .eq('id', deviceId)
-      .eq('status', 'online');
-    if (error) {
+      .eq('status', 'online')
+      .select('id');
+    if (error || !updated?.length) {
+      continue;
+    }
+
+    if (!shouldNotifyMacOffline(device.last_seen_at)) {
       continue;
     }
 
@@ -187,7 +220,8 @@ async function checkDevicesOffline(): Promise<void> {
         kind: 'device',
         title: 'Mac offline',
         body: `${name} ficou offline`,
-        dedupeKey: `device:${deviceId}:offline:${bucket}`,
+        dedupeKey: presenceDedupeKey(deviceId, 'offline'),
+        clearDedupeKeys: [presenceDedupeKey(deviceId, 'online')],
         data: { deviceId, name },
       });
     }
@@ -252,7 +286,7 @@ async function pollVercelDeploys(): Promise<void> {
   }
 }
 
-export async function runPushMaintenance(): Promise<void> {
-  await checkDevicesOffline();
+export async function runPushMaintenance(skipDeviceId?: string): Promise<void> {
+  await checkDevicesOffline(skipDeviceId);
   await pollVercelDeploys();
 }

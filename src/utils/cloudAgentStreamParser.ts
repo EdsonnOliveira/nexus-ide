@@ -209,15 +209,24 @@ function handleCloudAgentStreamEvent(
     return;
   }
 
-  if (type === 'thinking') {
-    if (event.subtype === 'delta' && typeof event.text === 'string') {
-      state.thought += event.text;
-      state.thoughtStreaming = true;
+  if (type === 'thinking' || type === 'reasoning') {
+    if (event.subtype === 'completed' || event.subtype === 'end') {
+      state.thoughtStreaming = false;
       return;
     }
 
-    if (event.subtype === 'completed') {
-      state.thoughtStreaming = false;
+    const thinkingText =
+      typeof event.text === 'string' && event.text
+        ? event.text
+        : typeof event.delta === 'string' && event.delta
+          ? event.delta
+          : typeof event.thinking === 'string' && event.thinking
+            ? event.thinking
+            : '';
+
+    if (thinkingText) {
+      state.thought += thinkingText;
+      state.thoughtStreaming = true;
     }
 
     return;

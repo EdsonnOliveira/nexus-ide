@@ -292,6 +292,20 @@ export function resolveFallbackActiveTabId(
   return tabs[tabs.length - 1]?.id ?? tabs[0]?.id ?? null;
 }
 
+export function resolvePreviousTabId(tabs: TabBarItem[], closedItemId: string): string | null {
+  const closedIndex = tabs.findIndex((item) => item.id === closedItemId);
+
+  if (closedIndex < 0) {
+    return tabs[0]?.id ?? null;
+  }
+
+  if (closedIndex > 0) {
+    return tabs[closedIndex - 1]?.id ?? null;
+  }
+
+  return tabs[1]?.id ?? null;
+}
+
 export function collectProjectPanes(tabs: TabBarItem[]): Tab[] {
   const paneMap = new Map<string, Tab>();
 

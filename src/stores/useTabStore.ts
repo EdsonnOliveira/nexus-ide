@@ -38,6 +38,7 @@ import {
   removePaneFromSplit,
   renameTabBarItem,
   resolveActiveTabBarItem,
+  resolvePreviousTabId,
   unsplitTabItems,
   updatePaneInTabs,
   updateSplitTabLayout,
@@ -50,8 +51,12 @@ import { resolveFileViewMode } from '@/utils/fileViewMode';
 import { isTabPinned, reorderTabBarItems, toggleTabPinned } from '@/utils/tabOrder';
 import { rebalanceMonoChainsToGrid, updateSplitRatioAtPath } from '@/utils/splitLayout';
 
+export interface AddTabOptions {
+  launchCommand?: string;
+}
+
 export interface TabStoreActions {
-  addTab: (type: TabType) => Promise<void>;
+  addTab: (type: TabType, options?: AddTabOptions) => Promise<void>;
   addAgentTab: (command: string) => Promise<void>;
   addAgentTabForProject: (projectId: string, command: string) => Promise<string | null>;
   replaceAgentTab: (tabId: string) => Promise<void>;
@@ -201,7 +206,7 @@ export function useTabActions(): TabStoreActions {
   };
 
   return {
-    addTab: async (type) => {
+    addTab: async (type, options) => {
       const project = getProjectSnapshot();
 
       if (!project) {
@@ -210,6 +215,7 @@ export function useTabActions(): TabStoreActions {
 
       const tabId = crypto.randomUUID();
       const badgeColorIndex = createBadgeColorIndex(project.tabs);
+      const launchCommand = options?.launchCommand?.trim() ?? '';
 
       if (type === 'emulator') {
         const platform = await resolveDefaultEmulatorPlatform(project.path);
@@ -265,7 +271,12 @@ export function useTabActions(): TabStoreActions {
               ptyId: null,
               agent: 'shell',
               badgeColorIndex,
+              ...(launchCommand && type === 'terminal' ? { restoreCommand: launchCommand } : {}),
             };
+
+      if (type === 'terminal' && launchCommand) {
+        useTerminalSessionStore.getState().setPendingLaunchCommand(tabId, launchCommand);
+      }
 
       await updateProject(project.id, {
         tabs: [...project.tabs, nextTab],
@@ -880,8 +891,11 @@ export function useTabActions(): TabStoreActions {
       killTabBarItem(closingTab);
 
       const nextTabs = project.tabs.filter((item) => item.id !== tabId);
+      const closingActiveItem = resolveActiveTabBarItem(project.tabs, project.activeTabId);
       const activeTabId =
-        project.activeTabId === tabId ? (nextTabs[0]?.id ?? null) : project.activeTabId;
+        closingActiveItem?.id === tabId
+          ? resolvePreviousTabId(project.tabs, tabId)
+          : project.activeTabId;
 
       await updateProject(project.id, {
         tabs: nextTabs,
@@ -906,8 +920,11 @@ export function useTabActions(): TabStoreActions {
         killTabBarItem(closingTab);
 
         const nextTabs = project.tabs.filter((item) => item.id !== tabId);
+        const closingActiveItem = resolveActiveTabBarItem(project.tabs, project.activeTabId);
         const activeTabId =
-          project.activeTabId === tabId ? (nextTabs[0]?.id ?? null) : project.activeTabId;
+          closingActiveItem?.id === tabId
+            ? resolvePreviousTabId(project.tabs, tabId)
+            : project.activeTabId;
 
         await updateProject(project.id, {
           tabs: nextTabs,
@@ -933,9 +950,10 @@ export function useTabActions(): TabStoreActions {
 
       const nextTabs = removePaneFromSplit(project.tabs, splitTab.id, tabId);
       const splitStillExists = nextTabs.some((item) => item.id === splitTab.id);
+      const closingActiveItem = resolveActiveTabBarItem(project.tabs, project.activeTabId);
       const activeTabId =
-        project.activeTabId === splitTab.id && !splitStillExists
-          ? (nextTabs[0]?.id ?? null)
+        closingActiveItem?.id === splitTab.id && !splitStillExists
+          ? resolvePreviousTabId(project.tabs, splitTab.id)
           : project.activeTabId;
 
       await updateProject(project.id, {

@@ -37,13 +37,15 @@ export function useDeferredMarkdownHtml(source: string, imageBaseDir?: string): 
           const rendered = renderMarkdownPreview(normalized, imageBaseDir);
           setHtml(rendered);
 
-          void hydrateMarkdownImageHtml(rendered, imageBaseDir ?? null, resolveDesktopMarkdownImage).then(
-            (hydrated) => {
-              if (!cancelled && hydrated !== rendered) {
-                setHtml(hydrated);
-              }
-            },
-          );
+          void hydrateMarkdownImageHtml(
+            rendered,
+            imageBaseDir ?? null,
+            resolveDesktopMarkdownImage,
+          ).then((hydrated) => {
+            if (!cancelled && hydrated !== rendered) {
+              setHtml(hydrated);
+            }
+          });
         },
         { timeout: idleTimeout },
       );
@@ -74,7 +76,10 @@ export function useDeferredMarkdownHtml(source: string, imageBaseDir?: string): 
   return html;
 }
 
-export function useMarkdownCodeHighlight<T extends HTMLElement>(html: string) {
+export function useMarkdownCodeHighlight<T extends HTMLElement>(
+  html: string,
+  imageBaseDir?: string,
+) {
   const ref = useRef<T>(null);
 
   useEffect(() => {
@@ -92,10 +97,49 @@ export function useMarkdownCodeHighlight<T extends HTMLElement>(html: string) {
       { timeout: 500 },
     );
 
+    const handleImageError = (event: Event) => {
+      const img = event.target;
+
+      if (!(img instanceof HTMLImageElement) || !img.classList.contains('markdown-preview__img')) {
+        return;
+      }
+
+      if (img.dataset.imageHydrateFailed === '1' || img.src.startsWith('data:image/')) {
+        img.classList.add('markdown-preview__img--broken');
+        return;
+      }
+
+      const imageRef =
+        img.getAttribute('data-image-ref') ||
+        img.getAttribute('data-image-path') ||
+        img.getAttribute('alt') ||
+        '';
+
+      if (!imageRef.trim()) {
+        img.classList.add('markdown-preview__img--broken');
+        return;
+      }
+
+      img.dataset.imageHydrateFailed = '1';
+
+      void resolveDesktopMarkdownImage(imageRef, imageBaseDir ?? null).then((dataUrl) => {
+        if (!dataUrl || !ref.current?.contains(img)) {
+          img.classList.add('markdown-preview__img--broken');
+          return;
+        }
+
+        img.src = dataUrl;
+        img.classList.remove('markdown-preview__img--pending', 'markdown-preview__img--broken');
+      });
+    };
+
+    node.addEventListener('error', handleImageError, true);
+
     return () => {
       window.cancelIdleCallback(idleId);
+      node.removeEventListener('error', handleImageError, true);
     };
-  }, [html]);
+  }, [html, imageBaseDir]);
 
   return ref;
 }

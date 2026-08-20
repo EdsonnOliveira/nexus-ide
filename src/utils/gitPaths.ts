@@ -9,7 +9,10 @@ function pathBasenameFromSegments(value: string): string {
 }
 
 export function normalizeGitInputRelativePath(filePath: string): string {
-  return filePath.replace(/\\/g, '/').replace(/^\/+/, '').replace(/^\.\/+/, '');
+  return filePath
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .replace(/^\.\/+/, '');
 }
 
 interface GitRepoPathCandidate {
@@ -97,13 +100,9 @@ export async function resolveGitDiffContext(
   filePath: string,
   explicitRepoPath?: string,
 ): Promise<{ repoPath: string; gitRelativePath: string; absoluteFilePath: string }> {
-  const repos = explicitRepoPath
-    ? []
-    : await window.nexus.git.discoverRepos(projectPath);
+  const repos = explicitRepoPath ? [] : await window.nexus.git.discoverRepos(projectPath);
   const repoPath =
-    explicitRepoPath ??
-    pickGitRepoPathForFile(repos, projectPath, filePath) ??
-    projectPath;
+    explicitRepoPath ?? pickGitRepoPathForFile(repos, projectPath, filePath) ?? projectPath;
   const normalizedInput = filePath.replace(/\\/g, '/');
   let gitRelativePath = isAbsolutePath(normalizedInput)
     ? toGitRelativePath(repoPath, filePath)
@@ -112,7 +111,11 @@ export async function resolveGitDiffContext(
   if (!isAbsolutePath(normalizedInput)) {
     const repoMeta = repos.find((repo) => repo.path === repoPath);
 
-    if (repoMeta && repoMeta.relativePath !== '.' && gitRelativePath.startsWith(`${repoMeta.relativePath}/`)) {
+    if (
+      repoMeta &&
+      repoMeta.relativePath !== '.' &&
+      gitRelativePath.startsWith(`${repoMeta.relativePath}/`)
+    ) {
       gitRelativePath = gitRelativePath.slice(repoMeta.relativePath.length + 1);
     }
   }
@@ -183,6 +186,21 @@ export function gitChangePathsMatch(left: string, right: string): boolean {
   return (
     normalizedLeft.endsWith(`/${normalizedRight}`) || normalizedRight.endsWith(`/${normalizedLeft}`)
   );
+}
+
+export function gitChangePathCovers(candidate: string, changePath: string): boolean {
+  if (gitChangePathsMatch(candidate, changePath)) {
+    return true;
+  }
+
+  const prefix = normalizeGitChangePath(candidate).replace(/\/+$/, '');
+  const path = normalizeGitChangePath(changePath).replace(/\/+$/, '');
+
+  if (!prefix || !path) {
+    return false;
+  }
+
+  return path === prefix || path.startsWith(`${prefix}/`) || prefix.startsWith(`${path}/`);
 }
 
 export function findGitFlatChangeByPath<T extends { path: string }>(

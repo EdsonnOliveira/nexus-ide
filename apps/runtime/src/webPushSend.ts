@@ -30,6 +30,7 @@ export async function sendWebPush(input: {
   title: string;
   body: string;
   dedupeKey?: string;
+  clearDedupeKeys?: string[];
   data?: Record<string, unknown>;
 }): Promise<{ sent: number; skipped?: string }> {
   const publicKey =
@@ -73,6 +74,16 @@ export async function sendWebPush(input: {
     [];
   if (rows.length === 0) {
     return { sent: 0, skipped: 'no_subscriptions' };
+  }
+
+  const clearDedupeKeys = (input.clearDedupeKeys ?? []).map((key) => key.trim()).filter(Boolean);
+  if (clearDedupeKeys.length > 0) {
+    await admin
+      .from('push_notification_log')
+      .delete()
+      .eq('user_id', input.userId)
+      .eq('kind', input.kind)
+      .in('dedupe_key', clearDedupeKeys);
   }
 
   if (input.dedupeKey) {

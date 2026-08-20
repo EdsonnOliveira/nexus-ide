@@ -73,6 +73,17 @@ export function useGlobalSearchPalette() {
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const lastRestartCommands = useTerminalSessionStore((state) => state.lastRestartCommands);
   const tabActions = useTabActions();
+  const terminalQuickCommandsVersion = useMemo(
+    () =>
+      projects
+        .map((project) =>
+          (project.terminalQuickCommands ?? [])
+            .map((entry) => `${entry.id}:${entry.command}`)
+            .join(','),
+        )
+        .join('|'),
+    [projects],
+  );
   const [visible, setVisible] = useState(false);
   const [query, setQuery] = useState('');
   const [groups, setGroups] = useState<GlobalSearchResultGroup[]>([]);
@@ -164,8 +175,9 @@ export function useGlobalSearchPalette() {
   }, [inputValue, parsed.slash, resolvedSlashProject]);
 
   const searchEffectKey = useMemo(
-    () => buildGlobalSearchEffectKey(parsed, String(lastRestartCommands)),
-    [lastRestartCommands, parsed],
+    () =>
+      buildGlobalSearchEffectKey(parsed, `${String(lastRestartCommands)}:${terminalQuickCommandsVersion}`),
+    [lastRestartCommands, parsed, terminalQuickCommandsVersion],
   );
 
   useEffect(() => {
@@ -414,7 +426,36 @@ export function useGlobalSearchPalette() {
       const project = projects.find((entry) => entry.id === payload.projectId);
 
       if (project) {
-        setQuery(`/${parsed.slash.command} @${project.name} `);
+        const commandPayload = (parsed.slash.payload || parsed.slash.filterText).trim();
+        const slashMeta = getSlashCommandMeta(parsed.slash.command);
+
+        if (slashMeta.isFreeTextPayload && commandPayload) {
+          const success = await executeSlashCommand(
+            {
+              ...parsed.slash,
+              projectId: project.id,
+              projectToken: project.name,
+              filterText: commandPayload,
+              payload: commandPayload,
+              phase: 'payload',
+            },
+            tabActions,
+            null,
+            agentPromptImages.map((image) => image.dataUrl),
+          );
+
+          if (success) {
+            finishClose();
+          }
+
+          return;
+        }
+
+        setQuery(
+          commandPayload
+            ? `/${parsed.slash.command} @${project.name} ${commandPayload}`
+            : `/${parsed.slash.command} @${project.name} `,
+        );
         resetActiveIndex();
       }
 

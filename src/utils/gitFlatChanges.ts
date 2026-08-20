@@ -119,6 +119,14 @@ export function buildGitChangeTree(changes: GitFlatChange[]): GitChangeTreeNode[
   return collapseSingleChildDirectoryChains(sortGitChangeTreeNodes(root));
 }
 
+export function collectGitChangeTreeFilePaths(node: GitChangeTreeNode): string[] {
+  if (!node.isDirectory) {
+    return node.change ? [node.change.path] : [];
+  }
+
+  return node.children.flatMap(collectGitChangeTreeFilePaths);
+}
+
 export function buildFlatChanges(status: GitStatusResult): GitFlatChange[] {
   const unstagedByPath = new Map(status.unstaged.map((entry) => [entry.path, entry]));
   const rows: GitFlatChange[] = [];

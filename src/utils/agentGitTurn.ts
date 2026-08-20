@@ -64,14 +64,14 @@ async function beginAgentGitTurn(paneId: string, prompt: string): Promise<void> 
   await useAgentGitChangeStore.getState().beginTurn(paneId, projectId, prompt, repoPath);
 }
 
-function runFinalizeAgentGitTurn(paneId: string): void {
+function runFinalizeAgentGitTurn(paneId: string, editedPaths?: string[]): void {
   const existing = finalizeTurnInFlight.get(paneId);
 
   if (existing) {
     return;
   }
 
-  const task = useAgentGitChangeStore.getState().finalizeTurn(paneId);
+  const task = useAgentGitChangeStore.getState().finalizeTurn(paneId, editedPaths);
   finalizeTurnInFlight.set(paneId, task);
 
   void task.finally(() => {
@@ -111,13 +111,13 @@ export function trackAgentGitPrompt(paneId: string, prompt: string): void {
   })();
 }
 
-export function completeAgentGitTurn(paneId: string): void {
+export function completeAgentGitTurn(paneId: string, editedPaths?: string[]): void {
   if (isProjectSwitching()) {
     deferredFinalizePaneIds.add(paneId);
     return;
   }
 
-  runFinalizeAgentGitTurn(paneId);
+  runFinalizeAgentGitTurn(paneId, editedPaths);
 }
 
 export async function drainDeferredAgentGitTurns(): Promise<void> {
@@ -142,9 +142,7 @@ function findGroupForTurn(
   paneId: string,
   turn: AgentTurn,
 ): AgentGitChangeGroup | null {
-  const paneGroups = groups.filter(
-    (group) => group.paneId === paneId && group.files.length > 0,
-  );
+  const paneGroups = groups.filter((group) => group.paneId === paneId && group.files.length > 0);
 
   if (paneGroups.length === 0) {
     return null;
@@ -181,14 +179,10 @@ function findGroupForTurn(
     }
   }
 
-  if (
-    turn.summary &&
-    (turn.summary.additions > 0 || turn.summary.deletions > 0)
-  ) {
+  if (turn.summary && (turn.summary.additions > 0 || turn.summary.deletions > 0)) {
     const matched = paneGroups.find(
       (group) =>
-        group.additions === turn.summary?.additions &&
-        group.deletions === turn.summary?.deletions,
+        group.additions === turn.summary?.additions && group.deletions === turn.summary?.deletions,
     );
 
     if (matched) {
@@ -230,11 +224,7 @@ export async function revertAgentGitChangesForTurn(options: {
   }
 
   if (projectId) {
-    const group = findGroupForTurn(
-      selectAgentGitGroupsForProject(store, projectId),
-      paneId,
-      turn,
-    );
+    const group = findGroupForTurn(selectAgentGitGroupsForProject(store, projectId), paneId, turn);
 
     if (group) {
       groupIds.push(group.id);

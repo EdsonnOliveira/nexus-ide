@@ -30,13 +30,19 @@ function resolveWebMarkdownImageSrc(src: string): string | null {
   return null;
 }
 
+function wrapWebMarkdownImage(imgHtml: string): string {
+  return `<span class="markdown-preview__img-wrap">${imgHtml}</span>`;
+}
+
 function renderWebMarkdownImage(alt: string, src: string): string {
   const resolved = resolveWebMarkdownImageSrc(src);
   const safeAlt = escapeHtml(alt);
   const safeRef = escapeHtml(src.trim());
 
   if (resolved) {
-    return `<img class="markdown-preview__img" src="${escapeHtml(resolved)}" alt="${safeAlt}" data-image-ref="${safeRef}" loading="lazy" />`;
+    return wrapWebMarkdownImage(
+      `<img class="markdown-preview__img" src="${escapeHtml(resolved)}" alt="${safeAlt}" data-image-ref="${safeRef}" loading="lazy" />`,
+    );
   }
 
   const trimmed = src.trim();
@@ -45,7 +51,9 @@ function renderWebMarkdownImage(alt: string, src: string): string {
     isLikelyImagePath(trimmed) ||
     (trimmed.length > 0 && !/^[a-z][a-z0-9.+-]*:/i.test(trimmed) && !/[\s<>"']/.test(trimmed))
   ) {
-    return `<img class="markdown-preview__img markdown-preview__img--pending" alt="${safeAlt}" data-image-path="${safeRef}" loading="lazy" />`;
+    return wrapWebMarkdownImage(
+      `<img class="markdown-preview__img markdown-preview__img--pending" alt="${safeAlt}" data-image-path="${safeRef}" loading="lazy" />`,
+    );
   }
 
   return `<span class="markdown-preview__img-missing" title="${safeRef}">${safeAlt || safeRef}</span>`;

@@ -42,6 +42,7 @@ import { useHomeDashboardActivityStats } from '@/hooks/useHomeDashboardActivityS
 import { useAppleCalendarEvents } from '@/hooks/useAppleCalendarEvents';
 import { useProjectTaskExecution } from '@/hooks/useProjectTaskExecution';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
+import { useAppSettingsStore } from '@/stores/useAppSettingsStore';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useTabActions } from '@/stores/useTabStore';
 import type { CalendarEventItem } from '@/types';
@@ -132,8 +133,9 @@ function HomeDashboardComponent() {
         .join('|'),
     [visibleProjects],
   );
+  const preferredAiProvider = useAppSettingsStore((state) => state.preferredAiProvider);
   const { stats: activityStats, loading: activityLoading } =
-    useHomeDashboardActivityStats(visibleProjectPathsKey);
+    useHomeDashboardActivityStats(visibleProjectPathsKey, preferredAiProvider);
 
   const appIcons = useNotificationAppIcons(systemNotificationPreview);
   const [calendarPopup, setCalendarPopup] = useState<ActiveCalendarPopupState | null>(null);

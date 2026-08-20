@@ -70,7 +70,6 @@ export function registerVercelHandlers(): void {
     try {
       return vercelCredentialStore.isTokenConfigured();
     } catch {
-      vercelCredentialStore.clearToken();
       return false;
     }
   });
@@ -98,7 +97,6 @@ export function registerVercelHandlers(): void {
     try {
       return vercelCredentialStore.getToken();
     } catch {
-      vercelCredentialStore.clearToken();
       return null;
     }
   });

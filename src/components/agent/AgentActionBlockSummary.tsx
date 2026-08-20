@@ -43,16 +43,18 @@ function AgentActionBlockSummaryComponent({
     setExpanded((current) => !current);
   }, []);
 
-  const iconKind = useMemo(
-    () => resolveAgentActivityIconFromLabel(summary.label),
-    [summary.label],
-  );
+  const iconKind = useMemo(() => resolveAgentActivityIconFromLabel(summary.label), [summary.label]);
 
   if (!summary.hasToolProgress) {
     return (
       <>
         {thoughts.map((activity) => (
-          <AgentThoughtBlock key={activity.id} activity={activity} defaultExpanded={false} />
+          <AgentThoughtBlock
+            key={activity.id}
+            activity={activity}
+            projectPath={projectPath}
+            defaultExpanded={false}
+          />
         ))}
       </>
     );
@@ -86,7 +88,12 @@ function AgentActionBlockSummaryComponent({
       {expanded ? (
         <div className='agent-view__turn-summary-files app-button--enter'>
           {thoughts.map((activity) => (
-            <AgentThoughtBlock key={activity.id} activity={activity} defaultExpanded={false} />
+            <AgentThoughtBlock
+              key={activity.id}
+              activity={activity}
+              projectPath={projectPath}
+              defaultExpanded={false}
+            />
           ))}
           {toolActivities.length > 0 ? (
             <AgentToolActivityScrollList

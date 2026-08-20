@@ -22,16 +22,24 @@ class VercelCredentialStoreService {
     },
   });
 
+  private decryptedCache: VercelStoredCredential[] | null = null;
+
   listCredentials(): VercelStoredCredential[] {
     return this.readCredentials();
   }
 
   hasCredentials(): boolean {
-    return this.readCredentials().length > 0;
+    return this.isTokenConfigured();
   }
 
   isTokenConfigured(): boolean {
-    return this.hasCredentials();
+    const stored = this.store.get('credentials') ?? [];
+
+    if (stored.some((item) => Boolean(item.id?.trim() && item.token?.trim()))) {
+      return true;
+    }
+
+    return Boolean(this.store.get('vercelAccessToken'));
   }
 
   getCredential(id: string): VercelStoredCredential | null {
@@ -120,6 +128,10 @@ class VercelCredentialStoreService {
   }
 
   private readCredentials(): VercelStoredCredential[] {
+    if (this.decryptedCache) {
+      return this.decryptedCache;
+    }
+
     const stored = this.store.get('credentials') ?? [];
     const credentials = stored
       .map((item) => {
@@ -145,12 +157,14 @@ class VercelCredentialStoreService {
       .filter((item): item is VercelStoredCredential => item !== null);
 
     if (credentials.length > 0) {
+      this.decryptedCache = credentials;
       return credentials;
     }
 
     const legacyToken = this.readLegacyToken();
 
     if (!legacyToken) {
+      this.decryptedCache = [];
       return [];
     }
 
@@ -161,10 +175,11 @@ class VercelCredentialStoreService {
     };
     this.writeCredentials([migrated]);
     this.store.set('vercelAccessToken', null);
-    return [migrated];
+    return this.decryptedCache ?? [migrated];
   }
 
   private writeCredentials(credentials: VercelStoredCredential[]): void {
+    this.decryptedCache = credentials;
     this.store.set(
       'credentials',
       credentials.map((item) => ({

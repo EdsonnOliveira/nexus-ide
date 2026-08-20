@@ -1,22 +1,44 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
+import { useDelayedHoverHint } from '@/hooks/useDelayedHoverHint';
 
 import { sanitizeAgentPrompt } from '@/utils/terminalShellPrompt';
 
+function formatPromptOccurredAt(timestamp: number): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return '';
+  }
+
+  return new Date(timestamp).toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 interface AgentGitPromptLabelProps {
   prompt: string;
+  completedAt?: number;
   className?: string;
   onOpen: (prompt: string) => void;
 }
 
 export const AgentGitPromptLabel = memo(function AgentGitPromptLabelComponent({
   prompt,
+  completedAt,
   className,
   onOpen,
 }: AgentGitPromptLabelProps) {
   const displayPrompt = sanitizeAgentPrompt(prompt);
   const labelRef = useRef<HTMLButtonElement>(null);
   const [isTruncated, setIsTruncated] = useState(false);
+  const occurredAtHint = useMemo(
+    () => (completedAt ? formatPromptOccurredAt(completedAt) : ''),
+    [completedAt],
+  );
+  const { onMouseEnter, onMouseLeave, hintNode } = useDelayedHoverHint(occurredAtHint);
 
   useEffect(() => {
     const element = labelRef.current;
@@ -46,15 +68,20 @@ export const AgentGitPromptLabel = memo(function AgentGitPromptLabelComponent({
   }, [displayPrompt, isTruncated, onOpen]);
 
   return (
-    <button
-      ref={labelRef}
-      type='button'
-      className={`git-scm__prompt-label git-scm__prompt-label-btn app-button app-button--enter${isTruncated ? ' git-scm__prompt-label-btn--expandable' : ''}${className ? ` ${className}` : ''}`}
-      title={isTruncated ? displayPrompt : undefined}
-      onClick={handleClick}
-    >
-      &ldquo;{displayPrompt}&rdquo;
-    </button>
+    <>
+      <button
+        ref={labelRef}
+        type='button'
+        className={`git-scm__prompt-label git-scm__prompt-label-btn app-button app-button--enter${isTruncated ? ' git-scm__prompt-label-btn--expandable' : ''}${className ? ` ${className}` : ''}`}
+        aria-label={occurredAtHint ? `${displayPrompt}. ${occurredAtHint}` : displayPrompt}
+        onClick={handleClick}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+      >
+        &ldquo;{displayPrompt}&rdquo;
+      </button>
+      {hintNode}
+    </>
   );
 });
 
@@ -82,7 +109,10 @@ export const AgentGitPromptModal = memo(function AgentGitPromptModalComponent({
   }, [prompt]);
 
   return (
-    <AnimatedModal onClose={onClose} panelClassName='project-dialog automation-prompt-modal git-prompt-modal'>
+    <AnimatedModal
+      onClose={onClose}
+      panelClassName='project-dialog automation-prompt-modal git-prompt-modal'
+    >
       {(requestClose) => (
         <>
           <span className='project-dialog__title'>Prompt do agent</span>

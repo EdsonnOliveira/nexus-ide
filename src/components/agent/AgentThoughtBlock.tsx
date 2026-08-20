@@ -4,20 +4,22 @@ import {
   resolveAgentActivityIconKind,
 } from '@/components/agent/AgentActivityIcon';
 import type { AgentActivity } from '@/types';
-import { useMarkdownCodeHighlight, useDeferredMarkdownHtml } from '@/hooks/useMarkdownCodeHighlight';
+import {
+  useMarkdownCodeHighlight,
+  useDeferredMarkdownHtml,
+} from '@/hooks/useMarkdownCodeHighlight';
 
 interface AgentThoughtBlockProps {
   activity: AgentActivity;
   defaultExpanded?: boolean;
   forceCollapsed?: boolean;
+  projectPath?: string;
 }
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 48;
 
 function isThoughtBodyAtBottom(body: HTMLElement): boolean {
-  return (
-    body.scrollHeight - body.scrollTop - body.clientHeight <= SCROLL_BOTTOM_THRESHOLD_PX
-  );
+  return body.scrollHeight - body.scrollTop - body.clientHeight <= SCROLL_BOTTOM_THRESHOLD_PX;
 }
 
 function getThoughtBodyTargetTop(body: HTMLElement): number {
@@ -41,6 +43,7 @@ function AgentThoughtBlockComponent({
   activity,
   defaultExpanded = false,
   forceCollapsed = false,
+  projectPath,
 }: AgentThoughtBlockProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -58,8 +61,8 @@ function AgentThoughtBlockComponent({
   );
 
   const bodyText = activity.label.trim();
-  const bodyHtml = useDeferredMarkdownHtml(bodyText);
-  const proseRef = useMarkdownCodeHighlight<HTMLDivElement>(bodyHtml);
+  const bodyHtml = useDeferredMarkdownHtml(bodyText, projectPath);
+  const proseRef = useMarkdownCodeHighlight<HTMLDivElement>(bodyHtml, projectPath);
   const canToggle = Boolean(bodyText) || Boolean(activity.streaming);
 
   useEffect(() => {

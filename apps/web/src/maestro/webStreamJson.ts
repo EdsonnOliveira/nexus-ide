@@ -1069,14 +1069,25 @@ function handleEvent(state: WebStreamJsonState, event: Record<string, unknown>):
     return;
   }
 
-  if (type === 'thinking') {
-    if (event.subtype === 'delta' && typeof event.text === 'string') {
-      upsertThought(state, event.text);
+  if (type === 'thinking' || type === 'reasoning') {
+    if (event.subtype === 'completed' || event.subtype === 'end') {
+      settleThought(state);
       return;
     }
-    if (event.subtype === 'completed') {
-      settleThought(state);
+
+    const thinkingText =
+      typeof event.text === 'string' && event.text
+        ? event.text
+        : typeof event.delta === 'string' && event.delta
+          ? event.delta
+          : typeof event.thinking === 'string' && event.thinking
+            ? event.thinking
+            : '';
+
+    if (thinkingText) {
+      upsertThought(state, thinkingText);
     }
+
     return;
   }
 

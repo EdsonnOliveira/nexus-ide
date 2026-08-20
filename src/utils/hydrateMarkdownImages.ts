@@ -31,8 +31,7 @@ function collectImageJobs(html: string): Array<{
     imageRef: string;
     isPending: boolean;
   }> = [];
-  const imgRegex =
-    /<img\b([^>]*?\bclass="[^"]*\bmarkdown-preview__img\b[^"]*"[^>]*)\/?>/gi;
+  const imgRegex = /<img\b([^>]*?\bclass="[^"]*\bmarkdown-preview__img\b[^"]*"[^>]*)\/?>/gi;
   let match = imgRegex.exec(html);
 
   while (match) {
@@ -126,15 +125,11 @@ export async function hydrateMarkdownImageHtml(
       continue;
     }
 
-    if (/^(?:nexus-file|file):\/\//i.test(job.src) && !job.isPending) {
-      continue;
-    }
-
     if (/^https?:\/\//i.test(job.src) && !job.isPending && !job.imageRef) {
       continue;
     }
 
-    if (/^https?:\/\//i.test(job.imageRef) && job.src === job.imageRef) {
+    if (/^https?:\/\//i.test(job.imageRef) && job.src === job.imageRef && !job.isPending) {
       continue;
     }
 
@@ -154,7 +149,9 @@ export async function hydrateMarkdownImageHtml(
     }
 
     if (dataUrl) {
-      nextHtml = nextHtml.split(job.fullMatch).join(buildHydratedImageTag(job.alt, dataUrl, job.imageRef));
+      nextHtml = nextHtml
+        .split(job.fullMatch)
+        .join(buildHydratedImageTag(job.alt, dataUrl, job.imageRef));
     } else if (job.isPending || !job.src) {
       nextHtml = nextHtml.split(job.fullMatch).join(buildMissingChip(job.alt, job.imageRef));
     }

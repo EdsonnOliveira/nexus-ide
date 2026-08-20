@@ -2,7 +2,8 @@ import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { CORS_HEADERS, jsonResponse } from '../_shared/cors.ts';
 import { createServiceClient, invokeSendPush } from '../_shared/supabaseAdmin.ts';
 
-const OFFLINE_AFTER_MS = 45_000;
+const OFFLINE_AFTER_MS = 5 * 60_000;
+const OFFLINE_NOTIFY_MAX_AGE_MS = 30 * 60_000;
 
 function authorizeCron(req: Request): boolean {
   const secret = Deno.env.get('NOTIFY_SECRET') ?? '';
@@ -16,12 +17,20 @@ function authorizeCron(req: Request): boolean {
   return Boolean(serviceRole && token === serviceRole);
 }
 
-function hourBucket(date = new Date()): string {
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(date.getUTCDate()).padStart(2, '0');
-  const hour = String(date.getUTCHours()).padStart(2, '0');
-  return `${year}${month}${day}${hour}`;
+function presenceDedupeKey(deviceId: string, state: 'online' | 'offline'): string {
+  return `device:${deviceId}:${state}`;
+}
+
+function shouldNotifyMacOffline(lastSeenAt: string | null | undefined): boolean {
+  if (!lastSeenAt) {
+    return false;
+  }
+  const lastSeenMs = new Date(lastSeenAt).getTime();
+  if (!Number.isFinite(lastSeenMs)) {
+    return false;
+  }
+  const ageMs = Date.now() - lastSeenMs;
+  return ageMs >= OFFLINE_AFTER_MS && ageMs <= OFFLINE_NOTIFY_MAX_AGE_MS;
 }
 
 Deno.serve(async (req: Request) => {
@@ -50,22 +59,26 @@ Deno.serve(async (req: Request) => {
 
   let marked = 0;
   let notified = 0;
-  const bucket = hourBucket();
 
   for (const device of devices ?? []) {
     const deviceId = String(device.id);
     const ownerId = String(device.owner_id);
     const name = String(device.name || 'Mac');
 
-    const { error: updateError } = await admin
+    const { data: updated, error: updateError } = await admin
       .from('devices')
       .update({ status: 'offline', updated_at: new Date().toISOString() })
       .eq('id', deviceId)
-      .eq('status', 'online');
-    if (updateError) {
+      .eq('status', 'online')
+      .select('id');
+    if (updateError || !updated?.length) {
       continue;
     }
     marked += 1;
+
+    if (!shouldNotifyMacOffline(device.last_seen_at)) {
+      continue;
+    }
 
     const recipientIds = new Set<string>([ownerId]);
     const { data: members } = await admin
@@ -89,7 +102,8 @@ Deno.serve(async (req: Request) => {
         kind: 'device',
         title: 'Mac offline',
         body: `${name} ficou offline`,
-        dedupeKey: `device:${deviceId}:offline:${bucket}`,
+        dedupeKey: presenceDedupeKey(deviceId, 'offline'),
+        clearDedupeKeys: [presenceDedupeKey(deviceId, 'online')],
         data: { deviceId, name },
       });
       notified += 1;

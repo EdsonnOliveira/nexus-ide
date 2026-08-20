@@ -41,11 +41,18 @@ const LazyHomeDashboard = lazy(() =>
   })),
 );
 
-const LazyTerminalPanel = lazy(() =>
-  import('@/components/terminal/TerminalPanel').then((module) => ({
-    default: module.TerminalPanel,
-  })),
-);
+const LazyTerminalPanel = lazy(async () => {
+  try {
+    const module = await import('@/components/terminal/TerminalPanel');
+    return { default: module.TerminalPanel };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('Failed to fetch dynamically imported module')) {
+      window.location.reload();
+    }
+    throw error;
+  }
+});
 
 function MainWorkspacePanel({ ready }: { ready: boolean }) {
   if (!ready) {

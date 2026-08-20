@@ -900,7 +900,7 @@ function formatGitTimestampArg(unixMs: number): string {
   return `@${Math.floor(unixMs / 1000)}`;
 }
 
-async function getGitDailyStatsForRepo(
+export async function getGitDailyStatsForRepo(
   repoPath: string,
   sinceMs: number,
   untilMs: number,

@@ -4,12 +4,22 @@ import {
   app,
   BrowserWindow,
   globalShortcut,
+  Menu,
   nativeImage,
+  powerMonitor,
   session,
   shell,
   type NativeImage,
 } from 'electron';
-import { appendFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  openSync,
+  readSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { registerApiHandlers } from './ipc/api';
@@ -20,6 +30,7 @@ import {
   startDesktopControlServer,
   stopDesktopControlServer,
 } from './services/desktopControlServer';
+import { startIdleWakeLock, stopIdleWakeLock } from './services/idleWakeLock';
 import {
   startManagedRuntime,
   stopManagedRuntime,
@@ -64,6 +75,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DOCK_APP_NAME = 'Nexus';
 const APP_WINDOW_TITLE = 'Nexus IDE';
 
+function ignoreBrokenPipe(stream: NodeJS.WriteStream | undefined): void {
+  stream?.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EPIPE' || error.code === 'ERR_STREAM_DESTROYED') {
+      return;
+    }
+  });
+}
+
+ignoreBrokenPipe(process.stdout);
+ignoreBrokenPipe(process.stderr);
+
 registerLocalFileScheme();
 
 process.env.APP_ROOT = path.join(__dirname, '../..');
@@ -79,19 +101,73 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 app.setName(DOCK_APP_NAME);
 app.setPath('userData', path.join(app.getPath('appData'), 'nexus-ide'));
 app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+
+function isBrokenPipeError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const code = 'code' in error ? String((error as { code?: unknown }).code) : '';
+  const message = 'message' in error ? String((error as { message?: unknown }).message) : '';
+  return code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED' || message.includes('EPIPE');
+}
+
+const MAX_LIFECYCLE_LOG_BYTES = 8 * 1024 * 1024;
+const LIFECYCLE_LOG_KEEP_BYTES = 1024 * 1024;
+
+let isWritingLifecycleLog = false;
+let lifecycleWriteCount = 0;
+
+function resolveLifecycleLogPath(): string {
+  return path.join(app.getPath('userData'), 'main.log');
+}
+
+function trimLifecycleLogIfNeeded(logPath: string): void {
+  try {
+    if (!existsSync(logPath)) {
+      return;
+    }
+
+    const size = statSync(logPath).size;
+
+    if (size <= MAX_LIFECYCLE_LOG_BYTES) {
+      return;
+    }
+
+    const fd = openSync(logPath, 'r');
+    const keep = Buffer.alloc(LIFECYCLE_LOG_KEEP_BYTES);
+    readSync(fd, keep, 0, LIFECYCLE_LOG_KEEP_BYTES, size - LIFECYCLE_LOG_KEEP_BYTES);
+    closeSync(fd);
+    const newline = keep.indexOf(10);
+    writeFileSync(logPath, keep.subarray(newline >= 0 ? newline + 1 : 0));
+  } catch {
+  }
+}
 
 function logLifecycle(message: string, extra?: unknown): void {
-  const line = extra === undefined
-    ? `[lifecycle] ${message}`
-    : `[lifecycle] ${message} ${JSON.stringify(extra)}`;
-  console.error(line);
+  if (isWritingLifecycleLog) {
+    return;
+  }
+
+  isWritingLifecycleLog = true;
 
   try {
-    appendFileSync(
-      path.join(app.getPath('userData'), 'main.log'),
-      `${new Date().toISOString()} ${line}\n`,
-    );
+    const line = extra === undefined
+      ? `[lifecycle] ${message}`
+      : `[lifecycle] ${message} ${JSON.stringify(extra)}`;
+    const logPath = resolveLifecycleLogPath();
+    appendFileSync(logPath, `${new Date().toISOString()} ${line}\n`);
+    lifecycleWriteCount += 1;
+
+    if (lifecycleWriteCount === 1 || lifecycleWriteCount % 40 === 0) {
+      trimLifecycleLogIfNeeded(logPath);
+    }
   } catch {
+  } finally {
+    isWritingLifecycleLog = false;
   }
 }
 
@@ -120,19 +196,30 @@ let lastQuitAttemptAt = 0;
 let quitFlushAttempts = 0;
 let pendingRecoveryMessage: string | null = null;
 let memoryWatchTimer: ReturnType<typeof setInterval> | null = null;
+let isRecreatingWindow = false;
+let blockSignalQuit = false;
+let userQuitRequested = false;
+
+function markUserQuitRequested(source: string): void {
+  userQuitRequested = true;
+  blockSignalQuit = false;
+  logLifecycle(`user quit requested via ${source}`);
+}
+
+function clearUserQuitRequested(): void {
+  userQuitRequested = false;
+}
 
 if (VITE_DEV_SERVER_URL) {
-  const exitForDevRestart = (signal: string) => {
-    logLifecycle(`received ${signal} — exiting for dev restart`);
-    isQuitting = true;
-    app.exit(0);
+  const ignoreDevKill = (signal: string) => {
+    blockSignalQuit = true;
+    const hasWindow = Boolean(win && !win.isDestroyed());
+    logLifecycle(`ignored ${signal} hasWindow=${hasWindow}`);
   };
 
-  process.on('SIGTERM', () => exitForDevRestart('SIGTERM'));
-  process.on('SIGINT', () => exitForDevRestart('SIGINT'));
-  process.on('SIGHUP', () => {
-    logLifecycle('ignored SIGHUP');
-  });
+  process.on('SIGTERM', () => ignoreDevKill('SIGTERM'));
+  process.on('SIGINT', () => ignoreDevKill('SIGINT'));
+  process.on('SIGHUP', () => ignoreDevKill('SIGHUP'));
 }
 
 function shouldRecoverRendererProcess(reason: string): boolean {
@@ -168,7 +255,7 @@ function sendToWindow(channel: string, ...args: unknown[]): void {
   try {
     win.webContents.send(channel, ...args);
   } catch (error) {
-    console.error(`[main] send failed (${channel})`, error);
+    logLifecycle(`send failed (${channel})`, String(error));
   }
 }
 
@@ -185,8 +272,47 @@ function deliverPendingRecoveryMessage(): void {
   }, RECOVERY_TOAST_DELAY_MS);
 }
 
+function recreateMainWindow(source: string): void {
+  if (isQuitting || isRecreatingWindow) {
+    return;
+  }
+
+  isRecreatingWindow = true;
+  logLifecycle(`recreating window after ${source}`);
+
+  const appIcon = applyAppBranding();
+  const dying = win && !win.isDestroyed() ? win : null;
+
+  void createWindow(appIcon)
+    .then(() => {
+      if (!dying || dying.isDestroyed() || dying === win) {
+        return;
+      }
+
+      dying.removeAllListeners('close');
+      dying.destroy();
+    })
+    .catch((error: unknown) => {
+      logLifecycle('recreate window failed', String(error));
+
+      if ((!win || win.isDestroyed()) && dying && !dying.isDestroyed()) {
+        win = dying;
+      }
+    })
+    .finally(() => {
+      isRecreatingWindow = false;
+    });
+}
+
 function scheduleRendererRecovery(webContents: Electron.WebContents | null, source: string): void {
-  if (isQuitting || !win || win.isDestroyed()) {
+  if (isQuitting || isRecreatingWindow) {
+    return;
+  }
+
+  if (!win || win.isDestroyed()) {
+    noteRendererFailure();
+    pendingRecoveryMessage = recoveryMessageFor(source);
+    recreateMainWindow(source);
     return;
   }
 
@@ -204,20 +330,18 @@ function scheduleRendererRecovery(webContents: Electron.WebContents | null, sour
   rendererReloadTimer = setTimeout(() => {
     rendererReloadTimer = null;
 
-    if (isQuitting || !win || win.isDestroyed()) {
+    if (isQuitting || isRecreatingWindow) {
       return;
     }
 
-    if (win.webContents.isDestroyed()) {
-      logLifecycle(`recreating window after ${source}`);
-      const appIcon = applyAppBranding();
-      const dying = win;
-      dying.destroy();
-      void createWindow(appIcon);
+    if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
+      recreateMainWindow(source);
       return;
     }
 
     logLifecycle(`recovering renderer after ${source}`);
+    win.show();
+    win.focus();
     win.webContents.reload();
   }, 300);
 }
@@ -265,10 +389,18 @@ function stopMemoryWatch(): void {
 
 function registerProcessDiagnostics(): void {
   process.on('uncaughtException', (error) => {
+    if (isBrokenPipeError(error)) {
+      return;
+    }
+
     logLifecycle('uncaughtException', String(error?.stack ?? error));
   });
 
   process.on('unhandledRejection', (reason) => {
+    if (isBrokenPipeError(reason)) {
+      return;
+    }
+
     logLifecycle('unhandledRejection', String(reason));
   });
 
@@ -283,6 +415,11 @@ function registerProcessDiagnostics(): void {
 
   app.on('child-process-gone', (_event, details) => {
     logLifecycle('child-process-gone', details);
+
+    const type = String(details.type ?? '');
+    if (type.toLowerCase().includes('gpu')) {
+      scheduleRendererRecovery(win?.webContents ?? null, 'gpu-gone');
+    }
   });
 }
 
@@ -294,6 +431,7 @@ function cancelPendingSessionFlush(): void {
   isSessionFlushing = false;
   flushMode = 'quit';
   isQuitting = false;
+  clearUserQuitRequested();
 
   if (sessionFlushTimer) {
     clearTimeout(sessionFlushTimer);
@@ -366,6 +504,14 @@ function requestSessionFlush(mode: 'quit' | 'close'): void {
         scheduleRendererRecovery(win.webContents, 'quit-flush-timeout');
         win.show();
         win.focus();
+        return;
+      }
+
+      if (!userQuitRequested) {
+        logLifecycle('session flush timeout — blocked force quit without user request');
+        cancelPendingSessionFlush();
+        win?.show();
+        win?.focus();
         return;
       }
 
@@ -458,7 +604,7 @@ async function createWindow(appIcon?: NativeImage) {
   }
 
   win.webContents.on('preload-error', (_, preloadPath, error) => {
-    console.error('Preload error:', preloadPath, error);
+    logLifecycle('preload-error', `${preloadPath} ${String(error)}`);
   });
 
   win.webContents.on('render-process-gone', (_event, details) => {
@@ -468,6 +614,18 @@ async function createWindow(appIcon?: NativeImage) {
     if (shouldRecoverRendererProcess(details.reason)) {
       scheduleRendererRecovery(win!.webContents, details.reason);
     }
+  });
+
+  win.webContents.on('unresponsive', () => {
+    logLifecycle('window unresponsive');
+  });
+
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3) {
+      return;
+    }
+
+    logLifecycle('did-fail-load', { errorCode, errorDescription, validatedURL });
   });
 
   win.webContents.on('did-finish-load', () => {
@@ -521,7 +679,7 @@ async function createWindow(appIcon?: NativeImage) {
   });
 
   win.on('close', (event) => {
-    if (isQuitting || !win) {
+    if (isQuitting || isRecreatingWindow || !win) {
       return;
     }
 
@@ -633,7 +791,10 @@ function registerWindowShortcuts(window: BrowserWindow): void {
     }
 
     if (isQuitShortcut(input)) {
-      logLifecycle('Cmd+Q from main window');
+      event.preventDefault();
+      markUserQuitRequested('Cmd+Q');
+      requestSessionFlush('quit');
+      return;
     }
 
     if (isAppReloadShortcut(input)) {
@@ -655,6 +816,38 @@ function registerWindowShortcuts(window: BrowserWindow): void {
   });
 }
 
+function installApplicationMenu(): void {
+  const quitItem: Electron.MenuItemConstructorOptions = {
+    label: 'Quit Nexus',
+    accelerator: process.platform === 'darwin' ? 'Command+Q' : 'Alt+F4',
+    click: () => {
+      markUserQuitRequested('menu');
+      requestSessionFlush('quit');
+    },
+  };
+
+  const template: Electron.MenuItemConstructorOptions[] =
+    process.platform === 'darwin'
+      ? [
+          {
+            label: app.name,
+            submenu: [{ role: 'about' }, { type: 'separator' }, quitItem],
+          },
+          { role: 'editMenu' },
+          { role: 'windowMenu' },
+        ]
+      : [
+          {
+            label: 'File',
+            submenu: [quitItem],
+          },
+          { role: 'editMenu' },
+          { role: 'windowMenu' },
+        ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 function registerShortcuts() {
   globalShortcut.register('CommandOrControl+B', () => {
     win?.webContents.send('app:toggle-explorer');
@@ -666,6 +859,7 @@ function registerShortcuts() {
 }
 
 app.whenReady().then(() => {
+  logLifecycle('app ready');
   const allowedPermissions = new Set([
     'media',
     'mediaKeySystem',
@@ -709,12 +903,17 @@ app.whenReady().then(() => {
   registerWhatsAppHandlers();
   registerEmulatorHandlers(() => win);
   startDesktopControlServer();
+  startIdleWakeLock();
   registerSessionHandlers(() => {
     completeSessionFlush();
   });
   registerWebviewHandlers();
   registerYouTubeSidebarWebviewSession();
   const appIcon = applyAppBranding();
+  installApplicationMenu();
+  powerMonitor.on('shutdown', () => {
+    markUserQuitRequested('shutdown');
+  });
   createWindow(appIcon);
   registerShortcuts();
   startMemoryWatch();
@@ -746,7 +945,8 @@ function registerWebviewHandlers(): void {
     contents.on('before-input-event', (event, input) => {
       if (isQuitShortcut(input)) {
         event.preventDefault();
-        logLifecycle('blocked Cmd+Q from webview');
+        markUserQuitRequested('Cmd+Q-webview');
+        requestSessionFlush('quit');
         return;
       }
       if (isBrowserReloadShortcut(input)) {
@@ -779,7 +979,7 @@ function registerWebviewHandlers(): void {
 app.on('window-all-closed', () => {
   logLifecycle('window-all-closed');
 
-  if (process.platform === 'darwin') {
+  if (process.platform === 'darwin' || isRecreatingWindow) {
     return;
   }
 
@@ -788,6 +988,7 @@ app.on('window-all-closed', () => {
   agentPrintRunner.stopAll();
   testRunnerSession.stopAll();
   stopDesktopControlServer();
+  stopIdleWakeLock();
   void cleanupEmulatorSessions();
   stopMemoryWatch();
   stopManagedRuntime();
@@ -797,11 +998,40 @@ app.on('window-all-closed', () => {
 app.on('before-quit', (event) => {
   const windowCount = BrowserWindow.getAllWindows().length;
   logLifecycle(
-    `before-quit isQuitting=${isQuitting} windows=${windowCount} visible=${Boolean(win && !win.isDestroyed() && win.isVisible())}`,
+    `before-quit isQuitting=${isQuitting} windows=${windowCount} visible=${Boolean(win && !win.isDestroyed() && win.isVisible())} signal=${blockSignalQuit} user=${userQuitRequested}`,
   );
+
+  if (blockSignalQuit) {
+    blockSignalQuit = false;
+    event.preventDefault();
+    cancelPendingSessionFlush();
+    logLifecycle('blocked signal quit');
+
+    if (win && !win.isDestroyed()) {
+      win.show();
+      win.focus();
+    }
+
+    return;
+  }
 
   if (isQuitting) {
     stopMemoryWatch();
+    return;
+  }
+
+  if (!userQuitRequested) {
+    event.preventDefault();
+    cancelPendingSessionFlush();
+    logLifecycle('blocked unexpected quit');
+
+    if (win && !win.isDestroyed()) {
+      win.show();
+      win.focus();
+    } else {
+      void createWindow(applyAppBranding());
+    }
+
     return;
   }
 
@@ -809,6 +1039,7 @@ app.on('before-quit', (event) => {
 
   if (recoveringFromCrash && win && !win.isDestroyed()) {
     event.preventDefault();
+    clearUserQuitRequested();
     scheduleRendererRecovery(win.webContents, 'quit-during-crash');
     return;
   }
@@ -845,6 +1076,7 @@ app.on('will-quit', () => {
   testRunnerSession.stopAll();
   stopManagedRuntime();
   stopDesktopControlServer();
+  stopIdleWakeLock();
   void cleanupEmulatorSessions();
 });
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { HomeDashboardActivityComparison } from '@/types';
+import type { AiProviderId } from '@/constants/aiProviders';
 
 const EMPTY_STATS: HomeDashboardActivityComparison = {
   today: {
@@ -16,7 +17,10 @@ const EMPTY_STATS: HomeDashboardActivityComparison = {
   },
 };
 
-export function useHomeDashboardActivityStats(projectPathsKey: string) {
+export function useHomeDashboardActivityStats(
+  projectPathsKey: string,
+  provider: Exclude<AiProviderId, 'nexus'>,
+) {
   const [stats, setStats] = useState<HomeDashboardActivityComparison>(EMPTY_STATS);
   const [loading, setLoading] = useState(true);
 
@@ -35,6 +39,7 @@ export function useHomeDashboardActivityStats(projectPathsKey: string) {
       try {
         const nextStats = await window.nexus.homeDashboard.getStats(
           projectPathsKey ? projectPathsKey.split('|') : [],
+          provider,
         );
         setStats(nextStats);
       } catch {
@@ -45,7 +50,7 @@ export function useHomeDashboardActivityStats(projectPathsKey: string) {
         setLoading(false);
       }
     },
-    [projectPathsKey],
+    [projectPathsKey, provider],
   );
 
   useEffect(() => {

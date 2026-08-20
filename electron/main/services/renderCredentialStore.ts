@@ -20,12 +20,15 @@ class RenderCredentialStoreService {
     },
   });
 
+  private decryptedCache: RenderStoredCredential[] | null = null;
+
   listCredentials(): RenderStoredCredential[] {
     return this.readCredentials();
   }
 
   hasCredentials(): boolean {
-    return this.readCredentials().length > 0;
+    const stored = this.store.get('credentials') ?? [];
+    return stored.some((item) => Boolean(item.id?.trim() && item.token?.trim()));
   }
 
   getCredential(id: string): RenderStoredCredential | null {
@@ -80,9 +83,13 @@ class RenderCredentialStoreService {
   }
 
   private readCredentials(): RenderStoredCredential[] {
+    if (this.decryptedCache) {
+      return this.decryptedCache;
+    }
+
     const stored = this.store.get('credentials') ?? [];
 
-    return stored
+    const credentials = stored
       .map((item) => {
         const id = item.id?.trim();
         const encryptedToken = item.token?.trim();
@@ -104,9 +111,13 @@ class RenderCredentialStoreService {
         };
       })
       .filter((item): item is RenderStoredCredential => item !== null);
+
+    this.decryptedCache = credentials;
+    return credentials;
   }
 
   private writeCredentials(credentials: RenderStoredCredential[]): void {
+    this.decryptedCache = credentials;
     this.store.set(
       'credentials',
       credentials.map((item) => ({

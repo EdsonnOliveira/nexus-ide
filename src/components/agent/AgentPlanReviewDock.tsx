@@ -216,6 +216,20 @@ function AgentPlanReviewDockComponent({
         return;
       }
 
+      if (event.defaultPrevented) {
+        return;
+      }
+
+      const target = event.target;
+
+      if (
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLInputElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return;
+      }
+
       if (isSubmitting || isBuilding || !isContentReady) {
         return;
       }
