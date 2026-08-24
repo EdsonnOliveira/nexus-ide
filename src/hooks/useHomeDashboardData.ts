@@ -4,7 +4,8 @@ import type { ProjectTask } from '@/types/task';
 import { useAppleCalendarEvents } from '@/hooks/useAppleCalendarEvents';
 import { useSystemNotifications } from '@/hooks/useSystemNotifications';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
-import { isProjectSurfaceNotification } from '@/utils/homeDashboardAgents';
+import { useProjectStore } from '@/stores/useProjectStore';
+import { getHomeProjectsSurfaceKey, isProjectSurfaceNotification } from '@/utils/homeDashboardAgents';
 import { classifyTaskStatus } from '@/utils/taskLabels';
 import { buildDefaultTaskFilters, filterProjectTasks } from '@/utils/taskFilters';
 import { isLocalTaskCompleted } from '@/utils/taskJson';
@@ -75,14 +76,23 @@ function compareTasks(left: ProjectTask, right: ProjectTask): number {
   return right.updatedAt - left.updatedAt;
 }
 
-export function useHomeDashboardData(projects: Project[], activeWorkspaceId: string | null) {
+export function useHomeSurfaceProjects(): Project[] {
+  const surfaceKey = useProjectStore((state) => getHomeProjectsSurfaceKey(state.projects));
+  return useMemo(() => useProjectStore.getState().projects, [surfaceKey]);
+}
+
+export function useHomeDashboardData(
+  projects: Project[],
+  activeWorkspaceId: string | null,
+  loadLiveData = true,
+) {
   const notifiedAgentPaneByProject = useProjectNotificationStore(
     (state) => state.notifiedAgentPaneByProject,
   );
   const { snapshot: calendarSnapshot, loading: calendarLoading, hydrated: calendarHydrated } =
-    useAppleCalendarEvents(true);
+    useAppleCalendarEvents(loadLiveData);
   const { snapshot: systemNotifications, loading: notificationsLoading } =
-    useSystemNotifications(true);
+    useSystemNotifications(loadLiveData);
 
   const visibleProjects = useMemo(
     () => filterVisibleProjects(projects, activeWorkspaceId),
@@ -101,6 +111,20 @@ export function useHomeDashboardData(projects: Project[], activeWorkspaceId: str
     entries.sort((left, right) => compareTasks(left.task, right.task));
 
     return entries.slice(0, HOME_DASHBOARD_TASK_LIMIT);
+  }, [visibleProjects]);
+
+  const allTasks = useMemo(() => {
+    const entries: HomeDashboardTaskEntry[] = [];
+
+    for (const project of visibleProjects) {
+      for (const task of project.tasks ?? []) {
+        entries.push({ project, task });
+      }
+    }
+
+    entries.sort((left, right) => compareTasks(left.task, right.task));
+
+    return entries;
   }, [visibleProjects]);
 
   const notifiedProjects = useMemo(
@@ -129,6 +153,7 @@ export function useHomeDashboardData(projects: Project[], activeWorkspaceId: str
   return {
     visibleProjects,
     pendingTasks,
+    allTasks,
     notifiedProjects,
     systemNotificationPreview,
     systemNotifications,

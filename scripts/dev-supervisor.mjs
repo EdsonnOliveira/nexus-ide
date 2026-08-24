@@ -99,6 +99,8 @@ function requestStop(signal) {
 
 process.on('SIGINT', () => requestStop('SIGINT'));
 process.on('SIGTERM', () => requestStop('SIGTERM'));
-process.on('SIGHUP', () => requestStop('SIGHUP'));
+process.on('SIGHUP', () => {
+  console.warn('[dev-supervisor] ignored SIGHUP');
+});
 
 startVite();

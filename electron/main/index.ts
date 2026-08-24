@@ -20,6 +20,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { registerApiHandlers } from './ipc/api';
@@ -183,10 +184,17 @@ const MEMORY_CHECK_INTERVAL_MS = 60_000;
 const MEMORY_RELOAD_THRESHOLD_KB = 3 * 1024 * 1024;
 const MEMORY_RELOAD_COOLDOWN_MS = 5 * 60_000;
 const RECOVERY_TOAST_DELAY_MS = 900;
+const DEV_LOAD_RETRY_MS = 1500;
+const DEV_LOAD_FAIL_CODES = new Set([-2, -101, -102, -103, -106, -118, -324]);
+const DEV_RECONNECT_MARKER = 'nexus-dev-reconnect';
 
 let win: BrowserWindow | null = null;
 let isQuitting = false;
 let rendererReloadTimer: ReturnType<typeof setTimeout> | null = null;
+let failLoadRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let lastMainFrameLoadFailed = false;
+let currentLoadFailed = false;
+let watchingDevServer = false;
 let flushMode: 'quit' | 'close' = 'quit';
 let isSessionFlushing = false;
 let sessionFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -304,6 +312,154 @@ function recreateMainWindow(source: string): void {
     });
 }
 
+function clearFailLoadRetry(): void {
+  if (!failLoadRetryTimer) {
+    return;
+  }
+
+  clearTimeout(failLoadRetryTimer);
+  failLoadRetryTimer = null;
+}
+
+function stopDevServerWatch(): void {
+  watchingDevServer = false;
+  clearFailLoadRetry();
+}
+
+function isDevReconnectUrl(url: string): boolean {
+  return url.includes(DEV_RECONNECT_MARKER);
+}
+
+function probeDevServer(): Promise<boolean> {
+  if (!VITE_DEV_SERVER_URL) {
+    return Promise.resolve(false);
+  }
+
+  let parsed: URL;
+
+  try {
+    parsed = new URL(VITE_DEV_SERVER_URL);
+  } catch {
+    return Promise.resolve(false);
+  }
+
+  const port = Number(parsed.port || (parsed.protocol === 'https:' ? 443 : 80));
+  const host = parsed.hostname || '127.0.0.1';
+  const hosts = host === 'localhost' ? ['127.0.0.1', '::1'] : [host];
+
+  return new Promise((resolve) => {
+    const tryHost = (index: number) => {
+      if (index >= hosts.length) {
+        resolve(false);
+        return;
+      }
+
+      const socket = net.connect({ port, host: hosts[index] });
+      const done = (ok: boolean) => {
+        socket.removeAllListeners();
+        socket.destroy();
+
+        if (ok) {
+          resolve(true);
+          return;
+        }
+
+        tryHost(index + 1);
+      };
+
+      socket.setTimeout(600);
+      socket.once('connect', () => done(true));
+      socket.once('error', () => done(false));
+      socket.once('timeout', () => done(false));
+    };
+
+    tryHost(0);
+  });
+}
+
+function buildDevReconnectHtml(): string {
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Nexus IDE</title>
+<style>
+html,body{margin:0;height:100%;background:#08080c;color:#e8e8ef;font-family:Inter,system-ui,sans-serif;}
+.wrap{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;}
+p{margin:0;opacity:.72;font-size:14px;}
+</style>
+</head>
+<body data-${DEV_RECONNECT_MARKER}="1">
+<div class="wrap"><p>Reconectando ao Nexus…</p></div>
+</body>
+</html>`;
+}
+
+function showDevReconnectPage(): void {
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
+    return;
+  }
+
+  if (isDevReconnectUrl(win.webContents.getURL())) {
+    return;
+  }
+
+  logLifecycle('showing dev reconnect page');
+  void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildDevReconnectHtml())}`);
+}
+
+async function tickDevServerWatch(source: string): Promise<void> {
+  if (!watchingDevServer || !VITE_DEV_SERVER_URL || isQuitting) {
+    return;
+  }
+
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
+    stopDevServerWatch();
+    return;
+  }
+
+  const up = await probeDevServer();
+
+  if (up) {
+    logLifecycle('dev server reachable, loading', source);
+    stopDevServerWatch();
+    lastMainFrameLoadFailed = false;
+    currentLoadFailed = false;
+
+    try {
+      await win.loadURL(VITE_DEV_SERVER_URL);
+    } catch (error: unknown) {
+      logLifecycle('retry loadURL failed', String(error));
+      watchDevServer('load-failed');
+    }
+
+    return;
+  }
+
+  showDevReconnectPage();
+  clearFailLoadRetry();
+  failLoadRetryTimer = setTimeout(() => {
+    failLoadRetryTimer = null;
+    void tickDevServerWatch(source);
+  }, DEV_LOAD_RETRY_MS);
+}
+
+function watchDevServer(source: string): void {
+  if (!VITE_DEV_SERVER_URL || isQuitting) {
+    return;
+  }
+
+  lastMainFrameLoadFailed = true;
+
+  if (watchingDevServer) {
+    return;
+  }
+
+  watchingDevServer = true;
+  logLifecycle('watching dev server', source);
+  void tickDevServerWatch(source);
+}
+
 function scheduleRendererRecovery(webContents: Electron.WebContents | null, source: string): void {
   if (isQuitting || isRecreatingWindow) {
     return;
@@ -342,6 +498,23 @@ function scheduleRendererRecovery(webContents: Electron.WebContents | null, sour
     logLifecycle(`recovering renderer after ${source}`);
     win.show();
     win.focus();
+
+    if (VITE_DEV_SERVER_URL) {
+      void probeDevServer().then((up) => {
+        if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
+          return;
+        }
+
+        if (up) {
+          win.webContents.reload();
+          return;
+        }
+
+        watchDevServer(source);
+      });
+      return;
+    }
+
     win.webContents.reload();
   }, 300);
 }
@@ -620,15 +793,42 @@ async function createWindow(appIcon?: NativeImage) {
     logLifecycle('window unresponsive');
   });
 
+  win.webContents.on('did-start-loading', () => {
+    currentLoadFailed = false;
+  });
+
   win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (!isMainFrame || errorCode === -3) {
       return;
     }
 
+    currentLoadFailed = true;
+    lastMainFrameLoadFailed = true;
     logLifecycle('did-fail-load', { errorCode, errorDescription, validatedURL });
+
+    const failedDevUrl = Boolean(
+      VITE_DEV_SERVER_URL && validatedURL && validatedURL.startsWith(VITE_DEV_SERVER_URL),
+    );
+
+    if (failedDevUrl || DEV_LOAD_FAIL_CODES.has(errorCode)) {
+      watchDevServer(errorDescription);
+    }
   });
 
   win.webContents.on('did-finish-load', () => {
+    const url = win?.webContents.getURL() ?? '';
+
+    if (isDevReconnectUrl(url)) {
+      return;
+    }
+
+    if (currentLoadFailed) {
+      watchDevServer('finish-after-fail');
+      return;
+    }
+
+    lastMainFrameLoadFailed = false;
+    stopDevServerWatch();
     deliverPendingRecoveryMessage();
   });
 
@@ -642,6 +842,7 @@ async function createWindow(appIcon?: NativeImage) {
       await win.loadURL(VITE_DEV_SERVER_URL);
     } catch (error) {
       logLifecycle('loadURL failed', String(error));
+      watchDevServer('loadURL failed');
     }
   } else {
     try {
@@ -1062,6 +1263,11 @@ app.on('activate', () => {
   if (win && !win.isDestroyed()) {
     win.show();
     win.focus();
+
+    if (lastMainFrameLoadFailed && VITE_DEV_SERVER_URL) {
+      watchDevServer('activate');
+    }
+
     return;
   }
 
@@ -1069,6 +1275,7 @@ app.on('activate', () => {
 });
 
 app.on('will-quit', () => {
+  stopDevServerWatch();
   stopMemoryWatch();
   globalShortcut.unregisterAll();
   ptyManager.killAll();

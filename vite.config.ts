@@ -23,10 +23,17 @@ function getViteProcess(): ViteElectronProcess {
 
 function isNexusElectronRunning(): boolean {
   try {
-    const result = spawnSync('pgrep', ['-f', 'nexus-ide/build/Nexus.app/Contents/MacOS/Electron'], {
-      encoding: 'utf8',
+    const result = spawnSync('/bin/ps', ['-ax', '-o', 'command='], { encoding: 'utf8' });
+
+    if (result.status !== 0 || !result.stdout) {
+      return false;
+    }
+
+    const prefix = `${nexusElectronBinary} `;
+    return result.stdout.split('\n').some((line) => {
+      const command = line.trimStart();
+      return command === nexusElectronBinary || command.startsWith(prefix);
     });
-    return result.status === 0 && Boolean(result.stdout?.trim());
   } catch {
     return false;
   }
@@ -136,13 +143,14 @@ async function restartBundledElectron(
 
         if (!force && (isChildAlive(running) || isNexusElectronRunning())) {
           console.warn('[vite] Electron already running — not restarting');
+          startElectronWatchdog(startup);
           return;
         }
 
         await stopBundledElectronApp();
 
         if (force && isNexusElectronRunning()) {
-          spawnSync('pkill', ['-f', 'nexus-ide/build/Nexus.app/Contents/MacOS/Electron'], {
+          spawnSync('pkill', ['-f', `${nexusElectronBinary} `], {
             encoding: 'utf8',
           });
           await new Promise((resolve) => setTimeout(resolve, 300));
@@ -289,6 +297,7 @@ export default defineConfig(({ command }) => {
     ],
     clearScreen: false,
     server: {
+      host: '127.0.0.1',
       port: 5260,
       strictPort: true,
     },

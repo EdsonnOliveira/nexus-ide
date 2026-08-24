@@ -1,7 +1,7 @@
-import { LayoutGrid, Bot } from 'lucide-react';
+import { LayoutGrid, Bot, CalendarDays, ListTodo } from 'lucide-react';
 import { memo, useCallback } from 'react';
 
-export type HomeDashboardViewMode = 'dashboard' | 'agent';
+export type HomeDashboardViewMode = 'dashboard' | 'agent' | 'calendar' | 'tasks';
 
 interface HomeDashboardModeSwitchProps {
   mode: HomeDashboardViewMode;
@@ -15,6 +15,14 @@ function HomeDashboardModeSwitchComponent({ mode, onChange }: HomeDashboardModeS
 
   const handleAgent = useCallback(() => {
     onChange('agent');
+  }, [onChange]);
+
+  const handleCalendar = useCallback(() => {
+    onChange('calendar');
+  }, [onChange]);
+
+  const handleTasks = useCallback(() => {
+    onChange('tasks');
   }, [onChange]);
 
   return (
@@ -43,6 +51,26 @@ function HomeDashboardModeSwitchComponent({ mode, onChange }: HomeDashboardModeS
       >
         <LayoutGrid size={14} strokeWidth={2.1} aria-hidden='true' />
         <span>Dashboard</span>
+      </button>
+      <button
+        type='button'
+        role='tab'
+        aria-selected={mode === 'calendar'}
+        className={`home-dashboard__mode-switch-btn app-button${mode === 'calendar' ? ' home-dashboard__mode-switch-btn--active' : ''}`}
+        onClick={handleCalendar}
+      >
+        <CalendarDays size={14} strokeWidth={2.1} aria-hidden='true' />
+        <span>Calendário</span>
+      </button>
+      <button
+        type='button'
+        role='tab'
+        aria-selected={mode === 'tasks'}
+        className={`home-dashboard__mode-switch-btn app-button${mode === 'tasks' ? ' home-dashboard__mode-switch-btn--active' : ''}`}
+        onClick={handleTasks}
+      >
+        <ListTodo size={14} strokeWidth={2.1} aria-hidden='true' />
+        <span>Tasks</span>
       </button>
     </div>
   );

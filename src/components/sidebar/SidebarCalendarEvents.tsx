@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDays, MapPin } from 'lucide-react';
 import { SidebarCalendarEventPopup } from '@/components/sidebar/SidebarCalendarEventPopup';
 import { useAppleCalendarEvents } from '@/hooks/useAppleCalendarEvents';
+import { useNowMs } from '@/hooks/useHomeDashboardClock';
 import { useCalendarEventNotificationStore } from '@/stores/useCalendarEventNotificationStore';
 import type { CalendarEventItem } from '@/types';
 import {
@@ -110,19 +111,9 @@ interface ActiveCalendarEventPopupState {
 
 function SidebarCalendarEventsComponent() {
   const { snapshot, loading, hydrated, openEvent, refresh } = useAppleCalendarEvents(true);
-  const [now, setNow] = useState(() => Date.now());
+  const now = useNowMs(15_000);
   const [activePopup, setActivePopup] = useState<ActiveCalendarEventPopupState | null>(null);
   const isEventPinging = useCalendarEventNotificationStore((state) => state.isEventPinging);
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setNow(Date.now());
-    }, 1_000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, []);
 
   useEffect(() => {
     const handleFocus = () => {

@@ -8,7 +8,7 @@ import {
   useDeferredMarkdownHtml,
   useMarkdownCodeHighlight,
 } from '@/hooks/useMarkdownCodeHighlight';
-import type { CloudAgentSession, CloudAgentTurn } from '@/types/cloudAgent';
+import type { CloudAgentTurn } from '@/types/cloudAgent';
 
 function CloudAgentThumbComponent({ logoUrl, color }: { logoUrl: string | null; color: string }) {
   if (logoUrl) {
@@ -215,18 +215,21 @@ function CloudAgentTurnView({
 }
 
 interface HomeDashboardCloudAgentCardProps {
-  session: CloudAgentSession;
+  sessionId: string;
   enterDelayMs: number;
 }
 
 function HomeDashboardCloudAgentCardComponent({
-  session,
+  sessionId,
   enterDelayMs,
 }: HomeDashboardCloudAgentCardProps) {
+  const session = useCloudAgentSessionsStore(
+    (state) => state.sessions.find((item) => item.id === sessionId) ?? null,
+  );
   const [confirmOpen, setConfirmOpen] = useState(false);
   const removeSession = useCloudAgentSessionsStore((state) => state.removeSession);
   const transcriptRef = useRef<HTMLDivElement>(null);
-  const turns = useMemo(() => session.turns, [session.turns]);
+  const turns = useMemo(() => session?.turns ?? [], [session?.turns]);
 
   useEffect(() => {
     const node = transcriptRef.current;
@@ -247,12 +250,20 @@ function HomeDashboardCloudAgentCardComponent({
   }, []);
 
   const handleConfirmClose = useCallback(() => {
+    if (!session) {
+      return;
+    }
+
     removeSession(session.id);
 
     if (cloudSupabase) {
       void closeAgentSession(cloudSupabase, session.id).catch(() => {});
     }
-  }, [removeSession, session.id]);
+  }, [removeSession, session]);
+
+  if (!session) {
+    return null;
+  }
 
   return (
     <article
@@ -296,12 +307,6 @@ function HomeDashboardCloudAgentCardComponent({
           </div>
         </div>
       </div>
-      <span
-        className={`home-dashboard__agent-card-progress${
-          session.status === 'running' ? ' home-dashboard__agent-card-progress--busy' : ''
-        }`}
-        aria-hidden='true'
-      />
       {confirmOpen ? (
         <CloudAgentCloseConfirm
           projectName={session.projectName}

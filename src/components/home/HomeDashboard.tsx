@@ -11,6 +11,7 @@ import {
 import { createPortal } from 'react-dom';
 import { Bell, Bot, CalendarDays, ListTodo } from 'lucide-react';
 import { HomeDashboardAgentMode } from '@/components/home/HomeDashboardAgentMode';
+import { HomeCalendarView } from '@/components/home/calendar/HomeCalendarView';
 import { HomeDashboardMailCard } from '@/components/home/HomeDashboardMailCard';
 import { HomeDashboardMacParakeetCard } from '@/components/home/HomeDashboardMacParakeetCard';
 import { HomeDashboardDailyCard } from '@/components/home/HomeDashboardDailyCard';
@@ -24,25 +25,27 @@ import {
   HomeDashboardModeSwitch,
   type HomeDashboardViewMode,
 } from '@/components/home/HomeDashboardModeSwitch';
-import { useHomeDashboardClock } from '@/hooks/useHomeDashboardClock';
+import { useNowMs } from '@/hooks/useHomeDashboardClock';
 import {
   HomeDashboardCalendarSkeleton,
   HomeDashboardNotificationSkeleton,
 } from '@/components/home/HomeDashboardSkeletons';
 import { HomeDashboardSection } from '@/components/home/HomeDashboardSection';
 import { HomeDashboardTaskRow } from '@/components/home/HomeDashboardTaskRow';
+import { HomeDashboardTasksBoard } from '@/components/home/HomeDashboardTasksBoard';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import { SidebarCalendarEventPopup } from '@/components/sidebar/SidebarCalendarEventPopup';
 import { TaskDetailModal } from '@/components/tasks/TaskDetailModal';
 import { TaskFormModal } from '@/components/tasks/TaskFormModal';
 import type { TaskExecutionAnchor } from '@/components/tasks/TaskAgentModeModal';
 import type { HomeDashboardTaskEntry } from '@/hooks/useHomeDashboardData';
-import { useHomeDashboardData } from '@/hooks/useHomeDashboardData';
+import { useHomeDashboardData, useHomeSurfaceProjects } from '@/hooks/useHomeDashboardData';
 import { useHomeDashboardActivityStats } from '@/hooks/useHomeDashboardActivityStats';
-import { useAppleCalendarEvents } from '@/hooks/useAppleCalendarEvents';
+import { openAppleCalendarEvent } from '@/hooks/useAppleCalendarEvents';
 import { useProjectTaskExecution } from '@/hooks/useProjectTaskExecution';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useAppSettingsStore } from '@/stores/useAppSettingsStore';
+import { useCloudAgentSessionsStore } from '@/stores/useCloudAgentSessionsStore';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useTabActions } from '@/stores/useTabStore';
 import type { CalendarEventItem } from '@/types';
@@ -89,7 +92,7 @@ const VIEW_MODE_STORAGE_KEY = 'nexus.home-dashboard.view-mode';
 function readStoredViewMode(): HomeDashboardViewMode {
   try {
     const raw = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
-    if (raw === 'agent' || raw === 'dashboard') {
+    if (raw === 'agent' || raw === 'dashboard' || raw === 'calendar' || raw === 'tasks') {
       return raw;
     }
   } catch {
@@ -99,7 +102,8 @@ function readStoredViewMode(): HomeDashboardViewMode {
 }
 
 function HomeDashboardComponent() {
-  const projects = useProjectStore((state) => state.projects);
+  const projects = useHomeSurfaceProjects();
+  const cloudSessionCount = useCloudAgentSessionsStore((state) => state.sessions.length);
   const activeWorkspaceId = useProjectStore((state) => state.activeWorkspaceId);
   const [viewMode, setViewMode] = useState<HomeDashboardViewMode>(() => readStoredViewMode());
   const selectProject = useProjectStore((state) => state.selectProject);
@@ -109,12 +113,11 @@ function HomeDashboardComponent() {
   );
   const { selectPane } = useTabActions();
   const { executeTask, executionModals } = useProjectTaskExecution(null);
-  const { openEvent } = useAppleCalendarEvents(true);
-  const { dateLabel, timeLabel, nowMs } = useHomeDashboardClock();
 
   const {
     visibleProjects,
     pendingTasks,
+    allTasks,
     notifiedProjects,
     systemNotificationPreview,
     systemNotifications,
@@ -122,7 +125,7 @@ function HomeDashboardComponent() {
     calendarSnapshot,
     notificationsLoading,
     calendarHydrated,
-  } = useHomeDashboardData(projects, activeWorkspaceId);
+  } = useHomeDashboardData(projects, activeWorkspaceId, viewMode === 'dashboard');
 
   const visibleProjectPathsKey = useMemo(
     () =>
@@ -134,8 +137,11 @@ function HomeDashboardComponent() {
     [visibleProjects],
   );
   const preferredAiProvider = useAppSettingsStore((state) => state.preferredAiProvider);
-  const { stats: activityStats, loading: activityLoading } =
-    useHomeDashboardActivityStats(visibleProjectPathsKey, preferredAiProvider);
+  const { stats: activityStats, loading: activityLoading } = useHomeDashboardActivityStats(
+    visibleProjectPathsKey,
+    preferredAiProvider,
+    viewMode === 'dashboard',
+  );
 
   const appIcons = useNotificationAppIcons(systemNotificationPreview);
   const [calendarPopup, setCalendarPopup] = useState<ActiveCalendarPopupState | null>(null);
@@ -172,7 +178,7 @@ function HomeDashboardComponent() {
     return count;
   }, [homeAgentQueue, projects]);
 
-  const compactChrome = viewMode === 'agent' && homeAgentCount >= 5;
+  const compactChrome = homeAgentCount + cloudSessionCount >= 4 || viewMode === 'calendar';
 
   const detailProject = useMemo(() => {
     if (!detailEntry) {
@@ -189,11 +195,6 @@ function HomeDashboardComponent() {
 
     return detailProject.tasks?.find((task) => task.id === detailEntry.task.id) ?? detailEntry.task;
   }, [detailEntry, detailProject]);
-
-  const visibleCalendarEvents = useMemo(
-    () => getVisibleCalendarEvents(calendarEvents, nowMs),
-    [calendarEvents, nowMs],
-  );
 
   const hasNotifications =
     notifiedProjects.length > 0 || systemNotificationPreview.length > 0;
@@ -293,12 +294,45 @@ function HomeDashboardComponent() {
     [executeTask, selectProject],
   );
 
+  const handleTaskDetailUpdated = useCallback(
+    (updated: ProjectTask) => {
+      if (!detailEntry) {
+        return;
+      }
+
+      const projectId = detailEntry.project.id;
+      const project = projects.find((item) => item.id === projectId);
+
+      if (!project) {
+        return;
+      }
+
+      const nextTasks = (project.tasks ?? []).map((item) =>
+        item.id === updated.id ||
+        (updated.externalId && item.externalId === updated.externalId)
+          ? {
+              ...item,
+              ...updated,
+              updatedAt: Date.now(),
+            }
+          : item,
+      );
+
+      void updateProject(projectId, { tasks: nextTasks });
+      setDetailEntry({
+        project: { ...project, tasks: nextTasks },
+        task: updated,
+      });
+    },
+    [detailEntry, projects, updateProject],
+  );
+
   const handleCalendarEventClick = useCallback(
     (event: CalendarEventItem, anchorRef: React.RefObject<HTMLButtonElement | null>) => {
       const rect = anchorRef.current?.getBoundingClientRect();
 
       if (!rect) {
-        void openEvent(event.startAt);
+        void openAppleCalendarEvent(event.startAt);
         return;
       }
 
@@ -308,7 +342,7 @@ function HomeDashboardComponent() {
         anchorRef,
       });
     },
-    [openEvent],
+    [],
   );
 
   const handleCloseCalendarPopup = useCallback(() => {
@@ -517,9 +551,13 @@ function HomeDashboardComponent() {
 
   const askBar = (
     <div
-      className={`home-dashboard__ask-bar${viewMode === 'dashboard' ? ' home-dashboard__ask-bar--sticky' : ''}${
-        compactChrome ? ' home-dashboard__ask-bar--compact' : ''
-      }${promptFlight ? ' home-dashboard__ask-bar--launching' : ''}`}
+      className={`home-dashboard__ask-bar${
+        viewMode === 'dashboard' || viewMode === 'tasks' || viewMode === 'calendar'
+          ? ' home-dashboard__ask-bar--sticky'
+          : ''
+      }${compactChrome ? ' home-dashboard__ask-bar--compact' : ''}${
+        promptFlight ? ' home-dashboard__ask-bar--launching' : ''
+      }`}
     >
       <HomeDashboardAskBar
         projects={visibleProjects}
@@ -535,26 +573,38 @@ function HomeDashboardComponent() {
   return (
     <div
       className={`home-dashboard nexus-hero${viewMode === 'agent' ? ' home-dashboard--maestro' : ''}${
-        compactChrome ? ' home-dashboard--compact-chrome' : ''
-      }${promptFlight ? ' home-dashboard--prompt-flight' : ''}`}
+        viewMode === 'calendar' ? ' home-dashboard--calendar' : ''
+      }${compactChrome ? ' home-dashboard--compact-chrome' : ''}${
+        promptFlight ? ' home-dashboard--prompt-flight' : ''
+      }`}
     >
       <HomeDashboardHero
-        dateLabel={dateLabel}
-        timeLabel={timeLabel}
         compact={compactChrome}
         askSlot={askBar}
+        switchSlot={
+          compactChrome ? (
+            <HomeDashboardModeSwitch mode={viewMode} onChange={handleViewModeChange} />
+          ) : null
+        }
       />
 
-      <div
-        className={`home-dashboard__mode-switch-wrap${
-          compactChrome ? ' home-dashboard__mode-switch-wrap--compact' : ''
-        }`}
-      >
-        <HomeDashboardModeSwitch mode={viewMode} onChange={handleViewModeChange} />
-      </div>
+      {compactChrome ? null : (
+        <div className='home-dashboard__mode-switch-wrap'>
+          <HomeDashboardModeSwitch mode={viewMode} onChange={handleViewModeChange} />
+        </div>
+      )}
 
-      {viewMode === 'agent' ? (
+      {viewMode === 'calendar' ? (
+        <HomeCalendarView />
+      ) : viewMode === 'agent' ? (
         <HomeDashboardAgentMode spawningPaneId={spawningPaneId} />
+      ) : viewMode === 'tasks' ? (
+        <HomeDashboardTasksBoard
+          projects={visibleProjects}
+          entries={allTasks}
+          onOpen={handleOpenTask}
+          onExecute={handleExecuteTask}
+        />
       ) : (
         <>
           <HomeDashboardDailyCard projects={visibleProjects} enterDelayMs={40} />
@@ -575,116 +625,107 @@ function HomeDashboardComponent() {
                       style={{ animationDelay: `${120 + index * 40}ms` }}
                       onClick={() => handleOpenAgentNotification(project.id, paneId)}
                     >
-                      <span className='home-dashboard__notification-icon' aria-hidden='true'>
-                        <Bot size={14} />
-                      </span>
-                      <span className='home-dashboard__notification-copy'>
-                        <span className='home-dashboard__notification-title'>Agent pronto</span>
-                        <span className='home-dashboard__notification-meta'>{project.name}</span>
-                      </span>
-                    </button>
-                  ))}
-                  {systemNotificationPreview.map((item, index) => {
-                    const iconKey = notificationAppIconKey(item.appId, item.appLabel);
-                    const iconSrc = appIcons[iconKey];
-
-                    return (
-                      <button
-                        key={item.id}
-                        type='button'
-                        className='home-dashboard__notification-row app-button app-button--enter'
-                        style={{ animationDelay: `${120 + (notifiedProjects.length + index) * 40}ms` }}
-                        onClick={() => handleOpenSystemNotification(item.appId)}
-                      >
-                        <span className='home-dashboard__notification-icon' aria-hidden='true'>
-                          {iconSrc ? (
-                            <img src={iconSrc} alt='' className='home-dashboard__notification-app-icon' />
-                          ) : (
-                            <Bell size={14} />
-                          )}
-                        </span>
-                        <span className='home-dashboard__notification-copy'>
-                          <span className='home-dashboard__notification-title'>{item.title}</span>
-                          <span className='home-dashboard__notification-meta'>
-                            {item.appLabel} · {formatNotificationRelativeTime(item.deliveredAt)}
+                          <span className='home-dashboard__notification-icon' aria-hidden='true'>
+                            <Bot size={14} />
                           </span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                  {!systemNotifications.accessGranted && systemNotifications.platformSupported ? (
+                          <span className='home-dashboard__notification-copy'>
+                            <span className='home-dashboard__notification-title'>Agent pronto</span>
+                            <span className='home-dashboard__notification-meta'>{project.name}</span>
+                          </span>
+                        </button>
+                      ))}
+                      {systemNotificationPreview.map((item, index) => {
+                        const iconKey = notificationAppIconKey(item.appId, item.appLabel);
+                        const iconSrc = appIcons[iconKey];
+
+                        return (
+                          <button
+                            key={item.id}
+                            type='button'
+                            className='home-dashboard__notification-row app-button app-button--enter'
+                            style={{ animationDelay: `${120 + (notifiedProjects.length + index) * 40}ms` }}
+                            onClick={() => handleOpenSystemNotification(item.appId)}
+                          >
+                            <span className='home-dashboard__notification-icon' aria-hidden='true'>
+                              {iconSrc ? (
+                                <img src={iconSrc} alt='' className='home-dashboard__notification-app-icon' />
+                              ) : (
+                                <Bell size={14} />
+                              )}
+                            </span>
+                            <span className='home-dashboard__notification-copy'>
+                              <span className='home-dashboard__notification-title'>{item.title}</span>
+                              <span className='home-dashboard__notification-meta'>
+                                {item.appLabel} · {formatNotificationRelativeTime(item.deliveredAt)}
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                      {!systemNotifications.accessGranted && systemNotifications.platformSupported ? (
+                        <button
+                          type='button'
+                          className='home-dashboard__permission-hint app-button app-button--enter'
+                          onClick={() => void window.nexus.systemNotifications.openFullDiskAccessSettings()}
+                        >
+                          Permitir acesso às notificações do sistema
+                        </button>
+                      ) : null}
+                    </div>
+                  )}
+                </HomeDashboardSection>
+
+                <HomeDashboardSection icon={CalendarDays} title='Eventos de hoje' accent='#94a3b8' enterDelayMs={120}>
+                  {showCalendarSkeleton ? (
+                    <HomeDashboardCalendarSkeleton />
+                  ) : !calendarSnapshot.platformSupported ? (
+                    <EmptyState icon={CalendarDays} message='Calendário disponível apenas no macOS' compact />
+                  ) : !calendarSnapshot.accessGranted ? (
                     <button
                       type='button'
                       className='home-dashboard__permission-hint app-button app-button--enter'
-                      onClick={() => void window.nexus.systemNotifications.openFullDiskAccessSettings()}
+                      onClick={() => void window.nexus.calendar.requestAccess()}
                     >
-                      Permitir acesso às notificações do sistema
+                      Permitir acesso ao Calendário
                     </button>
-                  ) : null}
-                </div>
-              )}
-            </HomeDashboardSection>
-
-            <HomeDashboardSection icon={CalendarDays} title='Eventos de hoje' accent='#94a3b8' enterDelayMs={120}>
-              {showCalendarSkeleton ? (
-                <HomeDashboardCalendarSkeleton />
-              ) : !calendarSnapshot.platformSupported ? (
-                <EmptyState icon={CalendarDays} message='Calendário disponível apenas no macOS' compact />
-              ) : !calendarSnapshot.accessGranted ? (
-                <button
-                  type='button'
-                  className='home-dashboard__permission-hint app-button app-button--enter'
-                  onClick={() => void window.nexus.calendar.requestAccess()}
-                >
-                  Permitir acesso ao Calendário
-                </button>
-              ) : visibleCalendarEvents.length === 0 ? (
-                <EmptyState icon={CalendarDays} message='Nenhum evento para hoje' compact />
-              ) : (
-                <div className='home-dashboard__calendar-list'>
-                  {visibleCalendarEvents.map((event, index) => (
-                    <HomeDashboardCalendarRow
-                      key={`${event.startAt}-${event.title}`}
-                      event={event}
-                      enterDelayMs={160 + index * 40}
-                      nowMs={nowMs}
+                  ) : (
+                    <HomeDashboardCalendarList
+                      events={calendarEvents}
                       onSelect={handleCalendarEventClick}
                     />
-                  ))}
-                </div>
-              )}
-            </HomeDashboardSection>
-          </div>
-
-          <HomeDashboardActivityStats
-            today={activityStats.today}
-            yesterday={activityStats.yesterday}
-            loading={activityLoading}
-          />
-
-          <HomeDashboardMacParakeetCard />
-
-          <HomeDashboardMailCard />
-
-          <HomeDashboardSection icon={ListTodo} title='Tasks pendentes' accent='#94a3b8' enterDelayMs={200}>
-            {pendingTasks.length === 0 ? (
-              <EmptyState icon={ListTodo} message='Nenhuma task pendente' compact />
-            ) : (
-              <div className='home-dashboard__task-list'>
-                {pendingTasks.map((entry, index) => (
-                  <HomeDashboardTaskRow
-                    key={`${entry.project.id}-${entry.task.id}`}
-                    entry={entry}
-                    enterDelayMs={240 + index * 35}
-                    onOpen={handleOpenTask}
-                    onExecute={handleExecuteTask}
-                  />
-                ))}
+                  )}
+                </HomeDashboardSection>
               </div>
-            )}
-          </HomeDashboardSection>
-        </>
-      )}
+
+              <HomeDashboardActivityStats
+                today={activityStats.today}
+                yesterday={activityStats.yesterday}
+                loading={activityLoading}
+              />
+
+              <HomeDashboardMacParakeetCard />
+
+              <HomeDashboardMailCard />
+
+              <HomeDashboardSection icon={ListTodo} title='Tasks pendentes' accent='#94a3b8' enterDelayMs={200}>
+                {pendingTasks.length === 0 ? (
+                  <EmptyState icon={ListTodo} message='Nenhuma task pendente' compact />
+                ) : (
+                  <div className='home-dashboard__task-list'>
+                    {pendingTasks.map((entry, index) => (
+                      <HomeDashboardTaskRow
+                        key={`${entry.project.id}-${entry.task.id}`}
+                        entry={entry}
+                        enterDelayMs={240 + index * 35}
+                        onOpen={handleOpenTask}
+                        onExecute={handleExecuteTask}
+                      />
+                    ))}
+                  </div>
+                )}
+              </HomeDashboardSection>
+            </>
+          )}
 
       {calendarPopup ? (
         <SidebarCalendarEventPopup
@@ -692,17 +733,19 @@ function HomeDashboardComponent() {
           anchorRect={calendarPopup.anchorRect}
           anchorRef={calendarPopup.anchorRef}
           onClose={handleCloseCalendarPopup}
-          onOpenInCalendar={openEvent}
+          onOpenInCalendar={openAppleCalendarEvent}
         />
       ) : null}
       {detailProject && detailTask ? (
         <TaskDetailModal
           projectId={detailProject.id}
           task={detailTask}
+          relatedTasks={detailProject.tasks}
           jiraSiteUrl={detailProject.taskIntegration?.jiraSiteUrl}
           onClose={handleCloseTaskDetail}
           onEdit={detailTask.source === 'local' ? handleEditTaskDetail : undefined}
           onExecute={handleExecuteFromDetail}
+          onTaskUpdated={handleTaskDetailUpdated}
         />
       ) : null}
       {formEntry ? (
@@ -718,6 +761,36 @@ function HomeDashboardComponent() {
     </div>
   );
 }
+
+interface HomeDashboardCalendarListProps {
+  events: CalendarEventItem[];
+  onSelect: (event: CalendarEventItem, anchorRef: React.RefObject<HTMLButtonElement | null>) => void;
+}
+
+function HomeDashboardCalendarListComponent({ events, onSelect }: HomeDashboardCalendarListProps) {
+  const nowMs = useNowMs(15_000);
+  const visibleEvents = useMemo(() => getVisibleCalendarEvents(events, nowMs), [events, nowMs]);
+
+  if (visibleEvents.length === 0) {
+    return <EmptyState icon={CalendarDays} message='Nenhum evento para hoje' compact />;
+  }
+
+  return (
+    <div className='home-dashboard__calendar-list'>
+      {visibleEvents.map((event, index) => (
+        <HomeDashboardCalendarRow
+          key={`${event.startAt}-${event.title}`}
+          event={event}
+          enterDelayMs={160 + index * 40}
+          nowMs={nowMs}
+          onSelect={onSelect}
+        />
+      ))}
+    </div>
+  );
+}
+
+const HomeDashboardCalendarList = memo(HomeDashboardCalendarListComponent);
 
 interface HomeDashboardCalendarRowProps {
   event: CalendarEventItem;

@@ -126,8 +126,13 @@ interface AskMentionMenuProps {
 }
 
 function resizeAskInput(textarea: HTMLTextAreaElement): void {
+  const styles = window.getComputedStyle(textarea);
+  const minHeight = Number.parseFloat(styles.minHeight);
+  const maxHeight = Number.parseFloat(styles.maxHeight);
+  const minPx = Number.isFinite(minHeight) && minHeight > 0 ? minHeight : 40;
+  const maxPx = Number.isFinite(maxHeight) && maxHeight > 0 ? maxHeight : 96;
   textarea.style.height = 'auto';
-  textarea.style.height = `${Math.min(96, Math.max(40, textarea.scrollHeight))}px`;
+  textarea.style.height = `${Math.min(maxPx, Math.max(minPx, textarea.scrollHeight))}px`;
 }
 
 function AskProjectThumbComponent({ logo, icon, color }: AskProjectThumbProps) {
@@ -436,7 +441,6 @@ function HomeDashboardAskBarComponent({
   onPromptFlightLand,
   onPromptFlightCancel,
 }: HomeDashboardAskBarProps) {
-  const projectsFromStore = useProjectStore((state) => state.projects);
   const { addAgentTabForProject, updateAgentTab } = useTabActions();
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const attachTriggerRef = useRef<HTMLButtonElement>(null);
@@ -825,7 +829,7 @@ function HomeDashboardAskBarComponent({
   const handleSubmit = useCallback(async () => {
     const trimmed = prompt.trim();
     const project =
-      projectsFromStore.find((item) => item.id === projectId) ??
+      useProjectStore.getState().projects.find((item) => item.id === projectId) ??
       projects.find((item) => item.id === projectId);
 
     if ((!trimmed && pendingImages.length === 0) || !project || submitting) {
@@ -910,7 +914,6 @@ function HomeDashboardAskBarComponent({
     pendingImages,
     projectId,
     projects,
-    projectsFromStore,
     prompt,
     submitting,
     updateAgentTab,

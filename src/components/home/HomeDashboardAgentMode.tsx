@@ -11,15 +11,16 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { Bot, X } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import { HomeDashboardCloudAgentCard } from '@/components/home/HomeDashboardCloudAgentCard';
 import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
+import { useHomeSurfaceProjects } from '@/hooks/useHomeDashboardData';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useCloudAgentSessionsStore } from '@/stores/useCloudAgentSessionsStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useTabActions } from '@/stores/useTabStore';
-import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import type { AgentTab, Project } from '@/types';
 import {
   forgetHomeDashboardProjectAgent,
@@ -41,7 +42,6 @@ const LazyAgentView = lazy(() =>
 interface HomeProjectAgentSlot {
   project: Project;
   pane: AgentTab;
-  busy: boolean;
 }
 
 function AgentProjectThumbComponent({
@@ -283,10 +283,6 @@ function AgentCardComponent({
           />
         </Suspense>
       </div>
-      <span
-        className={`home-dashboard__agent-card-progress${slot.busy ? ' home-dashboard__agent-card-progress--busy' : ''}`}
-        aria-hidden='true'
-      />
       {confirmOpen ? (
         <AgentCardCloseConfirm
           projectName={slot.project.name}
@@ -305,13 +301,13 @@ interface HomeDashboardAgentModeProps {
 }
 
 function HomeDashboardAgentModeComponent({ spawningPaneId = null }: HomeDashboardAgentModeProps) {
-  const projects = useProjectStore((state) => state.projects);
-  const agentBusyByPane = useTerminalSessionStore((state) => state.agentBusyByPane);
-  const awaitingResponseByPane = useTerminalSessionStore((state) => state.awaitingResponseByPane);
+  const projects = useHomeSurfaceProjects();
   const { closeTabForProject } = useTabActions();
   const [homeAgentQueue, setHomeAgentQueue] = useState(readHomeAgentQueue);
   const [focusedPaneId, setFocusedPaneId] = useState<string | null>(null);
-  const cloudSessions = useCloudAgentSessionsStore((state) => state.sessions);
+  const cloudSessionIds = useCloudAgentSessionsStore(
+    useShallow((state) => state.sessions.map((session) => session.id)),
+  );
 
   useEffect(() => {
     const refresh = () => {
@@ -351,12 +347,11 @@ function HomeDashboardAgentModeComponent({ spawningPaneId = null }: HomeDashboar
       next.push({
         project,
         pane,
-        busy: Boolean(agentBusyByPane[pane.id] || awaitingResponseByPane[pane.id]),
       });
     }
 
     return next;
-  }, [agentBusyByPane, awaitingResponseByPane, homeAgentQueue, projects]);
+  }, [homeAgentQueue, projects]);
 
   useLayoutEffect(() => {
     setHomeAgentOverlayPaneIds(slots.map((slot) => slot.pane.id));
@@ -390,7 +385,7 @@ function HomeDashboardAgentModeComponent({ spawningPaneId = null }: HomeDashboar
 
   return (
     <section className='home-dashboard__agent-mode app-button--enter'>
-      {slots.length === 0 && cloudSessions.length === 0 ? (
+      {slots.length === 0 && cloudSessionIds.length === 0 ? (
         <EmptyState
           icon={Bot}
           title='Nenhum agent na área'
@@ -410,10 +405,10 @@ function HomeDashboardAgentModeComponent({ spawningPaneId = null }: HomeDashboar
               onRemove={handleRemove}
             />
           ))}
-          {cloudSessions.map((session, index) => (
+          {cloudSessionIds.map((sessionId, index) => (
             <HomeDashboardCloudAgentCard
-              key={session.id}
-              session={session}
+              key={sessionId}
+              sessionId={sessionId}
               enterDelayMs={40 + (slots.length + index) * 35}
             />
           ))}

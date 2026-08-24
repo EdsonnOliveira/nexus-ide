@@ -1,18 +1,28 @@
 import { memo, type ReactNode } from 'react';
 import { NexusLogo } from '@/components/overlay/NexusLogo';
+import { useHomeDashboardClock } from '@/hooks/useHomeDashboardClock';
 
 interface HomeDashboardHeroProps {
-  dateLabel: string;
-  timeLabel: string;
   compact?: boolean;
   askSlot: ReactNode;
+  switchSlot?: ReactNode;
+}
+
+function HomeDashboardClockLabels() {
+  const { dateLabel, timeLabel } = useHomeDashboardClock();
+
+  return (
+    <div className='home-dashboard__hero-clock'>
+      <p className='home-dashboard__date'>{dateLabel}</p>
+      <p className='home-dashboard__time'>{timeLabel}</p>
+    </div>
+  );
 }
 
 function HomeDashboardHeroComponent({
-  dateLabel,
-  timeLabel,
   compact = false,
   askSlot,
+  switchSlot,
 }: HomeDashboardHeroProps) {
   return (
     <header
@@ -20,10 +30,7 @@ function HomeDashboardHeroComponent({
         compact ? ' home-dashboard__hero--compact' : ''
       }`}
     >
-      <div className='home-dashboard__hero-clock'>
-        <p className='home-dashboard__date'>{dateLabel}</p>
-        <p className='home-dashboard__time'>{timeLabel}</p>
-      </div>
+      <HomeDashboardClockLabels />
       <div className='home-dashboard__hero-brand'>
         <NexusLogo
           size={compact ? 28 : 56}
@@ -37,6 +44,7 @@ function HomeDashboardHeroComponent({
         </div>
       </div>
       <div className='home-dashboard__hero-ask'>{askSlot}</div>
+      {switchSlot ? <div className='home-dashboard__hero-switch'>{switchSlot}</div> : null}
     </header>
   );
 }

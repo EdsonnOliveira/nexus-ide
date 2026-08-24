@@ -1,15 +1,18 @@
+import type { Project } from '@/types';
+import { getPanesFromItem } from '@/utils/tabGroups';
+
 const HOME_AGENT_STORAGE_KEY = 'nexus.home-dashboard.project-agents';
 const HOME_VIEW_MODE_STORAGE_KEY = 'nexus.home-dashboard.view-mode';
 export const HOME_AGENT_CHANGE_EVENT = 'nexus-home-dashboard-project-agents';
 export const HOME_AGENT_FOCUS_EVENT = 'nexus-home-dashboard-focus-agent';
 export const HOME_ASK_FOCUS_EVENT = 'nexus-home-dashboard-focus-ask';
 
-export type HomeDashboardViewMode = 'dashboard' | 'agent';
+export type HomeDashboardViewMode = 'dashboard' | 'agent' | 'calendar' | 'tasks';
 
 export function getHomeDashboardViewMode(): HomeDashboardViewMode {
   try {
     const raw = window.localStorage.getItem(HOME_VIEW_MODE_STORAGE_KEY);
-    if (raw === 'agent' || raw === 'dashboard') {
+    if (raw === 'agent' || raw === 'dashboard' || raw === 'calendar' || raw === 'tasks') {
       return raw;
     }
   } catch {
@@ -238,6 +241,42 @@ export function moveAgentPaneToMaestro(projectId: string, paneId: string): void 
   writeHomeAgentQueue([...queue, { projectId, paneId }]);
   window.dispatchEvent(new Event(HOME_AGENT_CHANGE_EVENT));
   window.dispatchEvent(new CustomEvent(HOME_AGENT_FOCUS_EVENT, { detail: { paneId } }));
+}
+
+function projectAgentSurfaceKey(project: Project): string {
+  const paneKeys: string[] = [];
+
+  for (const item of project.tabs) {
+    for (const pane of getPanesFromItem(item)) {
+      if (pane.type === 'agent') {
+        paneKeys.push(`${pane.id}:${pane.ptyId ?? ''}`);
+      }
+    }
+  }
+
+  return paneKeys.join(',');
+}
+
+const projectSurfaceKeyCache = new WeakMap<Project, string>();
+
+export function getHomeProjectsSurfaceKey(projects: Project[]): string {
+  return projects
+    .map((project) => {
+      const cached = projectSurfaceKeyCache.get(project);
+      if (cached) {
+        return cached;
+      }
+
+      let taskKey = '';
+      for (const task of project.tasks ?? []) {
+        taskKey += `${task.id}:${task.status}:${task.updatedAt},`;
+      }
+
+      const key = `${project.id}:${project.name}:${project.path}:${project.icon}:${project.color}:${project.logo ?? ''}:${project.workspaceId ?? ''}:${taskKey}:${projectAgentSurfaceKey(project)}`;
+      projectSurfaceKeyCache.set(project, key);
+      return key;
+    })
+    .join('|');
 }
 
 export function forgetHomeDashboardProjectAgent(projectId: string, paneId?: string): void {

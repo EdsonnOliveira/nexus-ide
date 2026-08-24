@@ -26,6 +26,22 @@ function getMsUntilNextSecond(now: Date): number {
   return 1000 - now.getMilliseconds() + 50;
 }
 
+export function useNowMs(intervalMs: number): number {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, intervalMs);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [intervalMs]);
+
+  return nowMs;
+}
+
 export function useHomeDashboardClock(): { dateLabel: string; timeLabel: string; nowMs: number } {
   const [now, setNow] = useState(() => new Date());
 

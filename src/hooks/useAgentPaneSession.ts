@@ -116,7 +116,6 @@ const STREAM_JSON_ORPHAN_FINALIZE_MS = 2_000;
 const STREAM_JSON_INCOMPLETE_ORPHAN_FINALIZE_MS = 45_000;
 const STREAM_JSON_HUNG_IDLE_MS = 1_800_000;
 const STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS = 7_200_000;
-const STREAM_JSON_EMPTY_HUNG_IDLE_MS = 90_000;
 const STREAM_JSON_DEAD_PROCESS_FINALIZE_MS = 2_000;
 const STREAM_JSON_IDLE_CHECK_MS = 500;
 const STREAM_JSON_RESPONSE_IDLE_FINALIZE_MS = 400;
@@ -3514,25 +3513,6 @@ export function useAgentPaneSession({
             agentPrintRunActiveRef.current = true;
           }
 
-          if (
-            idleMs >= STREAM_JSON_STARTUP_GRACE_MS &&
-            !hasStreamJsonChunkRef.current &&
-            !hasStreamJsonVisibleProgress(streamJsonStateRef.current) &&
-            !hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current) &&
-            !hasPendingStreamJsonInteraction(streamJsonStateRef.current) &&
-            !streamJsonAutoRetryRef.current
-          ) {
-            if (
-              tryScheduleStreamJsonAutoRetry(() => {
-                agentPrintRunActiveRef.current = false;
-                window.nexus.agentPrint.stop(paneId);
-                clearAgentPrintRunToken(paneId);
-              })
-            ) {
-              return;
-            }
-          }
-
           const hasActiveToolWork = hasActiveStreamJsonToolOrTask(streamJsonStateRef.current);
 
           if (tryHandoffLongRunningDevShell(idleMs)) {
@@ -3548,39 +3528,6 @@ export function useAgentPaneSession({
               syncStreamJsonStallLiveStatus(idleMs);
             }
 
-            return;
-          }
-
-          if (
-            idleMs >= STREAM_JSON_EMPTY_HUNG_IDLE_MS &&
-            !hasStreamJsonChunkRef.current &&
-            !hasActiveToolWork &&
-            !hasStreamJsonVisibleProgress(streamJsonStateRef.current) &&
-            !hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current) &&
-            !hasPendingStreamJsonInteraction(streamJsonStateRef.current)
-          ) {
-            forceSettleStreamJsonInFlightWork(streamJsonStateRef.current);
-            applyStreamJsonChunk('');
-            agentPrintRunActiveRef.current = false;
-            window.nexus.agentPrint.stop(paneId);
-
-            updateActiveTurn((turn) => ({
-              ...turn,
-              activities: [
-                ...turn.activities.filter(
-                  (entry) =>
-                    entry.kind !== 'response' &&
-                    !(entry.kind === 'thought' && !entry.label.trim()) &&
-                    entry.kind !== 'live_status' &&
-                    entry.kind !== 'tool_run',
-                ),
-                createFailedPromptActivity(
-                  'Agent sem resposta (Thinking vazio). Pare e tente de novo.',
-                ),
-              ],
-            }));
-            finalizeActiveTurn(true);
-            clearAgentPrintRunToken(paneId);
             return;
           }
 

@@ -35,10 +35,28 @@ export function useSystemNotifications(enabled: boolean): {
 
     const loadSnapshot = () => {
       void window.nexus.systemNotifications.list().then((nextSnapshot) => {
-        if (!cancelled) {
-          setSnapshot(nextSnapshot);
-          setLoading(false);
+        if (cancelled) {
+          return;
         }
+
+        setSnapshot((current) => {
+          if (
+            current.accessGranted === nextSnapshot.accessGranted &&
+            current.platformSupported === nextSnapshot.platformSupported &&
+            current.items.length === nextSnapshot.items.length &&
+            current.items.every(
+              (item, index) =>
+                item.id === nextSnapshot.items[index]?.id &&
+                item.title === nextSnapshot.items[index]?.title &&
+                item.deliveredAt === nextSnapshot.items[index]?.deliveredAt,
+            )
+          ) {
+            return current;
+          }
+
+          return nextSnapshot;
+        });
+        setLoading(false);
       });
     };
 

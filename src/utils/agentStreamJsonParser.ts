@@ -316,6 +316,48 @@ function isThinkingContentType(type: string): boolean {
   return type === 'thinking' || type === 'reasoning';
 }
 
+function extractThinkingFromMessage(message: unknown): string {
+  if (!message || typeof message !== 'object') {
+    return '';
+  }
+
+  const content = (message as { content?: unknown }).content;
+
+  if (typeof content === 'string') {
+    return '';
+  }
+
+  if (!Array.isArray(content)) {
+    return '';
+  }
+
+  return content
+    .map((part) => {
+      if (!part || typeof part !== 'object') {
+        return '';
+      }
+
+      const entry = part as Record<string, unknown>;
+      const partType = typeof entry.type === 'string' ? entry.type.toLowerCase() : '';
+
+      if (!isThinkingContentType(partType)) {
+        return '';
+      }
+
+      if (typeof entry.thinking === 'string' && entry.thinking) {
+        return entry.thinking;
+      }
+
+      if (typeof entry.text === 'string' && entry.text) {
+        return entry.text;
+      }
+
+      return '';
+    })
+    .filter(Boolean)
+    .join('');
+}
+
 function extractThinkingDelta(event: Record<string, unknown>): string {
   if (typeof event.text === 'string' && event.text) {
     return event.text;
@@ -325,11 +367,29 @@ function extractThinkingDelta(event: Record<string, unknown>): string {
     return event.delta;
   }
 
+  if (event.delta && typeof event.delta === 'object') {
+    const delta = event.delta as { text?: unknown; thinking?: unknown };
+
+    if (typeof delta.text === 'string' && delta.text) {
+      return delta.text;
+    }
+
+    if (typeof delta.thinking === 'string' && delta.thinking) {
+      return delta.thinking;
+    }
+  }
+
   if (typeof event.thinking === 'string' && event.thinking) {
     return event.thinking;
   }
 
-  return '';
+  const fromMessage = extractThinkingFromMessage(event.message);
+
+  if (fromMessage) {
+    return fromMessage;
+  }
+
+  return extractThinkingFromMessage(event);
 }
 
 function extractSessionId(event: Record<string, unknown>): string | null {
@@ -1976,6 +2036,12 @@ function handleStreamJsonEvent(
   }
 
   if (type === 'assistant') {
+    const thinkingText = extractThinkingFromMessage(event.message);
+
+    if (thinkingText) {
+      upsertThought(state, thinkingText);
+    }
+
     const mode = resolveAssistantEventMode(event, state.sawStreamingAssistantDelta);
 
     if (mode === 'ignore') {

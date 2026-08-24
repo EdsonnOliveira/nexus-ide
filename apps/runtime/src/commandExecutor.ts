@@ -811,6 +811,7 @@ async function runAgentPrompt(
     '--stream-partial-output',
     '--trust',
     '--force',
+    '--approve-mcps',
     '--workspace',
     cwd,
   ];

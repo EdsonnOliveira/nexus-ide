@@ -539,6 +539,118 @@ export interface CalendarEventsSnapshot {
   events: CalendarEventItem[];
 }
 
+export type CalendarEventStatus = 'confirmed' | 'tentative' | 'canceled' | 'none';
+
+export type CalendarAttendeeStatus =
+  | 'accepted'
+  | 'declined'
+  | 'tentative'
+  | 'pending'
+  | 'unknown';
+
+export type CalendarRecurrenceKind = 'none' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly' | 'custom';
+
+export type CalendarMutationSpan = 'thisEvent' | 'futureEvents';
+
+export interface CalendarAttendeeItem {
+  name: string;
+  email: string;
+  status: CalendarAttendeeStatus;
+  isOrganizer: boolean;
+  isOptional: boolean;
+}
+
+export interface CalendarAlarmItem {
+  relativeOffsetMinutes: number;
+}
+
+export interface CalendarFullEventItem {
+  id: string;
+  title: string;
+  startAt: number;
+  endAt: number;
+  location: string;
+  calendarId: string;
+  calendarName: string;
+  colorHex: string;
+  allDay: boolean;
+  notes: string;
+  url: string;
+  status: CalendarEventStatus;
+  hasRecurrence: boolean;
+  recurrenceLabel: string;
+  allowsEdit: boolean;
+  alarms: CalendarAlarmItem[];
+  attendees: CalendarAttendeeItem[];
+}
+
+export interface CalendarListItem {
+  id: string;
+  title: string;
+  colorHex: string;
+  allowsEdit: boolean;
+  sourceId: string;
+  sourceTitle: string;
+}
+
+export interface CalendarAccountItem {
+  id: string;
+  title: string;
+  calendars: CalendarListItem[];
+}
+
+export interface CalendarCalendarsSnapshot {
+  platformSupported: boolean;
+  accessGranted: boolean;
+  accounts: CalendarAccountItem[];
+}
+
+export interface CalendarRangeEventsSnapshot {
+  platformSupported: boolean;
+  accessGranted: boolean;
+  available: boolean;
+  events: CalendarFullEventItem[];
+}
+
+export interface CalendarCreateEventInput {
+  title: string;
+  startAt: number;
+  endAt: number;
+  calendarId: string;
+  allDay?: boolean;
+  location?: string;
+  notes?: string;
+  url?: string;
+  alertMinutes?: number;
+  recurrence?: CalendarRecurrenceKind;
+}
+
+export interface CalendarUpdateEventInput {
+  id: string;
+  title?: string;
+  startAt?: number;
+  endAt?: number;
+  calendarId?: string;
+  allDay?: boolean;
+  location?: string;
+  notes?: string;
+  url?: string;
+  alertMinutes?: number;
+  recurrence?: CalendarRecurrenceKind;
+  span?: CalendarMutationSpan;
+}
+
+export interface CalendarDeleteEventInput {
+  id: string;
+  span?: CalendarMutationSpan;
+}
+
+export interface CalendarMutationResult {
+  ok: boolean;
+  event: CalendarFullEventItem | null;
+  error: string | null;
+}
+
 export type MacParakeetSourceType = 'interview' | 'regular_call';
 
 export interface MacParakeetTranscriptionItem {

@@ -387,6 +387,12 @@ const nexusApi = {
   calendar: {
     getTodayEvents: () => ipcRenderer.invoke('calendar:getTodayEvents'),
     requestAccess: () => ipcRenderer.invoke('calendar:requestAccess'),
+    getCalendars: () => ipcRenderer.invoke('calendar:getCalendars'),
+    getEventsInRange: (startAt, endAt) =>
+      ipcRenderer.invoke('calendar:getEventsInRange', startAt, endAt),
+    createEvent: (input) => ipcRenderer.invoke('calendar:createEvent', input),
+    updateEvent: (input) => ipcRenderer.invoke('calendar:updateEvent', input),
+    deleteEvent: (input) => ipcRenderer.invoke('calendar:deleteEvent', input),
     openEvent: (startAt) => ipcRenderer.invoke('calendar:openEvent', startAt),
     openPrivacySettings: () => ipcRenderer.invoke('calendar:openPrivacySettings'),
   },

@@ -238,6 +238,7 @@ export function buildAgentPrintPromptCommand(options: AgentPrintPromptOptions): 
     '--stream-partial-output',
     '--trust',
     '--force',
+    '--approve-mcps',
   ];
 
   if (options.continueSession) {
@@ -254,10 +255,6 @@ export function buildAgentPrintPromptCommand(options: AgentPrintPromptOptions): 
     parts.push('--model', shellEscapeSingleQuotes(model));
   }
 
-  if (options.autoReview) {
-    parts.push('--auto-review');
-  }
-
   parts.push('--', shellEscapeSingleQuotes(prompt));
 
   return `${parts.join(' ')} 2>&1 | cat`;
@@ -272,7 +269,7 @@ export function buildAgentPaneLaunchCommand(command: string): string {
   }
 
   if (!trimmed) {
-    return 'cursor-agent --force';
+    return 'cursor-agent --force --approve-mcps --trust';
   }
 
   return trimmed;

@@ -19,7 +19,7 @@ export interface AgentPrintRunOptions {
 }
 
 const execFileAsync = promisify(execFile);
-const STDOUT_WATCHDOG_MS = 120_000;
+const STDOUT_WATCHDOG_MS = 180_000;
 const STDOUT_STARTUP_EXTEND_MS = 90_000;
 const STDOUT_IDLE_WATCHDOG_MS = 7_200_000;
 const STDOUT_FLUSH_MS = 12;
@@ -267,6 +267,7 @@ class AgentPrintRunner {
       '--stream-partial-output',
       '--trust',
       '--force',
+      '--approve-mcps',
       '--workspace',
       resolvedCwd,
     ];

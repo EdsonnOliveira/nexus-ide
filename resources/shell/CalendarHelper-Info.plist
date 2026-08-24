@@ -25,8 +25,8 @@
   <key>LSUIElement</key>
   <true/>
   <key>NSCalendarsFullAccessUsageDescription</key>
-  <string>O Nexus IDE precisa ler seus eventos do Calendário para exibi-los na barra lateral.</string>
+  <string>O Nexus IDE precisa ler e gravar seus eventos do Calendário para exibi-los e gerenciá-los na home.</string>
   <key>NSCalendarsUsageDescription</key>
-  <string>O Nexus IDE exibe seus eventos do Calendário na barra lateral.</string>
+  <string>O Nexus IDE exibe e gerencia seus eventos do Calendário na home.</string>
 </dict>
 </plist>

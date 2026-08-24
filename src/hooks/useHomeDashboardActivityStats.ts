@@ -20,13 +20,14 @@ const EMPTY_STATS: HomeDashboardActivityComparison = {
 export function useHomeDashboardActivityStats(
   projectPathsKey: string,
   provider: Exclude<AiProviderId, 'nexus'>,
+  enabled = true,
 ) {
   const [stats, setStats] = useState<HomeDashboardActivityComparison>(EMPTY_STATS);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
 
   const refresh = useCallback(
     async (background = false) => {
-      if (!window.nexus?.homeDashboard?.getStats) {
+      if (!enabled || !window.nexus?.homeDashboard?.getStats) {
         setStats(EMPTY_STATS);
         setLoading(false);
         return;
@@ -50,14 +51,23 @@ export function useHomeDashboardActivityStats(
         setLoading(false);
       }
     },
-    [projectPathsKey, provider],
+    [enabled, projectPathsKey, provider],
   );
 
   useEffect(() => {
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
+
     void refresh(false);
-  }, [refresh]);
+  }, [enabled, refresh]);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
     const handleFocus = () => {
       void refresh(true);
     };
@@ -66,7 +76,7 @@ export function useHomeDashboardActivityStats(
     return () => {
       window.removeEventListener('focus', handleFocus);
     };
-  }, [refresh]);
+  }, [enabled, refresh]);
 
   return { stats, loading, refresh };
 }

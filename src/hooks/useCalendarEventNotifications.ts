@@ -8,6 +8,7 @@ import {
   CALENDAR_URGENT_AFTER_MS,
   getCalendarEventKey,
   isCalendarEventInUrgentWindow,
+  isCalendarEventStillVisible,
 } from '@/utils/calendarEventStyle';
 import { playCalendarEventAlertSound } from '@/utils/calendarEventNotificationSound';
 
@@ -70,7 +71,9 @@ export function useCalendarEventNotifications(events: CalendarEventItem[], enabl
     const tick = () => {
       const now = Date.now();
       const store = useCalendarEventNotificationStore.getState();
-      const timedEvents = eventsRef.current.filter((event) => !event.allDay);
+      const timedEvents = eventsRef.current.filter(
+        (event) => !event.allDay && isCalendarEventStillVisible(event, now),
+      );
       const nextPrevious: Record<string, number> = {};
 
       for (const event of timedEvents) {
