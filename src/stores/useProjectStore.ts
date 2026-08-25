@@ -485,10 +485,9 @@ function mergeAgentTurnsIntoTabs(
 
           if (prevTurns && prevTurns.length > 0) {
             const nextTurns = pane.turns ?? [];
-            const prevRunning = prevTurns.some((turn) => turn.running);
 
             if (nextTurns.length === 0) {
-              nextPane = prevRunning ? { ...nextPane, turns: prevTurns } : nextPane;
+              nextPane = { ...nextPane, turns: prevTurns };
             } else if (shouldPreferLocalAgentTurnHistory(prevTurns, nextTurns)) {
               nextPane = { ...nextPane, turns: prevTurns };
             }
@@ -514,10 +513,9 @@ function mergeAgentTurnsIntoTabs(
 
     if (prevTurns && prevTurns.length > 0) {
       const nextTurns = item.turns ?? [];
-      const prevRunning = prevTurns.some((turn) => turn.running);
 
       if (nextTurns.length === 0) {
-        nextItem = prevRunning ? { ...nextItem, turns: prevTurns } : nextItem;
+        nextItem = { ...nextItem, turns: prevTurns };
       } else if (shouldPreferLocalAgentTurnHistory(prevTurns, nextTurns)) {
         nextItem = { ...nextItem, turns: prevTurns };
       }

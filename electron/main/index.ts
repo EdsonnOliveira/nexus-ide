@@ -70,6 +70,11 @@ import { ptyManager } from './services/ptyManager';
 import { agentPrintRunner } from './services/agentPrintRunner';
 import { testRunnerSession } from './services/testRunnerSession';
 import { pruneSessionScrollbacksOnBoot } from './services/pruneSessionScrollbacks';
+import {
+  pruneBrowserDayCacheOnBoot,
+  startBrowserDayCacheWatch,
+  stopBrowserDayCacheWatch,
+} from './services/browserDayCache';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -105,6 +110,7 @@ app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disk-cache-size', '268435456');
 
 function isBrokenPipeError(error: unknown): boolean {
   if (!error || typeof error !== 'object') {
@@ -181,7 +187,7 @@ if (!app.requestSingleInstanceLock()) {
 const SESSION_FLUSH_TIMEOUT_MS = 5000;
 const CRASH_QUIT_GRACE_MS = 12_000;
 const MEMORY_CHECK_INTERVAL_MS = 60_000;
-const MEMORY_RELOAD_THRESHOLD_KB = 3 * 1024 * 1024;
+const MEMORY_RELOAD_THRESHOLD_KB = 1536 * 1024;
 const MEMORY_RELOAD_COOLDOWN_MS = 5 * 60_000;
 const RECOVERY_TOAST_DELAY_MS = 900;
 const DEV_LOAD_RETRY_MS = 1500;
@@ -1077,6 +1083,7 @@ app.whenReady().then(() => {
 
   registerLocalFileProtocol();
   pruneSessionScrollbacksOnBoot();
+  pruneBrowserDayCacheOnBoot();
   registerProjectHandlers();
   registerCloudHandlers();
   registerFileHandlers(() => win);
@@ -1118,6 +1125,7 @@ app.whenReady().then(() => {
   createWindow(appIcon);
   registerShortcuts();
   startMemoryWatch();
+  startBrowserDayCacheWatch();
   setImmediate(() => {
     startManagedRuntime();
   });
@@ -1192,6 +1200,7 @@ app.on('window-all-closed', () => {
   stopIdleWakeLock();
   void cleanupEmulatorSessions();
   stopMemoryWatch();
+  stopBrowserDayCacheWatch();
   stopManagedRuntime();
   app.quit();
 });
@@ -1218,6 +1227,7 @@ app.on('before-quit', (event) => {
 
   if (isQuitting) {
     stopMemoryWatch();
+    stopBrowserDayCacheWatch();
     return;
   }
 
@@ -1277,6 +1287,7 @@ app.on('activate', () => {
 app.on('will-quit', () => {
   stopDevServerWatch();
   stopMemoryWatch();
+  stopBrowserDayCacheWatch();
   globalShortcut.unregisterAll();
   ptyManager.killAll();
   agentPrintRunner.stopAll();

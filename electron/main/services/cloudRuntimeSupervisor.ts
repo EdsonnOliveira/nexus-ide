@@ -7,6 +7,7 @@ import { app } from 'electron';
 const DEFAULT_SOCKET = path.join(os.homedir(), '.nexus-runtime.sock');
 const RUNTIME_STATE_DIR = path.join(os.homedir(), '.nexus', 'runtime');
 const MANAGED_PID_FILE = path.join(RUNTIME_STATE_DIR, 'desktop-managed.pid');
+const LAUNCHD_LABEL = 'com.nexus.runtime';
 const RESTART_BASE_MS = 1_000;
 const RESTART_MAX_MS = 30_000;
 
@@ -173,6 +174,57 @@ function clearSocketFile(socketPath: string): void {
     if (existsSync(socketPath)) {
       unlinkSync(socketPath);
     }
+  } catch {
+  }
+}
+
+function launchdServiceTarget(): string | null {
+  if (process.platform !== 'darwin') {
+    return null;
+  }
+
+  const uid = process.getuid?.();
+
+  if (typeof uid !== 'number') {
+    return null;
+  }
+
+  return `gui/${uid}/${LAUNCHD_LABEL}`;
+}
+
+function pauseLaunchdRuntime(): void {
+  const target = launchdServiceTarget();
+
+  if (!target) {
+    return;
+  }
+
+  try {
+    execFileSync('launchctl', ['bootout', target], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+  }
+}
+
+function resumeLaunchdRuntime(): void {
+  if (process.platform !== 'darwin') {
+    return;
+  }
+
+  const uid = process.getuid?.();
+  const plistPath = path.join(os.homedir(), 'Library/LaunchAgents', `${LAUNCHD_LABEL}.plist`);
+
+  if (typeof uid !== 'number' || !existsSync(plistPath)) {
+    return;
+  }
+
+  try {
+    execFileSync('launchctl', ['bootstrap', `gui/${uid}`, plistPath], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
   } catch {
   }
 }
@@ -345,6 +397,7 @@ export function startManagedRuntime(): void {
     return;
   }
 
+  pauseLaunchdRuntime();
   replaceExistingRuntime();
 
   const env = {
@@ -433,6 +486,7 @@ export function stopManagedRuntime(): void {
 
   clearSocketFile(getSocketPath());
   clearManagedPid();
+  resumeLaunchdRuntime();
 }
 
 export function isManagedRuntimeRunning(): boolean {

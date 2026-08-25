@@ -12,13 +12,25 @@ const external = Object.keys(
 );
 
 const nexusElectronBinary = path.join(__dirname, 'build/Nexus.app/Contents/MacOS/Electron');
+const packagedElectronNeedle = '/Nexus IDE.app/Contents/MacOS/Nexus IDE';
 const ELECTRON_RESTART_DEBOUNCE_MS = 400;
 const ELECTRON_EXIT_TIMEOUT_MS = 1500;
+const ELECTRON_MAX_UNEXPECTED_EXITS = 5;
 
 type ViteElectronProcess = NodeJS.Process & { electronApp?: ChildProcess | null };
 
 function getViteProcess(): ViteElectronProcess {
   return process as ViteElectronProcess;
+}
+
+function isNexusElectronCommand(command: string): boolean {
+  if (command === nexusElectronBinary || command.startsWith(`${nexusElectronBinary} `)) {
+    return true;
+  }
+
+  return (
+    command.endsWith(packagedElectronNeedle) || command.includes(`${packagedElectronNeedle} `)
+  );
 }
 
 function isNexusElectronRunning(): boolean {
@@ -29,11 +41,7 @@ function isNexusElectronRunning(): boolean {
       return false;
     }
 
-    const prefix = `${nexusElectronBinary} `;
-    return result.stdout.split('\n').some((line) => {
-      const command = line.trimStart();
-      return command === nexusElectronBinary || command.startsWith(prefix);
-    });
+    return result.stdout.split('\n').some((line) => isNexusElectronCommand(line.trimStart()));
   } catch {
     return false;
   }
@@ -97,19 +105,35 @@ let electronRestarting = false;
 let electronRestartQueued = false;
 let unexpectedExitCount = 0;
 let lastElectronSpawnAt = 0;
+let stopWatchdogOnExit = false;
 
 let electronWatchdogTimer: ReturnType<typeof setInterval> | null = null;
 let lastBundledStartup: (() => void) | null = null;
 
+function stopElectronWatchdog(): void {
+  if (!electronWatchdogTimer) {
+    return;
+  }
+
+  clearInterval(electronWatchdogTimer);
+  electronWatchdogTimer = null;
+}
+
 function startElectronWatchdog(startup: () => void): void {
   lastBundledStartup = startup;
+  stopWatchdogOnExit = false;
 
   if (electronWatchdogTimer) {
     return;
   }
 
   electronWatchdogTimer = setInterval(() => {
-    if (electronRestarting || !lastBundledStartup) {
+    if (electronRestarting || !lastBundledStartup || stopWatchdogOnExit) {
+      return;
+    }
+
+    if (unexpectedExitCount > ELECTRON_MAX_UNEXPECTED_EXITS) {
+      stopElectronWatchdog();
       return;
     }
 
@@ -143,7 +167,11 @@ async function restartBundledElectron(
 
         if (!force && (isChildAlive(running) || isNexusElectronRunning())) {
           console.warn('[vite] Electron already running — not restarting');
-          startElectronWatchdog(startup);
+          if (isChildAlive(running)) {
+            startElectronWatchdog(startup);
+          } else {
+            stopElectronWatchdog();
+          }
           return;
         }
 
@@ -154,6 +182,12 @@ async function restartBundledElectron(
             encoding: 'utf8',
           });
           await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+
+        if (isNexusElectronRunning()) {
+          console.warn('[vite] Electron still running — not spawning another instance');
+          stopElectronWatchdog();
+          return;
         }
 
         lastElectronSpawnAt = Date.now();
@@ -179,15 +213,26 @@ async function restartBundledElectron(
             return;
           }
 
-          const now = Date.now();
+          const lifetimeMs = Date.now() - lastElectronSpawnAt;
+          const cleanExit = code === 0 && !signal;
 
-          if (now - lastElectronSpawnAt > 15_000) {
+          if (cleanExit) {
+            stopWatchdogOnExit = true;
+            stopElectronWatchdog();
+            unexpectedExitCount = ELECTRON_MAX_UNEXPECTED_EXITS + 1;
+            console.warn('[vite] Electron quit cleanly — not respawning');
+            return;
+          }
+
+          if (lifetimeMs > 15_000) {
             unexpectedExitCount = 0;
           }
 
           unexpectedExitCount += 1;
 
-          if (unexpectedExitCount > 5) {
+          if (unexpectedExitCount > ELECTRON_MAX_UNEXPECTED_EXITS) {
+            stopWatchdogOnExit = true;
+            stopElectronWatchdog();
             console.error('[vite] Electron exited repeatedly — not respawning');
             return;
           }
@@ -257,6 +302,8 @@ export default defineConfig(({ command }) => {
           input: 'electron/main/index.ts',
           plugins: [notBundle()],
           onstart({ startup }) {
+            unexpectedExitCount = 0;
+            stopWatchdogOnExit = false;
             scheduleBundledElectronRestart(startup);
           },
           options: {

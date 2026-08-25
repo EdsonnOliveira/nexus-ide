@@ -249,7 +249,20 @@ function projectAgentSurfaceKey(project: Project): string {
   for (const item of project.tabs) {
     for (const pane of getPanesFromItem(item)) {
       if (pane.type === 'agent') {
-        paneKeys.push(`${pane.id}:${pane.ptyId ?? ''}`);
+        const turns = pane.turns ?? [];
+        const lastTurn = turns[turns.length - 1];
+        paneKeys.push(
+          [
+            pane.id,
+            pane.ptyId ?? '',
+            turns.length,
+            lastTurn?.id ?? '',
+            lastTurn?.running ? 1 : 0,
+            lastTurn?.completedAt ?? 0,
+            lastTurn?.activities?.length ?? 0,
+            pane.followUps?.length ?? 0,
+          ].join(':'),
+        );
       }
     }
   }

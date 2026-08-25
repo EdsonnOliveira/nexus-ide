@@ -22,6 +22,7 @@ import { EmptyState } from '@/components/overlay/EmptyState';
 import { useAgentPaneSession } from '@/hooks/useAgentPaneSession';
 import { useAgentComposerDraftStore } from '@/stores/useAgentComposerDraftStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
+import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { TERMINAL_AGENTS } from '@/constants/terminalAgents';
 import type { AgentTurn, AgentFollowUp } from '@/types';
 import { cliAgentToTerminalAgent } from '@/utils/agentTabHelpers';
@@ -63,6 +64,7 @@ function AgentViewSessionComponent({
   const terminalAgent = cliAgentToTerminalAgent(tab.cliAgent);
   const agentConfig = TERMINAL_AGENTS[terminalAgent];
   const promptHistory = useMemo(() => buildAgentPromptHistory(turns), [turns]);
+  const resumeChatId = useTerminalSessionStore((state) => state.resumeChatIdByPane[tab.id]);
 
   useEffect(() => {
     const incomingTurns = sessionTab.turns ?? [];
@@ -73,6 +75,10 @@ function AgentViewSessionComponent({
 
     if (incomingTurnCount === 0) {
       if (localRunning || sessionLive) {
+        return;
+      }
+
+      if (resumeChatId && turns.length > 0) {
         return;
       }
 
@@ -105,7 +111,7 @@ function AgentViewSessionComponent({
     }
 
     setTurns(incomingTurns);
-  }, [clearPaneDraft, sessionTab.turns, tab.id, turns]);
+  }, [clearPaneDraft, resumeChatId, sessionTab.turns, tab.id, turns]);
 
   useEffect(() => {
     if (!isVisible || turns.length === 0) {

@@ -1,4 +1,4 @@
-import { watch, type FSWatcher } from 'node:fs';
+import { readdirSync, statSync, watch, type FSWatcher } from 'node:fs';
 import path from 'node:path';
 import type { BrowserWindow } from 'electron';
 import { resolveDirectoryPath } from './directoryListing';
@@ -6,7 +6,7 @@ import { notifyGitWatchersOfProjectChange } from './git';
 import { shouldIgnoreWatchPath } from './watchIgnorePaths';
 
 interface WatchState {
-  watcher: FSWatcher;
+  watchers: FSWatcher[];
   debounceTimer: NodeJS.Timeout | null;
   projectPath: string;
 }
@@ -54,22 +54,67 @@ export function watchProjectFiles(dirPath: string): void {
     }, 1500);
   };
 
-  try {
-    const watcher = watch(resolved, { recursive: true }, (event, filename) => {
-      const changedPath = filename ? path.join(resolved, filename) : undefined;
+  const watchers: FSWatcher[] = [];
+  const watchedRoots = new Set<string>();
 
-      if (shouldIgnoreWatchPath(resolved, changedPath)) {
-        return;
+  const startWatch = (watchRoot: string, recursive: boolean) => {
+    if (watchedRoots.has(watchRoot)) {
+      return;
+    }
+
+    try {
+      const watcher = watch(watchRoot, { recursive }, (event, filename) => {
+        const changedPath = filename ? path.join(watchRoot, filename) : watchRoot;
+
+        if (shouldIgnoreWatchPath(resolved, changedPath)) {
+          return;
+        }
+
+        if (!recursive && filename) {
+          try {
+            if (statSync(changedPath).isDirectory()) {
+              startWatch(changedPath, true);
+            }
+          } catch {
+          }
+        }
+
+        const structural = event !== 'change';
+        scheduleNotify(changedPath, structural);
+      });
+
+      watchedRoots.add(watchRoot);
+      watchers.push(watcher);
+    } catch {
+    }
+  };
+
+  try {
+    const entries = readdirSync(resolved, { withFileTypes: true });
+    startWatch(resolved, false);
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
       }
 
-      const structural = event !== 'change';
-      scheduleNotify(changedPath, structural);
-    });
+      const childPath = path.join(resolved, entry.name);
 
-    watchStates.set(resolved, { watcher, debounceTimer: null, projectPath: resolved });
+      if (shouldIgnoreWatchPath(resolved, childPath)) {
+        continue;
+      }
+
+      startWatch(childPath, true);
+    }
   } catch {
+    startWatch(resolved, true);
+  }
+
+  if (watchers.length === 0) {
     return;
   }
+
+  watchStates.set(resolved, { watchers, debounceTimer: null, projectPath: resolved });
 }
 
 export function unwatchProjectFiles(dirPath: string): void {
@@ -84,6 +129,9 @@ export function unwatchProjectFiles(dirPath: string): void {
     clearTimeout(state.debounceTimer);
   }
 
-  state.watcher.close();
+  for (const watcher of state.watchers) {
+    watcher.close();
+  }
+
   watchStates.delete(resolved);
 }
