@@ -18,6 +18,7 @@ import { WebMacPairingModal } from './WebMacPairingModal';
 import { WebMacSelect } from './WebMacSelect';
 import { WebMaestroAgents } from './WebMaestroAgents';
 import { WebMaestroAskBar } from './WebMaestroAskBar';
+import { WebSourceSwitch, type WebHomeSource } from './WebSourceSwitch';
 import { WebPushModal } from './WebPushModal';
 import {
   dismissWebPushNudge,
@@ -37,14 +38,8 @@ import { useWebVercelDeployments } from './useWebVercelDeployments';
 import { WebMobileReleaseCard } from './WebMobileReleaseCard';
 import { useWebMobileReleases } from './useWebMobileReleases';
 import type { WebFileAttachmentPayload } from './webAgentPromptImages';
-import {
-  buildWebTaskPrompt,
-  type WebProjectTask,
-} from './webProjectTasks';
-import {
-  dismissWebAgentTerminal,
-  handleWebAgentShellToolEvents,
-} from './webShellTerminal';
+import { buildWebTaskPrompt, type WebProjectTask } from './webProjectTasks';
+import { dismissWebAgentTerminal, handleWebAgentShellToolEvents } from './webShellTerminal';
 import {
   createWebStreamJsonState,
   extractStreamChunk,
@@ -76,6 +71,30 @@ const WEB_AGENT_MAX_INCOMPLETE_CONTINUES = 3;
 const WEB_AGENT_INCOMPLETE_CONTINUE_PROMPT =
   'Continue from where you left off. Finish the incomplete response.';
 
+function isSameLocalDay(ms: number, now = Date.now()): boolean {
+  const left = new Date(ms);
+  const right = new Date(now);
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
+}
+
+function isDesktopAgentFromToday(agent: WebAgentSession): boolean {
+  if (agent.status === 'running') {
+    return true;
+  }
+  if (isSameLocalDay(agent.createdAt)) {
+    return true;
+  }
+  return agent.turns.some(
+    (turn) =>
+      isSameLocalDay(turn.createdAt) ||
+      (typeof turn.endedAt === 'number' && isSameLocalDay(turn.endedAt)),
+  );
+}
+
 function resolveLastWebAgentResponse(agent: WebAgentSession): string {
   const lastTurn = agent.turns[agent.turns.length - 1];
   if (!lastTurn) {
@@ -102,19 +121,12 @@ function resolveStoreWorkspaceId(): string | null {
 
 async function resolveAgentWorkspaceId(projectId: string | null): Promise<string | null> {
   const state = useWebStore.getState();
-  const device =
-    state.devices.find((item) => item.id === state.selectedDeviceId) ?? null;
+  const device = state.devices.find((item) => item.id === state.selectedDeviceId) ?? null;
   if (device?.workspace_id) {
     return device.workspace_id;
   }
-  const project = projectId
-    ? state.projects.find((item) => item.id === projectId) ?? null
-    : null;
-  return (
-    project?.workspace_id ||
-    state.activeWorkspaceId ||
-    (await bridge.getWorkspaceId())
-  );
+  const project = projectId ? (state.projects.find((item) => item.id === projectId) ?? null) : null;
+  return project?.workspace_id || state.activeWorkspaceId || (await bridge.getWorkspaceId());
 }
 
 export function WebMaestroHome() {
@@ -132,6 +144,7 @@ export function WebMaestroHome() {
   const addAgent = useWebStore((state) => state.addAgent);
   const addAgentTurn = useWebStore((state) => state.addAgentTurn);
   const mergeHydratedAgents = useWebStore((state) => state.mergeHydratedAgents);
+  const syncDesktopAgents = useWebStore((state) => state.syncDesktopAgents);
   const patchAgentTurn = useWebStore((state) => state.patchAgentTurn);
   const setAgentCursorSessionId = useWebStore((state) => state.setAgentCursorSessionId);
   const setAgentModelId = useWebStore((state) => state.setAgentModelId);
@@ -140,7 +153,7 @@ export function WebMaestroHome() {
   const removeAgent = useWebStore((state) => state.removeAgent);
   const session = useWebStore((state) => state.session);
   const hydratedWorkspaceRef = useRef<string | null>(null);
-  const pinnedDesktopAgentIdsRef = useRef(new Set<string>());
+  const [sourceView, setSourceView] = useState<WebHomeSource>('web');
   const [submitting, setSubmitting] = useState(false);
   const [pairingOpen, setPairingOpen] = useState(false);
   const [vercelTokenOpen, setVercelTokenOpen] = useState(false);
@@ -151,7 +164,6 @@ export function WebMaestroHome() {
   const [agentFilterProjectId, setAgentFilterProjectId] = useState<string | null>(null);
   const [focusedAgentId, setFocusedAgentId] = useState<string | null>(null);
   const [openAgentId, setOpenAgentId] = useState<string | null>(null);
-  const [desktopAgentsCatalog, setDesktopAgentsCatalog] = useState<WebAgentSession[]>([]);
   const [heroScrolled, setHeroScrolled] = useState(false);
   const parsersRef = useRef(new Map<string, WebStreamJsonState>());
   const agentActivityRef = useRef(new Map<string, number>());
@@ -165,22 +177,26 @@ export function WebMaestroHome() {
   );
   const hydrateRunningAgentsRef = useRef<() => Promise<void>>(async () => {});
   const heroRef = useRef<HTMLElement>(null);
-  const visibleAgents = useMemo(
-    () =>
-      agents.filter(
-        (agent) =>
-          agent.source !== 'desktop_pane' || pinnedDesktopAgentIdsRef.current.has(agent.id),
-      ),
+  const desktopAgentsCatalog = useMemo(
+    () => agents.filter((agent) => agent.source === 'desktop_pane'),
     [agents],
   );
+  const visibleAgents = useMemo(() => {
+    if (sourceView === 'desktop') {
+      return desktopAgentsCatalog.filter((agent) => {
+        if (selectedDeviceId && agent.deviceId && agent.deviceId !== selectedDeviceId) {
+          return false;
+        }
+        return isDesktopAgentFromToday(agent);
+      });
+    }
+    return agents.filter((agent) => agent.source !== 'desktop_pane');
+  }, [agents, desktopAgentsCatalog, selectedDeviceId, sourceView]);
   const compact = visibleAgents.length >= 5;
-  const emulatorWorkspaceId = useMemo(() => resolveStoreWorkspaceId(), [
-    activeWorkspaceId,
-    selectedProjectId,
-    projects,
-    devices,
-    selectedDeviceId,
-  ]);
+  const emulatorWorkspaceId = useMemo(
+    () => resolveStoreWorkspaceId(),
+    [activeWorkspaceId, selectedProjectId, projects, devices, selectedDeviceId],
+  );
   const [deviceOnlineNowMs, setDeviceOnlineNowMs] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -376,8 +392,7 @@ export function WebMaestroHome() {
       ) {
         try {
           await bridge.requestLocalSync(deviceId);
-        } catch {
-        }
+        } catch {}
       }
 
       try {
@@ -385,8 +400,7 @@ export function WebMaestroHome() {
         if (!cancelled) {
           setProjects(projectList);
         }
-      } catch {
-      }
+      } catch {}
     };
 
     void refreshProjectTasks();
@@ -453,9 +467,7 @@ export function WebMaestroHome() {
       try {
         await hydrateRunningAgentsRef.current();
         const continued =
-          status === 'done'
-            ? await tryContinueIncompleteWebAgentRef.current(agentId)
-            : false;
+          status === 'done' ? await tryContinueIncompleteWebAgentRef.current(agentId) : false;
         if (continued) {
           finishingAgentsRef.current.delete(agentId);
           return;
@@ -499,8 +511,7 @@ export function WebMaestroHome() {
 
         if (chunk) {
           agentActivityRef.current.set(agentId, Date.now());
-          const parser =
-            parsersRef.current.get(parserKey) ?? createWebStreamJsonState();
+          const parser = parsersRef.current.get(parserKey) ?? createWebStreamJsonState();
           parsersRef.current.set(parserKey, parser);
           const update = feedWebStreamJson(parser, chunk);
           patchAgentTurn(agentId, {
@@ -563,17 +574,6 @@ export function WebMaestroHome() {
   );
 
   useEffect(() => {
-    setAgents(
-      useWebStore
-        .getState()
-        .agents.filter(
-          (agent) =>
-            agent.source !== 'desktop_pane' || pinnedDesktopAgentIdsRef.current.has(agent.id),
-        ),
-    );
-  }, [setAgents]);
-
-  useEffect(() => {
     const workspaceId = resolveStoreWorkspaceId();
     if (!workspaceId || hydratedWorkspaceRef.current === workspaceId) {
       return;
@@ -594,24 +594,16 @@ export function WebMaestroHome() {
         const hydrated = hydrateWebAgentsFromBundles(bundles);
         const desktopCatalog = hydrated.filter((agent) => agent.source === 'desktop_pane');
         const cloudAgents = hydrated.filter((agent) => agent.source !== 'desktop_pane');
-        const pinnedDesktop = desktopCatalog.filter((agent) =>
-          pinnedDesktopAgentIdsRef.current.has(agent.id),
-        );
-        setDesktopAgentsCatalog(desktopCatalog);
-        setAgents([...cloudAgents, ...pinnedDesktop]);
+        setAgents([...cloudAgents, ...desktopCatalog]);
         hydratedWorkspaceRef.current = workspaceId;
-        for (const agent of [...cloudAgents, ...pinnedDesktop]) {
+        for (const agent of cloudAgents) {
           if (agent.status === 'running' && agent.commandId) {
             const lastTurn = agent.turns[agent.turns.length - 1];
-            agentActivityRef.current.set(
-              agent.id,
-              lastTurn?.createdAt ?? agent.createdAt,
-            );
+            agentActivityRef.current.set(agent.id, lastTurn?.createdAt ?? agent.createdAt);
             subscribeAgent(agent.id, agent.commandId);
           }
         }
-      } catch {
-      }
+      } catch {}
     };
     void hydrate();
     return () => {
@@ -620,11 +612,13 @@ export function WebMaestroHome() {
   }, [activeWorkspaceId, selectedProjectId, selectedDeviceId, setAgents, subscribeAgent]);
 
   useEffect(() => {
+    let inFlight = false;
     const hydrateRunningAgents = async () => {
       const workspaceId = resolveStoreWorkspaceId();
-      if (!workspaceId) {
+      if (!workspaceId || inFlight) {
         return;
       }
+      inFlight = true;
       const hasRunning = useWebStore
         .getState()
         .agents.some((agent) => agent.status === 'running' && agent.source !== 'desktop_pane');
@@ -635,9 +629,6 @@ export function WebMaestroHome() {
         const lastTurn = agent.turns[agent.turns.length - 1];
         return Boolean(lastTurn) && !lastTurn?.thought?.trim() && !lastTurn?.response?.trim();
       });
-      if (!hasRunning && !hasDoneWithoutContent) {
-        return;
-      }
       try {
         const {
           data: { user },
@@ -646,10 +637,13 @@ export function WebMaestroHome() {
           return;
         }
         const bundles = await listOpenAgentSessionBundles(supabase, workspaceId, user.id);
-        const hydrated = hydrateWebAgentsFromBundles(bundles).filter(
-          (agent) => agent.source !== 'desktop_pane',
-        );
-        mergeHydratedAgents(hydrated);
+        const hydrated = hydrateWebAgentsFromBundles(bundles);
+        const desktopCatalog = hydrated.filter((agent) => agent.source === 'desktop_pane');
+        const cloudAgents = hydrated.filter((agent) => agent.source !== 'desktop_pane');
+        syncDesktopAgents(desktopCatalog);
+        if (hasRunning || hasDoneWithoutContent) {
+          mergeHydratedAgents(cloudAgents);
+        }
         const mergedAgents = useWebStore.getState().agents;
         for (const agent of mergedAgents) {
           if (agent.source === 'desktop_pane' || finishingAgentsRef.current.has(agent.id)) {
@@ -658,10 +652,7 @@ export function WebMaestroHome() {
           if (agent.status === 'running' && agent.commandId) {
             if (subscribedCommandIdsRef.current.get(agent.id) !== agent.commandId) {
               const lastTurn = agent.turns[agent.turns.length - 1];
-              agentActivityRef.current.set(
-                agent.id,
-                lastTurn?.createdAt ?? agent.createdAt,
-              );
+              agentActivityRef.current.set(agent.id, lastTurn?.createdAt ?? agent.createdAt);
               subscribeAgent(agent.id, agent.commandId);
             }
           } else if (agent.status !== 'running') {
@@ -669,6 +660,8 @@ export function WebMaestroHome() {
           }
         }
       } catch {
+      } finally {
+        inFlight = false;
       }
     };
 
@@ -690,7 +683,7 @@ export function WebMaestroHome() {
       window.clearInterval(intervalId);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [mergeHydratedAgents, subscribeAgent, unsubscribeAgent]);
+  }, [mergeHydratedAgents, subscribeAgent, syncDesktopAgents, unsubscribeAgent]);
 
   useEffect(() => {
     return () => {
@@ -713,8 +706,7 @@ export function WebMaestroHome() {
       const now = Date.now();
 
       for (const agent of runningAgents) {
-        const lastActivity =
-          agentActivityRef.current.get(agent.id) ?? agent.createdAt ?? now;
+        const lastActivity = agentActivityRef.current.get(agent.id) ?? agent.createdAt ?? now;
         const idleMs = now - lastActivity;
 
         try {
@@ -734,10 +726,7 @@ export function WebMaestroHome() {
               : null;
           const stalled = result?.stalled === true;
 
-          if (
-            executionStatus === 'completed' ||
-            executionStatus === 'cancelled'
-          ) {
+          if (executionStatus === 'completed' || executionStatus === 'cancelled') {
             await finishAgentWithHydration(agent.id, 'done');
             continue;
           }
@@ -749,17 +738,14 @@ export function WebMaestroHome() {
             await finishAgentWithHydration(agent.id, 'error');
             continue;
           }
-        } catch {
-        }
+        } catch {}
 
         if (idleMs < WEB_AGENT_CLIENT_STALL_MS) {
           continue;
         }
 
         const lastTurn = agent.turns[agent.turns.length - 1];
-        const hasProgress = Boolean(
-          lastTurn?.thought?.trim() || lastTurn?.response?.trim(),
-        );
+        const hasProgress = Boolean(lastTurn?.thought?.trim() || lastTurn?.response?.trim());
         if (hasProgress) {
           continue;
         }
@@ -790,8 +776,7 @@ export function WebMaestroHome() {
             },
             idempotency_key: crypto.randomUUID(),
           });
-        } catch {
-        }
+        } catch {}
       }
     };
 
@@ -866,7 +851,8 @@ export function WebMaestroHome() {
           throw new Error('Usuário não autenticado');
         }
         const agentId = crypto.randomUUID();
-        const titleSource = trimmedPrompt || (imageDataUrls.length > 0 ? 'Imagem anexada' : 'Arquivo anexado');
+        const titleSource =
+          trimmedPrompt || (imageDataUrls.length > 0 ? 'Imagem anexada' : 'Arquivo anexado');
         await createAgentSession(supabase, {
           id: agentId,
           workspace_id: workspaceId,
@@ -918,6 +904,7 @@ export function WebMaestroHome() {
             },
           ],
         });
+        setSourceView('web');
         setAgentFilterProjectId(selectedProjectId);
         setFocusedAgentId(agentId);
         agentActivityRef.current.set(agentId, createdAt);
@@ -946,8 +933,7 @@ export function WebMaestroHome() {
           unsubscribeAgent(createdSessionId);
           try {
             await closeAgentSession(supabase, createdSessionId);
-          } catch {
-          }
+          } catch {}
         }
         window.alert(formatUnknownError(error, 'Falha ao enviar prompt'));
         return false;
@@ -1068,9 +1054,7 @@ export function WebMaestroHome() {
     const priorMidProgress = [...(agent.turns[agent.turns.length - 1]?.activities ?? [])]
       .filter(
         (entry) =>
-          entry.kind === 'response' &&
-          entry.label.trim() &&
-          entry.label.trim() !== lastResponse,
+          entry.kind === 'response' && entry.label.trim() && entry.label.trim() !== lastResponse,
       )
       .some((entry) => looksLikeMidProgressWebResponse(entry.label));
     const shouldContinue =
@@ -1177,8 +1161,8 @@ export function WebMaestroHome() {
     async (agentId: string) => {
       const agent = useWebStore.getState().agents.find((entry) => entry.id === agentId);
       if (agent?.source === 'desktop_pane') {
-        pinnedDesktopAgentIdsRef.current.delete(agentId);
-        removeAgent(agentId);
+        setOpenAgentId(null);
+        setFocusedAgentId(null);
         return;
       }
       const deviceId = resolveDeviceId();
@@ -1196,13 +1180,11 @@ export function WebMaestroHome() {
               ),
             );
           }
-        } catch {
-        }
+        } catch {}
       }
       try {
         await closeAgentSession(supabase, agentId);
-      } catch {
-      }
+      } catch {}
       removeAgent(agentId);
     },
     [removeAgent, resolveDeviceId],
@@ -1217,7 +1199,7 @@ export function WebMaestroHome() {
         return;
       }
       if (agent.source === 'desktop_pane') {
-        pinnedDesktopAgentIdsRef.current.add(agent.id);
+        setSourceView('desktop');
       }
       addAgent(agent);
       if (agent.projectId) {
@@ -1248,39 +1230,27 @@ export function WebMaestroHome() {
           }
           const bundles = await listOpenAgentSessionBundles(supabase, workspaceId, user.id);
           const hydrated = hydrateWebAgentsFromBundles(bundles);
-          const fresh = hydrated.find((item) => item.id === agentId);
-          if (!fresh) {
-            return;
-          }
-          setDesktopAgentsCatalog(hydrated.filter((item) => item.source === 'desktop_pane'));
-          if (pinnedDesktopAgentIdsRef.current.has(agentId)) {
+          const desktopCatalog = hydrated.filter((item) => item.source === 'desktop_pane');
+          syncDesktopAgents(desktopCatalog);
+          const fresh = desktopCatalog.find((item) => item.id === agentId);
+          if (fresh) {
             addAgent(fresh);
           }
-        } catch {
-        }
+        } catch {}
       })();
     },
-    [addAgent, desktopAgentsCatalog, projects, setActiveWorkspaceId, setSelectedProjectId],
+    [
+      addAgent,
+      desktopAgentsCatalog,
+      projects,
+      setActiveWorkspaceId,
+      setSelectedProjectId,
+      syncDesktopAgents,
+    ],
   );
 
   const handleRequestDesktopAgents = useCallback(async () => {
-    const workspaceId = resolveStoreWorkspaceId();
-    if (!workspaceId) {
-      return;
-    }
-
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) {
-        return;
-      }
-      const bundles = await listOpenAgentSessionBundles(supabase, workspaceId, user.id);
-      const hydrated = hydrateWebAgentsFromBundles(bundles);
-      setDesktopAgentsCatalog(hydrated.filter((agent) => agent.source === 'desktop_pane'));
-    } catch {
-    }
+    await hydrateRunningAgentsRef.current();
   }, []);
 
   const handleExecuteTask = useCallback(
@@ -1308,6 +1278,13 @@ export function WebMaestroHome() {
     },
     [setAgentModeId],
   );
+
+  const handleSourceChange = useCallback((next: WebHomeSource) => {
+    setSourceView(next);
+    if (next === 'desktop') {
+      void hydrateRunningAgentsRef.current();
+    }
+  }, []);
 
   return (
     <div
@@ -1348,6 +1325,9 @@ export function WebMaestroHome() {
               O mesmo agente de programação poderoso, agora na web.
             </p>
           </div>
+        </div>
+        <div className='home-dashboard__hero-switch'>
+          <WebSourceSwitch source={sourceView} onChange={handleSourceChange} />
         </div>
         <div className='home-dashboard__hero-mac'>
           <WebMacSelect
@@ -1412,6 +1392,7 @@ export function WebMaestroHome() {
           agents={visibleAgents}
           projects={projects}
           selectedProjectId={agentFilterProjectId}
+          sourceView={sourceView}
           deviceId={resolveDeviceId()}
           focusedAgentId={focusedAgentId}
           openAgentId={openAgentId}

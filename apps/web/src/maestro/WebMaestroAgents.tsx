@@ -1,6 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Bot, FolderKanban, ListTodo, Monitor, Play, Smartphone, Trash2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  Bot,
+  FolderKanban,
+  ListTodo,
+  Monitor,
+  Play,
+  Smartphone,
+  Trash2,
+} from 'lucide-react';
 import type { CloudProject } from '@nexus/protocol';
 import type { WebAgentSession } from '../store';
 import { WebAgentChat } from './WebAgentChat';
@@ -21,6 +38,7 @@ interface WebMaestroAgentsProps {
   agents: WebAgentSession[];
   projects: CloudProject[];
   selectedProjectId: string | null;
+  sourceView?: 'web' | 'desktop';
   deviceId: string | null;
   focusedAgentId?: string | null;
   openAgentId?: string | null;
@@ -125,12 +143,7 @@ function ProjectThumb({
 }) {
   if (logoUrl) {
     return (
-      <img
-        src={logoUrl}
-        alt=''
-        className='home-dashboard__agent-project-logo'
-        draggable={false}
-      />
+      <img src={logoUrl} alt='' className='home-dashboard__agent-project-logo' draggable={false} />
     );
   }
 
@@ -360,12 +373,7 @@ function ProjectTasksRail({
     <div className='home-dashboard__project-tasks-rail' role='list'>
       {tasks.map((task, index) => (
         <div key={task.id} role='listitem'>
-          <ProjectTaskItem
-            task={task}
-            enterIndex={index}
-            onOpen={onOpen}
-            onExecute={onExecute}
-          />
+          <ProjectTaskItem task={task} enterIndex={index} onOpen={onOpen} onExecute={onExecute} />
         </div>
       ))}
     </div>
@@ -477,14 +485,16 @@ function AgentFullscreen({
               <Monitor size={14} strokeWidth={2.25} aria-hidden='true' />
             </button>
           ) : null}
-          <button
-            type='button'
-            className='home-dashboard__agent-card-close app-button app-button--enter'
-            aria-label='Excluir agent'
-            onClick={() => setConfirmOpen(true)}
-          >
-            <Trash2 size={14} strokeWidth={2.25} aria-hidden='true' />
-          </button>
+          {agent.source === 'desktop_pane' ? null : (
+            <button
+              type='button'
+              className='home-dashboard__agent-card-close app-button app-button--enter'
+              aria-label='Excluir agent'
+              onClick={() => setConfirmOpen(true)}
+            >
+              <Trash2 size={14} strokeWidth={2.25} aria-hidden='true' />
+            </button>
+          )}
         </div>
       </div>
       <div className='home-dashboard__agent-fullscreen-body'>
@@ -613,10 +623,7 @@ function AgentProjectRow({
           </button>
         ) : null}
         {group.runningCount > 0 ? (
-          <span
-            className='home-dashboard__agent-project-busy'
-            aria-label='Agent em execução'
-          />
+          <span className='home-dashboard__agent-project-busy' aria-label='Agent em execução' />
         ) : null}
       </span>
     </div>
@@ -627,6 +634,7 @@ export function WebMaestroAgents({
   agents,
   projects,
   selectedProjectId,
+  sourceView = 'web',
   deviceId,
   focusedAgentId = null,
   openAgentId: openAgentIdProp = null,
@@ -668,7 +676,7 @@ export function WebMaestroAgents({
   const selectedGroup = useMemo(
     () =>
       selectedProjectId
-        ? projectGroups.find((group) => group.projectId === selectedProjectId) ?? null
+        ? (projectGroups.find((group) => group.projectId === selectedProjectId) ?? null)
         : null,
     [projectGroups, selectedProjectId],
   );
@@ -677,7 +685,7 @@ export function WebMaestroAgents({
   const selectedCloudProject = useMemo(
     () =>
       selectedProjectId
-        ? projects.find((project) => project.id === selectedProjectId) ?? null
+        ? (projects.find((project) => project.id === selectedProjectId) ?? null)
         : null,
     [projects, selectedProjectId],
   );
@@ -690,15 +698,11 @@ export function WebMaestroAgents({
     [selectedCloudProject],
   );
   const openAgent = useMemo(
-    () => (openAgentId ? projectAgents.find((agent) => agent.id === openAgentId) ?? null : null),
+    () => (openAgentId ? (projectAgents.find((agent) => agent.id === openAgentId) ?? null) : null),
     [openAgentId, projectAgents],
   );
-  const hasEmulator = Boolean(
-    selectedProjectId && emulatorProjectIds?.has(selectedProjectId),
-  );
-  const hasPreview = Boolean(
-    selectedProjectId && previewProjectIds?.has(selectedProjectId),
-  );
+  const hasEmulator = Boolean(selectedProjectId && emulatorProjectIds?.has(selectedProjectId));
+  const hasPreview = Boolean(selectedProjectId && previewProjectIds?.has(selectedProjectId));
 
   const handleOpenAgent = useCallback(
     (agentId: string) => {
@@ -786,19 +790,26 @@ export function WebMaestroAgents({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [handleCloseAgent, onBackToProjects, openAgentId, showingProjects]);
 
+  const isDesktopView = sourceView === 'desktop';
+
   if (agents.length === 0) {
     return (
-      <section
-        ref={sectionRef}
-        className='home-dashboard__agent-mode app-button--enter'
-      >
+      <section ref={sectionRef} className='home-dashboard__agent-mode app-button--enter'>
         <div className='empty-state home-dashboard__agent-mode-empty'>
           <div className='empty-state__icon'>
-            <Bot size={28} aria-hidden='true' />
+            {isDesktopView ? (
+              <Monitor size={28} aria-hidden='true' />
+            ) : (
+              <Bot size={28} aria-hidden='true' />
+            )}
           </div>
-          <strong className='empty-state__title'>Nenhum agent na área</strong>
+          <strong className='empty-state__title'>
+            {isDesktopView ? 'Nenhum agent no Desktop' : 'Nenhum agent na área'}
+          </strong>
           <p className='empty-state__message'>
-            Escolha um projeto e pergunte algo ao Nexus para criar um agent aqui.
+            {isDesktopView
+              ? 'Os agents abertos hoje no Nexus Desktop aparecem aqui.'
+              : 'Escolha um projeto e pergunte algo ao Nexus para criar um agent aqui.'}
           </p>
         </div>
       </section>
@@ -811,11 +822,19 @@ export function WebMaestroAgents({
         {projectGroups.length === 0 ? (
           <div className='empty-state home-dashboard__agent-mode-empty'>
             <div className='empty-state__icon'>
-              <FolderKanban size={28} aria-hidden='true' />
+              {isDesktopView ? (
+                <Monitor size={28} aria-hidden='true' />
+              ) : (
+                <FolderKanban size={28} aria-hidden='true' />
+              )}
             </div>
-            <strong className='empty-state__title'>Nenhum projeto com agent</strong>
+            <strong className='empty-state__title'>
+              {isDesktopView ? 'Nenhum projeto com agent no Desktop' : 'Nenhum projeto com agent'}
+            </strong>
             <p className='empty-state__message'>
-              Quando um agent estiver ativo, o projeto aparece aqui.
+              {isDesktopView
+                ? 'Quando um agent estiver aberto no Desktop hoje, o projeto aparece aqui.'
+                : 'Quando um agent estiver ativo, o projeto aparece aqui.'}
             </p>
           </div>
         ) : (
@@ -847,12 +866,8 @@ export function WebMaestroAgents({
         <AgentFullscreen
           agent={openAgent}
           deviceId={deviceId}
-          hasEmulator={Boolean(
-            openAgent.projectId && emulatorProjectIds?.has(openAgent.projectId),
-          )}
-          hasPreview={Boolean(
-            openAgent.projectId && previewProjectIds?.has(openAgent.projectId),
-          )}
+          hasEmulator={Boolean(openAgent.projectId && emulatorProjectIds?.has(openAgent.projectId))}
+          hasPreview={Boolean(openAgent.projectId && previewProjectIds?.has(openAgent.projectId))}
           headerMacSelect={headerMacSelect}
           onOpenEmulator={onOpenEmulator}
           onOpenPreview={onOpenPreview}
@@ -886,9 +901,7 @@ export function WebMaestroAgents({
             <span className='home-dashboard__agent-project-icon-wrap'>
               <ProjectThumb
                 logoUrl={selectedGroup?.logoUrl ?? selectedCloudProject?.logo_url ?? null}
-                color={
-                  selectedGroup?.color ?? selectedCloudProject?.color ?? '#8b5cf6'
-                }
+                color={selectedGroup?.color ?? selectedCloudProject?.color ?? '#8b5cf6'}
                 name={selectedGroup?.name ?? selectedCloudProject?.name ?? 'Projeto'}
               />
             </span>
@@ -930,11 +943,7 @@ export function WebMaestroAgents({
       <div className='home-dashboard__project-sections'>
         <section className='home-dashboard__project-section' aria-label='Tasks'>
           <h2 className='home-dashboard__project-section-title'>Tasks</h2>
-          <ProjectTasksRail
-            tasks={projectTasks}
-            onOpen={setDetailTask}
-            onExecute={onExecuteTask}
-          />
+          <ProjectTasksRail tasks={projectTasks} onOpen={setDetailTask} onExecute={onExecuteTask} />
         </section>
         <section className='home-dashboard__project-section' aria-label='Agents'>
           <h2 className='home-dashboard__project-section-title'>Agents</h2>
@@ -943,7 +952,11 @@ export function WebMaestroAgents({
               <div className='empty-state__icon'>
                 <Bot size={22} aria-hidden='true' />
               </div>
-              <p className='empty-state__message'>Nenhum agent neste projeto</p>
+              <p className='empty-state__message'>
+                {isDesktopView
+                  ? 'Nenhum agent do Desktop neste projeto hoje'
+                  : 'Nenhum agent neste projeto'}
+              </p>
             </div>
           ) : (
             <div className='home-dashboard__agent-list' role='list'>

@@ -1,18 +1,8 @@
 import { create } from 'zustand';
-import type {
-  CloudProject,
-  CloudWorkspace,
-  CommandApproval,
-  DeviceRecord,
-} from '@nexus/protocol';
+import type { CloudProject, CloudWorkspace, CommandApproval, DeviceRecord } from '@nexus/protocol';
 import type { Session, User } from '@supabase/supabase-js';
 
-export type WebAgentActivityKind =
-  | 'thought'
-  | 'response'
-  | 'tool_run'
-  | 'file_read'
-  | 'file_edit';
+export type WebAgentActivityKind = 'thought' | 'response' | 'tool_run' | 'file_read' | 'file_edit';
 
 export interface WebAgentActivity {
   id: string;
@@ -98,6 +88,7 @@ interface WebState {
   setAgents: (agents: WebAgentSession[]) => void;
   addAgent: (agent: WebAgentSession) => void;
   mergeHydratedAgents: (incoming: WebAgentSession[]) => void;
+  syncDesktopAgents: (incoming: WebAgentSession[]) => void;
   patchAgentTurn: (
     agentId: string,
     patch: Partial<
@@ -109,10 +100,7 @@ interface WebState {
   ) => void;
   setAgentCursorSessionId: (agentId: string, cursorSessionId: string | null) => void;
   setAgentModelId: (agentId: string, modelId: string) => void;
-  setAgentModeId: (
-    agentId: string,
-    modeId: WebAgentSession['modeId'],
-  ) => void;
+  setAgentModeId: (agentId: string, modeId: WebAgentSession['modeId']) => void;
   setAgentStatus: (id: string, status: WebAgentSession['status']) => void;
   addAgentTurn: (agentId: string, turn: WebAgentTurn) => void;
   upsertAgentTerminal: (agentId: string, terminal: WebAgentTerminal) => void;
@@ -268,6 +256,20 @@ export const useWebStore = create<WebState>((set) => ({
         }),
       };
     }),
+  syncDesktopAgents: (incoming) =>
+    set((state) => {
+      const cloud = state.agents.filter((agent) => agent.source !== 'desktop_pane');
+      const existingById = new Map(
+        state.agents
+          .filter((agent) => agent.source === 'desktop_pane')
+          .map((agent) => [agent.id, agent]),
+      );
+      const desktop = incoming.map((remote) => {
+        const existing = existingById.get(remote.id);
+        return existing ? mergeWebAgentSession(existing, remote) : remote;
+      });
+      return { agents: [...cloud, ...desktop] };
+    }),
   patchAgentTurn: (agentId, patch) =>
     set((state) => ({
       agents: state.agents.map((agent) => {
@@ -292,15 +294,11 @@ export const useWebStore = create<WebState>((set) => ({
     })),
   setAgentModelId: (agentId, modelId) =>
     set((state) => ({
-      agents: state.agents.map((agent) =>
-        agent.id === agentId ? { ...agent, modelId } : agent,
-      ),
+      agents: state.agents.map((agent) => (agent.id === agentId ? { ...agent, modelId } : agent)),
     })),
   setAgentModeId: (agentId, modeId) =>
     set((state) => ({
-      agents: state.agents.map((agent) =>
-        agent.id === agentId ? { ...agent, modeId } : agent,
-      ),
+      agents: state.agents.map((agent) => (agent.id === agentId ? { ...agent, modeId } : agent)),
     })),
   setAgentStatus: (id, status) =>
     set((state) => ({
