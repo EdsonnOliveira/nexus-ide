@@ -139,6 +139,10 @@ function getMentionProjectKindBadgeLabel(kind: ProjectKind): string {
     return 'APP';
   }
 
+  if (kind === 'desktop') {
+    return 'DESK';
+  }
+
   return kind.toUpperCase();
 }
 
@@ -146,6 +150,7 @@ const PROJECT_KIND_BADGE_COLORS: Record<ProjectKind, string> = {
   api: '#93c5fd',
   web: '#6ee7b7',
   mobile: '#fcd34d',
+  desktop: '#c4b5fd',
 };
 
 interface ComposerMentionProjectThumbProps {

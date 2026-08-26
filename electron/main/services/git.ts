@@ -1,13 +1,7 @@
 import { execFile } from 'node:child_process';
-import {
-  existsSync,
-  readFileSync,
-  readdirSync,
-  statSync,
-  watch,
-  type FSWatcher,
-} from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, watch, type FSWatcher } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { BrowserWindow } from 'electron';
@@ -17,12 +11,7 @@ import { resolveDirectoryPath } from './directoryListing';
 const execFileAsync = promisify(execFile);
 
 export type GitChangeStatus =
-  | 'modified'
-  | 'added'
-  | 'deleted'
-  | 'renamed'
-  | 'untracked'
-  | 'conflicted';
+  'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflicted';
 
 export interface GitChangeEntry {
   path: string;
@@ -101,7 +90,10 @@ const MAX_UNTRACKED_LINE_STATS = 80;
 const MAX_UNTRACKED_EXPAND_FILES = 200;
 const MAX_DIFF_TEXT_CHARS = 1_500_000;
 const MAX_GIT_BLOB_BUFFER_BYTES = MAX_IMAGE_DATA_URL_BYTES;
-const lightChangeCountCache = new Map<string, { expiresAt: number; byRepo: Record<string, number> }>();
+const lightChangeCountCache = new Map<
+  string,
+  { expiresAt: number; byRepo: Record<string, number> }
+>();
 const lightChangeCountInFlight = new Map<
   string,
   Promise<{ total: number; byRepo: Record<string, number> }>
@@ -185,12 +177,64 @@ export function setGitWatchWindow(getter: () => BrowserWindow | null): void {
   notifyWindow = getter;
 }
 
+function expandUserPath(input: string): string {
+  const trimmed = input.trim();
+
+  if (trimmed === '~') {
+    return os.homedir();
+  }
+
+  if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+    return path.join(os.homedir(), trimmed.slice(2));
+  }
+
+  return trimmed;
+}
+
 function resolveRepo(dirPath: string): string {
-  return resolveDirectoryPath(dirPath);
+  return resolveDirectoryPath(expandUserPath(dirPath));
+}
+
+function findGitRootFromPath(startPath: string): string | null {
+  let current = path.resolve(startPath);
+
+  while (true) {
+    if (isGitRepo(current)) {
+      return current;
+    }
+
+    const parent = path.dirname(current);
+
+    if (parent === current) {
+      return null;
+    }
+
+    current = parent;
+  }
+}
+
+function repoContainsAbsolutePath(repoPath: string, absolutePath: string): boolean {
+  const relative = path.relative(repoPath, absolutePath).replace(/\\/g, '/');
+  return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
 function resolveGitRepoForFilePath(dirPath: string, filePath: string): string {
   const resolved = resolveRepo(dirPath);
+  const expandedFile = expandUserPath(filePath);
+  const absoluteFile = path.isAbsolute(expandedFile)
+    ? path.resolve(expandedFile)
+    : path.resolve(resolved, expandedFile);
+
+  const fileGitRoot = findGitRootFromPath(
+    existsSync(absoluteFile) ? path.dirname(absoluteFile) : absoluteFile,
+  );
+
+  if (
+    fileGitRoot &&
+    (fileGitRoot === resolved || repoContainsAbsolutePath(resolved, fileGitRoot))
+  ) {
+    return fileGitRoot;
+  }
 
   if (isGitRepo(resolved)) {
     return resolved;
@@ -202,41 +246,33 @@ function resolveGitRepoForFilePath(dirPath: string, filePath: string): string {
     return resolved;
   }
 
-  if (repos.length === 1) {
-    return repos[0].path;
-  }
+  const sortedRepos = [...repos].sort((left, right) => right.path.length - left.path.length);
 
-  const normalizedInput = filePath.replace(/\\/g, '/');
-
-  if (path.isAbsolute(filePath)) {
-    const absolute = path.resolve(filePath);
-    const sortedRepos = [...repos].sort((left, right) => right.path.length - left.path.length);
-
+  if (path.isAbsolute(expandedFile)) {
     for (const repo of sortedRepos) {
-      const relative = path.relative(repo.path, absolute).replace(/\\/g, '/');
-
-      if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+      if (repoContainsAbsolutePath(repo.path, absoluteFile)) {
         return repo.path;
       }
     }
-  } else {
-    const relative = normalizedInput.replace(/^\/+/, '').replace(/^\.\/+/, '');
-    const sortedRepos = [...repos].sort((left, right) => right.path.length - left.path.length);
 
-    for (const repo of sortedRepos) {
-      if (repo.relativePath !== '.' && relative.startsWith(`${repo.relativePath}/`)) {
-        return repo.path;
-      }
+    return resolved;
+  }
 
-      const candidate = path.join(repo.path, relative);
+  const relative = expandedFile
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .replace(/^\.\/+/, '');
 
-      if (existsSync(candidate)) {
-        return repo.path;
-      }
+  for (const repo of sortedRepos) {
+    if (
+      repo.relativePath !== '.' &&
+      (relative === repo.relativePath || relative.startsWith(`${repo.relativePath}/`))
+    ) {
+      return repo.path;
     }
   }
 
-  return repos[0].path;
+  return resolved;
 }
 
 function isGitRepo(dirPath: string): boolean {
@@ -455,7 +491,9 @@ function mapWorktreeStatus(code: string): GitChangeStatus {
   return 'modified';
 }
 
-function parseBranchLine(line: string): Pick<GitRepoInfo, 'branch' | 'upstream' | 'ahead' | 'behind' | 'detached'> {
+function parseBranchLine(
+  line: string,
+): Pick<GitRepoInfo, 'branch' | 'upstream' | 'ahead' | 'behind' | 'detached'> {
   const branchPart = line.slice(3).trim();
   const detached = branchPart.startsWith('HEAD (no branch)') || branchPart === 'HEAD';
 
@@ -731,7 +769,7 @@ async function countPorcelainChanges(repoPath: string): Promise<number> {
       const entryPath = line.startsWith('??')
         ? line.slice(3).trim()
         : line.length >= 3
-          ? line.slice(3).trim().split(' -> ').pop()?.trim() ?? ''
+          ? (line.slice(3).trim().split(' -> ').pop()?.trim() ?? '')
           : '';
 
       if (!entryPath || isGitStatusExcludedPath(entryPath)) {
@@ -1068,8 +1106,7 @@ async function enrichStatusWithStats(
     unstaged: result.unstaged.map((entry) => applyStatsToEntry(entry, unstagedStats)),
     untracked: result.untracked.map((entry, index) => ({
       ...entry,
-      additions:
-        index < MAX_UNTRACKED_LINE_STATS ? countUntrackedLines(resolved, entry.path) : 0,
+      additions: index < MAX_UNTRACKED_LINE_STATS ? countUntrackedLines(resolved, entry.path) : 0,
       deletions: 0,
     })),
   };
@@ -1194,10 +1231,7 @@ export async function discardGitPaths(dirPath: string, paths: string[]): Promise
     }
 
     const statusOutput = await runGit(resolved, buildGitPorcelainStatusArgs());
-    const status = await enrichStatusWithStats(
-      resolved,
-      parseStatusOutput(statusOutput, resolved),
-    );
+    const status = await enrichStatusWithStats(resolved, parseStatusOutput(statusOutput, resolved));
     const untrackedPaths = new Set(status.untracked.map((entry) => entry.path));
     const trackedPaths: string[] = [];
     const cleanPaths: string[] = [];
@@ -1292,12 +1326,7 @@ async function listGitRelativePathsByBasename(
   }
 
   try {
-    const trackedOutput = await runGit(repoRoot, [
-      'ls-files',
-      '--',
-      `**/${fileName}`,
-      fileName,
-    ]);
+    const trackedOutput = await runGit(repoRoot, ['ls-files', '--', `**/${fileName}`, fileName]);
 
     for (const line of trackedOutput.split('\n')) {
       const entryPath = line.trim().replace(/\\/g, '/');
@@ -1338,13 +1367,14 @@ async function resolveGitFileInRepo(
   filePath: string,
 ): Promise<{ relativePath: string; absolutePath: string }> {
   const resolvedRoot = path.resolve(repoRoot);
-  const normalizedInput = filePath.replace(/\\/g, '/');
+  const expandedInput = expandUserPath(filePath);
+  const normalizedInput = expandedInput.replace(/\\/g, '/');
 
   let relativePath: string;
   let absolutePath: string;
 
-  if (path.isAbsolute(filePath)) {
-    absolutePath = path.resolve(filePath);
+  if (path.isAbsolute(expandedInput)) {
+    absolutePath = path.resolve(expandedInput);
     relativePath = path.relative(resolvedRoot, absolutePath).replace(/\\/g, '/');
   } else {
     relativePath = normalizedInput.replace(/^\/+/, '').replace(/^\.\/+/, '');
@@ -1386,7 +1416,26 @@ async function resolveGitFileInRepo(
     }
   }
 
-  return { relativePath, absolutePath };
+  const containedRelative = path
+    .relative(resolvedRoot, path.resolve(absolutePath))
+    .replace(/\\/g, '/');
+
+  if (
+    !containedRelative ||
+    containedRelative.startsWith('..') ||
+    path.isAbsolute(containedRelative)
+  ) {
+    const fallbackName = path.basename(normalizedInput);
+    return {
+      relativePath: fallbackName,
+      absolutePath: path.resolve(resolvedRoot, fallbackName),
+    };
+  }
+
+  return {
+    relativePath: containedRelative,
+    absolutePath: path.resolve(resolvedRoot, containedRelative),
+  };
 }
 
 async function readGitBlobBuffer(repoRoot: string, spec: string): Promise<Buffer | null> {
@@ -1600,7 +1649,10 @@ export async function listGitBranches(dirPath: string): Promise<GitBranchInfo[]>
     });
 }
 
-export async function checkoutGitBranch(dirPath: string, branch: string): Promise<GitCommandResult> {
+export async function checkoutGitBranch(
+  dirPath: string,
+  branch: string,
+): Promise<GitCommandResult> {
   const resolved = resolveRepo(dirPath);
 
   try {
@@ -1612,10 +1664,7 @@ export async function checkoutGitBranch(dirPath: string, branch: string): Promis
   }
 }
 
-export async function createGitBranch(
-  dirPath: string,
-  branch: string,
-): Promise<GitCommandResult> {
+export async function createGitBranch(dirPath: string, branch: string): Promise<GitCommandResult> {
   const resolved = resolveRepo(dirPath);
 
   try {

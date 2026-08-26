@@ -25,7 +25,8 @@ const nexusApi = {
       ipcRenderer.invoke('projects:createWorkspace', name),
     updateWorkspace: (id: string, data: WorkspaceUpdatePayload): Promise<Workspace | null> =>
       ipcRenderer.invoke('projects:updateWorkspace', id, data),
-    removeWorkspace: (id: string): Promise<void> => ipcRenderer.invoke('projects:removeWorkspace', id),
+    removeWorkspace: (id: string): Promise<void> =>
+      ipcRenderer.invoke('projects:removeWorkspace', id),
     selectWorkspace: (id: string | null): Promise<void> =>
       ipcRenderer.invoke('projects:selectWorkspace', id),
     add: (projectPath: string, workspaceId?: string | null): Promise<Project> =>
@@ -92,16 +93,15 @@ const nexusApi = {
       continueSession?: boolean;
       resumeChatId?: string | null;
       runToken: string;
+      preserveChildren?: boolean;
     }): Promise<void> => ipcRenderer.invoke('agent:printStart', options),
-    stop: (paneId: string): void => {
-      ipcRenderer.send('agent:printStop', paneId);
+    stop: (paneId: string, options?: { preserveChildren?: boolean }): void => {
+      ipcRenderer.send('agent:printStop', paneId, options);
     },
     isRunning: (paneId: string): Promise<boolean> =>
       ipcRenderer.invoke('agent:printIsRunning', paneId),
     warm: (): Promise<void> => ipcRenderer.invoke('agent:printWarm'),
-    onData: (
-      callback: (paneId: string, data: string, runToken: string) => void,
-    ): (() => void) => {
+    onData: (callback: (paneId: string, data: string, runToken: string) => void): (() => void) => {
       const listener = (
         _: Electron.IpcRendererEvent,
         payload: { paneId: string; data: string; runToken: string },
@@ -198,7 +198,11 @@ const nexusApi = {
     watchProject: (dirPath: string) => ipcRenderer.invoke('files:watchProject', dirPath),
     unwatchProject: (dirPath: string) => ipcRenderer.invoke('files:unwatchProject', dirPath),
     onProjectChange: (
-      callback: (payload: { projectPath: string; changedPath?: string; structural?: boolean }) => void,
+      callback: (payload: {
+        projectPath: string;
+        changedPath?: string;
+        structural?: boolean;
+      }) => void,
     ): (() => void) => {
       const listener = (
         _: Electron.IpcRendererEvent,
@@ -245,8 +249,7 @@ const nexusApi = {
       ipcRenderer.invoke('git:checkout', dirPath, branch),
     createBranch: (dirPath: string, branch: string) =>
       ipcRenderer.invoke('git:createBranch', dirPath, branch),
-    stash: (dirPath: string, message?: string) =>
-      ipcRenderer.invoke('git:stash', dirPath, message),
+    stash: (dirPath: string, message?: string) => ipcRenderer.invoke('git:stash', dirPath, message),
     stashPop: (dirPath: string) => ipcRenderer.invoke('git:stashPop', dirPath),
     stashList: (dirPath: string) => ipcRenderer.invoke('git:stashList', dirPath),
     watch: (dirPath: string) => ipcRenderer.invoke('git:watch', dirPath),
@@ -288,12 +291,9 @@ const nexusApi = {
   session: {
     getScrollback: (paneId: string): Promise<string> =>
       ipcRenderer.invoke('session:getScrollback', paneId),
-    saveScrollbacks: (
-      entries: Record<string, string>,
-      pruneToPaneIds?: string[],
-    ): Promise<void> => ipcRenderer.invoke('session:saveScrollbacks', entries, pruneToPaneIds),
-    removePane: (paneId: string): Promise<void> =>
-      ipcRenderer.invoke('session:removePane', paneId),
+    saveScrollbacks: (entries: Record<string, string>, pruneToPaneIds?: string[]): Promise<void> =>
+      ipcRenderer.invoke('session:saveScrollbacks', entries, pruneToPaneIds),
+    removePane: (paneId: string): Promise<void> => ipcRenderer.invoke('session:removePane', paneId),
     flushComplete: (): Promise<void> => ipcRenderer.invoke('session:flush-complete'),
   },
   onToggleExplorer: (callback: () => void): (() => void) => {
@@ -372,7 +372,8 @@ const nexusApi = {
     seek: (seconds: number) => ipcRenderer.invoke('music:seek', seconds),
     cycleRepeat: () => ipcRenderer.invoke('music:cycleRepeat'),
     toggleShuffle: () => ipcRenderer.invoke('music:toggleShuffle'),
-    playQueueTrack: (playlistIndex: number) => ipcRenderer.invoke('music:playQueueTrack', playlistIndex),
+    playQueueTrack: (playlistIndex: number) =>
+      ipcRenderer.invoke('music:playQueueTrack', playlistIndex),
     playPlaylist: (playlistId: string) => ipcRenderer.invoke('music:playPlaylist', playlistId),
   },
   whatsapp: {
@@ -535,20 +536,14 @@ const nexusApi = {
           chunk: Uint8Array | ArrayBuffer | number[];
           width?: number;
           height?: number;
-          orientation?:
-            | 'portrait'
-            | 'landscapeLeft'
-            | 'portraitUpsideDown'
-            | 'landscapeRight';
+          orientation?: 'portrait' | 'landscapeLeft' | 'portraitUpsideDown' | 'landscapeRight';
         },
       ) => {
         const chunk =
           payload.chunk instanceof Uint8Array
             ? payload.chunk
             : new Uint8Array(
-                payload.chunk instanceof ArrayBuffer
-                  ? payload.chunk
-                  : (payload.chunk as number[]),
+                payload.chunk instanceof ArrayBuffer ? payload.chunk : (payload.chunk as number[]),
               );
 
         callback({
@@ -611,11 +606,7 @@ const nexusApi = {
           sessionId: string;
           width: number;
           height: number;
-          orientation?:
-            | 'portrait'
-            | 'landscapeLeft'
-            | 'portraitUpsideDown'
-            | 'landscapeRight';
+          orientation?: 'portrait' | 'landscapeLeft' | 'portraitUpsideDown' | 'landscapeRight';
         },
       ) => {
         callback(payload);
@@ -655,7 +646,8 @@ const nexusApi = {
   },
   api: {
     loadProjectData: (projectId) => ipcRenderer.invoke('api:loadProjectData', projectId),
-    saveProjectData: (projectId, data) => ipcRenderer.invoke('api:saveProjectData', projectId, data),
+    saveProjectData: (projectId, data) =>
+      ipcRenderer.invoke('api:saveProjectData', projectId, data),
     sendRequest: (payload) => ipcRenderer.invoke('api:sendRequest', payload),
   },
   tasks: {
@@ -670,7 +662,8 @@ const nexusApi = {
     listJiraProjects: (projectId, config) =>
       ipcRenderer.invoke('tasks:listJiraProjects', projectId, config),
     listTrelloBoards: (projectId) => ipcRenderer.invoke('tasks:listTrelloBoards', projectId),
-    listDeepcrmPipelines: (projectId) => ipcRenderer.invoke('tasks:listDeepcrmPipelines', projectId),
+    listDeepcrmPipelines: (projectId) =>
+      ipcRenderer.invoke('tasks:listDeepcrmPipelines', projectId),
     sync: (projectId) => ipcRenderer.invoke('tasks:sync', projectId),
     saveAttachment: (projectId, taskId, sourcePath) =>
       ipcRenderer.invoke('tasks:saveAttachment', projectId, taskId, sourcePath),
@@ -699,7 +692,8 @@ const nexusApi = {
     stop: (runId) => ipcRenderer.invoke('tests:stop', runId),
     isRunning: (runId) => ipcRenderer.invoke('tests:isRunning', runId),
     prepareMaestroRun: (steps) => ipcRenderer.invoke('tests:prepareMaestroRun', steps),
-    resolveHighlight: (runId, source) => ipcRenderer.invoke('tests:resolveHighlight', runId, source),
+    resolveHighlight: (runId, source) =>
+      ipcRenderer.invoke('tests:resolveHighlight', runId, source),
     onOutput: (callback) => {
       const listener = (
         _: Electron.IpcRendererEvent,
@@ -723,7 +717,10 @@ const nexusApi = {
       return () => ipcRenderer.off('tests:exit', listener);
     },
     onHighlight: (callback) => {
-      const listener = (_: Electron.IpcRendererEvent, payload: import('../../types/test').MaestroTestHighlightEvent) => {
+      const listener = (
+        _: Electron.IpcRendererEvent,
+        payload: import('../../types/test').MaestroTestHighlightEvent,
+      ) => {
         callback(payload);
       };
 
@@ -741,8 +738,7 @@ const nexusApi = {
     ): Promise<void> => ipcRenderer.invoke('passwords:saveValues', projectId, collectionId, values),
     deleteValues: (projectId: string, collectionId: string): Promise<void> =>
       ipcRenderer.invoke('passwords:deleteValues', projectId, collectionId),
-    getGuestPreloadPath: (): Promise<string> =>
-      ipcRenderer.invoke('passwords:getGuestPreloadPath'),
+    getGuestPreloadPath: (): Promise<string> => ipcRenderer.invoke('passwords:getGuestPreloadPath'),
   },
   debug: {
     sessionLog: (payload: {

@@ -7,6 +7,10 @@ import type { BrowserWindow } from 'electron';
 import { buildCliPathEnv } from '../utils/cliPathEnv';
 import { writeDebugSessionLog } from '../utils/debugSessionLog';
 
+export interface AgentPrintStopOptions {
+  preserveChildren?: boolean;
+}
+
 export interface AgentPrintRunOptions {
   paneId: string;
   cwd: string;
@@ -16,6 +20,7 @@ export interface AgentPrintRunOptions {
   continueSession?: boolean;
   resumeChatId?: string | null;
   runToken: string;
+  preserveChildren?: boolean;
 }
 
 const execFileAsync = promisify(execFile);
@@ -44,8 +49,7 @@ function syncAgentRunningMarker(running: boolean): void {
     }
 
     fs.rmSync(AGENT_RUNNING_MARKER, { force: true });
-  } catch {
-  }
+  } catch {}
 }
 
 function resolveCursorAgentExecutable(): string {
@@ -79,8 +83,7 @@ function resolveAgentPrintCwd(cwd: string): string {
       if (fs.statSync(resolved).isDirectory()) {
         return resolved;
       }
-    } catch {
-    }
+    } catch {}
   }
 
   return process.cwd();
@@ -96,6 +99,27 @@ class AgentPrintRunner {
 
   setWindow(window: BrowserWindow | null): void {
     this.window = window;
+  }
+
+  private signalChild(
+    child: ChildProcessWithoutNullStreams,
+    signal: NodeJS.Signals,
+    preserveChildren: boolean,
+  ): void {
+    const pid = child.pid;
+
+    try {
+      if (!preserveChildren && pid && process.platform !== 'win32') {
+        process.kill(-pid, signal);
+        return;
+      }
+
+      child.kill(signal);
+    } catch {
+      try {
+        child.kill(signal);
+      } catch {}
+    }
   }
 
   private clearWatchdog(paneId: string): void {
@@ -256,7 +280,7 @@ class AgentPrintRunner {
   }
 
   start(options: AgentPrintRunOptions): void {
-    this.stop(options.paneId);
+    this.stop(options.paneId, { preserveChildren: options.preserveChildren });
 
     const runToken = options.runToken;
     const resolvedCwd = resolveAgentPrintCwd(options.cwd);
@@ -337,23 +361,16 @@ class AgentPrintRunner {
       this.flushStdoutBatch(options.paneId);
       this.clearStdoutBatch(options.paneId);
 
-      if (this.processes.get(options.paneId) === child) {
+      const isCurrent = this.processes.get(options.paneId) === child;
+
+      if (isCurrent) {
         this.processes.delete(options.paneId);
       }
 
       syncAgentRunningMarker(this.processes.size > 0);
 
-      try {
-        if (child.pid && process.platform !== 'win32') {
-          process.kill(-child.pid, 'SIGTERM');
-        } else {
-          child.kill('SIGTERM');
-        }
-      } catch {
-        try {
-          child.kill('SIGTERM');
-        } catch {
-        }
+      if (isCurrent) {
+        this.signalChild(child, 'SIGTERM', false);
       }
 
       this.emit('agent:printDone', {
@@ -475,7 +492,7 @@ class AgentPrintRunner {
     });
   }
 
-  stop(paneId: string): void {
+  stop(paneId: string, options?: AgentPrintStopOptions): void {
     this.clearWatchdog(paneId);
     this.flushStdoutBatch(paneId);
     this.clearStdoutBatch(paneId);
@@ -486,47 +503,25 @@ class AgentPrintRunner {
       return;
     }
 
+    const preserveChildren = Boolean(options?.preserveChildren);
+
     // #region agent log
     writeDebugSessionLog({
       location: 'agentPrintRunner.ts:stop',
       message: 'agentPrint process stop requested',
-      data: { paneId },
+      data: { paneId, preserveChildren },
       hypothesisId: 'D',
     });
     // #endregion
 
-    const pid = child.pid;
-
-    try {
-      if (pid && process.platform !== 'win32') {
-        process.kill(-pid, 'SIGTERM');
-      } else {
-        child.kill('SIGTERM');
-      }
-    } catch {
-      try {
-        child.kill('SIGTERM');
-      } catch {
-      }
-    }
+    this.signalChild(child, 'SIGTERM', preserveChildren);
 
     setTimeout(() => {
-      if (child.killed) {
+      if (child.exitCode !== null || child.signalCode !== null) {
         return;
       }
 
-      try {
-        if (pid && process.platform !== 'win32') {
-          process.kill(-pid, 'SIGKILL');
-        } else {
-          child.kill('SIGKILL');
-        }
-      } catch {
-        try {
-          child.kill('SIGKILL');
-        } catch {
-        }
-      }
+      this.signalChild(child, 'SIGKILL', preserveChildren);
     }, 400);
   }
 

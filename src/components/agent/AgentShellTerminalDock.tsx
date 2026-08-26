@@ -7,9 +7,11 @@ import {
   useAgentShellTerminalEntries,
   useAgentShellTerminalStore,
   type AgentShellTerminalEntry,
+  type AgentShellTerminalStatus,
 } from '@/stores/useAgentShellTerminalStore';
 import { registerModalOpen } from '@/utils/overlayBlocking';
 import { registerTerminalHandle } from '@/utils/terminalHandleRegistry';
+import type { TerminalCommandStatusEvent } from '@/utils/terminalStream';
 import type { XTermViewHandle } from '@/types';
 
 interface AgentShellTerminalDockProps {
@@ -35,6 +37,36 @@ function formatElapsed(startedAt: number, now: number): string {
   return `${seconds}s`;
 }
 
+function isLiveShellStatus(status: AgentShellTerminalStatus): boolean {
+  return status === 'starting' || status === 'running';
+}
+
+function resolveShellStatusLabel(status: AgentShellTerminalStatus): string {
+  if (status === 'starting') {
+    return 'Iniciando';
+  }
+
+  if (status === 'running') {
+    return 'Rodando';
+  }
+
+  return 'Parado';
+}
+
+function resolveDockCountLabel(runningCount: number, stoppedCount: number): string {
+  if (runningCount > 0 && stoppedCount === 0) {
+    return runningCount === 1 ? '1 terminal rodando' : `${runningCount} terminais rodando`;
+  }
+
+  if (runningCount === 0) {
+    return stoppedCount === 1 ? '1 terminal parado' : `${stoppedCount} terminais parados`;
+  }
+
+  const runningLabel = runningCount === 1 ? '1 rodando' : `${runningCount} rodando`;
+  const stoppedLabel = stoppedCount === 1 ? '1 parado' : `${stoppedCount} parados`;
+  return `${runningLabel} · ${stoppedLabel}`;
+}
+
 interface AgentShellTerminalPanelProps {
   entry: AgentShellTerminalEntry;
   agentPaneId: string;
@@ -52,12 +84,16 @@ function AgentShellTerminalPanelComponent({
 }: AgentShellTerminalPanelProps) {
   const updateEntry = useAgentShellTerminalStore((state) => state.updateEntry);
   const terminalHandleRef = useRef<XTermViewHandle | null>(null);
+  const sawCommandStartRef = useRef(entry.status === 'running');
   const [cwd, setCwd] = useState(entry.cwd);
 
-  const handleTerminalRef = useCallback((handle: XTermViewHandle | null) => {
-    terminalHandleRef.current = handle;
-    registerTerminalHandle(entry.paneId, handle);
-  }, [entry.paneId]);
+  const handleTerminalRef = useCallback(
+    (handle: XTermViewHandle | null) => {
+      terminalHandleRef.current = handle;
+      registerTerminalHandle(entry.paneId, handle);
+    },
+    [entry.paneId],
+  );
 
   const handlePtyCreated = useCallback(
     (ptyId: string) => {
@@ -71,8 +107,52 @@ function AgentShellTerminalPanelComponent({
   );
 
   const handlePtyLost = useCallback(() => {
+    const current = useAgentShellTerminalStore
+      .getState()
+      .getEntries(agentPaneId)
+      .find((item) => item.paneId === entry.paneId);
+
+    if (current && isLiveShellStatus(current.status)) {
+      updateEntry(agentPaneId, entry.paneId, {
+        ptyId: null,
+        status: 'failed',
+        exitCode: current.exitCode,
+      });
+      return;
+    }
+
     updateEntry(agentPaneId, entry.paneId, { ptyId: null });
   }, [agentPaneId, entry.paneId, updateEntry]);
+
+  const handleCommandStatus = useCallback(
+    (event: TerminalCommandStatusEvent) => {
+      const current = useAgentShellTerminalStore
+        .getState()
+        .getEntries(agentPaneId)
+        .find((item) => item.paneId === entry.paneId);
+
+      if (current && !isLiveShellStatus(current.status)) {
+        return;
+      }
+
+      if (event.type === 'start') {
+        sawCommandStartRef.current = true;
+        updateEntry(agentPaneId, entry.paneId, { status: 'running' });
+        return;
+      }
+
+      if (!sawCommandStartRef.current) {
+        return;
+      }
+
+      sawCommandStartRef.current = false;
+      updateEntry(agentPaneId, entry.paneId, {
+        status: event.exitCode === 0 ? 'completed' : 'failed',
+        exitCode: event.exitCode,
+      });
+    },
+    [agentPaneId, entry.paneId, updateEntry],
+  );
 
   useEffect(() => {
     if (!isOpen) {
@@ -131,14 +211,22 @@ function AgentShellTerminalPanelComponent({
               <span className='agent-shell-terminal-panel__title'>{entry.title}</span>
               <span className='agent-shell-terminal-panel__command'>{entry.command}</span>
             </div>
-            <button
-              type='button'
-              className='agent-shell-terminal-panel__close app-button app-button--enter'
-              aria-label='Fechar terminal'
-              onClick={onClose}
-            >
-              <X size={16} strokeWidth={2.25} />
-            </button>
+            <div className='agent-shell-terminal-panel__actions'>
+              <span
+                className={`agent-shell-terminal-dock__item-status agent-shell-terminal-dock__item-status--${entry.status}`}
+              >
+                <span className='agent-shell-terminal-dock__item-status-dot' />
+                {resolveShellStatusLabel(entry.status)}
+              </span>
+              <button
+                type='button'
+                className='agent-shell-terminal-panel__close app-button app-button--enter'
+                aria-label='Fechar terminal'
+                onClick={onClose}
+              >
+                <X size={16} strokeWidth={2.25} />
+              </button>
+            </div>
           </div>
         ) : null}
         <div className='agent-shell-terminal-panel__body terminal-panel__body'>
@@ -158,6 +246,7 @@ function AgentShellTerminalPanelComponent({
             onCwdChange={setCwd}
             onOpenLinkInBrowser={() => undefined}
             restoreCommand={entry.status === 'starting' ? entry.command : null}
+            onCommandStatus={handleCommandStatus}
           />
         </div>
       </div>
@@ -183,8 +272,13 @@ function AgentShellTerminalDockItemComponent({
   onOpen,
   onDismiss,
 }: AgentShellTerminalDockItemProps) {
+  const live = isLiveShellStatus(entry.status);
+  const statusLabel = resolveShellStatusLabel(entry.status);
+
   return (
-    <div className={`agent-shell-terminal-dock__item${isOpen ? ' agent-shell-terminal-dock__item--open' : ''}`}>
+    <div
+      className={`agent-shell-terminal-dock__item${isOpen ? ' agent-shell-terminal-dock__item--open' : ''}${live ? '' : ' agent-shell-terminal-dock__item--stopped'}`}
+    >
       <button
         type='button'
         className='agent-shell-terminal-dock__item-main app-button app-button--enter'
@@ -192,12 +286,20 @@ function AgentShellTerminalDockItemComponent({
       >
         <Terminal size={14} strokeWidth={2.25} className='agent-shell-terminal-dock__item-icon' />
         <span className='agent-shell-terminal-dock__item-title'>{entry.title}</span>
-        <span className='agent-shell-terminal-dock__item-elapsed'>{elapsedLabel}</span>
+        <span
+          className={`agent-shell-terminal-dock__item-status agent-shell-terminal-dock__item-status--${entry.status}`}
+        >
+          <span className='agent-shell-terminal-dock__item-status-dot' />
+          {statusLabel}
+        </span>
+        {live ? (
+          <span className='agent-shell-terminal-dock__item-elapsed'>{elapsedLabel}</span>
+        ) : null}
       </button>
       <button
         type='button'
         className='agent-shell-terminal-dock__item-dismiss app-button app-button--enter'
-        aria-label={`Encerrar ${entry.title}`}
+        aria-label={live ? `Encerrar ${entry.title}` : `Remover ${entry.title}`}
         onClick={onDismiss}
       >
         <X size={14} strokeWidth={2.25} />
@@ -219,10 +321,11 @@ function AgentShellTerminalDockComponent({
   const [openPaneId, setOpenPaneId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
-  const visibleEntries = useMemo(
-    () => entries.filter((entry) => entry.status !== 'completed' && entry.status !== 'failed'),
+  const runningCount = useMemo(
+    () => entries.filter((entry) => isLiveShellStatus(entry.status)).length,
     [entries],
   );
+  const stoppedCount = entries.length - runningCount;
 
   const closePanel = useCallback(() => {
     setOpenPaneId(null);
@@ -232,18 +335,18 @@ function AgentShellTerminalDockComponent({
   }, [onComposerFocus]);
 
   useEffect(() => {
-    if (visibleEntries.length === 0) {
+    if (entries.length === 0) {
       setOpenPaneId(null);
       return;
     }
 
-    if (openPaneId && !visibleEntries.some((entry) => entry.paneId === openPaneId)) {
+    if (openPaneId && !entries.some((entry) => entry.paneId === openPaneId)) {
       setOpenPaneId(null);
     }
-  }, [openPaneId, visibleEntries]);
+  }, [openPaneId, entries]);
 
   useEffect(() => {
-    if (visibleEntries.length === 0) {
+    if (runningCount === 0) {
       return;
     }
 
@@ -254,7 +357,7 @@ function AgentShellTerminalDockComponent({
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [visibleEntries.length]);
+  }, [runningCount]);
 
   const handleDismiss = useCallback(
     (entry: AgentShellTerminalEntry) => {
@@ -273,19 +376,18 @@ function AgentShellTerminalDockComponent({
     [agentPaneId, closePanel, disposePaneSession, openPaneId, removeEntry],
   );
 
-  if (visibleEntries.length === 0) {
+  if (entries.length === 0) {
     return null;
   }
 
-  const countLabel =
-    visibleEntries.length === 1 ? '1 Terminal Running' : `${visibleEntries.length} Terminals Running`;
+  const countLabel = resolveDockCountLabel(runningCount, stoppedCount);
 
   return (
     <>
       <div className='agent-shell-terminal-dock app-button--enter'>
         <div className='agent-shell-terminal-dock__header'>{countLabel}</div>
         <div className='agent-shell-terminal-dock__list'>
-          {visibleEntries.map((entry) => (
+          {entries.map((entry) => (
             <AgentShellTerminalDockItem
               key={entry.paneId}
               entry={entry}
@@ -298,7 +400,7 @@ function AgentShellTerminalDockComponent({
         </div>
       </div>
 
-      {visibleEntries.map((entry) => (
+      {entries.map((entry) => (
         <AgentShellTerminalPanel
           key={entry.paneId}
           entry={entry}

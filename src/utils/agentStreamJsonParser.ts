@@ -11,6 +11,7 @@ import type {
 import { isAgentTurnSummaryVisible } from '@/utils/agentTurnSummary';
 import { writeDebugSessionLog } from '@/utils/debugSessionLog';
 import { sanitizeResponseText } from '@/utils/agentTranscriptParser';
+import { shouldOpenAgentShellToolTerminal } from '@/utils/agentShellToolTerminal';
 import { ensureOtherOption } from '@/utils/agentQuestionPrompt';
 import {
   deduplicatePlanResponseActivities,
@@ -63,6 +64,7 @@ export interface AgentStreamJsonParserState {
   runningToolRunStack: string[];
   runningTaskStack: string[];
   sawStreamingAssistantDelta: boolean;
+  handoffComplete: boolean;
 }
 
 export interface StreamJsonTurnUpdate {
@@ -118,6 +120,7 @@ export function createAgentStreamJsonParserState(): AgentStreamJsonParserState {
     runningToolRunStack: [],
     runningTaskStack: [],
     sawStreamingAssistantDelta: false,
+    handoffComplete: false,
   };
 }
 
@@ -2082,13 +2085,19 @@ function handleStreamJsonEvent(
       upsertResponse(state, resultText, 'final');
     }
 
+    const hasLiveDevShell = state.activities.some(
+      (entry) =>
+        entry.kind === 'tool_run' &&
+        Boolean(entry.streaming) &&
+        shouldOpenAgentShellToolTerminal(entry.toolCommand ?? ''),
+    );
+
     if (
+      !hasLiveDevShell &&
       !hasPendingStreamJsonInteraction(state) &&
-      hasMeaningfulStreamJsonTurnOutput(state) &&
-      !findStreamingThoughtActivity(state)?.streaming &&
-      state.runningToolRunStack.length === 0 &&
-      state.runningTaskStack.length === 0
+      (hasMeaningfulStreamJsonTurnOutput(state) || Boolean(resultText))
     ) {
+      forceSettleStreamJsonInFlightWork(state);
       state.shouldFinalize = true;
       // #region agent log
       writeDebugSessionLog({
@@ -2560,6 +2569,19 @@ export function looksLikeTruncatedAgentResponse(text: string): boolean {
   return false;
 }
 
+export function looksLikeLiveServerReply(text: string): boolean {
+  const trimmed = text.trim();
+
+  if (!trimmed) {
+    return false;
+  }
+
+  return (
+    /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?/i.test(trimmed) ||
+    /\b(?:est[aá] no ar|no ar em|rodando em\s+https?:)/i.test(trimmed)
+  );
+}
+
 export function looksLikeMidProgressAgentResponse(text: string): boolean {
   const trimmed = text.trim();
 
@@ -2572,7 +2594,7 @@ export function looksLikeMidProgressAgentResponse(text: string): boolean {
     /\b(vou |vamos |i'll |i will |let me |i am going to |i'm going to |next[,:]?\s|em seguida|agora vou|seguindo com|continu(?:ar|ando|e)\b)/i.test(
       tail,
     ) ||
-    /\b(atualizo|atualizando|subo|subindo|fa[cç]o|fazendo|verifico|verificando|testo|testando|leio|lendo|edito|editando|crio|criando|removo|removendo|adiciono|adicionando|implemento|implementando|aplico|aplicando|reinicio|reiniciando|configuro|configurando|ajusto|ajustando|valido|validando|confiro|conferindo|envio|enviando|rodo|rodando|executo|executando|abro|abrindo|fecho|fechando|monitoro|monitorando|acompanho|acompanhando|revogo|revogando|aguardo|aguardando)\b/i.test(
+    /\b(atualizo|atualizando|subo|subindo|fa[cç]o|fazendo|gero|gerando|verifico|verificando|testo|testando|leio|lendo|edito|editando|crio|criando|removo|removendo|adiciono|adicionando|implemento|implementando|aplico|aplicando|reinicio|reiniciando|configuro|configurando|ajusto|ajustando|valido|validando|confiro|conferindo|envio|enviando|rodo|rodando|executo|executando|abro|abrindo|fecho|fechando|monitoro|monitorando|acompanho|acompanhando|revogo|revogando|aguardo|aguardando)\b/i.test(
       tail,
     ) ||
     /\b(running|executing|checking|testing|reading|writing|updating|creating|sending|polling|waiting)\b/i.test(
@@ -2849,7 +2871,8 @@ export function finalizeStreamJsonTurn(
     : turn.activities.length > 0
       ? turn.activities
       : state.activities;
-  const incompleteEnding = hasIncompleteStreamJsonEnding(state, sourceActivities);
+  const incompleteEnding =
+    !state.handoffComplete && hasIncompleteStreamJsonEnding(state, sourceActivities);
   const lastSourceActivity = [...sourceActivities]
     .reverse()
     .find(
@@ -3052,4 +3075,5 @@ export function resetAgentStreamJsonTurn(state: AgentStreamJsonParserState): voi
   state.runningToolRunStack = [];
   state.runningTaskStack = [];
   state.sawStreamingAssistantDelta = false;
+  state.handoffComplete = false;
 }

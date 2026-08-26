@@ -154,8 +154,17 @@ function AgentViewSessionComponent({
     transcriptScrollRef.current?.scrollToTurn(turnId);
   }, []);
 
+  const dismissAgentReadyPing = useCallback(() => {
+    useProjectNotificationStore.getState().clearNotificationForPane(tab.id);
+
+    if (!isFocused) {
+      onFocusPane();
+    }
+  }, [isFocused, onFocusPane, tab.id]);
+
   const handleDraftChange = useCallback(
     (value: string) => {
+      dismissAgentReadyPing();
       setDraft(value);
 
       if (value.trim()) {
@@ -165,11 +174,12 @@ function AgentViewSessionComponent({
 
       clearPaneDraft(tab.id);
     },
-    [clearPaneDraft, projectId, setPaneDraft, tab.id],
+    [clearPaneDraft, dismissAgentReadyPing, projectId, setPaneDraft, tab.id],
   );
 
   const appendDraft = useCallback(
     (text: string) => {
+      dismissAgentReadyPing();
       setDraft((prev) => {
         const next = prev + text;
 
@@ -183,7 +193,7 @@ function AgentViewSessionComponent({
       });
       inputRef.current?.focus({ preventScroll: true });
     },
-    [clearPaneDraft, projectId, setPaneDraft, tab.id],
+    [clearPaneDraft, dismissAgentReadyPing, projectId, setPaneDraft, tab.id],
   );
 
   const handleTurnsChange = useCallback(
@@ -326,6 +336,7 @@ function AgentViewSessionComponent({
           'button, a, input, textarea, label, code, [role="menu"], [role="menuitem"], .context-menu',
         )
       ) {
+        onFocusPane();
         return;
       }
 

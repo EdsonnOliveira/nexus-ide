@@ -3,6 +3,32 @@ function isAbsolutePath(value: string): boolean {
   return normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized);
 }
 
+export function expandUserPath(input: string, projectPath = ''): string {
+  const normalized = input.replace(/\\/g, '/');
+
+  if (normalized !== '~' && !normalized.startsWith('~/')) {
+    return normalized;
+  }
+
+  const home =
+    projectPath.replace(/\\/g, '/').match(/^(\/Users\/[^/]+)/)?.[1] ??
+    projectPath.replace(/\\/g, '/').match(/^(\/home\/[^/]+)/)?.[1] ??
+    null;
+
+  if (!home) {
+    return normalized;
+  }
+
+  return normalized === '~' ? home : `${home}${normalized.slice(1)}`;
+}
+
+function repoContainsAbsoluteFile(repoPath: string, filePath: string): boolean {
+  const normalizedRepo = repoPath.replace(/\\/g, '/').replace(/\/+$/, '');
+  const normalizedInput = filePath.replace(/\\/g, '/');
+
+  return normalizedInput === normalizedRepo || normalizedInput.startsWith(`${normalizedRepo}/`);
+}
+
 function pathBasenameFromSegments(value: string): string {
   const segments = value.split('/').filter(Boolean);
   return segments[segments.length - 1] ?? value;
@@ -29,32 +55,28 @@ function pickGitRepoPathForFile(
     return null;
   }
 
-  const normalizedProject = projectPath.replace(/\\/g, '/').replace(/\/+$/, '');
-  const normalizedInput = filePath.replace(/\\/g, '/');
+  const normalizedProject = expandUserPath(projectPath, projectPath).replace(/\/+$/, '');
+  const normalizedInput = expandUserPath(filePath, normalizedProject);
+  const rootRepo = repos.find((repo) => repo.relativePath === '.');
+  const sortedRepos = [...repos].sort((left, right) => right.path.length - left.path.length);
 
   if (!isAbsolutePath(normalizedInput)) {
     const relative = normalizeGitInputRelativePath(normalizedInput);
-    const sortedRepos = [...repos].sort((left, right) => right.path.length - left.path.length);
 
     for (const repo of sortedRepos) {
-      if (repo.relativePath !== '.' && relative.startsWith(`${repo.relativePath}/`)) {
+      if (
+        repo.relativePath !== '.' &&
+        (relative === repo.relativePath || relative.startsWith(`${repo.relativePath}/`))
+      ) {
         return repo.path;
       }
     }
 
-    if (repos.length === 1) {
-      return repos[0].path;
-    }
-
-    return sortedRepos[0]?.path ?? null;
+    return rootRepo?.path ?? null;
   }
 
-  const sortedRepos = [...repos].sort((left, right) => right.path.length - left.path.length);
-
   for (const repo of sortedRepos) {
-    const normalizedRepo = repo.path.replace(/\\/g, '/').replace(/\/+$/, '');
-
-    if (normalizedInput === normalizedRepo || normalizedInput.startsWith(`${normalizedRepo}/`)) {
+    if (repoContainsAbsoluteFile(repo.path, normalizedInput)) {
       return repo.path;
     }
   }
@@ -79,7 +101,7 @@ function pickGitRepoPathForFile(
     }
   }
 
-  return repos.length === 1 ? repos[0].path : (sortedRepos[0]?.path ?? null);
+  return rootRepo?.path ?? null;
 }
 
 export async function resolveGitRepoPathForFile(

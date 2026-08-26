@@ -1,14 +1,18 @@
-import type {
-  ApiHttpResponse,
-  ApiProjectData,
-  ApiSendRequestPayload,
-  ApiTab,
-} from '@/types/api';
+import type { ApiHttpResponse, ApiProjectData, ApiSendRequestPayload, ApiTab } from '@/types/api';
 import type { Automation } from '@/types/automation';
 import type { ProjectTestEntry } from '@/types/test';
 import type { PasswordCollection } from '@/types/password';
 import type { AgentGitChangeGroup } from '@/types/agentGit';
-import type { ProjectTask, TaskAttachment, TaskComment, TaskCredentialStatus, TaskCredentialsPayload, TaskDetailData, TaskIntegrationConfig, TaskSyncResult } from '@/types/task';
+import type {
+  ProjectTask,
+  TaskAttachment,
+  TaskComment,
+  TaskCredentialStatus,
+  TaskCredentialsPayload,
+  TaskDetailData,
+  TaskIntegrationConfig,
+  TaskSyncResult,
+} from '@/types/task';
 import type {
   GitBranchInfo,
   GitCommandResult,
@@ -247,10 +251,7 @@ export interface AgentTab {
 export type EmulatorPlatform = 'android' | 'ios';
 
 export type EmulatorDeviceOrientation =
-  | 'portrait'
-  | 'landscapeLeft'
-  | 'portraitUpsideDown'
-  | 'landscapeRight';
+  'portrait' | 'landscapeLeft' | 'portraitUpsideDown' | 'landscapeRight';
 
 export type EmulatorSessionState = 'booting' | 'running' | 'stopped' | 'error';
 
@@ -377,7 +378,8 @@ export type TabBarItem = Tab | SplitTab;
 
 export type SplitOrientation = 'horizontal' | 'vertical';
 
-export type SplitSide = 'left' | 'right' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+export type SplitSide =
+  'left' | 'right' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 
 export type SplitLayoutNode =
   | { type: 'tab'; tabId: string }
@@ -500,7 +502,7 @@ export interface ProjectUpdatePayload {
   flag?: ProjectFlag | null;
 }
 
-export type ProjectKind = 'web' | 'mobile' | 'api';
+export type ProjectKind = 'web' | 'mobile' | 'api' | 'desktop';
 
 export interface ProjectDirectoryEntry {
   name: string;
@@ -680,14 +682,10 @@ export interface CalendarEventsSnapshot {
 
 export type CalendarEventStatus = 'confirmed' | 'tentative' | 'canceled' | 'none';
 
-export type CalendarAttendeeStatus =
-  | 'accepted'
-  | 'declined'
-  | 'tentative'
-  | 'pending'
-  | 'unknown';
+export type CalendarAttendeeStatus = 'accepted' | 'declined' | 'tentative' | 'pending' | 'unknown';
 
-export type CalendarRecurrenceKind = 'none' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly' | 'custom';
+export type CalendarRecurrenceKind =
+  'none' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly' | 'custom';
 
 export type CalendarMutationSpan = 'thisEvent' | 'futureEvents';
 
@@ -843,13 +841,7 @@ export type MacParakeetTranslateConclusionResult =
   | { ok: true; conclusion: string }
   | { ok: false; reason: 'not_found' | 'empty' | 'unauthorized' | 'failed' };
 
-export type JarvisPhase =
-  | 'idle'
-  | 'listening'
-  | 'processing'
-  | 'speaking'
-  | 'executing'
-  | 'error';
+export type JarvisPhase = 'idle' | 'listening' | 'processing' | 'speaking' | 'executing' | 'error';
 
 export type JarvisIntentMode = 'action' | 'question' | 'ping';
 
@@ -880,13 +872,7 @@ export interface JarvisProcessResult {
 }
 
 export type VercelDeploymentState =
-  | 'READY'
-  | 'ERROR'
-  | 'BUILDING'
-  | 'QUEUED'
-  | 'INITIALIZING'
-  | 'CANCELED'
-  | 'BLOCKED';
+  'READY' | 'ERROR' | 'BUILDING' | 'QUEUED' | 'INITIALIZING' | 'CANCELED' | 'BLOCKED';
 
 export interface VercelActiveDeployment {
   uid: string;
@@ -1070,13 +1056,12 @@ export interface NexusAPI {
       continueSession?: boolean;
       resumeChatId?: string | null;
       runToken: string;
+      preserveChildren?: boolean;
     }) => Promise<void>;
-    stop: (paneId: string) => void;
+    stop: (paneId: string, options?: { preserveChildren?: boolean }) => void;
     isRunning: (paneId: string) => Promise<boolean>;
     warm: () => Promise<void>;
-    onData: (
-      callback: (paneId: string, data: string, runToken: string) => void,
-    ) => () => void;
+    onData: (callback: (paneId: string, data: string, runToken: string) => void) => () => void;
     onDone: (
       callback: (
         paneId: string,
@@ -1092,10 +1077,7 @@ export interface NexusAPI {
     openFiles: () => Promise<string[] | null>;
   };
   tasks: {
-    saveCredentials: (
-      projectId: string,
-      credentials: TaskCredentialsPayload,
-    ) => Promise<void>;
+    saveCredentials: (projectId: string, credentials: TaskCredentialsPayload) => Promise<void>;
     getCredentials: (projectId: string) => Promise<TaskCredentialsPayload>;
     getCredentialStatus: (projectId: string) => Promise<TaskCredentialStatus>;
     clearCredentials: (projectId: string) => Promise<void>;
@@ -1266,20 +1248,25 @@ export interface NexusAPI {
       sourcePaths: string[],
     ) => Promise<
       Array<
-        | { ok: true; path: string; entryType?: 'file' | 'directory' }
-        | { ok: false; error: string }
+        { ok: true; path: string; entryType?: 'file' | 'directory' } | { ok: false; error: string }
       >
     >;
     renameEntry: (
       entryPath: string,
       nextName: string,
     ) => Promise<{ ok: true; path: string } | { ok: false; error: string }>;
-    deleteEntry: (entryPath: string) => Promise<{ ok: true; path: string } | { ok: false; error: string }>;
+    deleteEntry: (
+      entryPath: string,
+    ) => Promise<{ ok: true; path: string } | { ok: false; error: string }>;
     revealInFolder: (entryPath: string) => Promise<void>;
     watchProject: (dirPath: string) => Promise<void>;
     unwatchProject: (dirPath: string) => Promise<void>;
     onProjectChange: (
-      callback: (payload: { projectPath: string; changedPath?: string; structural?: boolean }) => void,
+      callback: (payload: {
+        projectPath: string;
+        changedPath?: string;
+        structural?: boolean;
+      }) => void,
     ) => () => void;
   };
   browser: {
@@ -1291,16 +1278,15 @@ export interface NexusAPI {
   };
   session: {
     getScrollback: (paneId: string) => Promise<string>;
-    saveScrollbacks: (
-      entries: Record<string, string>,
-      pruneToPaneIds?: string[],
-    ) => Promise<void>;
+    saveScrollbacks: (entries: Record<string, string>, pruneToPaneIds?: string[]) => Promise<void>;
     removePane: (paneId: string) => Promise<void>;
     flushComplete: () => Promise<void>;
   };
   git: {
     getStatus: (dirPath: string) => Promise<GitStatusResult>;
-    getChangeCounts: (dirPath: string) => Promise<{ total: number; byRepo: Record<string, number> }>;
+    getChangeCounts: (
+      dirPath: string,
+    ) => Promise<{ total: number; byRepo: Record<string, number> }>;
     discoverRepos: (dirPath: string) => Promise<GitRepoDiscovery[]>;
     stage: (dirPath: string, paths: string[]) => Promise<GitCommandResult>;
     unstage: (dirPath: string, paths: string[]) => Promise<GitCommandResult>;
@@ -1417,10 +1403,7 @@ export interface NexusAPI {
     status: () => Promise<JarvisStatus>;
     start: () => Promise<JarvisStatus>;
     stop: () => Promise<JarvisStatus>;
-    processUtterance: (
-      wavBase64: string,
-      projectNames?: string[],
-    ) => Promise<JarvisProcessResult>;
+    processUtterance: (wavBase64: string, projectNames?: string[]) => Promise<JarvisProcessResult>;
     processTranscript: (
       transcript: string,
       projectNames?: string[],
@@ -1579,9 +1562,7 @@ export interface NexusAPI {
       activeTerminals: number;
     }>;
     pingRuntime: () => Promise<boolean>;
-    listOpenAgentSessions: () => Promise<
-      import('@nexus/supabase').AgentSessionBundle[]
-    >;
+    listOpenAgentSessions: () => Promise<import('@nexus/supabase').AgentSessionBundle[]>;
     writeMobileReleaseSnapshot: (payload: unknown) => Promise<{ ok: boolean; path: string }>;
   };
 }
@@ -1634,6 +1615,7 @@ export interface WorkspaceContextMenuState {
   y: number;
 }
 
-export type ProjectPromptMode = 'rename' | 'icon' | 'workspace' | 'workspace-rename' | 'workspace-icon';
+export type ProjectPromptMode =
+  'rename' | 'icon' | 'workspace' | 'workspace-rename' | 'workspace-icon';
 
 export {};

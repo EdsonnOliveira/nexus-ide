@@ -6,4 +6,10 @@ type DebugSessionLogPayload = {
   runId?: string;
 };
 
-export function writeDebugSessionLog(_payload: DebugSessionLogPayload): void {}
+export function writeDebugSessionLog(payload: DebugSessionLogPayload): void {
+  if (!import.meta.env.DEV) {
+    return;
+  }
+
+  console.debug('[agent-debug]', payload.location, payload.message, payload.data ?? {});
+}

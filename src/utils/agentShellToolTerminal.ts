@@ -5,14 +5,7 @@ import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
 import { findPaneTab } from '@/utils/tabGroups';
 import { useProjectStore } from '@/stores/useProjectStore';
 
-const AGENT_TERMINAL_SCRIPT_NAMES = new Set([
-  'dev',
-  'start',
-  'serve',
-  'ios',
-  'android',
-  'web',
-]);
+const AGENT_TERMINAL_SCRIPT_NAMES = new Set(['dev', 'start', 'serve', 'ios', 'android', 'web']);
 
 const SCRIPT_TITLE_LABELS: Record<string, string> = {
   dev: 'Start dev server',
@@ -71,6 +64,40 @@ function matchesDevTerminalScript(segment: string): boolean {
   }
 
   return matchesNativeRunCommand(trimmed);
+}
+
+export function shouldKeepAgentShellsAlive(
+  agentPaneId: string,
+  activities: Array<{ kind: string; streaming?: boolean; toolCommand?: string }>,
+): boolean {
+  const entries = useAgentShellTerminalStore.getState().entriesByAgentPane[agentPaneId] ?? [];
+
+  if (entries.some((entry) => entry.status === 'starting' || entry.status === 'running')) {
+    return true;
+  }
+
+  return activities.some(
+    (entry) =>
+      entry.kind === 'tool_run' &&
+      Boolean(entry.streaming) &&
+      shouldOpenAgentShellToolTerminal(entry.toolCommand ?? ''),
+  );
+}
+
+export function hasBlockingAgentToolWork(
+  activities: Array<{ kind: string; streaming?: boolean; toolCommand?: string }>,
+): boolean {
+  return activities.some((entry) => {
+    if (entry.kind === 'task' && entry.streaming) {
+      return true;
+    }
+
+    if (entry.kind !== 'tool_run' || !entry.streaming) {
+      return false;
+    }
+
+    return !shouldOpenAgentShellToolTerminal(entry.toolCommand ?? '');
+  });
 }
 
 export function shouldOpenAgentShellToolTerminal(command: string): boolean {
@@ -192,9 +219,7 @@ function resolveShellToolCwd(agentPaneId: string, cwd: string | null): string {
   const agentTab = project ? findPaneTab(project.tabs, agentPaneId) : null;
 
   return (
-    (agentTab?.type === 'agent' ? agentTab.workingDirectory?.trim() : null) ||
-    project?.path ||
-    ''
+    (agentTab?.type === 'agent' ? agentTab.workingDirectory?.trim() : null) || project?.path || ''
   );
 }
 
@@ -250,10 +275,7 @@ function registerShellToolStarted(
   return paneId;
 }
 
-function registerShellToolCompleted(
-  agentPaneId: string,
-  event: StreamJsonShellToolEvent,
-): void {
+function registerShellToolCompleted(agentPaneId: string, event: StreamJsonShellToolEvent): void {
   const paneId = dequeuePendingTerminal(agentPaneId);
 
   if (!paneId) {
@@ -266,6 +288,15 @@ function registerShellToolCompleted(
     : false;
 
   if (isLongRunning) {
+    const current = useAgentShellTerminalStore
+      .getState()
+      .getEntries(agentPaneId)
+      .find((entry) => entry.paneId === paneId);
+
+    if (current?.status === 'completed' || current?.status === 'failed') {
+      return;
+    }
+
     useAgentShellTerminalStore.getState().updateEntry(agentPaneId, paneId, {
       status: 'running',
     });

@@ -31,6 +31,10 @@ function getProjectKindBadgeLabel(kind: ProjectKind): string {
     return 'APP';
   }
 
+  if (kind === 'desktop') {
+    return 'DESK';
+  }
+
   return kind.toUpperCase();
 }
 

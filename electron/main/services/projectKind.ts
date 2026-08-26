@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-export type ProjectKind = 'web' | 'mobile' | 'api';
+export type ProjectKind = 'web' | 'mobile' | 'api' | 'desktop';
 
 interface PackageJson {
   dependencies?: Record<string, string>;
@@ -37,6 +37,28 @@ function detectNodeProjectKind(root: string, pkg: PackageJson): ProjectKind | nu
     return 'mobile';
   }
 
+  const isDesktop =
+    hasDep(pkg, 'electron') ||
+    hasDep(pkg, 'electron-builder') ||
+    hasDep(pkg, 'electron-vite') ||
+    hasDep(pkg, 'electron-forge') ||
+    hasDep(pkg, '@electron-forge/cli') ||
+    hasDep(pkg, '@tauri-apps/api') ||
+    hasDep(pkg, '@tauri-apps/cli') ||
+    hasDep(pkg, 'nw') ||
+    hasDep(pkg, 'nw-builder') ||
+    hasFile(root, [
+      'src-tauri',
+      'forge.config.js',
+      'forge.config.ts',
+      'electron-builder.yml',
+      'electron-builder.yaml',
+    ]);
+
+  if (isDesktop) {
+    return 'desktop';
+  }
+
   if (hasDep(pkg, '@nestjs/core')) {
     return 'api';
   }
@@ -50,7 +72,6 @@ function detectNodeProjectKind(root: string, pkg: PackageJson): ProjectKind | nu
     hasDep(pkg, '@remix-run/react') ||
     hasDep(pkg, 'astro') ||
     hasDep(pkg, '@sveltejs/kit') ||
-    hasDep(pkg, 'electron') ||
     hasDep(pkg, 'react') ||
     hasDep(pkg, 'react-dom') ||
     hasDep(pkg, 'vue') ||
@@ -122,6 +143,10 @@ export function detectProjectKinds(dirPaths: string[]): Record<string, ProjectKi
 export function projectKindBadgeLabel(kind: ProjectKind): string {
   if (kind === 'mobile') {
     return 'APP';
+  }
+
+  if (kind === 'desktop') {
+    return 'DESK';
   }
 
   return kind.toUpperCase();

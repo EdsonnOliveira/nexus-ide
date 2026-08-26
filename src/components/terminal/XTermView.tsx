@@ -90,6 +90,7 @@ interface XTermViewProps {
   onFocusHints?: () => void;
   hintsKeyboardActive?: boolean;
   restoreCommand?: string | null;
+  onCommandStatus?: (event: TerminalCommandStatusEvent) => void;
 }
 
 const LAUNCH_COMMAND_DELAY_MS = 350;
@@ -307,7 +308,10 @@ async function fetchTerminalScrollback(ptyId: string, paneId: string): Promise<s
   return scrollback;
 }
 
-function canUseTerminal(terminal: Terminal | null, disposedRef: { current: boolean }): terminal is Terminal {
+function canUseTerminal(
+  terminal: Terminal | null,
+  disposedRef: { current: boolean },
+): terminal is Terminal {
   return Boolean(terminal && !disposedRef.current);
 }
 
@@ -433,6 +437,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     onFocusHints,
     hintsKeyboardActive = false,
     restoreCommand = null,
+    onCommandStatus,
   },
   ref,
 ) {
@@ -453,6 +458,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
   const onOpenLinkInBrowserRef = useRef(onOpenLinkInBrowser);
   const onCwdChangeRef = useRef(onCwdChange);
   const onFocusHintsRef = useRef(onFocusHints);
+  const onCommandStatusRef = useRef(onCommandStatus);
   const cwdRef = useRef(cwd);
   const projectPathRef = useRef(projectPath);
   const parseStreamRef = useRef<(data: string) => string>((data) => data);
@@ -477,14 +483,18 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
   const syncCommandHistoryPositionRef = useRef<() => void>(() => undefined);
   const applyHistoryCommandRef = useRef<(command: string) => void>(() => undefined);
   const closeCommandHistoryRef = useRef<(restoreDraft?: boolean) => void>(() => undefined);
-  const openOrNavigateCommandHistoryRef = useRef<(direction: 'up' | 'down') => boolean>(() => false);
+  const openOrNavigateCommandHistoryRef = useRef<(direction: 'up' | 'down') => boolean>(
+    () => false,
+  );
   const [linkMenu, setLinkMenu] = useState<{ url: string; x: number; y: number } | null>(null);
   const [promptInfo, setPromptInfo] = useState<TerminalPromptInfo | null>(null);
   const [promptBadgesVisible, setPromptBadgesVisible] = useState(false);
   const [promptBadgesPos, setPromptBadgesPos] = useState({ top: 0, left: 0 });
   const [commandHistoryOpen, setCommandHistoryOpen] = useState(false);
   const [commandHistoryIndex, setCommandHistoryIndex] = useState(0);
-  const [commandHistoryEntries, setCommandHistoryEntries] = useState<ShellCommandHistoryEntry[]>([]);
+  const [commandHistoryEntries, setCommandHistoryEntries] = useState<ShellCommandHistoryEntry[]>(
+    [],
+  );
   const [commandHistoryPos, setCommandHistoryPos] = useState<TerminalCommandHistoryPosition>({
     top: 0,
     left: 0,
@@ -526,9 +536,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       return;
     }
 
-    setPromptBadgesPos((prev) =>
-      prev.top === next.top && prev.left === next.left ? prev : next,
-    );
+    setPromptBadgesPos((prev) => (prev.top === next.top && prev.left === next.left ? prev : next));
   }, []);
 
   syncPromptBadgesPositionRef.current = syncPromptBadgesPosition;
@@ -690,86 +698,80 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
 
   closeCommandHistoryRef.current = closeCommandHistory;
 
-  const openOrNavigateCommandHistory = useCallback(
-    (direction: 'up' | 'down') => {
-      if (isAgentSessionRef.current || !promptBadgesVisibleRef.current) {
+  const openOrNavigateCommandHistory = useCallback((direction: 'up' | 'down') => {
+    if (isAgentSessionRef.current || !promptBadgesVisibleRef.current) {
+      return false;
+    }
+
+    const entries = useShellCommandHistoryStore.getState().getEntries(projectPathRef.current);
+
+    if (entries.length === 0) {
+      return false;
+    }
+
+    if (!commandHistoryOpenRef.current) {
+      if (direction !== 'up') {
         return false;
       }
 
-      const entries = useShellCommandHistoryStore.getState().getEntries(projectPathRef.current);
-
-      if (entries.length === 0) {
-        return false;
-      }
-
-      if (!commandHistoryOpenRef.current) {
-        if (direction !== 'up') {
-          return false;
-        }
-
-        commandHistoryDraftRef.current = inputLineRef.current;
-        commandHistoryOpenRef.current = true;
-        commandHistoryIndexRef.current = 0;
-        commandHistoryEntriesRef.current = entries;
-        setCommandHistoryEntries(entries);
-        setCommandHistoryIndex(0);
-        setCommandHistoryOpen(true);
-        applyHistoryCommandRef.current(entries[0]?.command ?? '');
+      commandHistoryDraftRef.current = inputLineRef.current;
+      commandHistoryOpenRef.current = true;
+      commandHistoryIndexRef.current = 0;
+      commandHistoryEntriesRef.current = entries;
+      setCommandHistoryEntries(entries);
+      setCommandHistoryIndex(0);
+      setCommandHistoryOpen(true);
+      applyHistoryCommandRef.current(entries[0]?.command ?? '');
+      requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            syncCommandHistoryPositionRef.current();
-          });
+          syncCommandHistoryPositionRef.current();
         });
+      });
+      return true;
+    }
+
+    if (direction === 'up') {
+      const nextIndex = Math.min(
+        commandHistoryIndexRef.current + 1,
+        commandHistoryEntriesRef.current.length - 1,
+      );
+
+      if (nextIndex === commandHistoryIndexRef.current) {
         return true;
       }
 
-      if (direction === 'up') {
-        const nextIndex = Math.min(
-          commandHistoryIndexRef.current + 1,
-          commandHistoryEntriesRef.current.length - 1,
-        );
-
-        if (nextIndex === commandHistoryIndexRef.current) {
-          return true;
-        }
-
-        commandHistoryIndexRef.current = nextIndex;
-        setCommandHistoryIndex(nextIndex);
-        applyHistoryCommandRef.current(commandHistoryEntriesRef.current[nextIndex]?.command ?? '');
-        return true;
-      }
-
-      if (commandHistoryIndexRef.current <= 0) {
-        closeCommandHistoryRef.current(true);
-        return true;
-      }
-
-      const nextIndex = commandHistoryIndexRef.current - 1;
       commandHistoryIndexRef.current = nextIndex;
       setCommandHistoryIndex(nextIndex);
       applyHistoryCommandRef.current(commandHistoryEntriesRef.current[nextIndex]?.command ?? '');
       return true;
-    },
-    [],
-  );
+    }
+
+    if (commandHistoryIndexRef.current <= 0) {
+      closeCommandHistoryRef.current(true);
+      return true;
+    }
+
+    const nextIndex = commandHistoryIndexRef.current - 1;
+    commandHistoryIndexRef.current = nextIndex;
+    setCommandHistoryIndex(nextIndex);
+    applyHistoryCommandRef.current(commandHistoryEntriesRef.current[nextIndex]?.command ?? '');
+    return true;
+  }, []);
 
   openOrNavigateCommandHistoryRef.current = openOrNavigateCommandHistory;
 
-  const handleSelectCommandHistoryIndex = useCallback(
-    (index: number) => {
-      const entry = commandHistoryEntriesRef.current[index];
+  const handleSelectCommandHistoryIndex = useCallback((index: number) => {
+    const entry = commandHistoryEntriesRef.current[index];
 
-      if (!entry) {
-        return;
-      }
+    if (!entry) {
+      return;
+    }
 
-      commandHistoryIndexRef.current = index;
-      setCommandHistoryIndex(index);
-      applyHistoryCommandRef.current(entry.command);
-      closeCommandHistoryRef.current(false);
-    },
-    [],
-  );
+    commandHistoryIndexRef.current = index;
+    setCommandHistoryIndex(index);
+    applyHistoryCommandRef.current(entry.command);
+    closeCommandHistoryRef.current(false);
+  }, []);
 
   useEffect(() => {
     if (isAgentSession) {
@@ -845,8 +847,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         const promptText = readShellPromptInput(terminal);
         const image = useTerminalPasteImageStore
           .getState()
-          .imagesByPane[paneIdRef.current]
-          ?.find((entry) => entry.id === imageId);
+          .imagesByPane[paneIdRef.current]?.find((entry) => entry.id === imageId);
         const sequence = image
           ? buildRemoveImagePathPromptSequence(image.relativePath, promptText)
           : buildRemoveImagePromptSequence(imageId, promptText);
@@ -951,7 +952,8 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     onOpenLinkInBrowserRef.current = onOpenLinkInBrowser;
     onCwdChangeRef.current = onCwdChange;
     onFocusHintsRef.current = onFocusHints;
-  }, [onCwdChange, onFocusHints, onOpenLinkInBrowser, onPtyCreated, onPtyLost]);
+    onCommandStatusRef.current = onCommandStatus;
+  }, [onCwdChange, onFocusHints, onOpenLinkInBrowser, onPtyCreated, onPtyLost, onCommandStatus]);
 
   useEffect(() => {
     cwdRef.current = cwd;
@@ -1140,10 +1142,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         }
 
         if (event.key === 'ArrowUp') {
-          if (
-            !commandHistoryOpenRef.current &&
-            inputLineRef.current.length > 0
-          ) {
+          if (!commandHistoryOpenRef.current && inputLineRef.current.length > 0) {
             return true;
           }
 
@@ -1324,9 +1323,8 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         },
       },
     );
-    const disposeAgentDetectorReset = trackAgentReadyDetectorReset(
-      paneIdRef.current,
-      () => agentReadyDetector.reset(),
+    const disposeAgentDetectorReset = trackAgentReadyDetectorReset(paneIdRef.current, () =>
+      agentReadyDetector.reset(),
     );
 
     inputLineRef.current = '';
@@ -1399,12 +1397,17 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         return;
       }
 
-      const baseLine =
-        activeTerminal.buffer.active.baseY + activeTerminal.buffer.active.cursorY;
+      const baseLine = activeTerminal.buffer.active.baseY + activeTerminal.buffer.active.cursorY;
       pendingCommandStatusEvents = [];
       const cleaned = parseStream(data);
       const commandEvents = pendingCommandStatusEvents;
       pendingCommandStatusEvents = [];
+
+      if (commandEvents.length > 0) {
+        for (const event of commandEvents) {
+          onCommandStatusRef.current?.(event);
+        }
+      }
 
       writeTerminalOutput(activeTerminal, cleaned, stickToBottomRef, () => {
         if (!canUseTerminal(terminalRef.current, disposedRef) || commandEvents.length === 0) {
@@ -1412,12 +1415,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         }
 
         try {
-          commandDecorations.handleEvents(
-            terminalRef.current,
-            cleaned,
-            baseLine,
-            commandEvents,
-          );
+          commandDecorations.handleEvents(terminalRef.current, cleaned, baseLine, commandEvents);
         } catch {
           // ignore decoration failures so the shell stays usable
         }
@@ -1634,7 +1632,13 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
             }
           }
 
-          if (terminal && fitAddon && isVisible && containerRef.current && canUseTerminal(terminal, disposedRef)) {
+          if (
+            terminal &&
+            fitAddon &&
+            isVisible &&
+            containerRef.current &&
+            canUseTerminal(terminal, disposedRef)
+          ) {
             scheduleTerminalGeometrySync(
               fitAddon,
               terminal,
@@ -1661,7 +1665,12 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         ptyIdRef.current = null;
       }
 
-      if (!ptyIdRef.current && !creatingRef.current && isRuntimeActive && !terminalExitedRef.current) {
+      if (
+        !ptyIdRef.current &&
+        !creatingRef.current &&
+        isRuntimeActive &&
+        !terminalExitedRef.current
+      ) {
         await spawnTerminalRef.current();
       }
     })();
