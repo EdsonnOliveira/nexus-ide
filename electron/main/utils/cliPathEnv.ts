@@ -3,6 +3,7 @@ import path from 'node:path';
 
 function getCliPathSegments(home: string): string[] {
   return [
+    path.join(home, 'bin'),
     path.join(home, '.local', 'bin'),
     path.join(home, '.cursor', 'bin'),
     '/opt/homebrew/bin',

@@ -11,6 +11,7 @@ export interface TerminalCommandHint {
     | 'android'
     | 'cursor'
     | 'claude'
+    | 'opencode'
     | 'codex'
     | 'gemini'
     | 'mode-agent'

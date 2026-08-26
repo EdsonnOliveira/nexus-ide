@@ -88,10 +88,12 @@ const nexusApi = {
       paneId: string;
       cwd: string;
       prompt: string;
+      cliAgent?: string;
       model?: string | null;
       mode?: 'plan' | 'ask';
       continueSession?: boolean;
       resumeChatId?: string | null;
+      attachmentPaths?: string[];
       runToken: string;
       preserveChildren?: boolean;
     }): Promise<void> => ipcRenderer.invoke('agent:printStart', options),
@@ -265,7 +267,7 @@ const nexusApi = {
     },
   },
   homeDashboard: {
-    getStats: (projectPaths: string[], provider?: 'cursor' | 'claude') =>
+    getStats: (projectPaths: string[], provider?: 'cursor' | 'claude' | 'opencode') =>
       ipcRenderer.invoke('homeDashboard:getStats', projectPaths, provider),
     recordActivity: (kind: 'prompts' | 'agentExecutions') =>
       ipcRenderer.invoke('homeDashboard:recordActivity', kind),

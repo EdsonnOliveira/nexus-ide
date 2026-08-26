@@ -1,4 +1,4 @@
-export const CLI_AGENT_COMMANDS = ['cursor-agent', 'claude', 'codex', 'gemini'] as const;
+export const CLI_AGENT_COMMANDS = ['cursor-agent', 'claude', 'opencode', 'codex', 'gemini'] as const;
 
 export type CliAgentCommand = (typeof CLI_AGENT_COMMANDS)[number];
 

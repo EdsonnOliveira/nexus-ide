@@ -6,6 +6,7 @@ import logoCodex from '@/assets/logo-codex.svg';
 import logoCursor from '@/assets/logo-cursor.svg';
 import logoExpo from '@/assets/logo-expo.svg';
 import logoGemini from '@/assets/logo-gemini.svg';
+import logoOpencode from '@/assets/logo-opencode.svg';
 import iconModeAgent from '@/assets/icon-mode-agent.svg';
 import iconModeAsk from '@/assets/icon-mode-ask.svg';
 import iconModeDebug from '@/assets/icon-mode-debug.svg';
@@ -37,6 +38,7 @@ const HINT_BADGE_ICON_SRC = {
   android: logoAndroid,
   cursor: logoCursor,
   claude: logoClaude,
+  opencode: logoOpencode,
   codex: logoCodex,
   gemini: logoGemini,
   'mode-agent': iconModeAgent,
@@ -52,6 +54,7 @@ const HINT_BADGE_COLORS = {
   android: '#059669',
   cursor: '#1a1a1a',
   claude: '#cc785c',
+  opencode: '#6366f1',
   codex: '#10a37f',
   gemini: '#1c69ff',
 } as const;

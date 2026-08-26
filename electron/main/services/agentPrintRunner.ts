@@ -15,10 +15,12 @@ export interface AgentPrintRunOptions {
   paneId: string;
   cwd: string;
   prompt: string;
+  cliAgent?: string;
   model?: string | null;
   mode?: 'plan' | 'ask';
   continueSession?: boolean;
   resumeChatId?: string | null;
+  attachmentPaths?: string[];
   runToken: string;
   preserveChildren?: boolean;
 }
@@ -72,6 +74,116 @@ function resolveCursorAgentExecutable(): string {
   }
 
   return 'cursor-agent';
+}
+
+function resolveOpenCodeExecutable(): string {
+  const home = os.homedir();
+  const candidates = [
+    path.join(home, 'bin', 'opencode'),
+    path.join(home, '.local', 'bin', 'opencode'),
+    '/opt/homebrew/bin/opencode',
+    '/usr/local/bin/opencode',
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return 'opencode';
+}
+
+function resolveCliAgentExecutable(cliAgent: string): string {
+  const base = cliAgent.trim().split(/\s+/)[0] ?? 'cursor-agent';
+
+  if (base === 'opencode') {
+    return resolveOpenCodeExecutable();
+  }
+
+  return resolveCursorAgentExecutable();
+}
+
+function buildCursorAgentArgs(options: AgentPrintRunOptions, resolvedCwd: string): string[] {
+  const args = [
+    '-p',
+    '--output-format',
+    'stream-json',
+    '--stream-partial-output',
+    '--trust',
+    '--force',
+    '--approve-mcps',
+    '--workspace',
+    resolvedCwd,
+  ];
+  const resumeChatId = options.resumeChatId?.trim();
+
+  if (resumeChatId) {
+    args.push('--resume', resumeChatId);
+  } else if (options.continueSession) {
+    args.push('--continue');
+  }
+
+  if (options.mode) {
+    args.push('--mode', options.mode);
+  }
+
+  const model = options.model?.trim();
+
+  if (model && model !== 'auto') {
+    args.push('--model', model);
+  }
+
+  if (options.prompt.trim()) {
+    args.push('--', options.prompt);
+  }
+
+  return args;
+}
+
+function buildOpenCodeArgs(options: AgentPrintRunOptions, resolvedCwd: string): string[] {
+  const args = ['run', '--format', 'json', '--auto', '--thinking', '--dir', resolvedCwd];
+  const resumeChatId = options.resumeChatId?.trim();
+
+  if (resumeChatId) {
+    args.push('--session', resumeChatId);
+  } else if (options.continueSession) {
+    args.push('--continue');
+  }
+
+  const model = options.model?.trim();
+
+  if (model && model !== 'auto') {
+    args.push('--model', model);
+  }
+
+  for (const attachmentPath of options.attachmentPaths ?? []) {
+    const trimmed = attachmentPath.trim();
+
+    if (trimmed) {
+      args.push('--file', trimmed);
+    }
+  }
+
+  if (options.prompt.trim()) {
+    args.push('--', options.prompt);
+  }
+
+  return args;
+}
+
+function buildAgentPrintArgs(options: AgentPrintRunOptions, resolvedCwd: string): string[] {
+  const base = (options.cliAgent ?? 'cursor-agent').trim().split(/\s+/)[0] ?? 'cursor-agent';
+
+  if (base === 'opencode') {
+    return buildOpenCodeArgs(options, resolvedCwd);
+  }
+
+  return buildCursorAgentArgs(options, resolvedCwd);
 }
 
 function resolveAgentPrintCwd(cwd: string): string {
@@ -284,40 +396,9 @@ class AgentPrintRunner {
 
     const runToken = options.runToken;
     const resolvedCwd = resolveAgentPrintCwd(options.cwd);
-    const args = [
-      '-p',
-      '--output-format',
-      'stream-json',
-      '--stream-partial-output',
-      '--trust',
-      '--force',
-      '--approve-mcps',
-      '--workspace',
-      resolvedCwd,
-    ];
-    const resumeChatId = options.resumeChatId?.trim();
-
-    if (resumeChatId) {
-      args.push('--resume', resumeChatId);
-    } else if (options.continueSession) {
-      args.push('--continue');
-    }
-
-    if (options.mode) {
-      args.push('--mode', options.mode);
-    }
-
-    const model = options.model?.trim();
-
-    if (model && model !== 'auto') {
-      args.push('--model', model);
-    }
-
-    if (options.prompt.trim()) {
-      args.push('--', options.prompt);
-    }
-
-    const executable = resolveCursorAgentExecutable();
+    const cliAgent = options.cliAgent ?? 'cursor-agent';
+    const args = buildAgentPrintArgs(options, resolvedCwd);
+    const executable = resolveCliAgentExecutable(cliAgent);
     const child = spawn(executable, args, {
       cwd: resolvedCwd,
       env: { ...process.env, PATH: buildCliPathEnv() },
@@ -337,8 +418,9 @@ class AgentPrintRunner {
         paneId: options.paneId,
         runToken,
         executable,
+        cliAgent,
         cwd: resolvedCwd,
-        resumeChatId: resumeChatId ?? null,
+        resumeChatId: options.resumeChatId?.trim() ?? null,
         continueSession: Boolean(options.continueSession),
         mode: options.mode ?? null,
         promptLength: options.prompt.trim().length,
@@ -458,7 +540,7 @@ class AgentPrintRunner {
           : !stdoutSeen && stderr
             ? stderr
             : !stdoutSeen
-              ? 'Agent encerrou sem emitir stream-json.'
+              ? 'Agent encerrou sem emitir eventos.'
               : undefined;
       const durationMs = Date.now() - startedAt;
 

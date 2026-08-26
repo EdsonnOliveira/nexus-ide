@@ -404,6 +404,10 @@ function extractSessionId(event: Record<string, unknown>): string | null {
     return event.sessionId;
   }
 
+  if (typeof event.sessionID === 'string' && event.sessionID.trim()) {
+    return event.sessionID;
+  }
+
   return null;
 }
 
@@ -1997,6 +2001,150 @@ function parseUsage(raw: unknown): AgentStreamJsonUsage | null {
   return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
 }
 
+function extractOpenCodePart(event: Record<string, unknown>): Record<string, unknown> | null {
+  const part = event.part;
+
+  if (!part || typeof part !== 'object') {
+    return null;
+  }
+
+  return part as Record<string, unknown>;
+}
+
+function handleOpenCodeToolUse(state: AgentStreamJsonParserState, part: Record<string, unknown>): void {
+  captureResponseLeadBeforeTools(state);
+  sealActiveResponseSegment(state);
+  settleThought(state);
+
+  const tool = typeof part.tool === 'string' ? part.tool.toLowerCase() : '';
+  const toolState = part.state as Record<string, unknown> | undefined;
+  const status = typeof toolState?.status === 'string' ? toolState.status : '';
+
+  if (status !== 'completed' && status !== 'error') {
+    return;
+  }
+
+  const input = toolState?.input as Record<string, unknown> | undefined;
+
+  if (tool === 'bash') {
+    const command = typeof input?.command === 'string' ? input.command.trim() : '';
+
+    if (command) {
+      trackShellCommand(state, command);
+      state.shellToolEvents.push({
+        type: 'started',
+        command,
+        output: '',
+        exitCode: null,
+      });
+      startToolRun(state, 'Running', { toolCommand: command });
+      completeToolRun(state, { label: 'Ran command' });
+    }
+
+    return;
+  }
+
+  if (tool === 'read') {
+    const filePath =
+      typeof input?.path === 'string'
+        ? input.path
+        : typeof input?.filePath === 'string'
+          ? input.filePath
+          : '';
+
+    if (filePath) {
+      startToolRun(state, `Reading ${basenamePath(filePath)}`, { filePath });
+      upsertFileRead(state, filePath);
+      completeToolRun(state);
+    }
+
+    return;
+  }
+
+  if (tool === 'write' || tool === 'edit') {
+    const filePath =
+      typeof input?.path === 'string'
+        ? input.path
+        : typeof input?.filePath === 'string'
+          ? input.filePath
+          : '';
+
+    if (filePath) {
+      const label =
+        tool === 'write'
+          ? `Writing ${basenamePath(filePath)}`
+          : `Editing ${basenamePath(filePath)}`;
+      startToolRun(state, label, { filePath });
+      completeToolRun(state);
+    }
+
+    return;
+  }
+
+  if (tool === 'glob') {
+    const pattern = typeof input?.pattern === 'string' ? input.pattern.trim() : '**/*';
+    const directory = typeof input?.path === 'string' ? input.path.trim() : '';
+    const label = directory ? `Glob ${pattern} in ${basenamePath(directory)}` : `Glob ${pattern}`;
+    startToolRun(state, label);
+    upsertFileRead(state, directory || pattern, label);
+    completeToolRun(state);
+    return;
+  }
+
+  if (tool === 'grep') {
+    const pattern = typeof input?.pattern === 'string' ? input.pattern.trim() : '';
+    const filePath = typeof input?.path === 'string' ? input.path.trim() : '';
+    const label = filePath ? `Grep ${pattern} in ${basenamePath(filePath)}` : `Grep ${pattern}`;
+    startToolRun(state, label);
+    upsertFileRead(state, filePath || pattern, label);
+    completeToolRun(state);
+    return;
+  }
+
+  if (tool === 'task') {
+    const description =
+      typeof input?.description === 'string' ? input.description : 'Subagent task';
+    const prompt = typeof input?.prompt === 'string' ? input.prompt : '';
+    startTaskActivity(state, {
+      description,
+      prompt,
+      subagentType: typeof input?.subagentType === 'string' ? input.subagentType : undefined,
+      agentId: typeof input?.agentId === 'string' ? input.agentId : undefined,
+    });
+    completeTaskActivity(state, {
+      args: {
+        description,
+        prompt,
+        subagentType: typeof input?.subagentType === 'string' ? input.subagentType : undefined,
+        agentId: typeof input?.agentId === 'string' ? input.agentId : undefined,
+      },
+    });
+    return;
+  }
+
+  const title = typeof toolState?.title === 'string' ? toolState.title.trim() : '';
+  startToolRun(state, title || `Running ${tool || 'tool'}`);
+  completeToolRun(state);
+}
+
+function maybeFinalizeOpenCodeStep(state: AgentStreamJsonParserState): void {
+  const hasLiveDevShell = state.activities.some(
+    (entry) =>
+      entry.kind === 'tool_run' &&
+      Boolean(entry.streaming) &&
+      shouldOpenAgentShellToolTerminal(entry.toolCommand ?? ''),
+  );
+
+  if (
+    !hasLiveDevShell &&
+    !hasPendingStreamJsonInteraction(state) &&
+    hasMeaningfulStreamJsonTurnOutput(state)
+  ) {
+    forceSettleStreamJsonInFlightWork(state);
+    state.shouldFinalize = true;
+  }
+}
+
 function handleStreamJsonEvent(
   state: AgentStreamJsonParserState,
   event: Record<string, unknown>,
@@ -2014,6 +2162,14 @@ function handleStreamJsonEvent(
   }
 
   if (type === 'thinking' || type === 'reasoning') {
+    const openCodePart = extractOpenCodePart(event);
+    const openCodeText = typeof openCodePart?.text === 'string' ? openCodePart.text : '';
+
+    if (openCodeText) {
+      upsertThought(state, openCodeText);
+      return;
+    }
+
     if (event.subtype === 'completed' || event.subtype === 'end') {
       settleThought(state);
       return;
@@ -2114,6 +2270,70 @@ function handleStreamJsonEvent(
       // #endregion
     }
 
+    return;
+  }
+
+  if (type === 'step_start') {
+    const sessionId = extractSessionId(event);
+
+    if (sessionId) {
+      state.sessionId = sessionId;
+    }
+
+    return;
+  }
+
+  if (type === 'tool_use') {
+    const part = extractOpenCodePart(event);
+
+    if (part) {
+      handleOpenCodeToolUse(state, part);
+    }
+
+    return;
+  }
+
+  if (type === 'text') {
+    const part = extractOpenCodePart(event);
+    const text = typeof part?.text === 'string' ? part.text.trim() : '';
+
+    if (text) {
+      upsertResponse(state, text, 'final');
+    }
+
+    const sessionId = extractSessionId(event);
+
+    if (sessionId) {
+      state.sessionId = sessionId;
+    }
+
+    return;
+  }
+
+  if (type === 'step_finish') {
+    const part = extractOpenCodePart(event);
+    const reason = typeof part?.reason === 'string' ? part.reason : '';
+
+    if (reason === 'stop') {
+      maybeFinalizeOpenCodeStep(state);
+    }
+
+    return;
+  }
+
+  if (type === 'error') {
+    const errorPayload = event.error as Record<string, unknown> | undefined;
+    const errorData = errorPayload?.data as Record<string, unknown> | undefined;
+    const message =
+      typeof errorData?.message === 'string'
+        ? errorData.message
+        : typeof errorPayload?.message === 'string'
+          ? errorPayload.message
+          : 'Erro no agent.';
+
+    upsertResponse(state, message, 'final');
+    forceSettleStreamJsonInFlightWork(state);
+    state.shouldFinalize = true;
     return;
   }
 }

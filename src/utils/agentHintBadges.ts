@@ -2,6 +2,7 @@ import logoClaude from '@/assets/logo-claude.svg';
 import logoCodex from '@/assets/logo-codex.svg';
 import logoCursor from '@/assets/logo-cursor.svg';
 import logoGemini from '@/assets/logo-gemini.svg';
+import logoOpencode from '@/assets/logo-opencode.svg';
 import iconModeAgent from '@/assets/icon-mode-agent.svg';
 import iconModeAsk from '@/assets/icon-mode-ask.svg';
 import iconModeDebug from '@/assets/icon-mode-debug.svg';
@@ -13,6 +14,7 @@ import type { TerminalCommandHint } from '@/types';
 export const AGENT_HINT_BADGE_ICON_SRC = {
   cursor: logoCursor,
   claude: logoClaude,
+  opencode: logoOpencode,
   codex: logoCodex,
   gemini: logoGemini,
   'mode-agent': iconModeAgent,
@@ -25,6 +27,7 @@ export const AGENT_HINT_BADGE_ICON_SRC = {
 export const AGENT_HINT_BADGE_COLORS = {
   cursor: '#6366f1',
   claude: '#cc785c',
+  opencode: '#6366f1',
   codex: '#10a37f',
   gemini: '#1c69ff',
 } as const;

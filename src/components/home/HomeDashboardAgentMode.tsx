@@ -12,6 +12,7 @@ import {
 } from 'react';
 import { Bot, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
+import { AgentShellTerminalDock } from '@/components/agent/AgentShellTerminalDock';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import { HomeDashboardCloudAgentCard } from '@/components/home/HomeDashboardCloudAgentCard';
@@ -254,6 +255,11 @@ function AgentCardComponent({
           onClick={stopCardFocusSteal}
           onPointerDown={stopCardFocusSteal}
         >
+          <AgentShellTerminalDock
+            agentPaneId={slot.pane.id}
+            projectPath={slot.project.path}
+            variant='header'
+          />
           <button
             type='button'
             className='home-dashboard__agent-card-close app-button app-button--enter'

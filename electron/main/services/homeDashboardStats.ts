@@ -33,7 +33,15 @@ interface StatsCacheEntry {
 let statsCache: StatsCacheEntry | null = null;
 
 export function resolveDashboardAiProvider(value: unknown): DashboardAiProvider {
-  return value === 'claude' ? 'claude' : 'cursor';
+  if (value === 'claude') {
+    return 'claude';
+  }
+
+  if (value === 'opencode') {
+    return 'opencode';
+  }
+
+  return 'cursor';
 }
 
 function buildStatsCacheKey(

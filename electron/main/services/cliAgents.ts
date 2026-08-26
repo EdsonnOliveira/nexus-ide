@@ -2,7 +2,7 @@ import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { buildCliPathEnv } from '../utils/cliPathEnv';
 
-export type CliAgentBadgeIcon = 'cursor' | 'claude' | 'codex' | 'gemini';
+export type CliAgentBadgeIcon = 'cursor' | 'claude' | 'opencode' | 'codex' | 'gemini';
 
 export interface CliAgentDefinition {
   id: string;
@@ -26,6 +26,13 @@ const CLI_AGENT_DEFINITIONS: CliAgentDefinition[] = [
     label: 'claude',
     badgeIcon: 'claude',
     badgeColor: '#cc785c',
+  },
+  {
+    id: 'opencode',
+    command: 'opencode',
+    label: 'opencode',
+    badgeIcon: 'opencode',
+    badgeColor: '#6366f1',
   },
   {
     id: 'codex',

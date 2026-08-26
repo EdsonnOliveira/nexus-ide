@@ -3333,6 +3333,74 @@ input {
   background: rgba(239, 68, 68, 0.14);
 }
 
+.home-dashboard__agent-card-terminal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  color: rgba(226, 232, 240, 0.88);
+  flex-shrink: 0;
+}
+
+.home-dashboard__agent-card-terminal--chip {
+  width: auto;
+  max-width: 220px;
+  height: 26px;
+  padding: 0 8px 0 6px;
+  gap: 6px;
+  background: rgba(12, 18, 32, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.home-dashboard__agent-card-terminal-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.home-dashboard__agent-card-terminal-elapsed {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(148, 163, 184, 0.95);
+}
+
+.home-dashboard__agent-card-terminal:hover:not(:disabled) {
+  color: #7dd3fc;
+  background: rgba(125, 211, 252, 0.14);
+}
+
+.home-dashboard__agent-card-terminal--live {
+  color: #a7f3d0;
+}
+
+.home-dashboard__agent-card-terminal--live.home-dashboard__agent-card-terminal--chip {
+  border-color: rgba(52, 211, 153, 0.35);
+}
+
+.home-dashboard__agent-card-terminal-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: #38bdf8;
+  color: #0f172a;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+}
+
 .home-dashboard__agent-card-status {
   display: inline-flex;
   align-items: center;
@@ -16955,61 +17023,9 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   color: var(--text-tertiary);
 }
 
-.settings-modal__provider-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.settings-modal__provider {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.settings-modal__provider-select {
   width: 100%;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-primary);
-  text-align: left;
-}
-
-.settings-modal__provider:hover:not(:disabled) {
-  background: var(--bg-tab-hover);
-}
-
-.settings-modal__provider--active {
-  background: rgba(96, 165, 250, 0.1);
-  border-color: color-mix(in srgb, #60a5fa 28%, transparent);
-}
-
-.settings-modal__provider--disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.settings-modal__provider-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1;
-  min-width: 0;
-}
-
-.settings-modal__provider-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.settings-modal__provider-subtitle {
-  font-size: 11px;
-  color: var(--text-tertiary);
-}
-
-.settings-modal__provider-check {
-  flex-shrink: 0;
-  color: #60a5fa;
+  max-width: 280px;
 }
 
 .project-dialog__title {
@@ -24120,6 +24136,30 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 .agent-shell-terminal-dock__item-dismiss:hover:not(:disabled) {
   color: var(--text-primary);
   background: color-mix(in srgb, var(--surface-1) 90%, transparent);
+}
+
+.agent-shell-terminal-popup {
+  width: min(360px, calc(100vw - 16px));
+  max-width: min(360px, calc(100vw - 16px));
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.agent-shell-terminal-popup__header {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.agent-shell-terminal-popup__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
 }
 
 @keyframes agent-shell-terminal-status-pulse {

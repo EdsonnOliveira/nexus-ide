@@ -494,11 +494,13 @@ function AgentViewSessionComponent({
           />
         ) : null}
 
-        <AgentShellTerminalDock
-          agentPaneId={tab.id}
-          projectPath={projectPath}
-          onComposerFocus={focusComposer}
-        />
+        {isHomeBoundAgentPane(projectId, tab.id) ? null : (
+          <AgentShellTerminalDock
+            agentPaneId={tab.id}
+            projectPath={projectPath}
+            onComposerFocus={focusComposer}
+          />
+        )}
 
         <AgentComposer
           paneId={tab.id}

@@ -1,10 +1,8 @@
-import { Check, Sparkles } from 'lucide-react';
-import { memo, useCallback, useState } from 'react';
+import { Sparkles } from 'lucide-react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
-import {
-  AI_PROVIDER_OPTIONS,
-  type AiProviderId,
-} from '@/constants/aiProviders';
+import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
+import { AI_PROVIDER_OPTIONS, type AiProviderId } from '@/constants/aiProviders';
 import { useAppSettingsStore } from '@/stores/useAppSettingsStore';
 
 type SettingsTabId = 'ia';
@@ -18,9 +16,20 @@ function SettingsModalComponent({ onClose }: SettingsModalProps) {
   const preferredAiProvider = useAppSettingsStore((state) => state.preferredAiProvider);
   const setPreferredAiProvider = useAppSettingsStore((state) => state.setPreferredAiProvider);
 
-  const handleSelectProvider = useCallback(
-    (provider: AiProviderId) => () => {
-      setPreferredAiProvider(provider);
+  const providerOptions = useMemo(
+    () =>
+      AI_PROVIDER_OPTIONS.filter((option) => !option.disabled).map((option) => ({
+        value: option.id,
+        label: option.label,
+      })),
+    [],
+  );
+
+  const handleProviderChange = useCallback(
+    (value: AiProviderId | '') => {
+      if (value) {
+        setPreferredAiProvider(value);
+      }
     },
     [setPreferredAiProvider],
   );
@@ -53,38 +62,12 @@ function SettingsModalComponent({ onClose }: SettingsModalProps) {
                 <p className='settings-modal__section-hint'>
                   Define qual IA será usada nas novas abas Agent.
                 </p>
-                <div className='settings-modal__provider-list' role='radiogroup' aria-label='Provedor de IA'>
-                  {AI_PROVIDER_OPTIONS.map((option) => {
-                    const isSelected = preferredAiProvider === option.id;
-
-                    return (
-                      <button
-                        key={option.id}
-                        type='button'
-                        role='radio'
-                        aria-checked={isSelected}
-                        disabled={option.disabled}
-                        className={`settings-modal__provider app-button app-button--enter${isSelected ? ' settings-modal__provider--active' : ''}${option.disabled ? ' settings-modal__provider--disabled' : ''}`}
-                        onClick={handleSelectProvider(option.id)}
-                      >
-                        <span className='settings-modal__provider-copy'>
-                          <span className='settings-modal__provider-label'>{option.label}</span>
-                          {option.subtitle ? (
-                            <span className='settings-modal__provider-subtitle'>{option.subtitle}</span>
-                          ) : null}
-                        </span>
-                        {isSelected ? (
-                          <Check
-                            size={14}
-                            strokeWidth={2}
-                            className='settings-modal__provider-check'
-                            aria-hidden
-                          />
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
+                <AnchoredSelect
+                  value={preferredAiProvider}
+                  options={providerOptions}
+                  onChange={handleProviderChange}
+                  triggerClassName='settings-modal__provider-select'
+                />
               </div>
             ) : null}
           </div>

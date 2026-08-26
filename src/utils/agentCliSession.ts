@@ -184,8 +184,14 @@ function isAgentChromeLine(trimmed: string): boolean {
   return false;
 }
 
+export function isStreamJsonAgentCli(cliAgent: string): boolean {
+  const base = extractCliAgentCommand(cliAgent.trim() || 'cursor-agent');
+
+  return base === 'cursor-agent' || base === 'opencode';
+}
+
 export function isCursorAgentStreamJsonCli(cliAgent: string): boolean {
-  return extractCliAgentCommand(cliAgent.trim() || 'cursor-agent') === 'cursor-agent';
+  return isStreamJsonAgentCli(cliAgent);
 }
 
 export function shellEscapeSingleQuotes(value: string): string {
@@ -260,11 +266,50 @@ export function buildAgentPrintPromptCommand(options: AgentPrintPromptOptions): 
   return `${parts.join(' ')} 2>&1 | cat`;
 }
 
+export function resolveStreamJsonPromptPayload(
+  cliAgent: string,
+  prompt: string,
+  imageRefs: string[],
+  rootPath: string,
+): { prompt: string; attachmentPaths: string[] } {
+  const base = extractCliAgentCommand(cliAgent.trim() || 'cursor-agent');
+  const root = rootPath.replace(/\/+$/, '');
+
+  if (base === 'opencode') {
+    const attachmentPaths = imageRefs
+      .map((ref) => {
+        const relPath = ref.startsWith('@') ? ref.slice(1) : ref;
+
+        if (relPath.startsWith('/')) {
+          return relPath;
+        }
+
+        return `${root}/${relPath}`;
+      })
+      .filter(Boolean);
+
+    return { prompt: prompt.trim(), attachmentPaths };
+  }
+
+  const resolvedImageRefs = imageRefs.map((ref) => {
+    const relPath = ref.startsWith('@') ? ref.slice(1) : ref;
+
+    if (relPath.startsWith('/')) {
+      return ref;
+    }
+
+    return `@${root}/${relPath}`;
+  });
+  const fullPrompt = [prompt, ...resolvedImageRefs].filter(Boolean).join(' ').trim();
+
+  return { prompt: fullPrompt, attachmentPaths: [] };
+}
+
 export function buildAgentPaneLaunchCommand(command: string): string {
   const trimmed = command.trim();
   const base = extractCliAgentCommand(trimmed || 'cursor-agent');
 
-  if (base === 'cursor-agent') {
+  if (base === 'cursor-agent' || base === 'opencode') {
     return '';
   }
 

@@ -526,6 +526,7 @@ export interface TerminalCommandHint {
     | 'android'
     | 'cursor'
     | 'claude'
+    | 'opencode'
     | 'codex'
     | 'gemini'
     | 'mode-agent'
@@ -1051,10 +1052,12 @@ export interface NexusAPI {
       paneId: string;
       cwd: string;
       prompt: string;
+      cliAgent?: string;
       model?: string | null;
       mode?: 'plan' | 'ask';
       continueSession?: boolean;
       resumeChatId?: string | null;
+      attachmentPaths?: string[];
       runToken: string;
       preserveChildren?: boolean;
     }) => Promise<void>;
@@ -1319,7 +1322,7 @@ export interface NexusAPI {
   homeDashboard: {
     getStats: (
       projectPaths: string[],
-      provider?: 'cursor' | 'claude',
+      provider?: 'cursor' | 'claude' | 'opencode',
     ) => Promise<HomeDashboardActivityComparison>;
     recordActivity: (kind: HomeDashboardActivityKind) => Promise<void>;
   };

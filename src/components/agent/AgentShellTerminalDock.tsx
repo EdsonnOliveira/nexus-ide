@@ -1,7 +1,19 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { Terminal, X } from 'lucide-react';
 import { XTermView } from '@/components/terminal/XTermView';
+import {
+  positionDropdownBelowAnchor,
+  useAnchoredDropdownMenu,
+} from '@/hooks/useAnchoredDropdownMenu';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import {
   useAgentShellTerminalEntries,
@@ -17,6 +29,7 @@ import type { XTermViewHandle } from '@/types';
 interface AgentShellTerminalDockProps {
   agentPaneId: string;
   projectPath: string;
+  variant?: 'dock' | 'header';
   onComposerFocus?: () => void;
 }
 
@@ -310,15 +323,114 @@ function AgentShellTerminalDockItemComponent({
 
 const AgentShellTerminalDockItem = memo(AgentShellTerminalDockItemComponent);
 
+interface AgentShellTerminalsPopupProps {
+  anchorRect: DOMRect;
+  anchorRef: RefObject<HTMLButtonElement | null>;
+  entries: AgentShellTerminalEntry[];
+  now: number;
+  openPaneId: string | null;
+  countLabel: string;
+  onClose: () => void;
+  onOpen: (paneId: string) => void;
+  onDismiss: (entry: AgentShellTerminalEntry) => void;
+}
+
+function AgentShellTerminalsPopupComponent({
+  anchorRect,
+  anchorRef,
+  entries,
+  now,
+  openPaneId,
+  countLabel,
+  onClose,
+  onOpen,
+  onDismiss,
+}: AgentShellTerminalsPopupProps) {
+  const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
+    onClose,
+    (menu) => positionDropdownBelowAnchor(menu, anchorRect, 'end'),
+    [anchorRect],
+  );
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+
+      if (menuRef.current?.contains(target) || anchorRef.current?.contains(target)) {
+        return;
+      }
+
+      requestClose();
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      window.addEventListener('mousedown', handlePointerDown);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [anchorRef, menuRef, requestClose]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        requestClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [requestClose]);
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className={`context-menu agent-shell-terminal-popup overlay-popup overlay-popup--anchor-end ${animationClass}`}
+      role='dialog'
+      aria-label={countLabel}
+    >
+      <div className='agent-shell-terminal-popup__header'>{countLabel}</div>
+      <div className='agent-shell-terminal-popup__list'>
+        {entries.map((entry) => (
+          <AgentShellTerminalDockItem
+            key={entry.paneId}
+            entry={entry}
+            elapsedLabel={formatElapsed(entry.startedAt, now)}
+            isOpen={openPaneId === entry.paneId}
+            onOpen={() => {
+              onOpen(entry.paneId);
+              requestClose();
+            }}
+            onDismiss={() => onDismiss(entry)}
+          />
+        ))}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+const AgentShellTerminalsPopup = memo(AgentShellTerminalsPopupComponent);
+
 function AgentShellTerminalDockComponent({
   agentPaneId,
   projectPath,
+  variant = 'dock',
   onComposerFocus,
 }: AgentShellTerminalDockProps) {
   const entries = useAgentShellTerminalEntries(agentPaneId);
   const removeEntry = useAgentShellTerminalStore((state) => state.removeEntry);
   const disposePaneSession = useTerminalSessionStore((state) => state.disposePaneSession);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const [openPaneId, setOpenPaneId] = useState<string | null>(null);
+  const [popupOpen, setPopupOpen] = useState(false);
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   const runningCount = useMemo(
@@ -337,6 +449,7 @@ function AgentShellTerminalDockComponent({
   useEffect(() => {
     if (entries.length === 0) {
       setOpenPaneId(null);
+      setPopupOpen(false);
       return;
     }
 
@@ -344,6 +457,22 @@ function AgentShellTerminalDockComponent({
       setOpenPaneId(null);
     }
   }, [openPaneId, entries]);
+
+  const handleOpenPopup = useCallback(() => {
+    if (entries.length === 1) {
+      const paneId = entries[0].paneId;
+      setPopupOpen(false);
+      setOpenPaneId((current) => (current === paneId ? null : paneId));
+      return;
+    }
+
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+    setAnchorRect(rect);
+    setPopupOpen((current) => !current);
+  }, [entries]);
 
   useEffect(() => {
     if (runningCount === 0) {
@@ -381,24 +510,64 @@ function AgentShellTerminalDockComponent({
   }
 
   const countLabel = resolveDockCountLabel(runningCount, stoppedCount);
+  const isHeader = variant === 'header';
 
   return (
     <>
-      <div className='agent-shell-terminal-dock app-button--enter'>
-        <div className='agent-shell-terminal-dock__header'>{countLabel}</div>
-        <div className='agent-shell-terminal-dock__list'>
-          {entries.map((entry) => (
-            <AgentShellTerminalDockItem
-              key={entry.paneId}
-              entry={entry}
-              elapsedLabel={formatElapsed(entry.startedAt, now)}
-              isOpen={openPaneId === entry.paneId}
-              onOpen={() => setOpenPaneId(entry.paneId)}
-              onDismiss={() => handleDismiss(entry)}
-            />
-          ))}
+      {isHeader ? (
+        <button
+          ref={buttonRef}
+          type='button'
+          className={`home-dashboard__agent-card-terminal app-button app-button--enter${runningCount > 0 ? ' home-dashboard__agent-card-terminal--live' : ''}${entries.length === 1 ? ' home-dashboard__agent-card-terminal--chip' : ''}`}
+          aria-label={countLabel}
+          aria-expanded={popupOpen}
+          onClick={handleOpenPopup}
+        >
+          <Terminal size={14} strokeWidth={2.25} aria-hidden='true' />
+          {entries.length === 1 ? (
+            <>
+              <span className='home-dashboard__agent-card-terminal-title'>{entries[0].title}</span>
+              {isLiveShellStatus(entries[0].status) ? (
+                <span className='home-dashboard__agent-card-terminal-elapsed'>
+                  {formatElapsed(entries[0].startedAt, now)}
+                </span>
+              ) : null}
+            </>
+          ) : (
+            <span className='home-dashboard__agent-card-terminal-badge'>{entries.length}</span>
+          )}
+        </button>
+      ) : (
+        <div className='agent-shell-terminal-dock app-button--enter'>
+          <div className='agent-shell-terminal-dock__header'>{countLabel}</div>
+          <div className='agent-shell-terminal-dock__list'>
+            {entries.map((entry) => (
+              <AgentShellTerminalDockItem
+                key={entry.paneId}
+                entry={entry}
+                elapsedLabel={formatElapsed(entry.startedAt, now)}
+                isOpen={openPaneId === entry.paneId}
+                onOpen={() => setOpenPaneId(entry.paneId)}
+                onDismiss={() => handleDismiss(entry)}
+              />
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+
+      {isHeader && popupOpen && anchorRect ? (
+        <AgentShellTerminalsPopup
+          anchorRect={anchorRect}
+          anchorRef={buttonRef}
+          entries={entries}
+          now={now}
+          openPaneId={openPaneId}
+          countLabel={countLabel}
+          onClose={() => setPopupOpen(false)}
+          onOpen={setOpenPaneId}
+          onDismiss={handleDismiss}
+        />
+      ) : null}
 
       {entries.map((entry) => (
         <AgentShellTerminalPanel

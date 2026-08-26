@@ -68,7 +68,8 @@ import {
   buildAgentPaneLaunchCommand,
   detectAgentLaunchErrorInTail,
   detectSmartModeApprovalInTail,
-  isCursorAgentStreamJsonCli,
+  isStreamJsonAgentCli,
+  resolveStreamJsonPromptPayload,
   resolveCursorAgentPrintMode,
   sendAgentInterruptSequence,
 } from '@/utils/agentCliSession';
@@ -382,7 +383,7 @@ export function useAgentPaneSession({
   }, [tab.id, tab.turns]);
 
   const usesStreamJson = useMemo(
-    () => isCursorAgentStreamJsonCli(resolveAgentTabCli(tab)),
+    () => isStreamJsonAgentCli(resolveAgentTabCli(tab)),
     [tab.cliAgent, tab.restoreCommand],
   );
 
@@ -1442,20 +1443,17 @@ export function useAgentPaneSession({
         lastPrintMode !== undefined && lastPrintMode !== currentMode;
       const model = session.agentModelByPane[paneId] ?? null;
       const mode = resolveCursorAgentPrintMode(currentMode);
+      const cliAgent = resolveAgentTabCli(tab);
       const root = agentRootPath.replace(/\/+$/, '');
-      const resolvedImageRefs = imageRefs.map((ref) => {
-        const relPath = ref.startsWith('@') ? ref.slice(1) : ref;
-
-        if (relPath.startsWith('/')) {
-          return ref;
-        }
-
-        return `@${root}/${relPath}`;
-      });
-      const fullPrompt = [prompt, ...resolvedImageRefs].filter(Boolean).join(' ').trim();
+      const { prompt: resolvedPrompt, attachmentPaths } = resolveStreamJsonPromptPayload(
+        cliAgent,
+        prompt,
+        imageRefs,
+        root,
+      );
       const storedResumeChatId = session.resumeChatIdByPane[paneId]?.trim() ?? null;
 
-      if (!fullPrompt) {
+      if (!resolvedPrompt && attachmentPaths.length === 0) {
         return false;
       }
 
@@ -1485,10 +1483,10 @@ export function useAgentPaneSession({
         streamJsonIncompleteContinueCountRef.current = 0;
       }
 
-      session.setLastCommand(paneId, fullPrompt);
-      trackAgentGitPrompt(paneId, fullPrompt);
+      session.setLastCommand(paneId, resolvedPrompt);
+      trackAgentGitPrompt(paneId, resolvedPrompt);
 
-      if (shouldMarkAgentAwaiting(paneId, fullPrompt, session.activeAgentByPane)) {
+      if (shouldMarkAgentAwaiting(paneId, resolvedPrompt, session.activeAgentByPane)) {
         session.markAwaitingResponse(paneId);
       }
 
@@ -1501,10 +1499,12 @@ export function useAgentPaneSession({
       void window.nexus.agentPrint.start({
         paneId,
         cwd: agentRootPath,
-        prompt: fullPrompt,
+        prompt: resolvedPrompt,
+        cliAgent,
         model,
         mode,
         resumeChatId,
+        attachmentPaths,
         continueSession:
           !resumeChatId &&
           cursorAgentContinueRef.current &&
@@ -1659,6 +1659,7 @@ export function useAgentPaneSession({
           paneId,
           cwd: agentRootPath,
           prompt: STREAM_JSON_INCOMPLETE_CONTINUE_PROMPT,
+          cliAgent: resolveAgentTabCli(tab),
           model,
           mode,
           resumeChatId,
@@ -3014,7 +3015,7 @@ export function useAgentPaneSession({
         );
 
         if (!pendingCommand) {
-          if (isCursorAgentStreamJsonCli(tabCliAgent)) {
+          if (isStreamJsonAgentCli(tabCliAgent)) {
             setIsAgentReady(true);
           }
           return;
@@ -3511,7 +3512,7 @@ export function useAgentPaneSession({
               ),
               createFailedPromptActivity(
                 payload.error ??
-                  'Não foi possível executar o agent. Verifique se o cursor-agent está instalado.',
+                  'Não foi possível executar o agent. Verifique se o CLI do provedor está instalado.',
               ),
             ],
           }));
