@@ -48,6 +48,8 @@ import {
   type SidebarVideoSession,
 } from '@/utils/sidebarVideoProviders';
 import { openSidebarWhatsAppLink } from '@/utils/sidebarWhatsAppLink';
+import { useAddProjectFlow } from '@/hooks/useAddProjectFlow';
+import { AddProjectMenu } from '@/components/sidebar/AddProjectMenu';
 import { ProjectMoveWorkspaceMenu } from '@/components/sidebar/ProjectMoveWorkspaceMenu';
 import { WorkspaceDeleteDialog } from '@/components/sidebar/WorkspaceDeleteDialog';
 import type {
@@ -76,7 +78,6 @@ function ProjectSidebarComponent() {
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const selectingProjectId = useProjectStore((state) => state.selectingProjectId);
   const activeWorkspaceId = useProjectStore((state) => state.activeWorkspaceId);
-  const addProject = useProjectStore((state) => state.addProject);
   const selectProject = useProjectStore((state) => state.selectProject);
   const leaveActiveProject = useProjectStore((state) => state.leaveActiveProject);
   const updateProject = useProjectStore((state) => state.updateProject);
@@ -430,9 +431,17 @@ function ProjectSidebarComponent() {
     }
   }, [activeProjectId, initialized, projects]);
 
-  const handleAddProject = useCallback(() => {
-    void addProject();
-  }, [addProject]);
+  const {
+    addButtonRef,
+    menuOpen: addProjectMenuOpen,
+    menuAnchor: addProjectMenuAnchor,
+    createPromptOpen: addProjectCreatePromptOpen,
+    handleOpenMenu: handleOpenAddProjectMenu,
+    handleCloseMenu: handleCloseAddProjectMenu,
+    handleSelectOption: handleAddProjectOption,
+    handleCreateConfirm: handleAddProjectCreateConfirm,
+    handleCreateClose: handleAddProjectCreateClose,
+  } = useAddProjectFlow();
 
   const handleOpenVideoPopup = useCallback(() => {
     const rect = videoButtonRef.current?.getBoundingClientRect();
@@ -1260,7 +1269,13 @@ function ProjectSidebarComponent() {
 
         <SidebarCalendarEvents />
 
-        <button type='button' className='sidebar__add app-button app-button--enter' title='Adicionar projeto' onClick={handleAddProject}>
+        <button
+          ref={addButtonRef}
+          type='button'
+          className='sidebar__add app-button app-button--enter'
+          title='Adicionar projeto'
+          onClick={handleOpenAddProjectMenu}
+        >
           <Plus size={14} />
           <span className='app-button__label'>Adicionar projeto</span>
         </button>
@@ -1331,6 +1346,14 @@ function ProjectSidebarComponent() {
           </button>
         </div>
       </div>
+
+      {addProjectMenuOpen && addProjectMenuAnchor ? (
+        <AddProjectMenu
+          anchorRect={addProjectMenuAnchor}
+          onClose={handleCloseAddProjectMenu}
+          onSelect={handleAddProjectOption}
+        />
+      ) : null}
 
       {videoPopupOpen && videoPopupAnchor ? (
         <SidebarVideoLinkPopup
@@ -1461,6 +1484,15 @@ function ProjectSidebarComponent() {
           currentWorkspaceId={moveProject.workspaceId}
           onClose={handleMoveClose}
           onSelect={handleMoveSelect}
+        />
+      ) : null}
+
+      {addProjectCreatePromptOpen ? (
+        <ProjectPromptDialog
+          mode='create'
+          initialValue=''
+          onConfirm={handleAddProjectCreateConfirm}
+          onClose={handleAddProjectCreateClose}
         />
       ) : null}
 

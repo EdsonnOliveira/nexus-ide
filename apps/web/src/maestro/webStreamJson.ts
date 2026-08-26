@@ -38,27 +38,17 @@ export interface WebStreamJsonUpdate {
 }
 
 export function createWebStreamJsonState(): WebStreamJsonState {
-  const startedAt = Date.now();
-  const thoughtId = 'web-act-thought-seed';
   return {
     buffer: '',
     thought: '',
-    thoughtStreaming: true,
+    thoughtStreaming: false,
     response: '',
     sessionId: null,
     done: false,
     shellToolEvents: [],
-    activities: [
-      {
-        id: thoughtId,
-        kind: 'thought',
-        label: '',
-        streaming: true,
-        startedAt,
-      },
-    ],
-    thoughtId,
-    thoughtStartedAt: startedAt,
+    activities: [],
+    thoughtId: null,
+    thoughtStartedAt: null,
     responseId: null,
     runningToolRunStack: [],
     seenReadPaths: new Set(),

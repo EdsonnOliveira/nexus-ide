@@ -1,3 +1,4 @@
+import logoAntigravity from '@/assets/logo-antigravity.svg';
 import logoClaude from '@/assets/logo-claude.svg';
 import logoCodex from '@/assets/logo-codex.svg';
 import logoCursor from '@/assets/logo-cursor.svg';
@@ -15,6 +16,7 @@ export const AGENT_HINT_BADGE_ICON_SRC = {
   cursor: logoCursor,
   claude: logoClaude,
   opencode: logoOpencode,
+  antigravity: logoAntigravity,
   codex: logoCodex,
   gemini: logoGemini,
   'mode-agent': iconModeAgent,
@@ -28,6 +30,7 @@ export const AGENT_HINT_BADGE_COLORS = {
   cursor: '#6366f1',
   claude: '#cc785c',
   opencode: '#6366f1',
+  antigravity: '#7c3aed',
   codex: '#10a37f',
   gemini: '#1c69ff',
 } as const;
@@ -76,6 +79,10 @@ export function resolveModelBadgeIcon(modelId: string, label: string): AgentHint
 
   if (id.includes('gemini') || text.includes('gemini')) {
     return 'gemini';
+  }
+
+  if (id.includes('antigravity') || text.includes('antigravity')) {
+    return 'antigravity';
   }
 
   return 'cursor';

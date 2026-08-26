@@ -97,6 +97,20 @@ export function App() {
     };
   }, [session]);
 
+  useEffect(() => {
+    const syncHidden = () => {
+      document.documentElement.classList.toggle('nexus-window-hidden', document.hidden);
+    };
+
+    syncHidden();
+    document.addEventListener('visibilitychange', syncHidden);
+
+    return () => {
+      document.removeEventListener('visibilitychange', syncHidden);
+      document.documentElement.classList.remove('nexus-window-hidden');
+    };
+  }, []);
+
   if (!session) {
     return <AuthView />;
   }

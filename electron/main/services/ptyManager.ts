@@ -125,7 +125,31 @@ const BLOCKED_ENV_KEYS = new Set([
   'REPL_ID',
 ]);
 
+function resolveWindowsShell(): string {
+  const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
+  const candidates = [
+    process.env.SHELL,
+    path.join(process.env.ProgramFiles ?? '', 'PowerShell', '7', 'pwsh.exe'),
+    path.join(process.env.LOCALAPPDATA ?? '', 'Microsoft', 'WindowsApps', 'pwsh.exe'),
+    path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    process.env.COMSPEC,
+    path.join(systemRoot, 'System32', 'cmd.exe'),
+  ].filter((value): value is string => Boolean(value));
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return process.env.COMSPEC || 'cmd.exe';
+}
+
 function resolveShell(): string {
+  if (process.platform === 'win32') {
+    return resolveWindowsShell();
+  }
+
   const zshConfigDir = getZshConfigDir();
 
   if (existsSync(path.join(zshConfigDir, '.zshrc'))) {
@@ -167,6 +191,16 @@ function isBashShell(shell: string): boolean {
   return shell.includes('bash');
 }
 
+function isPowerShell(shell: string): boolean {
+  const base = path.basename(shell).toLowerCase();
+  return base === 'pwsh.exe' || base === 'powershell.exe' || base === 'pwsh' || base === 'powershell';
+}
+
+function isCmdShell(shell: string): boolean {
+  const base = path.basename(shell).toLowerCase();
+  return base === 'cmd.exe' || base === 'cmd';
+}
+
 function buildEnv(agent: TerminalAgent, shell: string): Record<string, string> {
   const env: Record<string, string> = {};
 
@@ -206,6 +240,14 @@ function buildEnv(agent: TerminalAgent, shell: string): Record<string, string> {
 }
 
 function buildShellArgs(shell: string): string[] {
+  if (isPowerShell(shell)) {
+    return ['-NoLogo'];
+  }
+
+  if (isCmdShell(shell)) {
+    return [];
+  }
+
   const bashRcFile = getBashRcFile();
 
   if (isBashShell(shell) && existsSync(bashRcFile)) {

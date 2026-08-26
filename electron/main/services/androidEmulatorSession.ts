@@ -8,6 +8,7 @@ import type {
   EmulatorStreamStats,
   EmulatorVideoCodec,
 } from '../../types';
+import { killChildProcess } from '../utils/killProcessTree';
 import { resolveAdbPath, resolveEmulatorPath } from './emulatorPaths';
 
 export interface EmulatorSessionEvents {
@@ -220,7 +221,7 @@ async function runAdb(
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
-    const child = spawn(adbPath, commandArgs, { env: process.env });
+    const child = spawn(adbPath, commandArgs, { env: process.env, windowsHide: true });
     child.stdout.on('data', (chunk: Buffer) => {
       stdout += chunk.toString();
     });
@@ -646,7 +647,7 @@ export async function createAndroidEmulatorSession(
     stopped = true;
 
     if (emulatorProcess && !emulatorProcess.killed) {
-      emulatorProcess.kill('SIGTERM');
+      killChildProcess(emulatorProcess);
       emulatorProcess = null;
     }
 
@@ -656,7 +657,7 @@ export async function createAndroidEmulatorSession(
   const destroyInputShell = (): void => {
     if (inputShell && !inputShell.killed) {
       inputShell.stdin?.end();
-      inputShell.kill('SIGTERM');
+      killChildProcess(inputShell);
     }
 
     inputShell = null;
@@ -674,6 +675,7 @@ export async function createAndroidEmulatorSession(
     inputShell = spawn(adbTool.path, ['-s', serial, 'shell'], {
       env: process.env,
       stdio: ['pipe', 'ignore', 'ignore'],
+      windowsHide: true,
     });
     inputShell.on('close', () => {
       inputShell = null;
@@ -755,6 +757,7 @@ export async function createAndroidEmulatorSession(
     emulatorProcess = spawn(emulatorTool.path, buildEmulatorArgs(avdName), {
       env: process.env,
       detached: false,
+      windowsHide: true,
     });
 
     emulatorProcess.on('error', () => {
@@ -919,7 +922,7 @@ export async function createAndroidEmulatorSession(
 
   const stopCaptureProcess = () => {
     if (captureProcess && !captureProcess.killed) {
-      captureProcess.kill('SIGTERM');
+      killChildProcess(captureProcess);
       captureProcess = null;
     }
 
@@ -996,6 +999,7 @@ export async function createAndroidEmulatorSession(
       {
         env: process.env,
         stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true,
       },
     );
 
@@ -1055,7 +1059,7 @@ export async function createAndroidEmulatorSession(
 
       const frame = await new Promise<Buffer | null>((resolve) => {
         const chunks: Buffer[] = [];
-        const child = spawn(adbTool.path, args, { env: process.env });
+        const child = spawn(adbTool.path, args, { env: process.env, windowsHide: true });
         child.stdout.on('data', (chunk: Buffer) => {
           chunks.push(chunk);
         });
@@ -1172,14 +1176,14 @@ export async function createAndroidEmulatorSession(
       }
 
       if (captureProcess && !captureProcess.killed) {
-        captureProcess.kill('SIGTERM');
+        killChildProcess(captureProcess);
         captureProcess = null;
       }
 
       destroyInputShell();
 
       if (emulatorProcess && !emulatorProcess.killed) {
-        emulatorProcess.kill('SIGTERM');
+        killChildProcess(emulatorProcess);
         emulatorProcess = null;
       }
 
@@ -1328,6 +1332,7 @@ export async function createAndroidEmulatorSession(
         const chunks: Buffer[] = [];
         const child = spawn(adbTool.path, ['-s', serial, 'exec-out', 'screencap', '-p'], {
           env: process.env,
+          windowsHide: true,
         });
         child.stdout.on('data', (chunk: Buffer) => {
           chunks.push(chunk);

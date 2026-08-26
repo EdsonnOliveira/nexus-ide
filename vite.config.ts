@@ -34,6 +34,10 @@ function isNexusElectronCommand(command: string): boolean {
 }
 
 function isNexusElectronRunning(): boolean {
+  if (process.platform !== 'darwin') {
+    return false;
+  }
+
   try {
     const result = spawnSync('/bin/ps', ['-ax', '-o', 'command='], { encoding: 'utf8' });
 

@@ -181,6 +181,10 @@ export async function openNativeEmulatorWindow(
   platform: EmulatorPlatform,
   deviceId: string,
 ): Promise<boolean> {
+  if (process.platform !== 'darwin') {
+    return false;
+  }
+
   if (platform === 'ios') {
     return openIosSimulatorWindow(deviceId);
   }
@@ -192,6 +196,9 @@ export async function hideNativeEmulatorWindow(
   platform: EmulatorPlatform,
   deviceId: string,
 ): Promise<boolean> {
+  if (process.platform !== 'darwin') {
+    return false;
+  }
   if (platform === 'ios') {
     return hideIosSimulatorWindow();
   }

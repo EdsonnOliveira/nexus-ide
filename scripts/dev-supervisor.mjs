@@ -46,15 +46,11 @@ function startVite() {
   stopChild();
 
   console.warn('[dev-supervisor] starting vite');
-  const next = spawn(
-    'node scripts/patch-electron-branding.mjs && env -u NODE_OPTIONS vite',
-    {
-      cwd: root,
-      env: { ...process.env, NODE_OPTIONS: undefined },
-      stdio: 'inherit',
-      shell: true,
-    },
-  );
+  const next = spawn(process.execPath, [path.join(root, 'scripts/run-dev-vite.mjs')], {
+    cwd: root,
+    env: { ...process.env, NODE_OPTIONS: undefined },
+    stdio: 'inherit',
+  });
 
   child = next;
 

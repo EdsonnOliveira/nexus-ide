@@ -468,7 +468,7 @@ svg {
   background-repeat: no-repeat;
   background-position: center top;
   background-size: 100% 100%;
-  filter: hue-rotate(var(--hero-hue)) saturate(var(--hero-glow));
+  filter: none;
   -webkit-mask-image: linear-gradient(
     180deg,
     #000 0%,
@@ -488,12 +488,12 @@ svg {
 }
 
 .home-dashboard.nexus-hero.home-dashboard--maestro::before {
-  --hero-blob-5-x: 48%;
+  --hero-blob-5-x: 50%;
   --hero-blob-5-y: 16%;
-  --hero-blob-5-alpha: 0.12;
+  --hero-blob-5-alpha: 0.55;
   --hero-blob-6-x: 70%;
-  --hero-blob-6-y: 30%;
-  --hero-blob-6-alpha: 0.08;
+  --hero-blob-6-y: 22%;
+  --hero-blob-6-alpha: 0.4;
   --hero-hue: 0deg;
   background-image:
     radial-gradient(
@@ -538,7 +538,6 @@ svg {
       rgba(4, 16, 31, 0.55) 78%,
       transparent 100%
     );
-  animation: nexus-maestro-gradient 14s ease-in-out infinite;
 }
 
 .home-dashboard.nexus-hero > * {
@@ -612,108 +611,6 @@ svg {
   initial-value: 0.08;
 }
 
-@keyframes nexus-maestro-gradient {
-  0% {
-    --hero-blob-1-x: 16%;
-    --hero-blob-1-y: 10%;
-    --hero-blob-2-x: 72%;
-    --hero-blob-2-y: 4%;
-    --hero-blob-3-x: 94%;
-    --hero-blob-3-y: 36%;
-    --hero-blob-4-x: 4%;
-    --hero-blob-4-y: 42%;
-    --hero-blob-5-x: 44%;
-    --hero-blob-5-y: 12%;
-    --hero-blob-5-alpha: 0.1;
-    --hero-blob-6-x: 66%;
-    --hero-blob-6-y: 28%;
-    --hero-blob-6-alpha: 0.06;
-    --hero-hue: 0deg;
-    --hero-glow: 1.08;
-  }
-
-  25% {
-    --hero-blob-1-x: 38%;
-    --hero-blob-1-y: 2%;
-    --hero-blob-2-x: 56%;
-    --hero-blob-2-y: 16%;
-    --hero-blob-3-x: 84%;
-    --hero-blob-3-y: 26%;
-    --hero-blob-4-x: 14%;
-    --hero-blob-4-y: 50%;
-    --hero-blob-5-x: 64%;
-    --hero-blob-5-y: 6%;
-    --hero-blob-5-alpha: 0.62;
-    --hero-blob-6-x: 38%;
-    --hero-blob-6-y: 20%;
-    --hero-blob-6-alpha: 0.38;
-    --hero-hue: 8deg;
-    --hero-glow: 1.32;
-  }
-
-  50% {
-    --hero-blob-1-x: 28%;
-    --hero-blob-1-y: 16%;
-    --hero-blob-2-x: 76%;
-    --hero-blob-2-y: 6%;
-    --hero-blob-3-x: 96%;
-    --hero-blob-3-y: 46%;
-    --hero-blob-4-x: 6%;
-    --hero-blob-4-y: 30%;
-    --hero-blob-5-x: 50%;
-    --hero-blob-5-y: 20%;
-    --hero-blob-5-alpha: 0.92;
-    --hero-blob-6-x: 78%;
-    --hero-blob-6-y: 14%;
-    --hero-blob-6-alpha: 0.78;
-    --hero-hue: 14deg;
-    --hero-glow: 1.48;
-  }
-
-  75% {
-    --hero-blob-1-x: 10%;
-    --hero-blob-1-y: 6%;
-    --hero-blob-2-x: 62%;
-    --hero-blob-2-y: 18%;
-    --hero-blob-3-x: 88%;
-    --hero-blob-3-y: 20%;
-    --hero-blob-4-x: 18%;
-    --hero-blob-4-y: 44%;
-    --hero-blob-5-x: 30%;
-    --hero-blob-5-y: 8%;
-    --hero-blob-5-alpha: 0.7;
-    --hero-blob-6-x: 58%;
-    --hero-blob-6-y: 34%;
-    --hero-blob-6-alpha: 0.5;
-    --hero-hue: 6deg;
-    --hero-glow: 1.36;
-  }
-
-  100% {
-    --hero-blob-1-x: 16%;
-    --hero-blob-1-y: 10%;
-    --hero-blob-2-x: 72%;
-    --hero-blob-2-y: 4%;
-    --hero-blob-3-x: 94%;
-    --hero-blob-3-y: 36%;
-    --hero-blob-4-x: 4%;
-    --hero-blob-4-y: 42%;
-    --hero-blob-5-x: 44%;
-    --hero-blob-5-y: 12%;
-    --hero-blob-5-alpha: 0.1;
-    --hero-blob-6-x: 66%;
-    --hero-blob-6-y: 28%;
-    --hero-blob-6-alpha: 0.06;
-    --hero-hue: 0deg;
-    --hero-glow: 1.08;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .home-dashboard.nexus-hero.home-dashboard--maestro::before {
-    animation: none;
-  }
-}
 .home-dashboard__hero {
   position: relative;
   display: flex;

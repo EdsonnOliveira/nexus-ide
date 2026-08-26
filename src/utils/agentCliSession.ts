@@ -21,10 +21,10 @@ function stripAgentLineLeadIn(line: string): string {
 }
 
 const AGENT_LIVE_STATUS_PREFIX =
-  /^(?:Planning next moves|Planning|Globbing|Globbed|Grepping|Grepped|Searching|Searched|Working|Generating|Reading|Running|Thinking|Editing|Explored)(?:\s|,|$)/i;
+  /^(?:Planning next moves|Planning|Globbing|Globbed|Grepping|Grepped|Searching|Searched|Working|Generating|Reading|Running|Thinking|Editing|Explored|Trabalhando|Planejando|Pensando|Executando|Explorando)(?:\s|,|$|\.\.\.)/i;
 
 const AGENT_LIVE_STATUS_FRAGMENT =
-  /^(?:Planning next moves|Planning|Globbing|Globbed|Grepping|Grepped|Searching|Searched|Working|Generating|Reading|Running|Thinking|Editing|Explored|Glo(?:bb?(?:ing|ed)?)?|Gre(?:pp?(?:ing|ed)?)?|Read(?:ing)?|Work(?:ing)?|Globb?|Glob|Gre|Rea|Wor)$/i;
+  /^(?:Planning next moves|Planning|Globbing|Globbed|Grepping|Grepped|Searching|Searched|Working|Generating|Reading|Running|Thinking|Editing|Explored|Trabalhando|Planejando|Pensando|Executando|Explorando|Glo(?:bb?(?:ing|ed)?)?|Gre(?:pp?(?:ing|ed)?)?|Read(?:ing)?|Work(?:ing)?|Globb?|Glob|Gre|Rea|Wor)$/i;
 
 const AGENT_TOKEN_COUNT_LINE = /^[\d.]+\s*k?\s*tokens?\b/i;
 
@@ -187,7 +187,7 @@ function isAgentChromeLine(trimmed: string): boolean {
 export function isStreamJsonAgentCli(cliAgent: string): boolean {
   const base = extractCliAgentCommand(cliAgent.trim() || 'cursor-agent');
 
-  return base === 'cursor-agent' || base === 'opencode';
+  return base === 'cursor-agent' || base === 'opencode' || base === 'agy';
 }
 
 export function isCursorAgentStreamJsonCli(cliAgent: string): boolean {
@@ -309,7 +309,7 @@ export function buildAgentPaneLaunchCommand(command: string): string {
   const trimmed = command.trim();
   const base = extractCliAgentCommand(trimmed || 'cursor-agent');
 
-  if (base === 'cursor-agent' || base === 'opencode') {
+  if (base === 'cursor-agent' || base === 'opencode' || base === 'agy') {
     return '';
   }
 

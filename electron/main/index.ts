@@ -659,6 +659,14 @@ function requestSessionFlush(mode: 'quit' | 'close'): void {
     return;
   }
 
+  if (isDevReconnectUrl(win.webContents.getURL())) {
+    logLifecycle('session flush skipped — reconnect page');
+    isSessionFlushing = true;
+    flushMode = mode;
+    completeSessionFlush();
+    return;
+  }
+
   isSessionFlushing = true;
   flushMode = mode;
 
@@ -678,6 +686,12 @@ function requestSessionFlush(mode: 'quit' | 'close'): void {
       lastQuitAttemptAt = now;
 
       if (quitFlushAttempts < 2 && win && !win.isDestroyed()) {
+        if (isDevReconnectUrl(win.webContents.getURL()) || lastMainFrameLoadFailed) {
+          logLifecycle('session flush timeout — quitting reconnect page');
+          completeSessionFlush();
+          return;
+        }
+
         logLifecycle('session flush timeout — canceling quit and recovering');
         cancelPendingSessionFlush();
         scheduleRendererRecovery(win.webContents, 'quit-flush-timeout');

@@ -1,9 +1,6 @@
 import { createConnection, type Socket } from 'node:net';
-import os from 'node:os';
-import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-
-const DEFAULT_SOCKET = path.join(os.homedir(), '.nexus-desktop.sock');
+import { getDesktopIpcPath } from './localIpcPath';
 
 export type DesktopEmulatorPushHandler = (message: Record<string, unknown>) => void;
 
@@ -14,7 +11,7 @@ interface PendingRequest {
 }
 
 function getDesktopSocketPath(): string {
-  return process.env.NEXUS_DESKTOP_SOCKET ?? DEFAULT_SOCKET;
+  return getDesktopIpcPath();
 }
 
 export async function requestDesktopJson(

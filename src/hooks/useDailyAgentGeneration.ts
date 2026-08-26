@@ -252,13 +252,22 @@ export function useDailyAgentGeneration(projects: Project[]) {
             return;
           }
 
-          const streamUpdate = feedAgentStreamJsonChunk(parserState, data);
+          try {
+            const streamUpdate = feedAgentStreamJsonChunk(parserState, data);
 
-          if (
-            streamUpdate.shouldFinalize ||
-            (parserState.shouldFinalize && hasMeaningfulStreamJsonTurnOutput(parserState))
-          ) {
-            completeFromParser();
+            if (
+              streamUpdate.shouldFinalize ||
+              (parserState.shouldFinalize && hasMeaningfulStreamJsonTurnOutput(parserState))
+            ) {
+              completeFromParser();
+            }
+          } catch (error) {
+            settle({
+              content: '',
+              status: 'error',
+              errorMessage:
+                error instanceof Error ? error.message : 'Não foi possível gerar a resposta.',
+            });
           }
         },
         onDone: (_incomingPaneId, payload) => {
@@ -266,32 +275,44 @@ export function useDailyAgentGeneration(projects: Project[]) {
             return;
           }
 
-          feedAgentStreamJsonChunk(parserState, '');
-          const content = resolveDailyAgentFinalResponse(parserState);
-          const hasError = payload.code !== 0 || Boolean(payload.error);
+          try {
+            feedAgentStreamJsonChunk(parserState, '');
+            const content = resolveDailyAgentFinalResponse(parserState);
+            const hasError = payload.code !== 0 || Boolean(payload.error);
 
-          if (content.trim()) {
+            if (content.trim()) {
+              settle(
+                {
+                  content,
+                  status: 'success',
+                },
+                { stopProcess: false },
+              );
+              return;
+            }
+
             settle(
               {
-                content,
-                status: 'success',
+                content: '',
+                status: 'error',
+                errorMessage:
+                  hasError
+                    ? payload.error ?? 'Não foi possível gerar a resposta.'
+                    : 'Não foi possível gerar a resposta.',
               },
               { stopProcess: false },
             );
-            return;
+          } catch (error) {
+            settle(
+              {
+                content: '',
+                status: 'error',
+                errorMessage:
+                  error instanceof Error ? error.message : 'Não foi possível gerar a resposta.',
+              },
+              { stopProcess: false },
+            );
           }
-
-          settle(
-            {
-              content: '',
-              status: 'error',
-              errorMessage:
-                hasError
-                  ? payload.error ?? 'Não foi possível gerar a resposta.'
-                  : 'Não foi possível gerar a resposta.',
-            },
-            { stopProcess: false },
-          );
         },
       });
 

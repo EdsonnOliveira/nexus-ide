@@ -9,6 +9,7 @@ import { normalizeAutomation } from '@/utils/normalizeAutomation';
 import { rawAgentTurnHistoryNeedsTrim, trimAgentTurnsInTabBarItems } from '@/utils/trimAgentTurnHistory';
 import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
+import { useToastStore } from '@/stores/useToastStore';
 import {
   countBusyAgentPanes,
   beginProjectSwitch,
@@ -63,6 +64,8 @@ interface ProjectStoreState {
   projectsMigrated: boolean;
   initialize: () => Promise<void>;
   addProject: () => Promise<void>;
+  addProjectByPath: (projectPath: string) => Promise<void>;
+  createProject: (name: string) => Promise<void>;
   removeProject: (id: string) => Promise<void>;
   stopProject: (id: string) => Promise<void>;
   selectProject: (id: string, options?: { syncWorkspace?: boolean }) => Promise<void>;
@@ -893,13 +896,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
       }
     }
   },
-  addProject: async () => {
-    const projectPath = await window.nexus.dialog.openDirectory();
-
-    if (!projectPath) {
-      return;
-    }
-
+  addProjectByPath: async (projectPath) => {
     const prevState = get();
     const { activeWorkspaceId, workspaces } = prevState;
     const workspaceId = activeWorkspaceId ?? workspaces[0]?.id ?? null;
@@ -907,6 +904,37 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     await window.nexus.projects.add(projectPath, workspaceId);
     const appState = migrateAppState(await window.nexus.projects.list());
     applyStatePreservingRuntime(set, get, appState, prevState);
+  },
+  addProject: async () => {
+    const projectPath = await window.nexus.dialog.openDirectory();
+
+    if (!projectPath) {
+      return;
+    }
+
+    await get().addProjectByPath(projectPath);
+  },
+  createProject: async (name) => {
+    const trimmed = name.trim();
+
+    if (!trimmed) {
+      return;
+    }
+
+    const parentPath = await window.nexus.dialog.openDirectory();
+
+    if (!parentPath) {
+      return;
+    }
+
+    const result = await window.nexus.files.createDirectory(parentPath, trimmed);
+
+    if (!result.ok) {
+      useToastStore.getState().showToast(result.error);
+      return;
+    }
+
+    await get().addProjectByPath(result.path);
   },
   removeProject: async (id) => {
     const { useTerminalSessionStore } = await import('@/stores/useTerminalSessionStore');

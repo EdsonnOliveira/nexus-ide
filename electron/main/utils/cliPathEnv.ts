@@ -2,6 +2,21 @@ import os from 'node:os';
 import path from 'node:path';
 
 function getCliPathSegments(home: string): string[] {
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA ?? '';
+    const appData = process.env.APPDATA ?? '';
+
+    return [
+      path.join(home, 'bin'),
+      path.join(home, '.local', 'bin'),
+      path.join(home, '.cursor', 'bin'),
+      localAppData ? path.join(localAppData, 'Programs', 'cursor') : '',
+      appData ? path.join(appData, 'npm') : '',
+      localAppData ? path.join(localAppData, 'Android', 'Sdk', 'platform-tools') : '',
+      localAppData ? path.join(localAppData, 'Android', 'Sdk', 'emulator') : '',
+    ].filter(Boolean);
+  }
+
   return [
     path.join(home, 'bin'),
     path.join(home, '.local', 'bin'),
@@ -19,7 +34,7 @@ export function buildCliPathEnv(basePath?: string): string {
   const home = os.homedir();
   const segments = new Set<string>();
 
-  for (const segment of (basePath ?? process.env.PATH ?? '').split(':')) {
+  for (const segment of (basePath ?? process.env.PATH ?? '').split(path.delimiter)) {
     if (segment) {
       segments.add(segment);
     }
@@ -29,5 +44,5 @@ export function buildCliPathEnv(basePath?: string): string {
     segments.add(segment);
   }
 
-  return Array.from(segments).join(':');
+  return Array.from(segments).join(path.delimiter);
 }

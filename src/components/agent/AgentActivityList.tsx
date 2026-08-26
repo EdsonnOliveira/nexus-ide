@@ -86,6 +86,10 @@ function isRenderableActivity(activity: AgentActivity, running: boolean): boolea
     return false;
   }
 
+  if (activity.kind === 'thought') {
+    return Boolean(activity.label.trim());
+  }
+
   if (activity.kind === 'live_status') {
     return running && Boolean(activity.label.trim());
   }
@@ -494,29 +498,9 @@ function AgentActivityListComponent({
 
   const renderSingleActivity = (activity: AgentActivity): ReactNode => {
     if (activity.kind === 'thought') {
-      const thoughtIndex = visibleActivities.findIndex((entry) => entry.id === activity.id);
-      const following = thoughtIndex >= 0 ? visibleActivities.slice(thoughtIndex + 1) : [];
-      const hasProgressAfter = following.some((entry) => {
-        if (entry.kind === 'response') {
-          return true;
-        }
-
-        if (entry.kind === 'file_read' || entry.kind === 'file_edit') {
-          return Boolean(entry.filePath?.trim());
-        }
-
-        if (entry.kind === 'tool_run') {
-          return Boolean(entry.label.trim() || entry.toolCommand?.trim());
-        }
-
-        if (entry.kind === 'task') {
-          return Boolean(entry.label.trim());
-        }
-
-        return false;
-      });
-      const collapseEmptyPlaceholder =
-        !activity.streaming && !activity.label.trim() && hasProgressAfter;
+      if (!activity.label.trim()) {
+        return null;
+      }
 
       return (
         <AgentThoughtBlock
@@ -524,7 +508,7 @@ function AgentActivityListComponent({
           activity={activity}
           projectPath={projectPath}
           defaultExpanded={Boolean(activity.streaming)}
-          forceCollapsed={collapseEmptyPlaceholder}
+          forceCollapsed={false}
         />
       );
     }
@@ -696,7 +680,8 @@ function AgentActivityListComponent({
 
   const needsWaitingStatus = running && !hasLiveProgressIndicator;
   const [showWaitingStatus, setShowWaitingStatus] = useState(false);
-  const waitingLabel = visibleActivities.length === 0 ? 'Thinking...' : 'Planning next moves...';
+  const waitingLabel =
+    visibleActivities.length === 0 ? 'Trabalhando...' : 'Planejando próximo passo...';
 
   useEffect(() => {
     if (!running || !needsWaitingStatus) {
@@ -735,7 +720,10 @@ function AgentActivityListComponent({
 
     for (const activity of activities) {
       if (activity.kind === 'thought') {
-        const hadTools = toolGroup.length > 0 || nodes.length > 0;
+        if (!activity.label.trim()) {
+          continue;
+        }
+
         flushTools(activity.id);
         nodes.push(
           <AgentThoughtBlock
@@ -743,10 +731,7 @@ function AgentActivityListComponent({
             activity={activity}
             projectPath={projectPath}
             defaultExpanded={Boolean(activity.streaming || activity.label.trim())}
-            forceCollapsed={
-              (!activity.streaming && !activity.label.trim()) ||
-              (Boolean(activity.streaming) && !activity.label.trim() && hadTools)
-            }
+            forceCollapsed={!activity.streaming && !activity.label.trim()}
           />,
         );
         continue;
@@ -754,18 +739,7 @@ function AgentActivityListComponent({
 
       if (activity.kind === 'live_status' && !parseAgentLiveFileStatus(activity.label)) {
         flushTools(activity.id);
-        nodes.push(
-          <AgentThoughtBlock
-            key={activity.id}
-            activity={{
-              ...activity,
-              kind: 'thought',
-              streaming: true,
-              label: '',
-            }}
-            forceCollapsed
-          />,
-        );
+        nodes.push(<AgentLiveStatus key={activity.id} label={activity.label} />);
         continue;
       }
 

@@ -3,8 +3,9 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync, mkdirSync } from '
 import os from 'node:os';
 import path from 'node:path';
 import { app } from 'electron';
+import { killProcessTree } from '../utils/killProcessTree';
+import { getRuntimeIpcPath, isNamedPipePath } from '../utils/localIpcPath';
 
-const DEFAULT_SOCKET = path.join(os.homedir(), '.nexus-runtime.sock');
 const RUNTIME_STATE_DIR = path.join(os.homedir(), '.nexus', 'runtime');
 const MANAGED_PID_FILE = path.join(RUNTIME_STATE_DIR, 'desktop-managed.pid');
 const LAUNCHD_LABEL = 'com.nexus.runtime';
@@ -34,7 +35,7 @@ let healthyTimer: ReturnType<typeof setTimeout> | null = null;
 let startedBySupervisor = false;
 
 function getSocketPath(): string {
-  return process.env.NEXUS_RUNTIME_SOCKET ?? DEFAULT_SOCKET;
+  return getRuntimeIpcPath();
 }
 
 function getProjectRoot(): string {
@@ -111,6 +112,10 @@ function resolveRuntimeEnv(): NodeJS.ProcessEnv {
 }
 
 function listSocketPids(socketPath: string): number[] {
+  if (isNamedPipePath(socketPath) || process.platform === 'win32') {
+    return [];
+  }
+
   if (!existsSync(socketPath)) {
     return [];
   }
@@ -154,6 +159,11 @@ function clearManagedPid(): void {
 }
 
 function killPid(pid: number): void {
+  if (process.platform === 'win32') {
+    killProcessTree(pid);
+    return;
+  }
+
   try {
     process.kill(pid, 'SIGTERM');
   } catch {
@@ -170,6 +180,10 @@ function killPid(pid: number): void {
 }
 
 function clearSocketFile(socketPath: string): void {
+  if (isNamedPipePath(socketPath)) {
+    return;
+  }
+
   try {
     if (existsSync(socketPath)) {
       unlinkSync(socketPath);
@@ -267,15 +281,15 @@ function resolvePackagedRuntimeEntry(): string | null {
 function resolveDevRuntimeLaunch(): { command: string; args: string[]; cwd: string } | null {
   const projectRoot = getProjectRoot();
   const entry = path.join(projectRoot, 'apps/runtime/src/index.ts');
-  const tsxBin = path.join(projectRoot, 'node_modules/.bin/tsx');
+  const tsxCli = path.join(projectRoot, 'node_modules/tsx/dist/cli.mjs');
 
-  if (!existsSync(entry) || !existsSync(tsxBin)) {
+  if (!existsSync(entry) || !existsSync(tsxCli)) {
     return null;
   }
 
   return {
-    command: tsxBin,
-    args: [entry],
+    command: process.execPath,
+    args: [tsxCli, entry],
     cwd: projectRoot,
   };
 }
@@ -411,6 +425,7 @@ export function startManagedRuntime(): void {
     cwd: launch.cwd,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
   });
 
   child = next;

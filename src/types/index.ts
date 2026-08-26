@@ -527,6 +527,7 @@ export interface TerminalCommandHint {
     | 'cursor'
     | 'claude'
     | 'opencode'
+    | 'antigravity'
     | 'codex'
     | 'gemini'
     | 'mode-agent'
@@ -1322,7 +1323,7 @@ export interface NexusAPI {
   homeDashboard: {
     getStats: (
       projectPaths: string[],
-      provider?: 'cursor' | 'claude' | 'opencode',
+      provider?: 'cursor' | 'claude' | 'opencode' | 'antigravity',
     ) => Promise<HomeDashboardActivityComparison>;
     recordActivity: (kind: HomeDashboardActivityKind) => Promise<void>;
   };
@@ -1619,6 +1620,11 @@ export interface WorkspaceContextMenuState {
 }
 
 export type ProjectPromptMode =
-  'rename' | 'icon' | 'workspace' | 'workspace-rename' | 'workspace-icon';
+  | 'rename'
+  | 'icon'
+  | 'create'
+  | 'workspace'
+  | 'workspace-rename'
+  | 'workspace-icon';
 
 export {};

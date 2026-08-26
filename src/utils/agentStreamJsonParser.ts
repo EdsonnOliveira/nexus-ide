@@ -396,6 +396,10 @@ function extractThinkingDelta(event: Record<string, unknown>): string {
 }
 
 function extractSessionId(event: Record<string, unknown>): string | null {
+  if (typeof event.conversation_id === 'string' && event.conversation_id.trim()) {
+    return event.conversation_id;
+  }
+
   if (typeof event.session_id === 'string' && event.session_id.trim()) {
     return event.session_id;
   }
@@ -603,43 +607,7 @@ export function hasActiveStreamJsonToolOrTask(state: AgentStreamJsonParserState)
 }
 
 function pruneEmptyThoughtPlaceholders(state: AgentStreamJsonParserState): boolean {
-  const hasOtherProgress = state.activities.some((entry) => {
-    if (entry.kind === 'thought') {
-      return Boolean(entry.label.trim());
-    }
-
-    if (entry.kind === 'file_read' || entry.kind === 'file_edit') {
-      return Boolean(entry.filePath?.trim());
-    }
-
-    if (entry.kind === 'tool_run' || entry.kind === 'live_status' || entry.kind === 'status') {
-      return Boolean(entry.label.trim() || entry.toolCommand?.trim());
-    }
-
-    if (entry.kind === 'task') {
-      return Boolean(entry.label.trim());
-    }
-
-    if (entry.kind === 'response') {
-      return Boolean(entry.label.trim());
-    }
-
-    return entry.kind === 'question' || entry.kind === 'plan';
-  });
-
-  if (!hasOtherProgress) {
-    return false;
-  }
-
-  const lastIndex = state.activities.length - 1;
-  const keepTrailingToolThought = hasActiveStreamJsonToolOrTask(state);
-  const next = state.activities.filter((entry, index) => {
-    if (!(entry.kind === 'thought' && !entry.label.trim())) {
-      return true;
-    }
-
-    return Boolean(keepTrailingToolThought && entry.streaming && index === lastIndex);
-  });
+  const next = state.activities.filter((entry) => !(entry.kind === 'thought' && !entry.label.trim()));
 
   if (next.length === state.activities.length) {
     return false;
@@ -662,7 +630,7 @@ function hasActiveTurnProgressUi(state: AgentStreamJsonParserState): boolean {
   }
 
   return state.activities.some((entry) => {
-    if (entry.kind === 'thought' && entry.streaming) {
+    if (entry.kind === 'thought' && entry.streaming && entry.label.trim()) {
       return true;
     }
 
@@ -678,49 +646,16 @@ function hasActiveTurnProgressUi(state: AgentStreamJsonParserState): boolean {
   });
 }
 
-function ensureTrailingStreamingThought(state: AgentStreamJsonParserState): boolean {
-  const streamingThought = findStreamingThoughtActivity(state);
-
-  if (streamingThought?.streaming) {
-    if (streamingThought.label.trim()) {
-      return false;
-    }
-
-    const last = state.activities[state.activities.length - 1];
-
-    if (last?.id === streamingThought.id) {
-      return false;
-    }
-
-    state.activities = [
-      ...state.activities.filter((entry) => entry.id !== streamingThought.id),
-      streamingThought,
-    ];
-    return true;
-  }
-
-  const thought = createActivity('thought', '', {
-    streaming: true,
-    collapsed: false,
-  });
-
-  state.thoughtId = thought.id;
-  state.thoughtStartedAt = thought.createdAt;
-  state.thoughtSessionStartedAt = thought.createdAt;
-  state.activities = [...state.activities, thought];
-  return true;
-}
-
 function ensureRunningProgressPlaceholder(state: AgentStreamJsonParserState): boolean {
   if (hasActiveTurnProgressUi(state)) {
     return false;
   }
 
   if (!hasVisibleStreamJsonProgress(state)) {
-    return ensureTrailingStreamingThought(state);
+    return upsertStreamJsonLiveStatus(state, 'Trabalhando...');
   }
 
-  return upsertStreamJsonLiveStatus(state, 'Planning next moves...');
+  return upsertStreamJsonLiveStatus(state, 'Planejando próximo passo...');
 }
 
 function settleThought(state: AgentStreamJsonParserState): void {
@@ -731,50 +666,15 @@ function settleThought(state: AgentStreamJsonParserState): void {
   }
 
   if (!thought.label.trim()) {
-    const hasOtherProgress = state.activities.some((entry) => {
-      if (entry.id === thought.id) {
-        return false;
-      }
-
-      if (entry.kind === 'thought') {
-        return Boolean(entry.label.trim());
-      }
-
-      if (entry.kind === 'file_read' || entry.kind === 'file_edit') {
-        return Boolean(entry.filePath?.trim());
-      }
-
-      if (entry.kind === 'tool_run' || entry.kind === 'live_status' || entry.kind === 'status') {
-        return Boolean(entry.label.trim() || entry.toolCommand?.trim());
-      }
-
-      if (entry.kind === 'response') {
-        return Boolean(entry.label.trim());
-      }
-
-      return entry.kind === 'question' || entry.kind === 'plan';
-    });
-
-    if (!hasOtherProgress) {
-      state.thoughtId = thought.id;
-      state.thoughtStartedAt = state.thoughtStartedAt ?? thought.createdAt;
-      state.thoughtSessionStartedAt = state.thoughtSessionStartedAt ?? thought.createdAt;
-      state.activities = state.activities.map((entry) =>
-        entry.id === thought.id
-          ? {
-              ...entry,
-              streaming: true,
-              collapsed: false,
-            }
-          : entry,
-      );
-      return;
-    }
-
     state.activities = state.activities.filter((entry) => entry.id !== thought.id);
     state.thoughtId = null;
     state.thoughtStartedAt = null;
     state.thoughtSessionStartedAt = null;
+
+    if (!state.shouldFinalize) {
+      ensureRunningProgressPlaceholder(state);
+    }
+
     return;
   }
 
@@ -1989,10 +1889,30 @@ function parseUsage(raw: unknown): AgentStreamJsonUsage | null {
   }
 
   const usage = raw as Record<string, unknown>;
-  const inputTokens = typeof usage.inputTokens === 'number' ? usage.inputTokens : 0;
-  const outputTokens = typeof usage.outputTokens === 'number' ? usage.outputTokens : 0;
-  const cacheReadTokens = typeof usage.cacheReadTokens === 'number' ? usage.cacheReadTokens : 0;
-  const cacheWriteTokens = typeof usage.cacheWriteTokens === 'number' ? usage.cacheWriteTokens : 0;
+  const inputTokens =
+    typeof usage.inputTokens === 'number'
+      ? usage.inputTokens
+      : typeof usage.input_tokens === 'number'
+        ? usage.input_tokens
+        : 0;
+  const outputTokens =
+    typeof usage.outputTokens === 'number'
+      ? usage.outputTokens
+      : typeof usage.output_tokens === 'number'
+        ? usage.output_tokens
+        : 0;
+  const cacheReadTokens =
+    typeof usage.cacheReadTokens === 'number'
+      ? usage.cacheReadTokens
+      : typeof usage.cache_read_tokens === 'number'
+        ? usage.cache_read_tokens
+        : 0;
+  const cacheWriteTokens =
+    typeof usage.cacheWriteTokens === 'number'
+      ? usage.cacheWriteTokens
+      : typeof usage.cache_write_tokens === 'number'
+        ? usage.cache_write_tokens
+        : 0;
 
   if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0) {
     return null;
@@ -2145,10 +2065,224 @@ function maybeFinalizeOpenCodeStep(state: AgentStreamJsonParserState): void {
   }
 }
 
+function handleAntigravityToolStep(
+  state: AgentStreamJsonParserState,
+  stepUpdate: Record<string, unknown>,
+): void {
+  captureResponseLeadBeforeTools(state);
+  sealActiveResponseSegment(state);
+  settleThought(state);
+
+  const toolInfo = stepUpdate.tool_info as Record<string, unknown> | undefined;
+  const toolName = toolInfo
+    ? typeof toolInfo.name === 'string'
+      ? toolInfo.name.toLowerCase()
+      : ''
+    : typeof stepUpdate.tool_name === 'string'
+      ? stepUpdate.tool_name.toLowerCase()
+      : '';
+  const parameters = toolInfo?.parameters as Record<string, unknown> | undefined;
+  const output = typeof toolInfo?.output === 'string' ? toolInfo.output : '';
+
+  if (toolName === 'run_command') {
+    const commandLine =
+      typeof parameters?.CommandLine === 'string'
+        ? parameters.CommandLine.trim()
+        : typeof parameters?.command === 'string'
+          ? parameters.command.trim()
+          : '';
+
+    if (commandLine) {
+      trackShellCommand(state, commandLine);
+      state.shellToolEvents.push({
+        type: 'started',
+        command: commandLine,
+        output,
+        exitCode: null,
+      });
+      startToolRun(state, 'Running', { toolCommand: commandLine });
+      completeToolRun(state, { label: 'Ran command' });
+    }
+
+    return;
+  }
+
+  if (toolName === 'write_to_file' || toolName === 'edit_file') {
+    const filePath =
+      typeof parameters?.path === 'string'
+        ? parameters.path
+        : typeof parameters?.file_path === 'string'
+          ? parameters.file_path
+          : '';
+    const label =
+      toolName === 'write_to_file'
+        ? `Writing ${basenamePath(filePath)}`
+        : `Editing ${basenamePath(filePath)}`;
+
+    if (filePath) {
+      startToolRun(state, label, { filePath });
+      completeToolRun(state);
+    }
+
+    return;
+  }
+
+  if (toolName === 'read_file' || toolName === 'read') {
+    const filePath =
+      typeof parameters?.path === 'string'
+        ? parameters.path
+        : typeof parameters?.file_path === 'string'
+          ? parameters.file_path
+          : '';
+
+    if (filePath) {
+      startToolRun(state, `Reading ${basenamePath(filePath)}`, { filePath });
+      upsertFileRead(state, filePath);
+      completeToolRun(state);
+    }
+
+    return;
+  }
+
+  const displayName = typeof stepUpdate.tool_name === 'string' ? stepUpdate.tool_name : toolName;
+  startToolRun(state, `Running ${displayName || 'tool'}`);
+  completeToolRun(state);
+}
+
+function maybeFinalizeAntigravityResult(
+  state: AgentStreamJsonParserState,
+  resultText: string,
+): void {
+  const hasLiveDevShell = state.activities.some(
+    (entry) =>
+      entry.kind === 'tool_run' &&
+      Boolean(entry.streaming) &&
+      shouldOpenAgentShellToolTerminal(entry.toolCommand ?? ''),
+  );
+
+  if (
+    !hasLiveDevShell &&
+    !hasPendingStreamJsonInteraction(state) &&
+    (hasMeaningfulStreamJsonTurnOutput(state) || Boolean(resultText))
+  ) {
+    forceSettleStreamJsonInFlightWork(state);
+    state.shouldFinalize = true;
+  }
+}
+
+function handleAntigravityStreamEvent(
+  state: AgentStreamJsonParserState,
+  event: Record<string, unknown>,
+  antigravityEvent: string,
+): void {
+  if (antigravityEvent === 'init') {
+    const sessionId =
+      typeof event.conversation_id === 'string' && event.conversation_id.trim()
+        ? event.conversation_id
+        : extractSessionId(event);
+
+    if (sessionId) {
+      state.sessionId = sessionId;
+    }
+
+    return;
+  }
+
+  if (antigravityEvent === 'step_update') {
+    const stepUpdate = event.step_update as Record<string, unknown> | undefined;
+
+    if (!stepUpdate) {
+      return;
+    }
+
+    const conversationId =
+      typeof stepUpdate.conversation_id === 'string' && stepUpdate.conversation_id.trim()
+        ? stepUpdate.conversation_id
+        : null;
+
+    if (conversationId) {
+      state.sessionId = conversationId;
+    }
+
+    const stepType = typeof stepUpdate.step_type === 'string' ? stepUpdate.step_type : '';
+
+    if (stepType === 'user_input' || stepType === 'checkpoint') {
+      return;
+    }
+
+    if (stepType === 'agent_response') {
+      const textDelta = typeof stepUpdate.text_delta === 'string' ? stepUpdate.text_delta : '';
+      const stepState = typeof stepUpdate.state === 'string' ? stepUpdate.state : '';
+
+      if (textDelta) {
+        if (stepState === 'ACTIVE') {
+          state.sawStreamingAssistantDelta = true;
+          upsertResponse(state, textDelta, 'delta');
+        } else {
+          upsertResponse(state, textDelta, 'final');
+        }
+      }
+
+      const usage = parseUsage(stepUpdate.usage);
+
+      if (usage) {
+        state.pendingUsage = usage;
+      }
+
+      return;
+    }
+
+    if (stepType === 'tool') {
+      handleAntigravityToolStep(state, stepUpdate);
+    }
+
+    return;
+  }
+
+  if (antigravityEvent === 'result') {
+    const result = event.result as Record<string, unknown> | undefined;
+
+    if (!result) {
+      return;
+    }
+
+    const conversationId =
+      typeof result.conversation_id === 'string' && result.conversation_id.trim()
+        ? result.conversation_id
+        : extractSessionId(result);
+
+    if (conversationId) {
+      state.sessionId = conversationId;
+    }
+
+    const usage = parseUsage(result.usage);
+
+    if (usage) {
+      state.pendingUsage = usage;
+    }
+
+    const resultText =
+      typeof result.response === 'string' ? result.response.trim() : state.pendingResponseText.trim();
+
+    if (resultText && !isAggregatedPriorResponseText(resultText, state.activities)) {
+      upsertResponse(state, resultText, 'final');
+    }
+
+    maybeFinalizeAntigravityResult(state, resultText);
+  }
+}
+
 function handleStreamJsonEvent(
   state: AgentStreamJsonParserState,
   event: Record<string, unknown>,
 ): void {
+  const antigravityEvent = typeof event.event === 'string' ? event.event : '';
+
+  if (antigravityEvent) {
+    handleAntigravityStreamEvent(state, event, antigravityEvent);
+    return;
+  }
+
   const type = typeof event.type === 'string' ? event.type : '';
 
   if (type === 'system' && event.subtype === 'init') {
@@ -2448,13 +2582,7 @@ export function clearStreamJsonLiveStatus(state: AgentStreamJsonParserState): bo
 
 export function ensureStreamJsonStallProgressUi(state: AgentStreamJsonParserState): boolean {
   if (hasActiveStreamJsonToolOrTask(state)) {
-    let changed = clearStreamJsonLiveStatus(state);
-
-    if (ensureTrailingStreamingThought(state)) {
-      changed = true;
-    }
-
-    return changed;
+    return clearStreamJsonLiveStatus(state);
   }
 
   let changed = false;
@@ -2524,7 +2652,7 @@ export function resolveStreamJsonStallLiveStatus(
     return `Aguardando resposta do agent… (${idleSeconds}s)`;
   }
 
-  return 'Planning next moves...';
+  return 'Planejando próximo passo...';
 }
 
 export function forceSettleStreamJsonInFlightWork(state: AgentStreamJsonParserState): void {

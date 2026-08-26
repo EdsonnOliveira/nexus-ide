@@ -887,17 +887,9 @@ export function WebMaestroHome() {
               id: crypto.randomUUID(),
               prompt: titleSource,
               thought: '',
-              thoughtStreaming: true,
+              thoughtStreaming: false,
               response: '',
-              activities: [
-                {
-                  id: crypto.randomUUID(),
-                  kind: 'thought',
-                  label: '',
-                  streaming: true,
-                  startedAt: createdAt,
-                },
-              ],
+              activities: [],
               status: 'running',
               createdAt,
               commandId,
@@ -991,17 +983,9 @@ export function WebMaestroHome() {
           id: crypto.randomUUID(),
           prompt,
           thought: '',
-          thoughtStreaming: true,
+          thoughtStreaming: false,
           response: '',
-          activities: [
-            {
-              id: crypto.randomUUID(),
-              kind: 'thought',
-              label: '',
-              streaming: true,
-              startedAt: Date.now(),
-            },
-          ],
+          activities: [],
           status: 'running',
           createdAt: Date.now(),
           commandId,
@@ -1294,6 +1278,11 @@ export function WebMaestroHome() {
         projectScreenOpen ? ' home-dashboard--project-open' : ''
       }${agentScreenOpen ? ' home-dashboard--agent-open' : ''}`}
     >
+      <div className='home-dashboard__aurora' aria-hidden='true'>
+        <span className='home-dashboard__aurora-blob home-dashboard__aurora-blob--a' />
+        <span className='home-dashboard__aurora-blob home-dashboard__aurora-blob--b' />
+        <span className='home-dashboard__aurora-blob home-dashboard__aurora-blob--c' />
+      </div>
       <header
         ref={heroRef}
         className={`home-dashboard__hero app-button--enter${

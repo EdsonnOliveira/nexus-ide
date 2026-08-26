@@ -1,6 +1,6 @@
 {
   "name": "nexus-ide",
-  "version": "1.0.55",
+  "version": "1.0.56",
   "private": true,
   "description": "Nexus IDE — AI-powered desktop IDE",
   "engines": {
@@ -14,7 +14,7 @@
   ],
   "scripts": {
     "dev": "node scripts/dev-supervisor.mjs",
-    "dev:vite": "node scripts/patch-electron-branding.mjs && env -u NODE_OPTIONS vite",
+    "dev:vite": "node scripts/run-dev-vite.mjs",
     "dev:web": "npm run dev -w @nexus/web",
     "runtime": "node scripts/assert-nexus-supabase.mjs && tsx apps/runtime/src/index.ts",
     "runtime:dev": "node scripts/assert-nexus-supabase.mjs && tsx watch apps/runtime/src/index.ts",
@@ -24,6 +24,7 @@
     "cloud:deploy-push": "node scripts/deploy-push-functions.mjs",
     "build": "tsc --noEmit && npm run build:runtime && vite build && electron-builder",
     "build:local": "node scripts/build-shell-helpers.mjs && tsc --noEmit && npm run build:runtime && vite build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder && node scripts/finish-mac-local-build.mjs",
+    "build:win": "tsc --noEmit && npm run build:runtime && vite build && electron-builder --win nsis",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "postinstall": "node scripts/setup-native.mjs",
@@ -83,6 +84,8 @@
     "directories": {
       "output": "release"
     },
+    "beforeBuild": "./scripts/before-win-native-rebuild.cjs",
+    "afterPack": "./scripts/after-win-native-rebuild.cjs",
     "files": [
       "dist-electron",
       "dist",
@@ -101,27 +104,27 @@
       "resources/shell/**/*",
       "resources/simulator-server/**/*"
     ],
-    "extraFiles": [
-      {
-        "from": "resources/shell/CalendarHelper-Info.plist",
-        "to": "Helpers/CalendarHelper.app/Contents/Info.plist"
-      },
-      {
-        "from": "resources/shell/macosCalendarHelper",
-        "to": "Helpers/CalendarHelper.app/Contents/MacOS/CalendarHelper"
-      },
-      {
-        "from": "resources/shell/NotificationHelper.app",
-        "to": "Helpers/NotificationHelper.app"
-      },
-      {
-        "from": "resources/shell/SpeechHelper.app",
-        "to": "Helpers/SpeechHelper.app"
-      }
-    ],
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
+      "extraFiles": [
+        {
+          "from": "resources/shell/CalendarHelper-Info.plist",
+          "to": "Helpers/CalendarHelper.app/Contents/Info.plist"
+        },
+        {
+          "from": "resources/shell/macosCalendarHelper",
+          "to": "Helpers/CalendarHelper.app/Contents/MacOS/CalendarHelper"
+        },
+        {
+          "from": "resources/shell/NotificationHelper.app",
+          "to": "Helpers/NotificationHelper.app"
+        },
+        {
+          "from": "resources/shell/SpeechHelper.app",
+          "to": "Helpers/SpeechHelper.app"
+        }
+      ],
       "extraResources": [
         "build/Assets.car",
         {
@@ -159,6 +162,12 @@
     },
     "win": {
       "icon": "build/icon.ico",
+      "extraResources": [
+        {
+          "from": "dist-runtime",
+          "to": "runtime"
+        }
+      ],
       "target": [
         {
           "target": "nsis",

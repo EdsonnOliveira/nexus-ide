@@ -41,6 +41,10 @@ export function resolveDashboardAiProvider(value: unknown): DashboardAiProvider 
     return 'opencode';
   }
 
+  if (value === 'antigravity') {
+    return 'antigravity';
+  }
+
   return 'cursor';
 }
 

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertNexusSupabaseUrl } from '@nexus/supabase';
+import { getRuntimeIpcPath } from './localIpcPath';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -75,8 +76,6 @@ export function loadRuntimeEnv(): {
     password: process.env.NEXUS_RUNTIME_PASSWORD ?? null,
     deviceName: process.env.NEXUS_DEVICE_NAME ?? null,
     pairingCode: process.env.NEXUS_PAIRING_CODE ?? null,
-    socketPath:
-      process.env.NEXUS_RUNTIME_SOCKET ??
-      path.join(process.env.HOME ?? os.homedir(), '.nexus-runtime.sock'),
+    socketPath: getRuntimeIpcPath(),
   };
 }

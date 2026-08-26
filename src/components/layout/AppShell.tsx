@@ -13,6 +13,9 @@ import { useTabActions } from '@/stores/useTabStore';
 import { isMarkdownFile } from '@/utils/explorerRelativePath';
 import { NexusLogo } from '@/components/overlay/NexusLogo';
 import { EmptyState } from '@/components/overlay/EmptyState';
+import { useAddProjectFlow } from '@/hooks/useAddProjectFlow';
+import { AddProjectMenu } from '@/components/sidebar/AddProjectMenu';
+import { ProjectPromptDialog } from '@/components/sidebar/ProjectPromptDialog';
 import { PaneErrorBoundary } from '@/components/overlay/PaneErrorBoundary';
 import { ProjectSidebar } from '@/components/sidebar/ProjectSidebar';
 import { StatusBar } from '@/components/layout/StatusBar';
@@ -97,26 +100,52 @@ const ProjectPasswordsDrawer = lazy(() =>
 );
 
 function EmptyWorkspace() {
-  const addProject = useProjectStore((state) => state.addProject);
-
-  const handleAddProject = useCallback(() => {
-    void addProject();
-  }, [addProject]);
+  const {
+    addButtonRef,
+    menuOpen,
+    menuAnchor,
+    createPromptOpen,
+    handleOpenMenu,
+    handleCloseMenu,
+    handleSelectOption,
+    handleCreateConfirm,
+    handleCreateClose,
+  } = useAddProjectFlow();
 
   return (
-    <EmptyState
-      icon={FolderPlus}
-      title='Nenhum projeto adicionado'
-      message='Adicione um projeto para começar'
-    >
-      <button
-        type='button'
-        className='empty-state__action empty-state__action--primary app-button app-button--enter'
-        onClick={handleAddProject}
+    <>
+      <EmptyState
+        icon={FolderPlus}
+        title='Nenhum projeto adicionado'
+        message='Adicione um projeto para começar'
       >
-        Adicionar projeto
-      </button>
-    </EmptyState>
+        <button
+          ref={addButtonRef}
+          type='button'
+          className='empty-state__action empty-state__action--primary app-button app-button--enter'
+          onClick={handleOpenMenu}
+        >
+          Adicionar projeto
+        </button>
+      </EmptyState>
+
+      {menuOpen && menuAnchor ? (
+        <AddProjectMenu
+          anchorRect={menuAnchor}
+          onClose={handleCloseMenu}
+          onSelect={handleSelectOption}
+        />
+      ) : null}
+
+      {createPromptOpen ? (
+        <ProjectPromptDialog
+          mode='create'
+          initialValue=''
+          onConfirm={handleCreateConfirm}
+          onClose={handleCreateClose}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -267,6 +296,20 @@ function AppShellComponent() {
       }
     };
   }, [refreshCloud]);
+
+  useEffect(() => {
+    const syncHidden = () => {
+      document.documentElement.classList.toggle('nexus-window-hidden', document.hidden);
+    };
+
+    syncHidden();
+    document.addEventListener('visibilitychange', syncHidden);
+
+    return () => {
+      document.removeEventListener('visibilitychange', syncHidden);
+      document.documentElement.classList.remove('nexus-window-hidden');
+    };
+  }, []);
 
   const isMac = useMemo(
     () => typeof navigator !== 'undefined' && /Mac|iPhone|iPod|iPad/i.test(navigator.platform),

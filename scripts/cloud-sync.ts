@@ -99,7 +99,8 @@ if (!existingDevice) {
     owner_id: authData.user.id,
     name: defaultDeviceName(process.env.NEXUS_DEVICE_NAME),
     hostname: os.hostname(),
-    platform: 'macos',
+    platform:
+      process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux',
     architecture: os.arch(),
     runtime_version: '1.0.0',
     status: 'online',

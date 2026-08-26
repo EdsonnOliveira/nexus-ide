@@ -62,5 +62,5 @@ export function defaultDeviceName(override?: string | null): string {
     return cleanOverride;
   }
   const cleanHostname = sanitizeDeviceName(os.hostname().replace(/\.local$/i, ''));
-  return cleanHostname || 'Mac Nexus';
+  return cleanHostname || 'Nexus';
 }

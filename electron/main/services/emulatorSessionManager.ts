@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { clipboard, nativeImage, type BrowserWindow } from 'electron';
+import { app, clipboard, nativeImage, type BrowserWindow } from 'electron';
 import type {
   EmulatorPlatform,
   EmulatorCaptureBackend,
@@ -22,10 +22,9 @@ import { recordEmulatorDeviceUsage } from './emulatorDeviceUsageStore';
 import { createIosSimulatorSession } from './iosSimulatorSession';
 import { openNativeEmulatorWindow, hideNativeEmulatorWindow } from './openNativeEmulatorWindow';
 import { existsSync, readFileSync } from 'node:fs';
-import os from 'node:os';
 
 function userDataProjectsPath(): string {
-  return path.join(os.homedir(), 'Library', 'Application Support', 'nexus-ide', 'projects.json');
+  return path.join(app.getPath('userData'), 'projects.json');
 }
 
 function collectPaneIds(tabs: unknown): string[] {

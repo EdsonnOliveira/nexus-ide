@@ -24,6 +24,7 @@ import { createFileAuthStorage } from './sessionStorage';
 import { notifyMacOnline, runPushMaintenance } from './pushMaintenance';
 import { syncMobileReleaseSnapshotFromDisk } from './syncMobileReleaseSnapshot';
 import { publishDesktopAgentPanes } from './publishDesktopAgentPanes';
+import { isNamedPipePath } from './localIpcPath';
 
 const HEARTBEAT_MS = 15_000;
 const POLL_MS = 2_000;
@@ -163,7 +164,12 @@ async function ensureDevice(
         owner_id: ownerId,
         name,
         hostname: os.hostname(),
-        platform: 'macos',
+        platform:
+          process.platform === 'win32'
+            ? 'windows'
+            : process.platform === 'darwin'
+              ? 'macos'
+              : 'linux',
         architecture: os.arch(),
         runtime_version: '1.0.0',
         status: 'online',
@@ -191,7 +197,7 @@ function startLocalSocket(
   listOpenSessions: () => Promise<AgentSessionBundle[]>,
   publishBeforeList: () => Promise<unknown>,
 ): void {
-  if (existsSync(socketPath)) {
+  if (!isNamedPipePath(socketPath) && existsSync(socketPath)) {
     unlinkSync(socketPath);
   }
 

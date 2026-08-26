@@ -578,6 +578,13 @@ function HomeDashboardComponent() {
         promptFlight ? ' home-dashboard--prompt-flight' : ''
       }`}
     >
+      {viewMode === 'agent' ? (
+        <div className='home-dashboard__aurora' aria-hidden='true'>
+          <span className='home-dashboard__aurora-blob home-dashboard__aurora-blob--a' />
+          <span className='home-dashboard__aurora-blob home-dashboard__aurora-blob--b' />
+          <span className='home-dashboard__aurora-blob home-dashboard__aurora-blob--c' />
+        </div>
+      ) : null}
       <HomeDashboardHero
         compact={compactChrome}
         askSlot={askBar}

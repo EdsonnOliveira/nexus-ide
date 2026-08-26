@@ -1,12 +1,7 @@
-import { lazy, memo, Suspense, useCallback, useMemo, useState, type ReactNode } from 'react';
+import { memo, useCallback, useMemo, useState, type ReactNode } from 'react';
+import { DailyAgentResultModal } from '@/components/home/DailyAgentResultModal';
 import { DailyGenerateDateMenu } from '@/components/home/DailyGenerateDateMenu';
 import { DailyGenerationContext } from '@/components/home/dailyGenerationContext';
-
-const DailyAgentResultModal = lazy(() =>
-  import('@/components/home/DailyAgentResultModal').then((module) => ({
-    default: module.DailyAgentResultModal,
-  })),
-);
 import { useDailyAgentGeneration } from '@/hooks/useDailyAgentGeneration';
 import { useHomeDashboardDailySkill } from '@/hooks/useHomeDashboardDailySkill';
 import { fetchProjectGitFlatChanges } from '@/hooks/useProjectGitFlatChanges';
@@ -170,14 +165,12 @@ function DailyGenerationProviderComponent({ children }: { children: ReactNode })
     <DailyGenerationContext.Provider value={value}>
       {children}
       {resultModal ? (
-        <Suspense fallback={null}>
-          <DailyAgentResultModal
-            modal={resultModal}
-            isRunning={runningProjectId === resultModal.project.id}
-            onClose={closeModal}
-            onRegenerate={regenerate}
-          />
-        </Suspense>
+        <DailyAgentResultModal
+          modal={resultModal}
+          isRunning={runningProjectId === resultModal.project.id}
+          onClose={closeModal}
+          onRegenerate={regenerate}
+        />
       ) : null}
       {externalDateMenu ? (
         <DailyGenerateDateMenu

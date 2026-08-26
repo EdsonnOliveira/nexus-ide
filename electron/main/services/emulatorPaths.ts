@@ -1,6 +1,7 @@
 import { app } from 'electron';
-import { accessSync, constants, readdirSync } from 'node:fs';
+import { accessSync, constants, readdirSync, statSync } from 'node:fs';
 import { execSync } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 
 export interface ResolvedTool {
@@ -8,8 +9,28 @@ export interface ResolvedTool {
   found: boolean;
 }
 
+function homeDir(): string {
+  return process.env.HOME || process.env.USERPROFILE || os.homedir();
+}
+
+function hostBinary(name: string): string {
+  return process.platform === 'win32' ? `${name}.exe` : name;
+}
+
 function canExecute(filePath: string): boolean {
+  if (!filePath) {
+    return false;
+  }
+
   try {
+    if (!statSync(filePath).isFile()) {
+      return false;
+    }
+
+    if (process.platform === 'win32') {
+      return true;
+    }
+
     accessSync(filePath, constants.X_OK);
     return true;
   } catch {
@@ -19,24 +40,42 @@ function canExecute(filePath: string): boolean {
 
 function getExecutableSearchPaths(): string[] {
   const paths = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
-  const home = process.env.HOME ?? '';
-  const extras = [
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-    home ? path.join(home, '.local', 'bin') : '',
-  ].filter(Boolean);
+  const home = homeDir();
+  const extras =
+    process.platform === 'win32'
+      ? [
+          process.env.LOCALAPPDATA
+            ? path.join(process.env.LOCALAPPDATA, 'Android', 'Sdk', 'platform-tools')
+            : '',
+          process.env.LOCALAPPDATA
+            ? path.join(process.env.LOCALAPPDATA, 'Android', 'Sdk', 'emulator')
+            : '',
+          home ? path.join(home, '.cursor', 'bin') : '',
+          home ? path.join(home, '.local', 'bin') : '',
+        ]
+      : ['/opt/homebrew/bin', '/usr/local/bin', home ? path.join(home, '.local', 'bin') : ''];
 
-  return [...new Set([...paths, ...extras])];
+  return [...new Set([...paths, ...extras.filter(Boolean)])];
+}
+
+function commandNames(command: string): string[] {
+  if (process.platform !== 'win32' || command.endsWith('.exe') || command.endsWith('.cmd')) {
+    return [command];
+  }
+
+  return [hostBinary(command), `${command}.cmd`, command];
 }
 
 function resolveFromPath(command: string): ResolvedTool {
   const segments = getExecutableSearchPaths();
 
   for (const segment of segments) {
-    const candidate = path.join(segment, command);
+    for (const name of commandNames(command)) {
+      const candidate = path.join(segment, name);
 
-    if (canExecute(candidate)) {
-      return { path: candidate, found: true };
+      if (canExecute(candidate)) {
+        return { path: candidate, found: true };
+      }
     }
   }
 
@@ -54,7 +93,7 @@ function resolveFromCandidates(candidates: string[]): ResolvedTool {
 }
 
 function resolvePipUserIdb(): ResolvedTool {
-  const home = process.env.HOME ?? '';
+  const home = homeDir();
   const pythonLibrary = path.join(home, 'Library', 'Python');
 
   try {
@@ -73,6 +112,10 @@ function resolvePipUserIdb(): ResolvedTool {
 }
 
 function resolveViaLoginShell(command: string): ResolvedTool {
+  if (process.platform !== 'darwin') {
+    return { path: command, found: false };
+  }
+
   try {
     const resolved = execSync(`/bin/bash -lc 'command -v ${command}'`, {
       encoding: 'utf8',
@@ -92,10 +135,15 @@ function resolveViaLoginShell(command: string): ResolvedTool {
 }
 
 function resolveAndroidSdkRoot(): string | null {
+  const home = homeDir();
   const candidates = [
     process.env.ANDROID_HOME,
     process.env.ANDROID_SDK_ROOT,
-    path.join(process.env.HOME ?? '', 'Library', 'Android', 'sdk'),
+    process.platform === 'win32' && process.env.LOCALAPPDATA
+      ? path.join(process.env.LOCALAPPDATA, 'Android', 'Sdk')
+      : '',
+    process.platform === 'darwin' ? path.join(home, 'Library', 'Android', 'sdk') : '',
+    process.platform === 'linux' ? path.join(home, 'Android', 'Sdk') : '',
   ].filter((value): value is string => Boolean(value));
 
   for (const candidate of candidates) {
@@ -114,7 +162,7 @@ export function resolveAdbPath(): ResolvedTool {
   const sdkRoot = resolveAndroidSdkRoot();
 
   if (sdkRoot) {
-    const platformTool = path.join(sdkRoot, 'platform-tools', 'adb');
+    const platformTool = path.join(sdkRoot, 'platform-tools', hostBinary('adb'));
 
     if (canExecute(platformTool)) {
       return { path: platformTool, found: true };
@@ -128,7 +176,7 @@ export function resolveEmulatorPath(): ResolvedTool {
   const sdkRoot = resolveAndroidSdkRoot();
 
   if (sdkRoot) {
-    const emulatorBin = path.join(sdkRoot, 'emulator', 'emulator');
+    const emulatorBin = path.join(sdkRoot, 'emulator', hostBinary('emulator'));
 
     if (canExecute(emulatorBin)) {
       return { path: emulatorBin, found: true };
@@ -159,7 +207,7 @@ export function resolveIdbPath(): ResolvedTool {
 }
 
 export function resolveIdbCompanionPath(): ResolvedTool {
-  const home = process.env.HOME ?? '';
+  const home = homeDir();
   const customCandidates = [
     process.env.IDB_COMPANION_PATH,
     home ? path.join(home, '.local', 'idb-companion-dist', 'idb_companion') : '',

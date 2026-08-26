@@ -87,11 +87,12 @@ function ThoughtBlock({
   endedAt?: number;
   body: string;
 }) {
-  const [expanded, setExpanded] = useState(() => streaming || Boolean(body.trim()));
+  const [expanded, setExpanded] = useState(() => Boolean(body.trim()));
   const [elapsed, setElapsed] = useState(1);
+  const hasBody = Boolean(body.trim());
 
   useEffect(() => {
-    if (!streaming) {
+    if (!streaming || !hasBody) {
       return;
     }
     const tick = () => {
@@ -100,33 +101,34 @@ function ThoughtBlock({
     tick();
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
-  }, [startedAt, streaming]);
+  }, [hasBody, startedAt, streaming]);
 
   useEffect(() => {
-    if (streaming) {
+    if (hasBody) {
       setExpanded(true);
-      return;
     }
+  }, [hasBody]);
 
-    if (!body.trim()) {
-      setExpanded(false);
-    }
-  }, [body, streaming]);
+  if (streaming && !hasBody) {
+    return (
+      <div className='agent-view__thought-waiting' role='status' aria-live='polite'>
+        <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
+        <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
+        <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
+        <span className='agent-view__thought-waiting-hint'>Trabalhando...</span>
+      </div>
+    );
+  }
+
+  if (!hasBody) {
+    return null;
+  }
 
   const title = streaming
-    ? `Thinking ${elapsed}s`
-    : `Thought for ${formatThoughtDuration((endedAt ?? Date.now()) - startedAt)}`;
+    ? `Pensando ${elapsed}s`
+    : `Pensou por ${formatThoughtDuration((endedAt ?? Date.now()) - startedAt)}`;
 
-  const waitingHint =
-    streaming && !body.trim()
-      ? elapsed >= 300
-        ? 'Demorando demais. Se continuar assim, pare o agent e tente de novo.'
-        : elapsed >= 90
-          ? 'Ainda sem resposta do agent neste Mac...'
-          : null
-      : null;
-
-  const canToggle = Boolean(body.trim()) || streaming;
+  const canToggle = true;
 
   return (
     <div
@@ -157,16 +159,6 @@ function ThoughtBlock({
       {expanded ? (
         <div className='agent-view__thought-body app-button--enter'>
           {body.trim() ? <div className='agent-view__thought-prose'>{body}</div> : null}
-          {streaming && !body.trim() ? (
-            <div className='agent-view__thought-waiting'>
-              <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
-              <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
-              <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
-              {waitingHint ? (
-                <span className='agent-view__thought-waiting-hint'>{waitingHint}</span>
-              ) : null}
-            </div>
-          ) : null}
         </div>
       ) : null}
     </div>
@@ -402,9 +394,9 @@ function TurnView({
   const activities = turn.activities ?? [];
   const hasActivities = activities.length > 0;
   const showThoughtFallback =
-    !hasActivities &&
-    (running || Boolean(turn.thought) || Boolean(turn.response) || turn.status === 'error');
-  const thoughtStreaming = running && (turn.thoughtStreaming || !turn.response.trim());
+    !hasActivities && (running || Boolean(turn.thought) || turn.status === 'error');
+  const thoughtStreaming =
+    running && !turn.response.trim() && (turn.thoughtStreaming || !turn.thought.trim());
   const responseStreaming = running && Boolean(turn.response.trim());
 
   const activityChunks = useMemo(() => {
@@ -449,6 +441,10 @@ function TurnView({
 
     for (const activity of groupActivities) {
       if (activity.kind === 'thought') {
+        if (!activity.label.trim()) {
+          continue;
+        }
+
         flushTools(activity.id);
         nodes.push(
           <ThoughtBlock
@@ -470,6 +466,27 @@ function TurnView({
     }
 
     flushTools('tail');
+
+    const hasStreamingTool = groupActivities.some(
+      (entry) =>
+        Boolean(entry.streaming) &&
+        (entry.kind === 'tool_run' || entry.kind === 'file_read' || entry.kind === 'file_edit'),
+    );
+    const hasThoughtBody = groupActivities.some(
+      (entry) => entry.kind === 'thought' && entry.label.trim(),
+    );
+
+    if (running && !hasStreamingTool && !hasThoughtBody) {
+      nodes.push(
+        <div key={`${groupKey}-working`} className='agent-view__thought-waiting' role='status'>
+          <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
+          <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
+          <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
+          <span className='agent-view__thought-waiting-hint'>Trabalhando...</span>
+        </div>,
+      );
+    }
+
     return nodes;
   };
 

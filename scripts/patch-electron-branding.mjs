@@ -330,6 +330,10 @@ function patchNexusAppBundle() {
   return nexusBinaryPath;
 }
 
+if (process.platform !== 'darwin') {
+  process.exit(0);
+}
+
 generateMacAppIcons();
 buildLiquidGlassIcon();
 buildCalendarHelper();

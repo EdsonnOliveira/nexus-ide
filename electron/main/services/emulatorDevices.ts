@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import type { EmulatorDevice, EmulatorPlatform, EmulatorPlatformSetup } from '../../types';
 import { sortEmulatorDevicesByUsage } from './emulatorDeviceUsageStore';
 import {
@@ -30,7 +32,7 @@ function runCommand(
     let stdout = '';
     let stderr = '';
 
-    const child = spawn(command, args, { env: process.env });
+    const child = spawn(command, args, { env: process.env, windowsHide: true });
     child.stdout.on('data', (chunk: Buffer) => {
       stdout += chunk.toString();
     });
@@ -90,6 +92,10 @@ export async function listAndroidAvds(): Promise<EmulatorDevice[]> {
 }
 
 export async function listIosSimulators(): Promise<EmulatorDevice[]> {
+  if (process.platform !== 'darwin') {
+    return [];
+  }
+
   const xcrun = resolveXcrunPath();
 
   if (!xcrun.found) {
@@ -135,6 +141,25 @@ export async function listIosSimulators(): Promise<EmulatorDevice[]> {
 
 export { recordEmulatorDeviceUsage } from './emulatorDeviceUsageStore';
 
+function resolveAndroidStudioInstallCommand(): string | null {
+  if (process.platform === 'darwin') {
+    return 'open -a "Android Studio"';
+  }
+
+  if (process.platform === 'win32') {
+    const programFiles = process.env.ProgramFiles ?? 'C:\\Program Files';
+    const studio = path.join(programFiles, 'Android', 'Android Studio', 'bin', 'studio64.exe');
+
+    if (existsSync(studio)) {
+      return `Start-Process "${studio}"`;
+    }
+
+    return 'Start-Process "https://developer.android.com/studio"';
+  }
+
+  return null;
+}
+
 export async function listEmulatorDevices(platform: EmulatorPlatform): Promise<EmulatorDevice[]> {
   if (platform === 'android') {
     return listAndroidAvds();
@@ -173,32 +198,31 @@ export function getEmulatorSetupStatus(): {
 
   if (process.platform !== 'darwin') {
     iosMissing.push('macOS');
-  }
-
-  if (!xcrun.found) {
+  } else if (!xcrun.found) {
     iosMissing.push('xcrun');
   }
 
-  if (!idb.found) {
+  if (process.platform === 'darwin' && !idb.found) {
     iosOptionalMissing.push('idb');
   }
 
-  if (!idbCompanion.found) {
+  if (process.platform === 'darwin' && !idbCompanion.found) {
     iosOptionalMissing.push('idb-companion');
   }
 
   const androidInstallCommand =
-    androidMissing.length > 0 && process.platform === 'darwin'
-      ? 'open -a "Android Studio"'
-      : null;
+    androidMissing.length > 0 ? resolveAndroidStudioInstallCommand() : null;
 
-  const iosInstallCommand = iosMissing.includes('xcrun')
-    ? 'xcode-select --install'
-    : !simulatorServer.found && iosOptionalMissing.includes('idb-companion')
-      ? 'brew tap facebook/fb && brew install idb-companion'
-      : !simulatorServer.found && iosOptionalMissing.includes('idb')
-        ? 'pip3 install fb-idb'
-        : null;
+  const iosInstallCommand =
+    process.platform !== 'darwin'
+      ? null
+      : iosMissing.includes('xcrun')
+        ? 'xcode-select --install'
+        : !simulatorServer.found && iosOptionalMissing.includes('idb-companion')
+          ? 'brew tap facebook/fb && brew install idb-companion'
+          : !simulatorServer.found && iosOptionalMissing.includes('idb')
+            ? 'pip3 install fb-idb'
+            : null;
 
   return {
     android: {
@@ -206,7 +230,9 @@ export function getEmulatorSetupStatus(): {
       missingTools: androidMissing,
       installHint:
         androidMissing.length > 0
-          ? 'Instale o Android Studio e configure ANDROID_HOME com platform-tools e emulator.'
+          ? process.platform === 'win32'
+            ? 'Instale o Android Studio, ative o Windows Hypervisor Platform e defina ANDROID_HOME=%LOCALAPPDATA%\\Android\\Sdk com platform-tools e emulator.'
+            : 'Instale o Android Studio e configure ANDROID_HOME com platform-tools e emulator.'
           : null,
       installCommand: androidInstallCommand,
     },

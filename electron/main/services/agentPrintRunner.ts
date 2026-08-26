@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import type { BrowserWindow } from 'electron';
 import { buildCliPathEnv } from '../utils/cliPathEnv';
 import { writeDebugSessionLog } from '../utils/debugSessionLog';
+import { killProcessTree } from '../utils/killProcessTree';
 
 export interface AgentPrintStopOptions {
   preserveChildren?: boolean;
@@ -26,6 +27,32 @@ export interface AgentPrintRunOptions {
 }
 
 const execFileAsync = promisify(execFile);
+
+function isWindowsBatchFile(executable: string): boolean {
+  return process.platform === 'win32' && /\.(cmd|bat)$/i.test(executable);
+}
+
+function spawnCliProcess(
+  executable: string,
+  args: string[],
+  options: {
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    stdio: ['ignore', 'pipe', 'pipe'];
+    detached: boolean;
+    windowsHide: boolean;
+  },
+): ChildProcessWithoutNullStreams {
+  if (isWindowsBatchFile(executable)) {
+    const comspec = process.env.ComSpec || 'cmd.exe';
+    return spawn(comspec, ['/d', '/s', '/c', executable, ...args], {
+      ...options,
+      windowsVerbatimArguments: true,
+    });
+  }
+
+  return spawn(executable, args, options);
+}
 const STDOUT_WATCHDOG_MS = 180_000;
 const STDOUT_STARTUP_EXTEND_MS = 90_000;
 const STDOUT_IDLE_WATCHDOG_MS = 7_200_000;
@@ -54,48 +81,57 @@ function syncAgentRunningMarker(running: boolean): void {
   } catch {}
 }
 
-function resolveCursorAgentExecutable(): string {
-  const home = os.homedir();
-  const candidates = [
-    path.join(home, '.local', 'bin', 'cursor-agent'),
-    path.join(home, '.cursor', 'bin', 'cursor-agent'),
-    '/opt/homebrew/bin/cursor-agent',
-    '/usr/local/bin/cursor-agent',
-  ];
+function executableNames(name: string): string[] {
+  if (process.platform !== 'win32') {
+    return [name];
+  }
 
-  for (const candidate of candidates) {
-    try {
-      if (fs.existsSync(candidate)) {
-        return candidate;
+  return [`${name}.cmd`, `${name}.exe`, name];
+}
+
+function resolveExecutable(baseName: string, extraDirs: string[] = []): string {
+  const home = os.homedir();
+  const localAppData = process.env.LOCALAPPDATA ?? '';
+  const dirs = [
+    path.join(home, '.local', 'bin'),
+    path.join(home, '.cursor', 'bin'),
+    path.join(home, 'bin'),
+    ...extraDirs,
+    ...(process.platform === 'win32'
+      ? [
+          localAppData ? path.join(localAppData, 'cursor-agent') : '',
+          localAppData ? path.join(localAppData, 'Programs', 'cursor') : '',
+        ]
+      : ['/opt/homebrew/bin', '/usr/local/bin']),
+  ].filter(Boolean);
+
+  for (const dir of dirs) {
+    for (const name of executableNames(baseName)) {
+      const candidate = path.join(dir, name);
+
+      try {
+        if (fs.existsSync(candidate)) {
+          return candidate;
+        }
+      } catch {
+        continue;
       }
-    } catch {
-      continue;
     }
   }
 
-  return 'cursor-agent';
+  return process.platform === 'win32' ? `${baseName}.cmd` : baseName;
+}
+
+function resolveCursorAgentExecutable(): string {
+  return resolveExecutable('cursor-agent');
 }
 
 function resolveOpenCodeExecutable(): string {
-  const home = os.homedir();
-  const candidates = [
-    path.join(home, 'bin', 'opencode'),
-    path.join(home, '.local', 'bin', 'opencode'),
-    '/opt/homebrew/bin/opencode',
-    '/usr/local/bin/opencode',
-  ];
+  return resolveExecutable('opencode');
+}
 
-  for (const candidate of candidates) {
-    try {
-      if (fs.existsSync(candidate)) {
-        return candidate;
-      }
-    } catch {
-      continue;
-    }
-  }
-
-  return 'opencode';
+function resolveAntigravityExecutable(): string {
+  return resolveExecutable('agy');
 }
 
 function resolveCliAgentExecutable(cliAgent: string): string {
@@ -103,6 +139,10 @@ function resolveCliAgentExecutable(cliAgent: string): string {
 
   if (base === 'opencode') {
     return resolveOpenCodeExecutable();
+  }
+
+  if (base === 'agy') {
+    return resolveAntigravityExecutable();
   }
 
   return resolveCursorAgentExecutable();
@@ -176,11 +216,44 @@ function buildOpenCodeArgs(options: AgentPrintRunOptions, resolvedCwd: string): 
   return args;
 }
 
+function buildAntigravityArgs(options: AgentPrintRunOptions): string[] {
+  const args = [
+    '-p',
+    options.prompt.trim(),
+    '--output-format',
+    'stream-json',
+    '--dangerously-skip-permissions',
+  ];
+  const resumeChatId = options.resumeChatId?.trim();
+
+  if (resumeChatId) {
+    args.push('--conversation', resumeChatId);
+  } else if (options.continueSession) {
+    args.push('--continue');
+  }
+
+  if (options.mode === 'plan') {
+    args.push('--mode', 'plan');
+  }
+
+  const model = options.model?.trim();
+
+  if (model && model !== 'auto') {
+    args.push('--model', model);
+  }
+
+  return args;
+}
+
 function buildAgentPrintArgs(options: AgentPrintRunOptions, resolvedCwd: string): string[] {
   const base = (options.cliAgent ?? 'cursor-agent').trim().split(/\s+/)[0] ?? 'cursor-agent';
 
   if (base === 'opencode') {
     return buildOpenCodeArgs(options, resolvedCwd);
+  }
+
+  if (base === 'agy') {
+    return buildAntigravityArgs(options);
   }
 
   return buildCursorAgentArgs(options, resolvedCwd);
@@ -223,6 +296,11 @@ class AgentPrintRunner {
     try {
       if (!preserveChildren && pid && process.platform !== 'win32') {
         process.kill(-pid, signal);
+        return;
+      }
+
+      if (!preserveChildren && pid && process.platform === 'win32') {
+        killProcessTree(pid);
         return;
       }
 
@@ -374,12 +452,24 @@ class AgentPrintRunner {
 
     this.warmPromise = (async () => {
       try {
-        await execFileAsync(executable, ['models'], {
-          encoding: 'utf8',
-          env: { ...process.env, PATH: buildCliPathEnv() },
-          timeout: 10_000,
-          maxBuffer: 2 * 1024 * 1024,
-        });
+        if (isWindowsBatchFile(executable)) {
+          const comspec = process.env.ComSpec || 'cmd.exe';
+          await execFileAsync(comspec, ['/d', '/s', '/c', executable, 'models'], {
+            encoding: 'utf8',
+            env: { ...process.env, PATH: buildCliPathEnv() },
+            timeout: 10_000,
+            maxBuffer: 2 * 1024 * 1024,
+            windowsHide: true,
+          });
+        } else {
+          await execFileAsync(executable, ['models'], {
+            encoding: 'utf8',
+            env: { ...process.env, PATH: buildCliPathEnv() },
+            timeout: 10_000,
+            maxBuffer: 2 * 1024 * 1024,
+            windowsHide: true,
+          });
+        }
         this.lastWarmAt = Date.now();
       } catch {
         this.lastWarmAt = Date.now();
@@ -399,11 +489,12 @@ class AgentPrintRunner {
     const cliAgent = options.cliAgent ?? 'cursor-agent';
     const args = buildAgentPrintArgs(options, resolvedCwd);
     const executable = resolveCliAgentExecutable(cliAgent);
-    const child = spawn(executable, args, {
+    const child = spawnCliProcess(executable, args, {
       cwd: resolvedCwd,
       env: { ...process.env, PATH: buildCliPathEnv() },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
+      windowsHide: true,
     });
 
     this.processes.set(options.paneId, child);

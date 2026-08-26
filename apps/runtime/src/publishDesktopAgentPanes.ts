@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { NexusClient } from '@nexus/supabase';
+import { userDataDir } from './userDataDir';
 
 interface LocalProject {
   id: string;
@@ -58,10 +58,6 @@ function getProjectsPublishToken(): string {
   } catch {
     return `error:${Date.now()}`;
   }
-}
-
-function userDataDir(): string {
-  return path.join(os.homedir(), 'Library', 'Application Support', 'nexus-ide');
 }
 
 function truncateText(value: string, maxChars: number): string {

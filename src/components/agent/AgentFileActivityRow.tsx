@@ -5,7 +5,7 @@ import {
   resolveAgentActivityIconFromLabel,
   resolveAgentActivityIconKind,
 } from '@/components/agent/AgentActivityIcon';
-import { AgentThoughtBlock } from '@/components/agent/AgentThoughtBlock';
+import { AgentLiveStatus } from '@/components/agent/AgentLiveStatus';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useTabActions } from '@/stores/useTabStore';
 import type { AgentActivity, AgentTurnSummaryCommandRef } from '@/types';
@@ -265,18 +265,7 @@ function renderAgentToolActivityRow(
       );
     }
 
-    return (
-      <AgentThoughtBlock
-        key={activity.id}
-        activity={{
-          ...activity,
-          kind: 'thought',
-          streaming: true,
-          label: '',
-        }}
-        forceCollapsed
-      />
-    );
+    return <AgentLiveStatus key={activity.id} label={activity.label} />;
   }
 
   if (activity.kind === 'status' && /^Ran\b/i.test(activity.label.trim())) {
@@ -323,7 +312,7 @@ function AgentToolActivityScrollListComponent({
       Boolean(summary) &&
       (Boolean(detail?.streaming) ||
         detail?.kind === 'live_status' ||
-        /^(?:Executando|Running|Exploring|Editing|Planning|Thinking|Aguardando|Agent executando|Comando)\b/i.test(
+        /^(?:Executando|Running|Exploring|Editing|Planning|Thinking|Aguardando|Agent executando|Comando|Trabalhando|Planejando)\b/i.test(
           summary ?? '',
         ));
 

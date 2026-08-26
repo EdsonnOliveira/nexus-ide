@@ -41,23 +41,28 @@ function ProjectPromptDialogComponent({
 
   const title =
     dialogTitle ??
-    (mode === 'rename' || mode === 'workspace-rename'
-      ? mode === 'workspace-rename'
-        ? 'Renomear workspace'
-        : 'Renomear projeto'
-      : mode === 'workspace'
-        ? 'Nova workspace'
-        : 'Definir ícone');
+    (mode === 'create'
+      ? 'Novo projeto'
+      : mode === 'rename' || mode === 'workspace-rename'
+        ? mode === 'workspace-rename'
+          ? 'Renomear workspace'
+          : 'Renomear projeto'
+        : mode === 'workspace'
+          ? 'Nova workspace'
+          : 'Definir ícone');
   const label =
     dialogLabel ??
-    (mode === 'rename' || mode === 'workspace-rename'
-      ? mode === 'workspace-rename'
-        ? 'Nome da workspace'
-        : 'Nome do projeto'
-      : mode === 'workspace'
-        ? 'Nome da workspace'
-        : 'Caractere do ícone');
+    (mode === 'create'
+      ? 'Nome do projeto'
+      : mode === 'rename' || mode === 'workspace-rename'
+        ? mode === 'workspace-rename'
+          ? 'Nome da workspace'
+          : 'Nome do projeto'
+        : mode === 'workspace'
+          ? 'Nome da workspace'
+          : 'Caractere do ícone');
   const isIconMode = mode === 'icon' || mode === 'workspace-icon';
+  const submitLabel = mode === 'create' ? 'Criar' : 'Salvar';
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -158,7 +163,7 @@ function ProjectPromptDialogComponent({
               Cancelar
             </button>
             <button type='submit' className='project-dialog__btn project-dialog__btn--primary'>
-              Salvar
+              {submitLabel}
             </button>
           </div>
         </form>

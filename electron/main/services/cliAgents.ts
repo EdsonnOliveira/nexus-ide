@@ -2,7 +2,13 @@ import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { buildCliPathEnv } from '../utils/cliPathEnv';
 
-export type CliAgentBadgeIcon = 'cursor' | 'claude' | 'opencode' | 'codex' | 'gemini';
+export type CliAgentBadgeIcon =
+  | 'cursor'
+  | 'claude'
+  | 'opencode'
+  | 'antigravity'
+  | 'codex'
+  | 'gemini';
 
 export interface CliAgentDefinition {
   id: string;
@@ -35,6 +41,13 @@ const CLI_AGENT_DEFINITIONS: CliAgentDefinition[] = [
     badgeColor: '#6366f1',
   },
   {
+    id: 'agy',
+    command: 'agy',
+    label: 'agy',
+    badgeIcon: 'antigravity',
+    badgeColor: '#7c3aed',
+  },
+  {
     id: 'codex',
     command: 'codex',
     label: 'codex',
@@ -65,18 +78,25 @@ function isCommandAvailable(command: string, pathEnv: string): boolean {
       continue;
     }
 
-    const candidate = path.join(dir, command);
+    const names =
+      process.platform === 'win32'
+        ? [command, `${command}.cmd`, `${command}.exe`, `${command}.bat`]
+        : [command];
 
-    if (!existsSync(candidate)) {
-      continue;
-    }
+    for (const name of names) {
+      const candidate = path.join(dir, name);
 
-    try {
-      if (statSync(candidate).isFile()) {
-        return true;
+      if (!existsSync(candidate)) {
+        continue;
       }
-    } catch {
-      continue;
+
+      try {
+        if (statSync(candidate).isFile()) {
+          return true;
+        }
+      } catch {
+        continue;
+      }
     }
   }
 

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
+import { userDataDir } from './userDataDir';
 import type { NexusClient } from '@nexus/supabase';
 import { publishDesktopAgentPanes } from './publishDesktopAgentPanes';
 
@@ -41,10 +41,6 @@ interface BrainManual {
   documents?: Array<{ id?: string; title?: string; content?: string; body?: string }>;
   meetings?: Array<{ id?: string; title?: string; notes?: string; content?: string; occurredAt?: string }>;
   decisions?: Array<{ id?: string; title?: string; body?: string; content?: string; status?: string }>;
-}
-
-function userDataDir(): string {
-  return path.join(os.homedir(), 'Library', 'Application Support', 'nexus-ide');
 }
 
 function summarizeProjectMetadata(project: LocalProject): Record<string, unknown> {

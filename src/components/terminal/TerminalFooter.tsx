@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import logoAndroid from '@/assets/logo-android.svg';
 import logoApple from '@/assets/logo-apple.svg';
+import logoAntigravity from '@/assets/logo-antigravity.svg';
 import logoClaude from '@/assets/logo-claude.svg';
 import logoCodex from '@/assets/logo-codex.svg';
 import logoCursor from '@/assets/logo-cursor.svg';
@@ -39,6 +40,7 @@ const HINT_BADGE_ICON_SRC = {
   cursor: logoCursor,
   claude: logoClaude,
   opencode: logoOpencode,
+  antigravity: logoAntigravity,
   codex: logoCodex,
   gemini: logoGemini,
   'mode-agent': iconModeAgent,
@@ -55,6 +57,7 @@ const HINT_BADGE_COLORS = {
   cursor: '#1a1a1a',
   claude: '#cc785c',
   opencode: '#6366f1',
+  antigravity: '#7c3aed',
   codex: '#10a37f',
   gemini: '#1c69ff',
 } as const;

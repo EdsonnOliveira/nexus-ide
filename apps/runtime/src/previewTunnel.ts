@@ -142,35 +142,31 @@ export async function probeUrlReachable(url: string, timeoutMs = 2500): Promise<
   return false;
 }
 
-async function resolveCloudflaredPath(): Promise<string> {
+function cloudflaredBinaryName(): string {
+  return process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared';
+}
+
+async function findCloudflaredOnPath(): Promise<string | null> {
+  const command = process.platform === 'win32' ? 'where' : 'which';
+
   try {
-    const { stdout } = await execFileAsync('which', ['cloudflared']);
-    const found = stdout.trim();
-    if (found) {
-      return found;
-    }
+    const { stdout } = await execFileAsync(command, ['cloudflared'], { windowsHide: true });
+    const found = stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean);
+
+    return found || null;
   } catch {
+    return null;
   }
+}
 
-  const binDir = path.join(os.homedir(), '.nexus', 'bin');
-  const localBin = path.join(binDir, 'cloudflared');
-  try {
-    await access(localBin);
-    return localBin;
-  } catch {
-  }
-
-  await mkdir(binDir, { recursive: true });
-  const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
-  const platform = process.platform === 'darwin' ? 'darwin' : 'linux';
-  const asset = `cloudflared-${platform}-${arch}`;
-  const tgzUrl = `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/${asset}.tgz`;
-  const tmpTgz = path.join(binDir, `${asset}.tgz`);
-
-  await new Promise<void>((resolve, reject) => {
-    const download = (url: string, redirectsLeft: number) => {
+function downloadToFile(url: string, destination: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const download = (currentUrl: string, redirectsLeft: number) => {
       https
-        .get(url, (response) => {
+        .get(currentUrl, (response) => {
           const status = response.statusCode ?? 0;
           if (status >= 300 && status < 400 && response.headers.location && redirectsLeft > 0) {
             response.resume();
@@ -182,7 +178,7 @@ async function resolveCloudflaredPath(): Promise<string> {
             response.resume();
             return;
           }
-          const file = createWriteStream(tmpTgz);
+          const file = createWriteStream(destination);
           response.pipe(file);
           file.on('finish', () => {
             file.close();
@@ -192,9 +188,39 @@ async function resolveCloudflaredPath(): Promise<string> {
         })
         .on('error', reject);
     };
-    download(tgzUrl, 5);
+    download(url, 5);
   });
+}
 
+async function resolveCloudflaredPath(): Promise<string> {
+  const fromPath = await findCloudflaredOnPath();
+  if (fromPath) {
+    return fromPath;
+  }
+
+  const binDir = path.join(os.homedir(), '.nexus', 'bin');
+  const localBin = path.join(binDir, cloudflaredBinaryName());
+  try {
+    await access(localBin);
+    return localBin;
+  } catch {
+  }
+
+  await mkdir(binDir, { recursive: true });
+  const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
+
+  if (process.platform === 'win32') {
+    const exeUrl = `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-windows-${arch}.exe`;
+    await downloadToFile(exeUrl, localBin);
+    return localBin;
+  }
+
+  const platform = process.platform === 'darwin' ? 'darwin' : 'linux';
+  const asset = `cloudflared-${platform}-${arch}`;
+  const tgzUrl = `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/${asset}.tgz`;
+  const tmpTgz = path.join(binDir, `${asset}.tgz`);
+
+  await downloadToFile(tgzUrl, tmpTgz);
   await execFileAsync('tar', ['-xzf', tmpTgz, '-C', binDir]);
   await chmod(localBin, 0o755);
   try {
@@ -368,6 +394,7 @@ async function startCloudflared(proxyPort: number): Promise<{
     {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env,
+      windowsHide: true,
     },
   );
 

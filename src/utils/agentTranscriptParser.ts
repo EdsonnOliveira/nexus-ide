@@ -281,15 +281,7 @@ export function createAgentTranscriptParserState(): AgentTranscriptParserState {
 }
 
 export function createInitialTurnActivities(): AgentActivity[] {
-  const startedAt = Date.now();
-
-  return [
-    createActivity('thought', '', {
-      streaming: true,
-      collapsed: false,
-      createdAt: startedAt,
-    }),
-  ];
+  return [createActivity('live_status', 'Trabalhando...')];
 }
 
 function markAgentMarker(state: AgentTranscriptParserState): void {
@@ -327,29 +319,6 @@ function upsertLiveStatus(activities: AgentActivity[], activity: AgentActivity):
   ];
 }
 
-function ensureStreamingThought(
-  activities: AgentActivity[],
-  state: AgentTranscriptParserState,
-): AgentActivity[] {
-  const existing = activities.find((entry) => entry.kind === 'thought' && entry.streaming);
-
-  if (existing) {
-    return activities;
-  }
-
-  const startedAt = state.thoughtStartedAt ?? Date.now();
-  state.thoughtStartedAt = startedAt;
-
-  return [
-    ...activities.filter((entry) => entry.kind !== 'live_status'),
-    createActivity('thought', '', {
-      streaming: true,
-      collapsed: true,
-      createdAt: startedAt,
-    }),
-  ];
-}
-
 function finalizeStreamingThought(
   activities: AgentActivity[],
   state: AgentTranscriptParserState,
@@ -359,6 +328,11 @@ function finalizeStreamingThought(
   if (!existing) {
     state.thoughtStartedAt = null;
     return activities;
+  }
+
+  if (!existing.label.trim()) {
+    state.thoughtStartedAt = null;
+    return activities.filter((entry) => entry.id !== existing.id);
   }
 
   const durationMs = state.thoughtStartedAt
@@ -571,8 +545,7 @@ function applyLineToTurn(
 
   if (/^Thinking/i.test(normalized)) {
     markAgentMarker(state);
-    activities = activities.filter((entry) => entry.kind !== 'live_status');
-    activities = ensureStreamingThought(activities, state);
+    activities = upsertLiveStatus(activities, createActivity('live_status', 'Pensando...'));
     return { ...turn, activities };
   }
 
@@ -618,7 +591,6 @@ function applyLineToTurn(
   if (live) {
     markAgentMarker(state);
     activities = upsertLiveStatus(activities, live);
-    activities = ensureStreamingThought(activities, state);
     return { ...turn, activities };
   }
 

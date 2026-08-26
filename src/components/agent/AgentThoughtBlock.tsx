@@ -3,6 +3,7 @@ import {
   AgentActivityIcon,
   resolveAgentActivityIconKind,
 } from '@/components/agent/AgentActivityIcon';
+import { AgentLiveStatus } from '@/components/agent/AgentLiveStatus';
 import type { AgentActivity } from '@/types';
 import {
   useMarkdownCodeHighlight,
@@ -57,7 +58,7 @@ function AgentThoughtBlockComponent({
     return Boolean(activity.streaming) || defaultExpanded;
   });
   const [elapsedSeconds, setElapsedSeconds] = useState(() =>
-    activity.streaming ? getElapsedSeconds(activity.createdAt) : 1,
+    activity.streaming && activity.label.trim() ? getElapsedSeconds(activity.createdAt) : 1,
   );
 
   const bodyText = activity.label.trim();
@@ -82,7 +83,7 @@ function AgentThoughtBlockComponent({
   }, [activity.streaming, bodyText, defaultExpanded, forceCollapsed]);
 
   useEffect(() => {
-    if (!activity.streaming) {
+    if (!activity.streaming || !activity.label.trim()) {
       return;
     }
 
@@ -95,7 +96,7 @@ function AgentThoughtBlockComponent({
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [activity.createdAt, activity.id, activity.streaming]);
+  }, [activity.createdAt, activity.id, activity.streaming, activity.label]);
 
   useEffect(() => {
     stickToBottomRef.current = true;
@@ -192,20 +193,15 @@ function AgentThoughtBlockComponent({
 
   const isBriefThought = !activity.streaming && !bodyText;
   const titleLabel = activity.streaming
-    ? `Thinking ${elapsedSeconds}s`
+    ? `Pensando ${elapsedSeconds}s`
     : isBriefThought
-      ? 'Thought briefly'
-      : `Thought for ${formatDuration(activity.durationMs)}`;
+      ? 'Pensou brevemente'
+      : `Pensou por ${formatDuration(activity.durationMs)}`;
   const iconKind = useMemo(() => resolveAgentActivityIconKind(activity), [activity]);
 
-  const showWaitingState = activity.streaming && !bodyText;
-  const waitingHint = showWaitingState
-    ? elapsedSeconds >= 300
-      ? 'Demorando demais. Pare o agent e tente de novo.'
-      : elapsedSeconds >= 90
-        ? 'Ainda sem resposta do agent...'
-        : null
-    : null;
+  if (activity.streaming && !bodyText) {
+    return <AgentLiveStatus label='Trabalhando...' />;
+  }
 
   return (
     <div
@@ -233,16 +229,6 @@ function AgentThoughtBlockComponent({
               className='agent-view__thought-prose markdown-preview markdown-preview--monokai'
               dangerouslySetInnerHTML={{ __html: bodyHtml }}
             />
-          ) : null}
-          {showWaitingState ? (
-            <div className='agent-view__thought-waiting'>
-              <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
-              <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
-              <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
-              {waitingHint ? (
-                <span className='agent-view__thought-waiting-hint'>{waitingHint}</span>
-              ) : null}
-            </div>
           ) : null}
         </div>
       ) : null}

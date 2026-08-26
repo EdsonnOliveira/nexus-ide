@@ -1,13 +1,10 @@
 import { createServer, type Server, type Socket } from 'node:net';
 import { existsSync, unlinkSync } from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { EmulatorPlatform } from '../../types';
+import { getDesktopIpcPath, isNamedPipePath } from '../utils/localIpcPath';
 import { getEmulatorSetupStatus, listEmulatorDevices } from './emulatorDevices';
 import { emulatorSessionManager } from './emulatorSessionManager';
-
-const DEFAULT_SOCKET = path.join(os.homedir(), '.nexus-desktop.sock');
 
 type DesktopRequest = {
   id?: string;
@@ -335,13 +332,13 @@ function releaseStreamListenersIfIdle(): void {
 }
 
 export function startDesktopControlServer(
-  socketPath = process.env.NEXUS_DESKTOP_SOCKET ?? DEFAULT_SOCKET,
+  socketPath = getDesktopIpcPath(),
 ): void {
   if (server) {
     return;
   }
 
-  if (existsSync(socketPath)) {
+  if (!isNamedPipePath(socketPath) && existsSync(socketPath)) {
     try {
       unlinkSync(socketPath);
     } catch {
@@ -420,5 +417,5 @@ export function stopDesktopControlServer(): void {
 }
 
 export function getDesktopControlSocketPath(): string {
-  return process.env.NEXUS_DESKTOP_SOCKET ?? DEFAULT_SOCKET;
+  return getDesktopIpcPath();
 }

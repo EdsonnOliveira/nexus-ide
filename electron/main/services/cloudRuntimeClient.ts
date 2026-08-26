@@ -1,9 +1,7 @@
 import { createConnection } from 'node:net';
 import os from 'node:os';
-import path from 'node:path';
 import type { AgentSessionBundle } from '@nexus/supabase';
-
-const DEFAULT_SOCKET = path.join(os.homedir(), '.nexus-runtime.sock');
+import { getRuntimeIpcPath } from '../utils/localIpcPath';
 
 export interface LocalRuntimeStatus {
   online: boolean;
@@ -19,7 +17,7 @@ export interface LocalRuntimeStatus {
 
 function requestRuntimeJson<T>(
   command: string,
-  socketPath = process.env.NEXUS_RUNTIME_SOCKET ?? DEFAULT_SOCKET,
+  socketPath = getRuntimeIpcPath(),
   timeoutMs = 4000,
 ): Promise<T | null> {
   return new Promise((resolve) => {
@@ -69,7 +67,7 @@ function requestRuntimeJson<T>(
 }
 
 export function getLocalRuntimeStatus(
-  socketPath = process.env.NEXUS_RUNTIME_SOCKET ?? DEFAULT_SOCKET,
+  socketPath = getRuntimeIpcPath(),
 ): Promise<LocalRuntimeStatus> {
   const fallback: LocalRuntimeStatus = {
     online: false,
@@ -107,7 +105,7 @@ export function getLocalRuntimeStatus(
 }
 
 export async function listOpenAgentSessionsFromRuntime(
-  socketPath = process.env.NEXUS_RUNTIME_SOCKET ?? DEFAULT_SOCKET,
+  socketPath = getRuntimeIpcPath(),
 ): Promise<AgentSessionBundle[]> {
   const response = await requestRuntimeJson<{
     type?: string;

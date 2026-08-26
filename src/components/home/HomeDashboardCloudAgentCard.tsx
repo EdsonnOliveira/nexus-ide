@@ -8,6 +8,7 @@ import {
   useDeferredMarkdownHtml,
   useMarkdownCodeHighlight,
 } from '@/hooks/useMarkdownCodeHighlight';
+import { AgentLiveStatus } from '@/components/agent/AgentLiveStatus';
 import type { CloudAgentTurn } from '@/types/cloudAgent';
 
 function CloudAgentThumbComponent({ logoUrl, color }: { logoUrl: string | null; color: string }) {
@@ -80,12 +81,13 @@ function formatCloudThoughtDuration(ms: number): string {
 }
 
 function CloudAgentThoughtBlock({ turn }: { turn: CloudAgentTurn }) {
+  const hasBody = Boolean(turn.thought.trim());
   const streaming = turn.status === 'running' && (turn.thoughtStreaming || !turn.response.trim());
-  const [expanded, setExpanded] = useState(streaming || !turn.thought);
+  const [expanded, setExpanded] = useState(hasBody);
   const [elapsedSeconds, setElapsedSeconds] = useState(1);
 
   useEffect(() => {
-    if (!streaming) {
+    if (!streaming || !hasBody) {
       return;
     }
 
@@ -96,11 +98,21 @@ function CloudAgentThoughtBlock({ turn }: { turn: CloudAgentTurn }) {
     tick();
     const intervalId = window.setInterval(tick, 1000);
     return () => window.clearInterval(intervalId);
-  }, [streaming, turn.createdAt]);
+  }, [hasBody, streaming, turn.createdAt]);
 
   useEffect(() => {
-    setExpanded(streaming);
-  }, [streaming]);
+    if (hasBody) {
+      setExpanded(true);
+    }
+  }, [hasBody]);
+
+  if (streaming && !hasBody) {
+    return <AgentLiveStatus label='Trabalhando...' />;
+  }
+
+  if (!hasBody) {
+    return null;
+  }
 
   const title = streaming
     ? `Pensando ${elapsedSeconds}s`
@@ -130,13 +142,6 @@ function CloudAgentThoughtBlock({ turn }: { turn: CloudAgentTurn }) {
         <div className='agent-view__thought-body'>
           {turn.thought.trim() ? (
             <div className='agent-view__thought-prose'>{turn.thought}</div>
-          ) : null}
-          {streaming && !turn.thought.trim() ? (
-            <div className='agent-view__thought-waiting'>
-              <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
-              <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
-              <span className='agent-view__thought-waiting-dot' aria-hidden='true' />
-            </div>
           ) : null}
         </div>
       ) : null}

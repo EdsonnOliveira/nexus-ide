@@ -1,11 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import type { NexusClient } from '@nexus/supabase';
-
-function userDataDir(): string {
-  return path.join(os.homedir(), 'Library', 'Application Support', 'nexus-ide');
-}
+import { userDataDir } from './userDataDir';
 
 export async function syncMobileReleaseSnapshotFromDisk(
   client: NexusClient,
