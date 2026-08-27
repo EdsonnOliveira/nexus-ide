@@ -1,6 +1,6 @@
 {
   "name": "nexus-ide",
-  "version": "1.0.57",
+  "version": "1.0.58",
   "private": true,
   "description": "Nexus IDE — AI-powered desktop IDE",
   "engines": {
@@ -94,6 +94,23 @@
       "build/icon.icns",
       "build/icon.ico",
       "build/icon.png",
+      {
+        "from": "node_modules/node-pty",
+        "to": "node_modules/node-pty"
+      },
+      {
+        "from": "node_modules/macos-calendar",
+        "to": "node_modules/macos-calendar"
+      },
+      {
+        "from": "node_modules/@vscode/ripgrep",
+        "to": "node_modules/@vscode/ripgrep"
+      },
+      {
+        "from": "node_modules/@vscode",
+        "to": "node_modules/@vscode",
+        "filter": ["ripgrep-*/**/*"]
+      },
       "!**/*.map"
     ],
     "asarUnpack": [

@@ -5,11 +5,8 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { electronSimple } from 'vite-plugin-electron/multi-env';
 import { notBundle } from 'vite-plugin-electron/plugin';
-import pkg from './package.json';
 
-const external = Object.keys(
-  'dependencies' in pkg ? (pkg.dependencies as Record<string, string>) : {},
-);
+const external = ['electron', 'node-pty', 'macos-calendar', '@vscode/ripgrep'];
 
 const nexusElectronBinary = path.join(__dirname, 'build/Nexus.app/Contents/MacOS/Electron');
 const packagedElectronNeedle = '/Nexus IDE.app/Contents/MacOS/Nexus IDE';
