@@ -6,9 +6,14 @@ export type HomeDashboardViewMode = 'dashboard' | 'agent' | 'calendar' | 'tasks'
 interface HomeDashboardModeSwitchProps {
   mode: HomeDashboardViewMode;
   onChange: (mode: HomeDashboardViewMode) => void;
+  hasMaestroPing?: boolean;
 }
 
-function HomeDashboardModeSwitchComponent({ mode, onChange }: HomeDashboardModeSwitchProps) {
+function HomeDashboardModeSwitchComponent({
+  mode,
+  onChange,
+  hasMaestroPing = false,
+}: HomeDashboardModeSwitchProps) {
   const handleDashboard = useCallback(() => {
     onChange('dashboard');
   }, [onChange]);
@@ -36,10 +41,18 @@ function HomeDashboardModeSwitchComponent({ mode, onChange }: HomeDashboardModeS
         type='button'
         role='tab'
         aria-selected={mode === 'agent'}
-        className={`home-dashboard__mode-switch-btn app-button${mode === 'agent' ? ' home-dashboard__mode-switch-btn--active' : ''}`}
+        className={`home-dashboard__mode-switch-btn app-button${mode === 'agent' ? ' home-dashboard__mode-switch-btn--active' : ''}${hasMaestroPing ? ' home-dashboard__mode-switch-btn--ping' : ''}`}
         onClick={handleAgent}
       >
-        <Bot size={14} strokeWidth={2.1} aria-hidden='true' />
+        <span className='home-dashboard__mode-switch-icon-wrap'>
+          <Bot size={14} strokeWidth={2.1} aria-hidden='true' />
+          {hasMaestroPing ? (
+            <span
+              className='project-item__ping project-item__ping--red home-dashboard__mode-switch-ping'
+              aria-hidden='true'
+            />
+          ) : null}
+        </span>
         <span>Maestro</span>
       </button>
       <button

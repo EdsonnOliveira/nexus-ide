@@ -51,11 +51,11 @@ export function shouldPreferLocalAgentTurnHistory(
   const localRunning = localTurns.some((turn) => turn.running);
   const incomingRunning = incomingTurns.some((turn) => turn.running);
 
-  if (!localRunning && incomingRunning) {
+  if (localRunning) {
     return true;
   }
 
-  if (localRunning && !incomingRunning && localTurns.length >= incomingTurns.length) {
+  if (!localRunning && incomingRunning) {
     return true;
   }
 

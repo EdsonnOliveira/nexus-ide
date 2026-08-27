@@ -1,4 +1,4 @@
-import { ListTodo, Play, Search } from 'lucide-react';
+import { ListTodo, Play, Plus, Search } from 'lucide-react';
 import {
   memo,
   useCallback,
@@ -43,6 +43,7 @@ interface HomeDashboardTasksBoardProps {
   entries: HomeDashboardTaskEntry[];
   onOpen: (entry: HomeDashboardTaskEntry) => void;
   onExecute: (entry: HomeDashboardTaskEntry, anchor?: TaskExecutionAnchor | null) => void;
+  onCreate: (projectId: string | null) => void;
 }
 
 interface BoardCardProps {
@@ -184,6 +185,7 @@ function HomeDashboardTasksBoardComponent({
   entries,
   onOpen,
   onExecute,
+  onCreate,
 }: HomeDashboardTasksBoardProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [projectFilter, setProjectFilter] = useState('');
@@ -338,6 +340,17 @@ function HomeDashboardTasksBoardComponent({
           onChange={setProjectFilter}
           triggerClassName='home-dashboard__kanban-project-select'
         />
+        <button
+          type='button'
+          className='home-dashboard__kanban-add app-button app-button--enter'
+          aria-label='Nova tarefa'
+          title='Nova tarefa'
+          disabled={projects.length === 0}
+          onClick={() => onCreate(projectFilter || null)}
+        >
+          <Plus size={16} strokeWidth={2.25} />
+          <span className='app-button__label'>Nova tarefa</span>
+        </button>
       </div>
 
       {filteredEntries.length === 0 ? (

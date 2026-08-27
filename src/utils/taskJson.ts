@@ -24,9 +24,7 @@ export interface TaskJsonV1 {
   attachments?: TaskJsonAttachmentV1[];
 }
 
-export type TaskJsonParseResult =
-  | { ok: true; task: ProjectTask }
-  | { ok: false; error: string };
+export type TaskJsonParseResult = { ok: true; task: ProjectTask } | { ok: false; error: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -118,11 +116,7 @@ function stripAttachmentForJson(
   };
 }
 
-function parseAttachment(
-  raw: unknown,
-  index: number,
-  projectPath: string,
-): TaskAttachment | null {
+function parseAttachment(raw: unknown, index: number, projectPath: string): TaskAttachment | null {
   if (!isRecord(raw)) {
     throw new Error(`O anexo ${index + 1} é inválido.`);
   }
@@ -229,8 +223,7 @@ export function parseLocalTaskJson(text: string, projectPath: string): TaskJsonP
     return { ok: false, error: 'O campo "title" é obrigatório.' };
   }
 
-  const description =
-    typeof parsed.description === 'string' ? parsed.description.trim() : '';
+  const description = typeof parsed.description === 'string' ? parsed.description.trim() : '';
 
   let status: string | undefined;
 
@@ -324,6 +317,23 @@ export function parseLocalTaskJson(text: string, projectPath: string): TaskJsonP
       updatedAt: Date.now(),
     },
   };
+}
+
+export function upsertProjectTasks(current: ProjectTask[], incoming: ProjectTask[]): ProjectTask[] {
+  const next = [...current];
+
+  for (const task of incoming) {
+    const index = next.findIndex((item) => item.id === task.id);
+
+    if (index >= 0) {
+      next[index] = task;
+      continue;
+    }
+
+    next.push(task);
+  }
+
+  return next;
 }
 
 export const TASK_JSON_PLACEHOLDER = `{

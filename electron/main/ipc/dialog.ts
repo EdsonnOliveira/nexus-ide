@@ -65,6 +65,40 @@ export function registerDialogHandlers(getWindow: () => BrowserWindow | null): v
     return result.filePaths;
   });
 
+  ipcMain.handle('dialog:openVideo', async () => {
+    const window = getWindow();
+    const result = await dialog.showOpenDialog(window ?? undefined, {
+      properties: ['openFile'],
+      filters: [
+        { name: 'Vídeos', extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi'] },
+        { name: 'Todos os arquivos', extensions: ['*'] },
+      ],
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    return result.filePaths[0];
+  });
+
+  ipcMain.handle('dialog:openVideos', async () => {
+    const window = getWindow();
+    const result = await dialog.showOpenDialog(window ?? undefined, {
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Vídeos', extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi'] },
+        { name: 'Todos os arquivos', extensions: ['*'] },
+      ],
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    return result.filePaths;
+  });
+
   ipcMain.handle('dialog:openFile', async () => {
     const window = getWindow();
     const result = await dialog.showOpenDialog(window ?? undefined, {

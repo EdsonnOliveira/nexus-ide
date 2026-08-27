@@ -217,15 +217,7 @@ function stripAttachmentDataUrls(turn: AgentTurn): AgentTurn {
 }
 
 function stripPersistedAttachments(turns: AgentTurn[]): AgentTurn[] {
-  if (turns.length <= 1) {
-    return turns;
-  }
-
-  const lastIndex = turns.length - 1;
-
-  return turns.map((turn, index) =>
-    turn.running || index === lastIndex ? turn : stripAttachmentDataUrls(turn),
-  );
+  return turns.map(stripAttachmentDataUrls);
 }
 
 const trimResultCache = new WeakMap<AgentTurn[], AgentTurn[]>();
@@ -264,6 +256,10 @@ function enforceByteBudget(turns: AgentTurn[], maxBytes: number): AgentTurn[] {
   const trimmedTurn = trimTurnActivities(next[0]!, maxBytes);
 
   if (measureAgentTurnHistoryBytes([trimmedTurn]) > maxBytes) {
+    if (trimmedTurn.running) {
+      return [trimmedTurn];
+    }
+
     return [{ ...trimmedTurn, activities: [] }];
   }
 

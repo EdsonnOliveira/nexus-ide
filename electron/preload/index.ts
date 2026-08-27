@@ -135,6 +135,8 @@ const nexusApi = {
     openDirectory: (): Promise<string | null> => ipcRenderer.invoke('dialog:openDirectory'),
     openImage: (): Promise<string | null> => ipcRenderer.invoke('dialog:openImage'),
     openImages: (): Promise<string[] | null> => ipcRenderer.invoke('dialog:openImages'),
+    openVideo: (): Promise<string | null> => ipcRenderer.invoke('dialog:openVideo'),
+    openVideos: (): Promise<string[] | null> => ipcRenderer.invoke('dialog:openVideos'),
     openFile: (): Promise<string | null> => ipcRenderer.invoke('dialog:openFile'),
     openFiles: (): Promise<string[] | null> => ipcRenderer.invoke('dialog:openFiles'),
   },
@@ -267,8 +269,10 @@ const nexusApi = {
     },
   },
   homeDashboard: {
-    getStats: (projectPaths: string[], provider?: 'cursor' | 'claude' | 'opencode' | 'antigravity') =>
-      ipcRenderer.invoke('homeDashboard:getStats', projectPaths, provider),
+    getStats: (
+      projectPaths: string[],
+      provider?: 'cursor' | 'claude' | 'opencode' | 'antigravity',
+    ) => ipcRenderer.invoke('homeDashboard:getStats', projectPaths, provider),
     recordActivity: (kind: 'prompts' | 'agentExecutions') =>
       ipcRenderer.invoke('homeDashboard:recordActivity', kind),
   },
@@ -417,6 +421,7 @@ const nexusApi = {
       ipcRenderer.invoke('jarvis:processUtterance', wavBase64, projectNames ?? []),
     processTranscript: (transcript, projectNames) =>
       ipcRenderer.invoke('jarvis:processTranscript', transcript, projectNames ?? []),
+    transcribe: (wavBase64) => ipcRenderer.invoke('jarvis:transcribe', wavBase64),
     speakSummary: (text) => ipcRenderer.invoke('jarvis:speakSummary', text),
     speak: (text) => ipcRenderer.invoke('jarvis:speak', text),
     notifyFinished: (ok, error) => ipcRenderer.invoke('jarvis:notifyFinished', ok, error),
@@ -669,8 +674,9 @@ const nexusApi = {
     sync: (projectId) => ipcRenderer.invoke('tasks:sync', projectId),
     saveAttachment: (projectId, taskId, sourcePath) =>
       ipcRenderer.invoke('tasks:saveAttachment', projectId, taskId, sourcePath),
-    saveAttachmentFromDataUrl: (projectId, taskId, dataUrl) =>
-      ipcRenderer.invoke('tasks:saveAttachmentFromDataUrl', projectId, taskId, dataUrl),
+    saveAttachmentFromDataUrl: (projectId, taskId, dataUrl, fileName) =>
+      ipcRenderer.invoke('tasks:saveAttachmentFromDataUrl', projectId, taskId, dataUrl, fileName),
+    generateAiDraft: (input) => ipcRenderer.invoke('tasks:generateAiDraft', input),
     readAttachment: (filePath) => ipcRenderer.invoke('tasks:readAttachment', filePath),
     getDetail: (projectId, externalId) =>
       ipcRenderer.invoke('tasks:getDetail', projectId, externalId),

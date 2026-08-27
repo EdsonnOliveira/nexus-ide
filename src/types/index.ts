@@ -1077,6 +1077,8 @@ export interface NexusAPI {
     openDirectory: () => Promise<string | null>;
     openImage: () => Promise<string | null>;
     openImages: () => Promise<string[] | null>;
+    openVideo: () => Promise<string | null>;
+    openVideos: () => Promise<string[] | null>;
     openFile: () => Promise<string | null>;
     openFiles: () => Promise<string[] | null>;
   };
@@ -1107,7 +1109,21 @@ export interface NexusAPI {
       projectId: string,
       taskId: string,
       dataUrl: string,
+      fileName?: string,
     ) => Promise<TaskAttachment>;
+    generateAiDraft: (input: {
+      text: string;
+      transcript: string;
+      attachmentCount?: number;
+    }) => Promise<{
+      tasks: Array<{
+        title: string;
+        description: string;
+        priority: string;
+        labels: string[];
+        attachmentIndexes: number[];
+      }>;
+    }>;
     readAttachment: (filePath: string) => Promise<string>;
     getDetail: (projectId: string, externalId: string) => Promise<TaskDetailData>;
     addComment: (projectId: string, externalId: string, body: string) => Promise<TaskComment>;
@@ -1412,6 +1428,7 @@ export interface NexusAPI {
       transcript: string,
       projectNames?: string[],
     ) => Promise<JarvisProcessResult>;
+    transcribe: (wavBase64: string) => Promise<{ transcript: string }>;
     speakSummary: (text: string) => Promise<string>;
     speak: (text: string) => Promise<void>;
     notifyFinished: (ok: boolean, error?: string) => Promise<void>;
@@ -1620,11 +1637,6 @@ export interface WorkspaceContextMenuState {
 }
 
 export type ProjectPromptMode =
-  | 'rename'
-  | 'icon'
-  | 'create'
-  | 'workspace'
-  | 'workspace-rename'
-  | 'workspace-icon';
+  'rename' | 'icon' | 'create' | 'workspace' | 'workspace-rename' | 'workspace-icon';
 
 export {};

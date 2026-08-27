@@ -179,3 +179,11 @@ export interface TaskMoveResult {
 export function isImageAttachmentName(name: string): boolean {
   return /\.(png|jpe?g|gif|webp|svg|bmp|avif|heic|heif)$/i.test(name);
 }
+
+export function isAudioAttachmentName(name: string): boolean {
+  return /\.(wav|mp3|m4a|aac|ogg|flac|aiff?)$/i.test(name);
+}
+
+export function isVideoAttachmentName(name: string): boolean {
+  return /\.(mp4|mov|m4v|webm|mkv|avi)$/i.test(name);
+}

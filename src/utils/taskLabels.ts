@@ -192,6 +192,38 @@ export function isImageAttachmentName(name: string): boolean {
   return /\.(png|jpe?g|gif|webp|svg|bmp|avif|heic|heif)$/i.test(name);
 }
 
+export function isAudioAttachmentName(name: string): boolean {
+  return /\.(wav|mp3|m4a|aac|ogg|flac|aiff?)$/i.test(name);
+}
+
+export function isVideoAttachmentName(name: string): boolean {
+  return /\.(mp4|mov|m4v|webm|mkv|avi)$/i.test(name);
+}
+
+export type TaskAttachmentPreviewKind = 'image' | 'audio' | 'video' | 'file';
+
+export function resolveTaskAttachmentPreviewKind(
+  attachment: Pick<TaskAttachment, 'name' | 'kind' | 'mimeType'>,
+): TaskAttachmentPreviewKind {
+  if (
+    attachment.kind === 'image' ||
+    attachment.mimeType?.startsWith('image/') ||
+    isImageAttachmentName(attachment.name)
+  ) {
+    return 'image';
+  }
+
+  if (attachment.mimeType?.startsWith('audio/') || isAudioAttachmentName(attachment.name)) {
+    return 'audio';
+  }
+
+  if (attachment.mimeType?.startsWith('video/') || isVideoAttachmentName(attachment.name)) {
+    return 'video';
+  }
+
+  return 'file';
+}
+
 export function mergeProjectTasks(
   currentTasks: ProjectTask[],
   remoteTasks: ProjectTask[],
@@ -199,9 +231,7 @@ export function mergeProjectTasks(
 ): ProjectTask[] {
   const localTasks = currentTasks.filter((task) => task.source === 'local');
   const existingByExternalId = new Map(
-    currentTasks
-      .filter((task) => task.externalId)
-      .map((task) => [task.externalId!, task]),
+    currentTasks.filter((task) => task.externalId).map((task) => [task.externalId!, task]),
   );
 
   const mergedRemote = remoteTasks

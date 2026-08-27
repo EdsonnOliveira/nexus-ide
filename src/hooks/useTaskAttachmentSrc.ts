@@ -10,6 +10,18 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   svg: 'image/svg+xml',
   bmp: 'image/bmp',
   avif: 'image/avif',
+  wav: 'audio/wav',
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  ogg: 'audio/ogg',
+  flac: 'audio/flac',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  m4v: 'video/mp4',
+  webm: 'video/webm',
+  mkv: 'video/x-matroska',
+  txt: 'text/plain',
 };
 
 function resolveAttachmentMimeType(attachment: Pick<TaskAttachment, 'path' | 'mimeType'>): string {

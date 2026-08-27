@@ -139,6 +139,7 @@ const STREAM_JSON_ORPHAN_FINALIZE_MS = 2_000;
 const STREAM_JSON_INCOMPLETE_ORPHAN_FINALIZE_MS = 45_000;
 const STREAM_JSON_HUNG_IDLE_MS = 1_800_000;
 const STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS = 7_200_000;
+const STREAM_JSON_EMPTY_HUNG_IDLE_MS = 120_000;
 const STREAM_JSON_DEAD_PROCESS_FINALIZE_MS = 2_000;
 const STREAM_JSON_IDLE_CHECK_MS = 500;
 const STREAM_JSON_RESPONSE_IDLE_FINALIZE_MS = 400;
@@ -178,7 +179,10 @@ interface UseAgentPaneSessionOptions {
   isVisible: boolean;
   onPtyCreated: (ptyId: string) => void;
   onPtyLost: () => void;
-  onTurnsChange: (turns: AgentTurn[], options?: { persist?: boolean }) => void;
+  onTurnsChange: (
+    turns: AgentTurn[],
+    options?: { persist?: boolean; storageOnly?: boolean },
+  ) => void;
   onFollowUpsChange: (followUps: AgentFollowUp[]) => void;
   onAppendDraft?: (text: string) => void;
   onRestoreDraft?: (text: string) => void;
@@ -621,18 +625,7 @@ export function useAgentPaneSession({
       return;
     }
 
-    const incomingRunning = incoming.some((turn) => turn.running);
-
-    if ((agentPrintRunActiveRef.current || storedToken) && localRunning) {
-      return;
-    }
-
-    if (
-      localRunning &&
-      !incomingRunning &&
-      incoming.length > 0 &&
-      incoming.length <= localTurns.length
-    ) {
+    if (localRunning) {
       return;
     }
 
@@ -664,9 +657,14 @@ export function useAgentPaneSession({
   const flushPersistTurns = useCallback(() => {
     cancelPersistTurnsDebounce();
 
-    const trimmedTurns = trimAgentTurnHistory(turnsRef.current);
-    turnsRef.current = trimmedTurns;
-    onTurnsChangeRef.current(trimmedTurns, { persist: true });
+    if (turnsRef.current.length === 0) {
+      return;
+    }
+
+    onTurnsChangeRef.current(trimAgentTurnHistory(turnsRef.current), {
+      persist: true,
+      storageOnly: true,
+    });
   }, [cancelPersistTurnsDebounce]);
 
   useEffect(() => {
@@ -722,6 +720,7 @@ export function useAgentPaneSession({
           streamingTurnsUiRef.current = null;
         }
 
+        onTurnsChangeRef.current(nextTurns, { persist: false });
         flushPersistTurns();
         return;
       }
@@ -742,9 +741,10 @@ export function useAgentPaneSession({
       }
 
       if (turnsRef.current.length > 0) {
-        const trimmedTurns = trimAgentTurnHistory(turnsRef.current);
-        turnsRef.current = trimmedTurns;
-        onTurnsChangeRef.current(trimmedTurns, { persist: true });
+        onTurnsChangeRef.current(trimAgentTurnHistory(turnsRef.current), {
+          persist: true,
+          storageOnly: true,
+        });
       }
 
       onFollowUpsChangeRef.current(followUpsRef.current);
@@ -3245,7 +3245,7 @@ export function useAgentPaneSession({
           useTerminalSessionStore.getState().resetAgentWorkload(paneId);
         }
 
-        if (hasRunningTurn) {
+        if (hasRunningTurn && !usesStreamJson) {
           updateActiveTurn((turn) =>
             feedAgentTranscriptChunk(turn, cleaned, parserStateRef.current),
           );
@@ -3691,6 +3691,39 @@ export function useAgentPaneSession({
               syncStreamJsonStallLiveStatus(idleMs);
             }
 
+            return;
+          }
+
+          if (
+            idleMs >= STREAM_JSON_EMPTY_HUNG_IDLE_MS &&
+            !hasBlockingToolWork &&
+            !hasStreamJsonVisibleProgress(streamJsonStateRef.current) &&
+            !hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current) &&
+            !hasPendingStreamJsonInteraction(streamJsonStateRef.current)
+          ) {
+            forceSettleStreamJsonInFlightWork(streamJsonStateRef.current);
+            applyStreamJsonChunk('');
+            agentPrintRunActiveRef.current = false;
+            window.nexus.agentPrint.stop(paneId, {
+              preserveChildren: resolvePreserveAgentPrintChildren(),
+            });
+            updateActiveTurn((turn) => ({
+              ...turn,
+              activities: [
+                ...turn.activities.filter(
+                  (entry) =>
+                    entry.kind !== 'response' &&
+                    !(entry.kind === 'thought' && !entry.label.trim()) &&
+                    entry.kind !== 'live_status' &&
+                    entry.kind !== 'tool_run',
+                ),
+                createFailedPromptActivity(
+                  'O agent não respondeu. Envie novamente para continuar.',
+                ),
+              ],
+            }));
+            finalizeActiveTurn(true);
+            clearAgentPrintRunToken(paneId);
             return;
           }
 

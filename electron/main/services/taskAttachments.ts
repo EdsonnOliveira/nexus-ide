@@ -5,20 +5,96 @@ import type { TaskAttachment } from '../../types/task';
 import { isImageAttachmentName } from '../../types/task';
 import { ensureNexusProjectDir } from './nexusProjectGitignore';
 
-function resolveImageExtension(mimeType: string): string {
-  if (mimeType === 'image/jpeg') {
-    return 'jpg';
+const MIME_EXTENSIONS: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/svg+xml': 'svg',
+  'audio/webm': 'webm',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/mpeg': 'mp3',
+  'audio/mp4': 'm4a',
+  'audio/ogg': 'ogg',
+  'video/webm': 'webm',
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'text/plain': 'txt',
+};
+
+const FILE_MIME_TYPES: Record<string, string> = {
+  wav: 'audio/wav',
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  ogg: 'audio/ogg',
+  flac: 'audio/flac',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  m4v: 'video/mp4',
+  webm: 'video/webm',
+  mkv: 'video/x-matroska',
+  txt: 'text/plain',
+};
+
+function resolveDataUrlExtension(mimeType: string): string {
+  const mapped = MIME_EXTENSIONS[mimeType];
+
+  if (mapped) {
+    return mapped;
   }
 
-  if (mimeType === 'image/svg+xml') {
-    return 'svg';
-  }
-
-  return (mimeType.split('/')[1] ?? 'png').replace('jpeg', 'jpg');
+  const subtype = (mimeType.split('/')[1] ?? 'bin').split('+')[0] ?? 'bin';
+  return subtype.replace('jpeg', 'jpg').replace(/[^a-z0-9]/gi, '') || 'bin';
 }
 
 function sanitizeAttachmentName(fileName: string): string {
   return fileName.replace(/[^\w.\-()+\s]/g, '_');
+}
+
+function guessFileMimeType(fileName: string): string | undefined {
+  const extension = path.extname(fileName).slice(1).toLowerCase();
+  return FILE_MIME_TYPES[extension];
+}
+
+function resolveAttachmentKind(fileName: string, mimeType?: string): TaskAttachment['kind'] {
+  if (mimeType?.startsWith('image/') || isImageAttachmentName(fileName)) {
+    return 'image';
+  }
+
+  return 'file';
+}
+
+function resolveGeneratedFileName(mimeType: string, fileName?: string): string {
+  const trimmed = fileName?.trim();
+
+  if (trimmed) {
+    return sanitizeAttachmentName(path.basename(trimmed));
+  }
+
+  const extension = resolveDataUrlExtension(mimeType);
+  const prefix = mimeType.startsWith('audio/')
+    ? 'audio'
+    : mimeType.startsWith('video/')
+      ? 'video'
+      : mimeType.startsWith('text/')
+        ? 'texto'
+        : mimeType.startsWith('image/')
+          ? 'clipboard'
+          : 'anexo';
+
+  return `${prefix}-${Date.now()}.${extension}`;
+}
+
+function parseDataUrl(dataUrl: string): { mimeType: string; base64: string } {
+  const match = dataUrl.match(/^data:([^;,]+)(?:;[^,]*)?;base64,(.+)$/i);
+
+  if (!match?.[1] || !match[2]) {
+    throw new Error('Invalid attachment data URL');
+  }
+
+  return {
+    mimeType: match[1].toLowerCase(),
+    base64: match[2],
+  };
 }
 
 export async function saveTaskAttachment(
@@ -37,8 +113,9 @@ export async function saveTaskAttachment(
   return {
     id: randomUUID(),
     name: fileName,
-    kind: isImageAttachmentName(fileName) ? 'image' : 'file',
+    kind: resolveAttachmentKind(fileName),
     path: targetPath,
+    mimeType: guessFileMimeType(fileName),
   };
 }
 
@@ -46,27 +123,22 @@ export async function saveTaskAttachmentFromDataUrl(
   projectPath: string,
   taskId: string,
   dataUrl: string,
+  fileName?: string,
 ): Promise<TaskAttachment> {
-  const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
-
-  if (!match) {
-    throw new Error('Invalid image data URL');
-  }
-
-  const mimeType = match[1];
-  const base64 = match[2];
-  const extension = resolveImageExtension(mimeType);
-  const fileName = `clipboard-${Date.now()}.${extension}`;
+  const { mimeType, base64 } = parseDataUrl(dataUrl);
+  const resolvedName = resolveGeneratedFileName(mimeType, fileName);
   const targetDir = await ensureNexusProjectDir(projectPath, 'tasks', taskId);
-
-  const targetPath = path.join(targetDir, `${randomUUID()}-${sanitizeAttachmentName(fileName)}`);
+  const targetPath = path.join(
+    targetDir,
+    `${randomUUID()}-${sanitizeAttachmentName(resolvedName)}`,
+  );
 
   await writeFile(targetPath, Buffer.from(base64, 'base64'));
 
   return {
     id: randomUUID(),
-    name: fileName,
-    kind: 'image',
+    name: resolvedName,
+    kind: resolveAttachmentKind(resolvedName, mimeType),
     path: targetPath,
     mimeType,
   };

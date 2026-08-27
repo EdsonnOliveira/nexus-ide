@@ -1,7 +1,12 @@
 import { ipcMain, shell } from 'electron';
 import { projectStore } from '../services/projectStore';
 import { taskCredentialStore } from '../services/taskCredentialStore';
-import { saveTaskAttachment, saveTaskAttachmentFromDataUrl, readTaskAttachment } from '../services/taskAttachments';
+import {
+  saveTaskAttachment,
+  saveTaskAttachmentFromDataUrl,
+  readTaskAttachment,
+} from '../services/taskAttachments';
+import { generateTaskAiDraft } from '../services/taskAiDraft';
 import {
   addJiraIssueComment,
   completeJiraIssue,
@@ -113,7 +118,12 @@ export function registerTaskHandlers(): void {
 
   ipcMain.handle(
     'tasks:testConnection',
-    async (_event, projectId: string, config: TaskIntegrationConfig, credentials: TaskCredentialsPayload) => {
+    async (
+      _event,
+      projectId: string,
+      config: TaskIntegrationConfig,
+      credentials: TaskCredentialsPayload,
+    ) => {
       taskCredentialStore.saveSecrets(projectId, credentials);
       const secrets = taskCredentialStore.getSecrets(projectId);
 
@@ -157,12 +167,15 @@ export function registerTaskHandlers(): void {
     },
   );
 
-  ipcMain.handle('tasks:listJiraProjects', async (_event, projectId: string, config: TaskIntegrationConfig) => {
-    const secrets = taskCredentialStore.getSecrets(projectId);
-    const apiToken = secrets.jiraApiToken ?? '';
+  ipcMain.handle(
+    'tasks:listJiraProjects',
+    async (_event, projectId: string, config: TaskIntegrationConfig) => {
+      const secrets = taskCredentialStore.getSecrets(projectId);
+      const apiToken = secrets.jiraApiToken ?? '';
 
-    return listJiraProjects(config.jiraSiteUrl ?? '', config.jiraEmail ?? '', apiToken);
-  });
+      return listJiraProjects(config.jiraSiteUrl ?? '', config.jiraEmail ?? '', apiToken);
+    },
+  );
 
   ipcMain.handle('tasks:listTrelloBoards', async (_event, projectId: string) => {
     const secrets = taskCredentialStore.getSecrets(projectId);
@@ -227,9 +240,26 @@ export function registerTaskHandlers(): void {
 
   ipcMain.handle(
     'tasks:saveAttachmentFromDataUrl',
-    async (_event, projectId: string, taskId: string, dataUrl: string) => {
+    async (_event, projectId: string, taskId: string, dataUrl: string, fileName?: string) => {
       const project = getProjectOrThrow(projectId);
-      return saveTaskAttachmentFromDataUrl(project.path, taskId, dataUrl);
+      return saveTaskAttachmentFromDataUrl(
+        project.path,
+        taskId,
+        dataUrl,
+        typeof fileName === 'string' ? fileName : undefined,
+      );
+    },
+  );
+
+  ipcMain.handle(
+    'tasks:generateAiDraft',
+    async (_event, input: { text?: unknown; transcript?: unknown; attachmentCount?: unknown }) => {
+      return generateTaskAiDraft({
+        text: typeof input?.text === 'string' ? input.text : '',
+        transcript: typeof input?.transcript === 'string' ? input.transcript : '',
+        attachmentCount:
+          typeof input?.attachmentCount === 'number' ? input.attachmentCount : undefined,
+      });
     },
   );
 
@@ -315,11 +345,7 @@ export function registerTaskHandlers(): void {
           throw new Error('Board do Trello não configurado');
         }
 
-        return listTrelloBoardLists(
-          secrets.trelloApiKey ?? '',
-          secrets.trelloToken ?? '',
-          boardId,
-        );
+        return listTrelloBoardLists(secrets.trelloApiKey ?? '', secrets.trelloToken ?? '', boardId);
       }
 
       if (config.platform === 'deepcrm') {

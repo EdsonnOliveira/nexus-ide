@@ -15,6 +15,7 @@ import { useProjectStore } from '@/stores/useProjectStore';
 import { useToastStore } from '@/stores/useToastStore';
 import type { MacParakeetTranscriptionDetail, MacParakeetTranscriptionItem } from '@/types';
 import type { ProjectTask } from '@/types/task';
+import { upsertProjectTasks } from '@/utils/taskJson';
 import {
   findLinkedProjectIdForTranscription,
   setTranscriptionLinkedProject,
@@ -188,7 +189,7 @@ function HomeDashboardMacParakeetCardComponent() {
       const nextProject =
         projectId === ''
           ? null
-          : visibleProjects.find((project) => project.id === projectId) ?? null;
+          : (visibleProjects.find((project) => project.id === projectId) ?? null);
 
       if (projectId !== '' && !nextProject) {
         return;
@@ -313,8 +314,8 @@ function HomeDashboardMacParakeetCardComponent() {
     setTaskFormState(null);
   }, []);
 
-  const handleSaveTask = useCallback(
-    async (task: ProjectTask) => {
+  const handleSaveTasks = useCallback(
+    async (incoming: ProjectTask[]) => {
       if (!taskFormState) {
         return;
       }
@@ -325,12 +326,24 @@ function HomeDashboardMacParakeetCardComponent() {
         return;
       }
 
-      const tasks = project.tasks ?? [];
-      await updateProject(project.id, { tasks: [...tasks, task] });
+      await updateProject(project.id, {
+        tasks: upsertProjectTasks(project.tasks ?? [], incoming),
+      });
       setTaskFormState(null);
-      showToast(`Tarefa criada em ${project.name}`);
+      showToast(
+        incoming.length > 1
+          ? `${incoming.length} tarefas criadas em ${project.name}`
+          : `Tarefa criada em ${project.name}`,
+      );
     },
     [projects, showToast, taskFormState, updateProject],
+  );
+
+  const handleSaveTask = useCallback(
+    async (task: ProjectTask) => {
+      await handleSaveTasks([task]);
+    },
+    [handleSaveTasks],
   );
 
   const showSkeleton = !hydrated || (loading && transcriptions.length === 0);
@@ -387,7 +400,9 @@ function HomeDashboardMacParakeetCardComponent() {
           <EmptyState
             icon={Mic}
             message={
-              selectedSourceType ? 'Nenhuma transcrição neste filtro' : 'Nenhuma transcrição recente'
+              selectedSourceType
+                ? 'Nenhuma transcrição neste filtro'
+                : 'Nenhuma transcrição recente'
             }
             compact
           />
@@ -439,7 +454,9 @@ function HomeDashboardMacParakeetCardComponent() {
                       <span
                         className='home-dashboard__parakeet-chip'
                         style={{
-                          ['--parakeet-accent' as string]: resolveMacParakeetSourceAccent(item.sourceType),
+                          ['--parakeet-accent' as string]: resolveMacParakeetSourceAccent(
+                            item.sourceType,
+                          ),
                         }}
                       >
                         {resolveMacParakeetSourceLabel(item.sourceType)}
@@ -461,7 +478,10 @@ function HomeDashboardMacParakeetCardComponent() {
                     </span>
                   </span>
                   {item.isLive ? (
-                    <span className='home-dashboard__parakeet-live' aria-label='Chamada em andamento'>
+                    <span
+                      className='home-dashboard__parakeet-live'
+                      aria-label='Chamada em andamento'
+                    >
                       <span className='home-dashboard__parakeet-live-dot' aria-hidden='true' />
                     </span>
                   ) : null}
@@ -507,6 +527,7 @@ function HomeDashboardMacParakeetCardComponent() {
           autoFocusTitle
           onClose={handleCloseTaskForm}
           onSave={(task) => void handleSaveTask(task)}
+          onSaveMany={(incoming) => void handleSaveTasks(incoming)}
         />
       ) : null}
     </>

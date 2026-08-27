@@ -3,6 +3,7 @@ import { getPanesFromItem } from '@/utils/tabGroups';
 
 const HOME_AGENT_STORAGE_KEY = 'nexus.home-dashboard.project-agents';
 const HOME_VIEW_MODE_STORAGE_KEY = 'nexus.home-dashboard.view-mode';
+const HOME_MAESTRO_DENSE_STORAGE_KEY = 'nexus.home-dashboard.maestro-dense';
 export const HOME_AGENT_CHANGE_EVENT = 'nexus-home-dashboard-project-agents';
 export const HOME_AGENT_FOCUS_EVENT = 'nexus-home-dashboard-focus-agent';
 export const HOME_ASK_FOCUS_EVENT = 'nexus-home-dashboard-focus-ask';
@@ -24,6 +25,21 @@ export function getHomeDashboardViewMode(): HomeDashboardViewMode {
 export function setHomeDashboardViewMode(mode: HomeDashboardViewMode): void {
   try {
     window.localStorage.setItem(HOME_VIEW_MODE_STORAGE_KEY, mode);
+  } catch {
+  }
+}
+
+export function getHomeMaestroDense(): boolean {
+  try {
+    return window.localStorage.getItem(HOME_MAESTRO_DENSE_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function setHomeMaestroDense(dense: boolean): void {
+  try {
+    window.localStorage.setItem(HOME_MAESTRO_DENSE_STORAGE_KEY, dense ? '1' : '0');
   } catch {
   }
 }

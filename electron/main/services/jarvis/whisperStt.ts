@@ -27,8 +27,7 @@ const CANDIDATE_MODELS = [
   '/usr/local/share/whisper-cpp/ggml-base.bin',
 ];
 
-const WHISPER_PROMPT =
-  'Nexus. Comandos em português do Brasil para o assistente do IDE.';
+const WHISPER_PROMPT = 'Nexus. Comandos em português do Brasil para o assistente do IDE.';
 
 export interface WhisperResolveResult {
   binary: string | null;
@@ -69,8 +68,7 @@ async function resolveBinary(preferred?: string | null): Promise<string | null> 
       if (resolved && existsSync(resolved)) {
         return resolved;
       }
-    } catch {
-    }
+    } catch {}
   }
 
   return null;
@@ -98,7 +96,10 @@ function resolveMacSpeechBinary(): string | null {
   const candidates = [
     join(process.cwd(), 'resources/shell/SpeechHelper.app/Contents/MacOS/SpeechHelper'),
     join(process.cwd(), 'resources/shell/macosSpeechToText'),
-    join(process.cwd(), 'build/Nexus.app/Contents/Helpers/SpeechHelper.app/Contents/MacOS/SpeechHelper'),
+    join(
+      process.cwd(),
+      'build/Nexus.app/Contents/Helpers/SpeechHelper.app/Contents/MacOS/SpeechHelper',
+    ),
     join(app.getAppPath(), 'Contents/Helpers/SpeechHelper.app/Contents/MacOS/SpeechHelper'),
     join(process.resourcesPath, '../Helpers/SpeechHelper.app/Contents/MacOS/SpeechHelper'),
     join(
@@ -282,7 +283,7 @@ async function transcribeWithWhisper(
   }
 }
 
-const MAX_WAV_BYTES = 4 * 1024 * 1024;
+const MAX_WAV_BYTES = 8 * 1024 * 1024;
 
 export async function transcribeWavBase64(
   wavBase64: string,
@@ -295,7 +296,7 @@ export async function transcribeWavBase64(
     throw new Error(whisperTools.detail);
   }
 
-  if (wavBase64.length > 6_000_000) {
+  if (wavBase64.length > 12_000_000) {
     throw new Error('Áudio muito grande');
   }
 
@@ -313,12 +314,7 @@ export async function transcribeWavBase64(
     writeFileSync(wavPath, audio);
 
     if (whisperTools.available && whisperTools.binary) {
-      return await transcribeWithWhisper(
-        wavPath,
-        whisperTools.binary,
-        whisperTools.model,
-        tempDir,
-      );
+      return await transcribeWithWhisper(wavPath, whisperTools.binary, whisperTools.model, tempDir);
     }
 
     if (macSpeech) {
@@ -329,7 +325,6 @@ export async function transcribeWavBase64(
   } finally {
     try {
       rmSync(tempDir, { recursive: true, force: true });
-    } catch {
-    }
+    } catch {}
   }
 }

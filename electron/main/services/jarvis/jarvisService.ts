@@ -12,13 +12,7 @@ import { jarvisVoice } from './jarvisVoicePhrases';
 import { speakText } from './tts';
 import { resolveWhisperTools, transcribeWavBase64 } from './whisperStt';
 
-export type JarvisPhase =
-  | 'idle'
-  | 'listening'
-  | 'processing'
-  | 'speaking'
-  | 'executing'
-  | 'error';
+export type JarvisPhase = 'idle' | 'listening' | 'processing' | 'speaking' | 'executing' | 'error';
 
 export interface JarvisStatus {
   enabled: boolean;
@@ -136,8 +130,7 @@ export async function startJarvisListening(): Promise<JarvisStatus> {
           return getJarvisStatus();
         }
       }
-    } catch {
-    }
+    } catch {}
   }
 
   const status = await getJarvisStatus();
@@ -160,8 +153,7 @@ export async function startJarvisListening(): Promise<JarvisStatus> {
   broadcast('jarvis:listening', { listening: true });
   try {
     await speakText(jarvisVoice.listeningOk());
-  } catch {
-  }
+  } catch {}
   return getJarvisStatus();
 }
 
@@ -182,7 +174,10 @@ export async function processJarvisUtterance(
 
   busy = true;
   setPhase('processing');
-  console.info('[jarvis] utterance received', { bytes: wavBase64.length, projects: projectNames.length });
+  console.info('[jarvis] utterance received', {
+    bytes: wavBase64.length,
+    projects: projectNames.length,
+  });
 
   try {
     const transcript = await transcribeWavBase64(wavBase64, {
@@ -201,8 +196,7 @@ export async function processJarvisUtterance(
       : jarvisVoice.askRepeat();
     try {
       await speakText(spoken);
-    } catch {
-    }
+    } catch {}
     broadcast('jarvis:finished', { ok: false, error: message });
     return { accepted: false, transcript: lastTranscript ?? '', intent: null, error: message };
   } finally {
@@ -230,8 +224,7 @@ export async function processJarvisTranscript(
     broadcast('jarvis:error', { message });
     try {
       await speakText(jarvisVoice.askRepeat());
-    } catch {
-    }
+    } catch {}
     broadcast('jarvis:finished', { ok: false, error: message });
     return { accepted: false, transcript: lastTranscript ?? '', intent: null, error: message };
   } finally {
@@ -272,8 +265,7 @@ async function finishFromTranscript(
     setPhase('speaking');
     try {
       await speakText(intent.ackPhrase);
-    } catch {
-    }
+    } catch {}
     setPhase('executing');
     broadcast('jarvis:intent', { intent });
     return { accepted: true, transcript, intent };
@@ -282,9 +274,7 @@ async function finishFromTranscript(
   broadcast('jarvis:started', { transcript });
   setPhase('speaking');
 
-  const immediateAck = listeningCheck
-    ? jarvisVoice.listeningOk()
-    : jarvisVoice.ack();
+  const immediateAck = listeningCheck ? jarvisVoice.listeningOk() : jarvisVoice.ack();
   const speakAckPromise = speakText(immediateAck).catch(() => undefined);
 
   const intent = await classifyJarvisIntent(
@@ -299,6 +289,13 @@ async function finishFromTranscript(
   broadcast('jarvis:intent', { intent });
 
   return { accepted: true, transcript, intent };
+}
+
+export async function transcribeJarvisAudio(wavBase64: string): Promise<string> {
+  return transcribeWavBase64(wavBase64, {
+    binary: prefsStore.get('whisperBinary'),
+    model: prefsStore.get('whisperModel'),
+  });
 }
 
 export async function speakJarvisSummary(text: string): Promise<string> {

@@ -10,14 +10,13 @@ import { usePendingTaskViewStore } from '@/stores/usePendingTaskViewStore';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useToastStore } from '@/stores/useToastStore';
 import type { ProjectTask, TaskCredentialsPayload, TaskIntegrationConfig } from '@/types/task';
-import {
-  formatDeepcrmIntegrationError,
-} from '@/utils/deepcrmIntegration';
+import { formatDeepcrmIntegrationError } from '@/utils/deepcrmIntegration';
 import { formatTaskIntegrationError } from '@/utils/jiraIntegration';
 import {
   LOCAL_TASK_STATUS_DONE,
   LOCAL_TASK_STATUS_PENDING,
   serializeLocalTaskJson,
+  upsertProjectTasks,
 } from '@/utils/taskJson';
 
 interface ProjectTasksDrawerProps {
@@ -25,7 +24,9 @@ interface ProjectTasksDrawerProps {
 }
 
 function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
-  const project = useProjectStore((state) => state.projects.find((item) => item.id === projectId) ?? null);
+  const project = useProjectStore(
+    (state) => state.projects.find((item) => item.id === projectId) ?? null,
+  );
   const updateProject = useProjectStore((state) => state.updateProject);
   const { executeTask, executionModals } = useProjectTaskExecution(projectId);
   const { isSyncing, syncError } = useTaskSync(projectId);
@@ -165,11 +166,13 @@ function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
                 : task.deepcrm,
           });
         } catch (error) {
-          useToastStore.getState().showToast(
-            task.source === 'deepcrm'
-              ? formatDeepcrmIntegrationError(error)
-              : formatTaskIntegrationError(error),
-          );
+          useToastStore
+            .getState()
+            .showToast(
+              task.source === 'deepcrm'
+                ? formatDeepcrmIntegrationError(error)
+                : formatTaskIntegrationError(error),
+            );
         }
       })();
     },
@@ -228,18 +231,19 @@ function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
     setFormTask(task);
   }, []);
 
-  const handleSaveTask = useCallback(
-    async (task: ProjectTask) => {
-      const existingIndex = tasks.findIndex((item) => item.id === task.id);
-      const nextTasks =
-        existingIndex >= 0
-          ? tasks.map((item, index) => (index === existingIndex ? task : item))
-          : [...tasks, task];
-
-      await persistTasks(nextTasks);
+  const handleSaveTasks = useCallback(
+    async (incoming: ProjectTask[]) => {
+      await persistTasks(upsertProjectTasks(tasks, incoming));
       setFormTask(undefined);
     },
     [persistTasks, tasks],
+  );
+
+  const handleSaveTask = useCallback(
+    async (task: ProjectTask) => {
+      await handleSaveTasks([task]);
+    },
+    [handleSaveTasks],
   );
 
   const handleImportJsonApply = useCallback(
@@ -330,6 +334,7 @@ function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
           task={formTask}
           onClose={() => setFormTask(undefined)}
           onSave={(task) => void handleSaveTask(task)}
+          onSaveMany={(incoming) => void handleSaveTasks(incoming)}
         />
       ) : null}
       {importJsonOpen ? (
@@ -346,7 +351,9 @@ function ProjectTasksDrawerComponent({ projectId }: ProjectTasksDrawerProps) {
           projectId={project.id}
           integration={project.taskIntegration ?? null}
           onClose={() => setIntegrationOpen(false)}
-          onSave={(integration, credentials) => void handleSaveIntegration(integration, credentials)}
+          onSave={(integration, credentials) =>
+            void handleSaveIntegration(integration, credentials)
+          }
         />
       ) : null}
       {executionModals}

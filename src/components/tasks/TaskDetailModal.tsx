@@ -1,4 +1,14 @@
-import { CheckCircle2, ExternalLink, History, ListTodo, Loader2, Pencil, Play, Send, User } from 'lucide-react';
+import {
+  CheckCircle2,
+  ExternalLink,
+  History,
+  ListTodo,
+  Loader2,
+  Pencil,
+  Play,
+  Send,
+  User,
+} from 'lucide-react';
 import { memo, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
@@ -7,7 +17,7 @@ import {
   readTaskExecutionAnchor,
   type TaskExecutionAnchor,
 } from '@/components/tasks/TaskAgentModeModal';
-import { TaskAttachmentImage } from '@/components/tasks/TaskAttachmentImage';
+import { TaskAttachmentImage, TaskAttachmentPreview } from '@/components/tasks/TaskAttachmentImage';
 import type {
   ProjectTask,
   TaskBoardColumnOption,
@@ -27,10 +37,7 @@ import {
 } from '@/utils/deepcrmIntegration';
 import { renderMarkdownPreview } from '@/utils/markdownPreview';
 import { buildJiraIssueUrl, formatTaskIntegrationError } from '@/utils/jiraIntegration';
-import {
-  getTaskSubtaskProgress,
-  resolveTaskSubtasks,
-} from '@/utils/taskFilters';
+import { getTaskSubtaskProgress, resolveTaskSubtasks } from '@/utils/taskFilters';
 import {
   formatHistoryEmptyValue,
   formatTaskDate,
@@ -39,6 +46,7 @@ import {
   getTaskInitials,
   getTaskTagBorderColor,
   resolveHistoryStatusBadge,
+  resolveTaskAttachmentPreviewKind,
   resolveTaskCoverAttachment,
   resolveTaskPriorityVisual,
   resolveTaskStatusBadge,
@@ -55,7 +63,12 @@ type AttachmentTab = 'all' | 'images' | 'documents';
 type DeepcrmDetailTab = 'tasks' | 'timeline';
 
 const LOCAL_BOARD_COLUMNS: TaskBoardColumnOption[] = [
-  { id: LOCAL_TASK_STATUS_PENDING, name: LOCAL_TASK_STATUS_PENDING, isDone: false, isProgress: false },
+  {
+    id: LOCAL_TASK_STATUS_PENDING,
+    name: LOCAL_TASK_STATUS_PENDING,
+    isDone: false,
+    isProgress: false,
+  },
   {
     id: LOCAL_TASK_STATUS_IN_PROGRESS,
     name: LOCAL_TASK_STATUS_IN_PROGRESS,
@@ -172,8 +185,7 @@ function TaskDetailModalComponent({
   onTaskUpdated,
 }: TaskDetailModalProps) {
   const isJiraTask = task.source === 'jira' && Boolean(task.externalId);
-  const isDeepcrmTask =
-    task.source === 'deepcrm' && Boolean(task.externalId?.startsWith('DC-P-'));
+  const isDeepcrmTask = task.source === 'deepcrm' && Boolean(task.externalId?.startsWith('DC-P-'));
   const isTrelloTask = task.source === 'trello' && Boolean(task.externalId);
   const isLocalTask = task.source === 'local';
   const isRichDetailTask = isJiraTask || isDeepcrmTask;
@@ -190,9 +202,7 @@ function TaskDetailModalComponent({
   const [boardColumns, setBoardColumns] = useState<TaskBoardColumnOption[]>(
     isLocalTask ? LOCAL_BOARD_COLUMNS : [],
   );
-  const [isLoadingBoardColumns, setIsLoadingBoardColumns] = useState(
-    !isLocalTask && canMoveBoard,
-  );
+  const [isLoadingBoardColumns, setIsLoadingBoardColumns] = useState(!isLocalTask && canMoveBoard);
   const [boardError, setBoardError] = useState<string | null>(null);
   const [isMovingBoard, setIsMovingBoard] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
@@ -244,7 +254,10 @@ function TaskDetailModalComponent({
     [activeTask.deepcrm?.healthScore, activeTask.deepcrm?.healthScoreNumeric],
   );
 
-  const healthBadgeClass = useMemo(() => resolveDeepcrmHealthBadgeClass(healthLabel), [healthLabel]);
+  const healthBadgeClass = useMemo(
+    () => resolveDeepcrmHealthBadgeClass(healthLabel),
+    [healthLabel],
+  );
 
   const mrrLabel = useMemo(
     () => formatDeepcrmMrr(activeTask.deepcrm?.mrr),
@@ -296,12 +309,7 @@ function TaskDetailModalComponent({
     }
 
     return true;
-  }, [
-    completedSubtaskCount,
-    deepcrmSubtasks.length,
-    jiraSubtaskProgress,
-    jiraSubtasks.length,
-  ]);
+  }, [completedSubtaskCount, deepcrmSubtasks.length, jiraSubtaskProgress, jiraSubtasks.length]);
   const canCompleteParent = !hasParentSubtasks || allParentSubtasksCompleted;
 
   const filteredAttachments = useMemo(() => {
@@ -381,9 +389,7 @@ function TaskDetailModalComponent({
       }
 
       setLoadError(
-        isDeepcrmTask
-          ? formatDeepcrmIntegrationError(error)
-          : formatTaskIntegrationError(error),
+        isDeepcrmTask ? formatDeepcrmIntegrationError(error) : formatTaskIntegrationError(error),
       );
     } finally {
       if (isMountedRef.current) {
@@ -418,9 +424,7 @@ function TaskDetailModalComponent({
         }
 
         setLoadError(
-          isDeepcrmTask
-            ? formatDeepcrmIntegrationError(error)
-            : formatTaskIntegrationError(error),
+          isDeepcrmTask ? formatDeepcrmIntegrationError(error) : formatTaskIntegrationError(error),
         );
       })
       .finally(() => {
@@ -457,9 +461,7 @@ function TaskDetailModalComponent({
     } catch (error) {
       setBoardColumns([]);
       setBoardError(
-        isDeepcrmTask
-          ? formatDeepcrmIntegrationError(error)
-          : formatTaskIntegrationError(error),
+        isDeepcrmTask ? formatDeepcrmIntegrationError(error) : formatTaskIntegrationError(error),
       );
     } finally {
       setIsLoadingBoardColumns(false);
@@ -484,10 +486,7 @@ function TaskDetailModalComponent({
       label: column.name,
     }));
 
-    if (
-      currentBoardStatus &&
-      !options.some((option) => option.label === currentBoardStatus)
-    ) {
+    if (currentBoardStatus && !options.some((option) => option.label === currentBoardStatus)) {
       options.unshift({
         value: `${CURRENT_BOARD_VALUE_PREFIX}${currentBoardStatus}`,
         label: currentBoardStatus,
@@ -577,9 +576,7 @@ function TaskDetailModalComponent({
         }
       } catch (error) {
         setBoardError(
-          isDeepcrmTask
-            ? formatDeepcrmIntegrationError(error)
-            : formatTaskIntegrationError(error),
+          isDeepcrmTask ? formatDeepcrmIntegrationError(error) : formatTaskIntegrationError(error),
         );
       } finally {
         setIsMovingBoard(false);
@@ -628,9 +625,7 @@ function TaskDetailModalComponent({
         requestClose();
       } catch (error) {
         setBoardError(
-          isDeepcrmTask
-            ? formatDeepcrmIntegrationError(error)
-            : formatTaskIntegrationError(error),
+          isDeepcrmTask ? formatDeepcrmIntegrationError(error) : formatTaskIntegrationError(error),
         );
       } finally {
         setIsCompleting(false);
@@ -735,7 +730,13 @@ function TaskDetailModalComponent({
   );
 
   const resolveSubtaskForExecute = useCallback(
-    (subtaskKey: string, title: string, status?: string, assignee?: string, assigneeAvatarUrl?: string) => {
+    (
+      subtaskKey: string,
+      title: string,
+      status?: string,
+      assignee?: string,
+      assigneeAvatarUrl?: string,
+    ) => {
       const fullTask = relatedTasks.find(
         (item) => item.externalId === subtaskKey || item.id === subtaskKey,
       );
@@ -855,7 +856,9 @@ function TaskDetailModalComponent({
       <div className='task-detail-modal__comment-body'>
         <div className='task-detail-modal__comment-header'>
           <span className='task-detail-modal__comment-author'>{comment.authorName}</span>
-          <time className='task-detail-modal__comment-date'>{formatTaskDate(comment.createdAt)}</time>
+          <time className='task-detail-modal__comment-date'>
+            {formatTaskDate(comment.createdAt)}
+          </time>
         </div>
         <p className='task-detail-modal__comment-text'>{comment.body || 'Sem conteúdo'}</p>
       </div>
@@ -876,7 +879,9 @@ function TaskDetailModalComponent({
             {entry.action ?? `atualizou o ${entry.field}`}
           </span>
         </p>
-        <time className='task-detail-modal__history-date'>{formatTaskHistoryDate(entry.createdAt)}</time>
+        <time className='task-detail-modal__history-date'>
+          {formatTaskHistoryDate(entry.createdAt)}
+        </time>
         {entry.from || entry.to ? (
           <div className='task-detail-modal__history-change'>
             <TaskHistoryValue value={entry.from ?? formatHistoryEmptyValue(entry.field)} />
@@ -949,19 +954,25 @@ function TaskDetailModalComponent({
         <div className='task-detail-modal__attachments'>
           <span className='task-detail-modal__section-label'>Anexos</span>
           <div className='task-detail-modal__attachment-list'>
-            {activeTask.attachments.map((attachment) => (
-              <div key={attachment.id} className='task-detail-modal__attachment-item'>
-                {attachment.kind === 'image' ? (
-                  <TaskAttachmentImage
+            {activeTask.attachments.map((attachment) => {
+              const previewKind = resolveTaskAttachmentPreviewKind(attachment);
+
+              return (
+                <div key={attachment.id} className='task-detail-modal__attachment-item'>
+                  <TaskAttachmentPreview
                     attachment={attachment}
-                    className='task-detail-modal__attachment-thumb'
+                    className={
+                      previewKind === 'image'
+                        ? 'task-detail-modal__attachment-thumb'
+                        : previewKind === 'file'
+                          ? 'task-detail-modal__attachment-name'
+                          : 'task-detail-modal__attachment-media'
+                    }
                     alt={attachment.name}
                   />
-                ) : (
-                  <span className='task-detail-modal__attachment-name'>{attachment.name}</span>
-                )}
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : null}
@@ -1092,8 +1103,7 @@ function TaskDetailModalComponent({
                   const fullTask = relatedTasks.find(
                     (item) => item.externalId === subtask.key || item.id === subtask.key,
                   );
-                  const assigneeName =
-                    fullTask?.jira?.assignee ?? subtask.assignee;
+                  const assigneeName = fullTask?.jira?.assignee ?? subtask.assignee;
                   const assigneeAvatar =
                     fullTask?.jira?.assigneeAvatarUrl ?? subtask.assigneeAvatarUrl;
                   return (
@@ -1193,19 +1203,25 @@ function TaskDetailModalComponent({
                 </div>
               </div>
               <div className='task-detail-modal__attachment-list'>
-                {filteredAttachments.map((attachment) => (
-                  <div key={attachment.id} className='task-detail-modal__attachment-item'>
-                    {attachment.kind === 'image' ? (
-                      <TaskAttachmentImage
+                {filteredAttachments.map((attachment) => {
+                  const previewKind = resolveTaskAttachmentPreviewKind(attachment);
+
+                  return (
+                    <div key={attachment.id} className='task-detail-modal__attachment-item'>
+                      <TaskAttachmentPreview
                         attachment={attachment}
-                        className='task-detail-modal__attachment-thumb'
+                        className={
+                          previewKind === 'image'
+                            ? 'task-detail-modal__attachment-thumb'
+                            : previewKind === 'file'
+                              ? 'task-detail-modal__attachment-name'
+                              : 'task-detail-modal__attachment-media'
+                        }
                         alt={attachment.name}
                       />
-                    ) : (
-                      <span className='task-detail-modal__attachment-name'>{attachment.name}</span>
-                    )}
-                  </div>
-                ))}
+                    </div>
+                  );
+                })}
               </div>
             </section>
           ) : null}
@@ -1256,7 +1272,11 @@ function TaskDetailModalComponent({
                     onClick={() => void handleSubmitComment()}
                   >
                     {isSubmittingComment ? (
-                      <Loader2 size={14} className='task-detail-modal__loading-icon' strokeWidth={2} />
+                      <Loader2
+                        size={14}
+                        className='task-detail-modal__loading-icon'
+                        strokeWidth={2}
+                      />
                     ) : (
                       <Send size={14} strokeWidth={2} />
                     )}
@@ -1536,9 +1556,7 @@ function TaskDetailModalComponent({
           {healthLabel ? (
             <div className='task-detail-modal__info-row'>
               <span className='task-detail-modal__info-label'>Saúde</span>
-              <span
-                className={`task-detail-modal__health-badge ${healthBadgeClass}`.trim()}
-              >
+              <span className={`task-detail-modal__health-badge ${healthBadgeClass}`.trim()}>
                 {healthLabel}
                 {typeof activeTask.deepcrm?.healthScoreNumeric === 'number' ? (
                   <span className='task-detail-modal__health-score'>

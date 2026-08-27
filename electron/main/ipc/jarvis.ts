@@ -9,6 +9,7 @@ import {
   speakJarvisSummary,
   startJarvisListening,
   stopJarvisListening,
+  transcribeJarvisAudio,
 } from '../services/jarvis/jarvisService';
 
 function asProjectNames(value: unknown): string[] {
@@ -74,6 +75,18 @@ export function registerJarvisHandlers(): void {
 
     return processJarvisTranscript(transcript.slice(0, 8_000), asProjectNames(projectNames));
   });
+  ipcMain.handle('jarvis:transcribe', async (_, wavBase64: unknown) => {
+    if (typeof wavBase64 !== 'string' || wavBase64.length === 0) {
+      throw new Error('Áudio inválido');
+    }
+
+    if (wavBase64.length > 12_000_000) {
+      throw new Error('Áudio muito grande');
+    }
+
+    const transcript = await transcribeJarvisAudio(wavBase64);
+    return { transcript };
+  });
   ipcMain.handle('jarvis:speakSummary', (_, text: unknown) => {
     const trimmed = asTrimmedString(text, 12_000);
 
@@ -93,10 +106,7 @@ export function registerJarvisHandlers(): void {
     return speakJarvisMessage(trimmed);
   });
   ipcMain.handle('jarvis:notifyFinished', (_, ok: unknown, error?: unknown) => {
-    notifyJarvisFinished(
-      Boolean(ok),
-      typeof error === 'string' ? error.slice(0, 500) : undefined,
-    );
+    notifyJarvisFinished(Boolean(ok), typeof error === 'string' ? error.slice(0, 500) : undefined);
   });
   ipcMain.handle('jarvis:setOllamaModel', (_, model: unknown) => {
     if (typeof model !== 'string') {
