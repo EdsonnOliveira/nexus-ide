@@ -783,6 +783,55 @@ const nexusApi = {
     writeMobileReleaseSnapshot: (payload: unknown): Promise<{ ok: boolean; path: string }> =>
       ipcRenderer.invoke('cloud:writeMobileReleaseSnapshot', payload),
   },
+  agentPip: {
+    pin: (snapshot: import('../types/agentPip').AgentPipSnapshot): Promise<void> =>
+      ipcRenderer.invoke('agentPip:pin', snapshot),
+    update: (snapshot: import('../types/agentPip').AgentPipSnapshot): Promise<boolean> =>
+      ipcRenderer.invoke('agentPip:update', snapshot),
+    unpin: (): Promise<void> => ipcRenderer.invoke('agentPip:unpin'),
+    getSnapshot: (): Promise<import('../types/agentPip').AgentPipSnapshot | null> =>
+      ipcRenderer.invoke('agentPip:getSnapshot'),
+    focusMain: (): Promise<void> => ipcRenderer.invoke('agentPip:focusMain'),
+    command: (payload: import('../types/agentPip').AgentPipCommand): Promise<boolean> =>
+      ipcRenderer.invoke('agentPip:command', payload),
+    onSnapshot: (
+      callback: (snapshot: import('../types/agentPip').AgentPipSnapshot) => void,
+    ): (() => void) => {
+      const listener = (
+        _: Electron.IpcRendererEvent,
+        payload: import('../types/agentPip').AgentPipSnapshot,
+      ) => {
+        callback(payload);
+      };
+
+      ipcRenderer.on('agentPip:snapshot', listener);
+      return () => ipcRenderer.off('agentPip:snapshot', listener);
+    },
+    onUnpinned: (callback: () => void): (() => void) => {
+      const listener = () => {
+        callback();
+      };
+
+      ipcRenderer.on('agentPip:unpinned', listener);
+      return () => ipcRenderer.off('agentPip:unpinned', listener);
+    },
+    onHostCommand: (
+      callback: (request: import('../types/agentPip').AgentPipHostRequest) => void,
+    ): (() => void) => {
+      const listener = (
+        _: Electron.IpcRendererEvent,
+        payload: import('../types/agentPip').AgentPipHostRequest,
+      ) => {
+        callback(payload);
+      };
+
+      ipcRenderer.on('agentPip:hostCommand', listener);
+      return () => ipcRenderer.off('agentPip:hostCommand', listener);
+    },
+    replyHostCommand: (requestId: string, ok: boolean): void => {
+      ipcRenderer.send('agentPip:hostResult', { requestId, ok });
+    },
+  },
 };
 
 contextBridge.exposeInMainWorld('nexus', nexusApi);

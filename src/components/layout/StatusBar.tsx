@@ -1,8 +1,9 @@
 import { memo, useCallback, useMemo, useState, type MouseEvent } from 'react';
-import { Folder, GitBranch, Mic, Settings } from 'lucide-react';
+import { Folder, GitBranch, Mic, Settings, Terminal } from 'lucide-react';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { StatusBarBranchMenu } from '@/components/layout/StatusBarBranchMenu';
 import { SettingsModal } from '@/components/settings/SettingsModal';
+import { StandaloneTerminalPopup } from '@/components/terminal/StandaloneTerminalPopup';
 import { useGitBranch } from '@/hooks/useGitBranch';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useJarvisStore } from '@/stores/useJarvisStore';
@@ -49,6 +50,8 @@ function StatusBarComponent({ onToggleJarvis }: StatusBarProps) {
   const [blockedCheckout, setBlockedCheckout] = useState<BlockedCheckoutState | null>(null);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [standaloneTerminalOpen, setStandaloneTerminalOpen] = useState(false);
+  const [standalonePtyId, setStandalonePtyId] = useState<string | null>(null);
   const jarvisEnabled = useJarvisStore((state) => state.enabled);
   const jarvisPhase = useJarvisStore((state) => state.phase);
   const jarvisError = useJarvisStore((state) => state.lastError);
@@ -290,6 +293,18 @@ function StatusBarComponent({ onToggleJarvis }: StatusBarProps) {
           <div className='status-bar__actions'>
             <button
               type='button'
+              className={`status-bar__btn app-button app-button--enter${
+                standaloneTerminalOpen ? ' status-bar__btn--terminal-open' : ''
+              }`}
+              aria-label='Abrir terminal'
+              aria-pressed={standaloneTerminalOpen}
+              title='Terminal'
+              onClick={() => setStandaloneTerminalOpen(true)}
+            >
+              <Terminal size={12} />
+            </button>
+            <button
+              type='button'
               className={jarvisButtonClassName}
               aria-label={jarvisAriaLabel}
               aria-pressed={jarvisEnabled}
@@ -356,6 +371,15 @@ function StatusBarComponent({ onToggleJarvis }: StatusBarProps) {
       ) : null}
 
       {settingsOpen ? <SettingsModal onClose={() => setSettingsOpen(false)} /> : null}
+
+      {standaloneTerminalOpen ? (
+        <StandaloneTerminalPopup
+          ptyId={standalonePtyId}
+          onPtyCreated={setStandalonePtyId}
+          onPtyLost={() => setStandalonePtyId(null)}
+          onClose={() => setStandaloneTerminalOpen(false)}
+        />
+      ) : null}
     </>
   );
 }

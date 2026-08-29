@@ -58,6 +58,30 @@ function collectImageJobs(html: string): Array<{
     match = imgRegex.exec(html);
   }
 
+  const pendingSpanRegex =
+    /<span\b([^>]*?\bclass="[^"]*\bmarkdown-preview__img--pending\b[^"]*"[^>]*)><\/span>/gi;
+  let pendingMatch = pendingSpanRegex.exec(html);
+
+  while (pendingMatch) {
+    const attrs = pendingMatch[1] ?? '';
+    const altMatch = attrs.match(/\baria-label="([^"]*)"/i);
+    const pathMatch = attrs.match(/\bdata-image-path="([^"]*)"/i);
+    const imageRef = decodeHtmlAttr(pathMatch?.[1] ?? '');
+    const alt = decodeHtmlAttr(altMatch?.[1] ?? '');
+
+    if (imageRef) {
+      jobs.push({
+        fullMatch: pendingMatch[0],
+        src: '',
+        alt,
+        imageRef,
+        isPending: true,
+      });
+    }
+
+    pendingMatch = pendingSpanRegex.exec(html);
+  }
+
   const missingRegex =
     /<span\b([^>]*?\bclass="[^"]*\bmarkdown-preview__img-missing\b[^"]*"[^>]*)>([\s\S]*?)<\/span>/gi;
   let missingMatch = missingRegex.exec(html);

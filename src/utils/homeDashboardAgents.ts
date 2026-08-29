@@ -275,7 +275,6 @@ function projectAgentSurfaceKey(project: Project): string {
             lastTurn?.id ?? '',
             lastTurn?.running ? 1 : 0,
             lastTurn?.completedAt ?? 0,
-            lastTurn?.activities?.length ?? 0,
             pane.followUps?.length ?? 0,
           ].join(':'),
         );

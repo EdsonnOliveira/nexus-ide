@@ -2,6 +2,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -17,6 +18,7 @@ import {
   ArrowUp,
   AtSign,
   BookOpen,
+  Check,
   File,
   FileText,
   FolderKanban,
@@ -24,6 +26,10 @@ import {
   Paperclip,
   X,
 } from 'lucide-react';
+import logoAntigravity from '@/assets/logo-antigravity.svg';
+import logoClaude from '@/assets/logo-claude.svg';
+import logoCursor from '@/assets/logo-cursor.svg';
+import logoOpencode from '@/assets/logo-opencode.svg';
 import { AgentComposerModeChip } from '@/components/agent/AgentComposerModeChip';
 import { AgentPromptImageMentionText } from '@/components/agent/AgentPromptImageBadges';
 import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
@@ -35,6 +41,11 @@ import {
   getAgentModeOption,
   type AutomationAgentMode,
 } from '@/constants/agentModes';
+import {
+  ASK_AI_PROVIDER_OPTIONS,
+  type AiProviderId,
+} from '@/constants/aiProviders';
+import { useAppSettingsStore } from '@/stores/useAppSettingsStore';
 import {
   positionDropdownAboveAnchor,
   positionDropdownBelowAnchor,
@@ -85,6 +96,7 @@ export interface HomeDashboardPromptFlightStart {
 interface HomeDashboardAskBarProps {
   projects: Project[];
   viewMode: HomeDashboardViewMode;
+  compact?: boolean;
   onAgentOpened?: () => void;
   onPromptFlightStart?: (payload: HomeDashboardPromptFlightStart) => void;
   onPromptFlightLand?: (flightId: string, paneId: string) => void;
@@ -113,6 +125,37 @@ interface AskAttachMenuProps {
   onAttachFile: () => void;
 }
 
+interface AskAiProviderMenuProps {
+  open: boolean;
+  anchorRect: DOMRect | null;
+  triggerRef: RefObject<HTMLButtonElement | null>;
+  value: Exclude<AiProviderId, 'nexus'>;
+  onClose: () => void;
+  onSelect: (provider: Exclude<AiProviderId, 'nexus'>) => void;
+}
+
+const ASK_AI_PROVIDER_LOGOS: Record<Exclude<AiProviderId, 'nexus'>, string> = {
+  cursor: logoCursor,
+  claude: logoClaude,
+  opencode: logoOpencode,
+  antigravity: logoAntigravity,
+};
+
+function AskAiProviderLogoComponent({ provider }: { provider: Exclude<AiProviderId, 'nexus'> }) {
+  return (
+    <i className='home-dashboard__ask-ai-logo-wrap' aria-hidden='true'>
+      <img
+        src={ASK_AI_PROVIDER_LOGOS[provider]}
+        alt=''
+        className='home-dashboard__ask-ai-logo'
+        draggable={false}
+      />
+    </i>
+  );
+}
+
+const AskAiProviderLogo = memo(AskAiProviderLogoComponent);
+
 interface AskMentionMenuProps {
   open: boolean;
   anchorRect: DOMRect | null;
@@ -131,8 +174,20 @@ function resizeAskInput(textarea: HTMLTextAreaElement): void {
   const maxHeight = Number.parseFloat(styles.maxHeight);
   const minPx = Number.isFinite(minHeight) && minHeight > 0 ? minHeight : 40;
   const maxPx = Number.isFinite(maxHeight) && maxHeight > 0 ? maxHeight : 96;
-  textarea.style.height = 'auto';
-  textarea.style.height = `${Math.min(maxPx, Math.max(minPx, textarea.scrollHeight))}px`;
+
+  if (!textarea.value) {
+    textarea.style.height = `${minPx}px`;
+    textarea.style.overflowY = 'hidden';
+    return;
+  }
+
+  textarea.style.overflowY = 'hidden';
+  textarea.style.height = '0px';
+  void textarea.offsetHeight;
+  const contentHeight = textarea.scrollHeight;
+  const nextHeight = Math.min(maxPx, Math.max(minPx, contentHeight));
+  textarea.style.height = `${nextHeight}px`;
+  textarea.style.overflowY = contentHeight > nextHeight ? 'auto' : 'hidden';
 }
 
 function AskProjectThumbComponent({ logo, icon, color }: AskProjectThumbProps) {
@@ -301,6 +356,113 @@ function AskAttachMenuComponent({
 
 const AskAttachMenu = memo(AskAttachMenuComponent);
 
+function AskAiProviderMenuPanelComponent({
+  anchorRect,
+  triggerRef,
+  value,
+  onClose,
+  onSelect,
+}: Omit<AskAiProviderMenuProps, 'open'>) {
+  const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
+    onClose,
+    (menu) => {
+      positionDropdownBelowAnchor(menu, anchorRect!, 'end');
+    },
+    [anchorRect],
+  );
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+
+      if (menuRef.current?.contains(target) || triggerRef.current?.contains(target)) {
+        return;
+      }
+
+      requestClose();
+    };
+
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        requestClose();
+      }
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      window.addEventListener('mousedown', handlePointerDown, true);
+    }, 0);
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.removeEventListener('mousedown', handlePointerDown, true);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [menuRef, requestClose, triggerRef]);
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className={`context-menu overlay-popup overlay-popup--anchor-end ${animationClass}`}
+      role='menu'
+      aria-label='IA deste agent'
+    >
+      {ASK_AI_PROVIDER_OPTIONS.map((option) => {
+        const isActive = option.id === value;
+
+        return (
+          <button
+            key={option.id}
+            type='button'
+            className={`context-menu__item app-button app-button--enter${
+              isActive ? ' context-menu__item--active' : ''
+            }`}
+            role='menuitem'
+            onClick={() => {
+              onSelect(option.id);
+              requestClose();
+            }}
+          >
+            <AskAiProviderLogo provider={option.id} />
+            <span>{option.label}</span>
+            {isActive ? <Check size={14} strokeWidth={2} aria-hidden='true' /> : null}
+          </button>
+        );
+      })}
+    </div>,
+    document.body,
+  );
+}
+
+const AskAiProviderMenuPanel = memo(AskAiProviderMenuPanelComponent);
+
+function AskAiProviderMenuComponent({
+  open,
+  anchorRect,
+  triggerRef,
+  value,
+  onClose,
+  onSelect,
+}: AskAiProviderMenuProps) {
+  if (!open || !anchorRect) {
+    return null;
+  }
+
+  return (
+    <AskAiProviderMenuPanel
+      anchorRect={anchorRect}
+      triggerRef={triggerRef}
+      value={value}
+      onClose={onClose}
+      onSelect={onSelect}
+    />
+  );
+}
+
+const AskAiProviderMenu = memo(AskAiProviderMenuComponent);
+
 function AskMentionMenuPanelComponent({
   anchorRect,
   matches,
@@ -436,15 +598,28 @@ function insertTextAtCaret(
 function HomeDashboardAskBarComponent({
   projects,
   viewMode,
+  compact = false,
   onAgentOpened,
   onPromptFlightStart,
   onPromptFlightLand,
   onPromptFlightCancel,
 }: HomeDashboardAskBarProps) {
   const { addAgentTabForProject, updateAgentTab } = useTabActions();
+  const preferredAiProvider = useAppSettingsStore((state) => state.preferredAiProvider);
+  const storeProjects = useProjectStore((state) => state.projects);
+  const activeWorkspaceId = useProjectStore((state) => state.activeWorkspaceId);
+  const selectableProjects = useMemo(() => {
+    const source = projects.length > 0 ? projects : storeProjects;
+    if (!activeWorkspaceId) {
+      return source;
+    }
+
+    return source.filter((project) => project.workspaceId === activeWorkspaceId);
+  }, [activeWorkspaceId, projects, storeProjects]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const attachTriggerRef = useRef<HTMLButtonElement>(null);
   const mentionTriggerRef = useRef<HTMLButtonElement>(null);
+  const aiProviderTriggerRef = useRef<HTMLButtonElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef('');
@@ -458,6 +633,11 @@ function HomeDashboardAskBarComponent({
   const [pendingImages, setPendingImages] = useState<PendingAskImage[]>([]);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [attachAnchorRect, setAttachAnchorRect] = useState<DOMRect | null>(null);
+  const [aiProviderMenuOpen, setAiProviderMenuOpen] = useState(false);
+  const [aiProviderAnchorRect, setAiProviderAnchorRect] = useState<DOMRect | null>(null);
+  const [aiProvider, setAiProvider] = useState<Exclude<AiProviderId, 'nexus'>>(
+    () => useAppSettingsStore.getState().preferredAiProvider,
+  );
   const [mentionAnchorRect, setMentionAnchorRect] = useState<DOMRect | null>(null);
   const [dropActive, setDropActive] = useState(false);
   const [skillHints, setSkillHints] = useState<TerminalCommandHint[]>(EMPTY_SKILL_HINTS);
@@ -487,17 +667,17 @@ function HomeDashboardAskBarComponent({
   }, [focusPromptInput]);
 
   useEffect(() => {
-    if (projects.length === 0) {
+    if (selectableProjects.length === 0) {
       if (projectId) {
         setProjectId('');
       }
       return;
     }
 
-    if (!projectId || !projects.some((project) => project.id === projectId)) {
-      setProjectId(projects[0]?.id ?? '');
+    if (!projectId || !selectableProjects.some((project) => project.id === projectId)) {
+      setProjectId(selectableProjects[0]?.id ?? '');
     }
-  }, [projectId, projects]);
+  }, [projectId, selectableProjects]);
 
   const handleProjectChange = useCallback(
     (value: string) => {
@@ -512,13 +692,13 @@ function HomeDashboardAskBarComponent({
   }, []);
 
   const handleCycleProject = useCallback(() => {
-    if (projects.length === 0 || submitting) {
+    if (selectableProjects.length === 0 || submitting) {
       return;
     }
 
-    const currentIndex = projects.findIndex((project) => project.id === projectId);
-    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % projects.length;
-    const nextId = projects[nextIndex]?.id ?? '';
+    const currentIndex = selectableProjects.findIndex((project) => project.id === projectId);
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % selectableProjects.length;
+    const nextId = selectableProjects[nextIndex]?.id ?? '';
 
     if (nextId) {
       setProjectId(nextId);
@@ -526,23 +706,23 @@ function HomeDashboardAskBarComponent({
 
     setProjectMenuOpen(true);
     focusPromptInput();
-  }, [focusPromptInput, projectId, projects, submitting]);
+  }, [focusPromptInput, projectId, selectableProjects, submitting]);
 
   const selectedProject = useMemo(
-    () => projects.find((project) => project.id === projectId) ?? null,
-    [projectId, projects],
+    () => selectableProjects.find((project) => project.id === projectId) ?? null,
+    [projectId, selectableProjects],
   );
 
   const projectOptions = useMemo(
     () =>
-      projects.map((project) => ({
+      selectableProjects.map((project) => ({
         value: project.id,
         label: project.name,
         icon: (
           <AskProjectThumb logo={project.logo} icon={project.icon} color={project.color} />
         ),
       })),
-    [projects],
+    [selectableProjects],
   );
 
   const triggerLeadingIcon = useMemo(() => {
@@ -657,7 +837,7 @@ function HomeDashboardAskBarComponent({
     });
   }, [syncInputScroll]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const input = inputRef.current;
 
     if (!input) {
@@ -666,7 +846,7 @@ function HomeDashboardAskBarComponent({
 
     resizeAskInput(input);
     syncInputScroll();
-  }, [prompt, syncInputScroll]);
+  }, [compact, prompt, syncInputScroll]);
 
   const imagePreviewByNumber = useMemo(() => {
     const map = new Map<number, string>();
@@ -683,6 +863,8 @@ function HomeDashboardAskBarComponent({
   const projectActionsDisabled = !projectId || submitting;
   const imageActionsDisabled = submitting;
   const activeModeOption = getAgentModeOption(agentMode);
+  const selectedAiProviderLabel =
+    ASK_AI_PROVIDER_OPTIONS.find((option) => option.id === aiProvider)?.label ?? 'Cursor';
   const askPlaceholder =
     agentMode !== 'agent'
       ? AGENT_MODE_INPUT_PLACEHOLDERS[agentMode]
@@ -878,6 +1060,7 @@ function HomeDashboardAskBarComponent({
         imageDataUrls,
         preferredPaneId: null,
         agentMode,
+        aiProvider,
         addAgentTabForProject,
         syncAgentWorkingDirectory: async (nextPaneId, workingDirectory) => {
           await updateAgentTab(nextPaneId, { workingDirectory });
@@ -906,6 +1089,7 @@ function HomeDashboardAskBarComponent({
   }, [
     addAgentTabForProject,
     agentMode,
+    aiProvider,
     caretIndex,
     onAgentOpened,
     onPromptFlightCancel,
@@ -1143,6 +1327,14 @@ function HomeDashboardAskBarComponent({
     setAttachMenuOpen(false);
   }, []);
 
+  const handleCloseAiProviderMenu = useCallback(() => {
+    setAiProviderMenuOpen(false);
+  }, []);
+
+  const handleSelectAiProvider = useCallback((provider: Exclude<AiProviderId, 'nexus'>) => {
+    setAiProvider(provider);
+  }, []);
+
   const handleCloseMentionMenu = useCallback(() => {
     mention.dismiss();
   }, [mention.dismiss]);
@@ -1165,7 +1357,25 @@ function HomeDashboardAskBarComponent({
 
     setAttachAnchorRect(rect);
     setAttachMenuOpen(true);
+    setAiProviderMenuOpen(false);
   }, [attachMenuOpen, imageActionsDisabled]);
+
+  const handleToggleAiProviderMenu = useCallback(() => {
+    if (aiProviderMenuOpen) {
+      setAiProviderMenuOpen(false);
+      return;
+    }
+
+    const rect = aiProviderTriggerRef.current?.getBoundingClientRect();
+
+    if (!rect) {
+      return;
+    }
+
+    setAiProviderAnchorRect(rect);
+    setAiProviderMenuOpen(true);
+    setAttachMenuOpen(false);
+  }, [aiProviderMenuOpen]);
 
   const handleAttachFile = useCallback(async () => {
     if (!selectedProject) {
@@ -1260,7 +1470,7 @@ function HomeDashboardAskBarComponent({
         leadingIcon={triggerLeadingIcon}
         className='home-dashboard__ask-project-wrap'
         triggerClassName='home-dashboard__ask-project'
-        disabled={projects.length === 0 || submitting}
+        disabled={selectableProjects.length === 0 || submitting}
         open={projectMenuOpen}
         onOpenChange={handleProjectMenuOpenChange}
       />
@@ -1371,6 +1581,24 @@ function HomeDashboardAskBarComponent({
           <AtSign size={16} strokeWidth={2} aria-hidden='true' />
         </button>
         <button
+          ref={aiProviderTriggerRef}
+          type='button'
+          className={`home-dashboard__ask-action app-button${
+            aiProviderMenuOpen ? ' home-dashboard__ask-action--open' : ''
+          }${
+            aiProvider !== preferredAiProvider && !aiProviderMenuOpen
+              ? ' home-dashboard__ask-action--active'
+              : ''
+          }`}
+          aria-label={`IA deste agent: ${selectedAiProviderLabel}`}
+          aria-haspopup='menu'
+          aria-expanded={aiProviderMenuOpen}
+          title={`IA deste agent: ${selectedAiProviderLabel}`}
+          onClick={handleToggleAiProviderMenu}
+        >
+          <AskAiProviderLogo provider={aiProvider} />
+        </button>
+        <button
           type='submit'
           className='home-dashboard__ask-send app-button app-button--enter'
           aria-label='Enviar'
@@ -1386,6 +1614,14 @@ function HomeDashboardAskBarComponent({
         onClose={handleCloseAttachMenu}
         onAttachImage={handleAttachImageClick}
         onAttachFile={handleAttachFileClick}
+      />
+      <AskAiProviderMenu
+        open={aiProviderMenuOpen}
+        anchorRect={aiProviderAnchorRect}
+        triggerRef={aiProviderTriggerRef}
+        value={aiProvider}
+        onClose={handleCloseAiProviderMenu}
+        onSelect={handleSelectAiProvider}
       />
       <AskMentionMenu
         open={mention.isOpen}

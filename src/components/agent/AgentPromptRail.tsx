@@ -37,7 +37,7 @@ interface PromptRailPreview {
   attachments: AgentPromptAttachment[];
 }
 
-const MARK_WIDTH_NORMAL = 10;
+const MARK_WIDTH_NORMAL = 6;
 const MARK_WIDTH_FOCUS = 18;
 const MARK_WIDTH_MIN = 4;
 const MARK_HOVER_WIDTH_FACTORS = [1, 0.78, 0.52, 0.32, 0.22];

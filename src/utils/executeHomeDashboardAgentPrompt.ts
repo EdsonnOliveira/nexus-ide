@@ -1,5 +1,6 @@
 import type { Project } from '@/types';
 import type { AutomationAgentMode } from '@/constants/agentModes';
+import type { AiProviderId } from '@/constants/aiProviders';
 import { isCursorAgentStreamJsonCli } from '@/utils/agentCliSession';
 import {
   hasAgentPaneSubmit,
@@ -49,6 +50,7 @@ interface ExecuteHomeDashboardAgentPromptOptions {
   imageDataUrls?: string[];
   preferredPaneId?: string | null;
   agentMode?: AutomationAgentMode;
+  aiProvider?: Exclude<AiProviderId, 'nexus'>;
   addAgentTabForProject: (projectId: string, command: string) => Promise<string | null>;
   syncAgentWorkingDirectory?: (paneId: string, workingDirectory: string) => Promise<void>;
 }
@@ -59,6 +61,7 @@ export async function executeHomeDashboardAgentPrompt({
   imageDataUrls = [],
   preferredPaneId = null,
   agentMode = 'agent',
+  aiProvider,
   addAgentTabForProject,
   syncAgentWorkingDirectory,
 }: ExecuteHomeDashboardAgentPromptOptions): Promise<string | null> {
@@ -75,7 +78,7 @@ export async function executeHomeDashboardAgentPrompt({
       : null;
 
   if (!paneId) {
-    const command = await resolveAgentLaunchCommand(project.path);
+    const command = await resolveAgentLaunchCommand(project.path, aiProvider);
     resetAgentReadyDetectors('');
     paneId = await addAgentTabForProject(project.id, command);
   }

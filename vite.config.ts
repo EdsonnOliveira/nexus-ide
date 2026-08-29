@@ -168,18 +168,14 @@ async function restartBundledElectron(
 
         if (!force && (isChildAlive(running) || isNexusElectronRunning())) {
           console.warn('[vite] Electron already running — not restarting');
-          if (isChildAlive(running)) {
-            startElectronWatchdog(startup);
-          } else {
-            stopElectronWatchdog();
-          }
+          startElectronWatchdog(startup);
           return;
         }
 
         await stopBundledElectronApp();
 
         if (force && isNexusElectronRunning()) {
-          spawnSync('pkill', ['-f', `${nexusElectronBinary} `], {
+          spawnSync('pkill', ['-KILL', '-f', `${nexusElectronBinary} `], {
             encoding: 'utf8',
           });
           await new Promise((resolve) => setTimeout(resolve, 300));

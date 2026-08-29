@@ -10,14 +10,20 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import { Bot, X } from 'lucide-react';
+import { Bot, Maximize2, Minimize2, Pin, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { AgentShellTerminalDock } from '@/components/agent/AgentShellTerminalDock';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { EmptyState } from '@/components/overlay/EmptyState';
+import {
+  AgentCardFrame,
+  useAgentCardFullscreen,
+} from '@/components/home/AgentCardFullscreenOverlay';
 import { HomeDashboardCloudAgentCard } from '@/components/home/HomeDashboardCloudAgentCard';
 import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
+import { useAgentPipSync } from '@/hooks/useAgentPipSync';
 import { useHomeSurfaceProjects } from '@/hooks/useHomeDashboardData';
+import { useAgentPipStore } from '@/stores/useAgentPipStore';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useCloudAgentSessionsStore } from '@/stores/useCloudAgentSessionsStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
@@ -160,32 +166,39 @@ function AgentCardCloseConfirmComponent({
 const AgentCardCloseConfirm = memo(AgentCardCloseConfirmComponent);
 
 interface AgentCardProps {
-  slot: HomeProjectAgentSlot;
+  project: Project;
+  pane: AgentTab;
   enterDelayMs: number;
   isFocused: boolean;
   isSpawning: boolean;
   onFocus: (paneId: string) => void;
-  onRemove: (slot: HomeProjectAgentSlot) => void;
+  onRemove: (project: Project, pane: AgentTab) => void;
 }
 
 function AgentCardComponent({
-  slot,
+  project,
+  pane,
   enterDelayMs,
   isFocused,
   isSpawning,
   onFocus,
   onRemove,
 }: AgentCardProps) {
-  const paneId = slot.pane.id;
+  const paneId = pane.id;
   const setTabPtyId = useProjectStore((state) => state.setTabPtyId);
   const clearNotificationForPane = useProjectNotificationStore(
     (state) => state.clearNotificationForPane,
   );
   const hasReadyPing = useProjectNotificationStore(
-    (state) => state.notifiedAgentPaneByProject[slot.project.id] === paneId,
+    (state) => state.notifiedAgentPaneByProject[project.id] === paneId,
   );
   const { updateAgentTab } = useTabActions();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const fullscreen = useAgentCardFullscreen();
+  const pinnedPaneId = useAgentPipStore((state) => state.paneId);
+  const pinAgent = useAgentPipStore((state) => state.pin);
+  const unpinAgent = useAgentPipStore((state) => state.unpin);
+  const isPinned = pinnedPaneId === paneId;
 
   const handleFocus = useCallback(() => {
     onFocus(paneId);
@@ -194,17 +207,19 @@ function AgentCardComponent({
 
   const handlePtyCreated = useCallback(
     (ptyId: string) => {
-      setTabPtyId(slot.project.id, paneId, ptyId);
+      setTabPtyId(project.id, paneId, ptyId);
     },
-    [paneId, setTabPtyId, slot.project.id],
+    [paneId, setTabPtyId, project.id],
   );
 
   const handlePtyLost = useCallback(() => {
-    setTabPtyId(slot.project.id, paneId, null);
-  }, [paneId, setTabPtyId, slot.project.id]);
+    setTabPtyId(project.id, paneId, null);
+  }, [paneId, setTabPtyId, project.id]);
 
   const handleUpdateTab = useCallback(
-    (patch: Partial<Pick<AgentTab, 'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand'>>) => {
+    (
+      patch: Partial<Pick<AgentTab, 'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand'>>,
+    ) => {
       void updateAgentTab(paneId, patch);
     },
     [paneId, updateAgentTab],
@@ -219,84 +234,131 @@ function AgentCardComponent({
   }, []);
 
   const handleConfirmClose = useCallback(() => {
-    onRemove(slot);
-  }, [onRemove, slot]);
+    onRemove(project, pane);
+  }, [onRemove, pane, project]);
 
   const stopCardFocusSteal = useCallback((event: ReactMouseEvent | ReactPointerEvent) => {
     event.stopPropagation();
   }, []);
 
+  const handleToggleFullscreen = useCallback(() => {
+    if (fullscreen.open) {
+      fullscreen.closeFullscreen();
+      return;
+    }
+
+    handleFocus();
+    fullscreen.openFullscreen();
+  }, [fullscreen.closeFullscreen, fullscreen.open, fullscreen.openFullscreen, handleFocus]);
+
+  const handleTogglePin = useCallback(() => {
+    if (isPinned) {
+      unpinAgent();
+      return;
+    }
+
+    pinAgent(paneId);
+  }, [isPinned, paneId, pinAgent, unpinAgent]);
+
   return (
-    <article
-      data-home-agent-pane={slot.pane.id}
-      className={`home-dashboard__agent-card app-button--enter${isFocused ? ' home-dashboard__agent-card--focused' : ''}${hasReadyPing ? ' home-dashboard__agent-card--ping' : ''}${isSpawning ? ' home-dashboard__agent-card--spawn' : ''}`}
-      style={{ animationDelay: `${enterDelayMs}ms` }}
-      onMouseDown={handleFocus}
-    >
-      <div className='home-dashboard__agent-card-head'>
-        <span className='home-dashboard__agent-card-thumb-wrap'>
-          <AgentProjectThumb
-            logo={slot.project.logo}
-            icon={slot.project.icon}
-            color={slot.project.color}
-          />
-          {hasReadyPing ? (
-            <span
-              className='project-item__ping project-item__ping--red home-dashboard__project-ping'
-              aria-hidden='true'
-            />
-          ) : null}
-        </span>
-        <div className='home-dashboard__agent-card-copy'>
-          <span className='home-dashboard__agent-card-project'>{slot.project.name}</span>
-        </div>
-        <div
-          className='home-dashboard__agent-card-aside'
-          onClick={stopCardFocusSteal}
-          onPointerDown={stopCardFocusSteal}
-        >
-          <AgentShellTerminalDock
-            agentPaneId={slot.pane.id}
-            projectPath={slot.project.path}
-            variant='header'
-          />
-          <button
-            type='button'
-            className='home-dashboard__agent-card-close app-button app-button--enter'
-            aria-label='Fechar agent'
-            onClick={handleOpenConfirm}
+    <>
+      <AgentCardFrame
+        className={`home-dashboard__agent-card app-button--enter${isFocused ? ' home-dashboard__agent-card--focused' : ''}${hasReadyPing ? ' home-dashboard__agent-card--ping' : ''}${isSpawning ? ' home-dashboard__agent-card--spawn' : ''}`}
+        style={{ animationDelay: `${enterDelayMs}ms` }}
+        fullscreen={fullscreen}
+        dataHomeAgentPane={pane.id}
+        onMouseDown={handleFocus}
+      >
+        <div className='home-dashboard__agent-card-head'>
+          <span className='home-dashboard__agent-card-thumb-wrap'>
+            <AgentProjectThumb logo={project.logo} icon={project.icon} color={project.color} />
+            {hasReadyPing ? (
+              <span
+                className='project-item__ping project-item__ping--red home-dashboard__project-ping'
+                aria-hidden='true'
+              />
+            ) : null}
+          </span>
+          <div className='home-dashboard__agent-card-copy'>
+            <span className='home-dashboard__agent-card-project'>{project.name}</span>
+          </div>
+          <div
+            className='home-dashboard__agent-card-aside'
+            onClick={stopCardFocusSteal}
+            onPointerDown={stopCardFocusSteal}
           >
-            <X size={14} strokeWidth={2.25} aria-hidden='true' />
-          </button>
+            <AgentShellTerminalDock
+              agentPaneId={pane.id}
+              projectPath={project.path}
+              variant='header'
+            />
+            <button
+              type='button'
+              className={`home-dashboard__agent-card-terminal app-button app-button--enter${isPinned ? ' home-dashboard__agent-card-terminal--pinned' : ''}`}
+              aria-label={isPinned ? 'Desafixar agent' : 'Fixar agent'}
+              aria-pressed={isPinned}
+              title={isPinned ? 'Desafixar' : 'Fixar'}
+              onClick={handleTogglePin}
+            >
+              <Pin
+                size={14}
+                strokeWidth={2.25}
+                fill={isPinned ? 'currentColor' : 'none'}
+                aria-hidden='true'
+              />
+            </button>
+            <button
+              type='button'
+              className='home-dashboard__agent-card-terminal app-button app-button--enter'
+              aria-label={fullscreen.open ? 'Sair da tela cheia' : 'Tela cheia'}
+              aria-pressed={fullscreen.open}
+              title={fullscreen.open ? 'Sair da tela cheia' : 'Tela cheia'}
+              onClick={handleToggleFullscreen}
+            >
+              {fullscreen.open ? (
+                <Minimize2 size={14} strokeWidth={2.25} aria-hidden='true' />
+              ) : (
+                <Maximize2 size={14} strokeWidth={2.25} aria-hidden='true' />
+              )}
+            </button>
+            <button
+              type='button'
+              className='home-dashboard__agent-card-close app-button app-button--enter'
+              aria-label='Fechar agent'
+              onClick={handleOpenConfirm}
+            >
+              <X size={14} strokeWidth={2.25} aria-hidden='true' />
+            </button>
+          </div>
         </div>
-      </div>
-      <div className='home-dashboard__agent-card-body'>
-        <Suspense
-          fallback={<div className='home-dashboard__agent-card-loading'>Carregando agent...</div>}
-        >
-          <LazyAgentView
-            tab={slot.pane}
-            projectId={slot.project.id}
-            projectPath={slot.project.path}
-            isVisible
-            isRuntimeActive
-            isFocused={isFocused}
-            disableStickyPrompt
-            onFocusPane={handleFocus}
-            onPtyCreated={handlePtyCreated}
-            onPtyLost={handlePtyLost}
-            onUpdateTab={handleUpdateTab}
-          />
-        </Suspense>
-      </div>
+        <div className='home-dashboard__agent-card-body'>
+          <Suspense
+            fallback={<div className='home-dashboard__agent-card-loading'>Carregando agent...</div>}
+          >
+            <LazyAgentView
+              tab={pane}
+              projectId={project.id}
+              projectPath={project.path}
+              isVisible
+              isRuntimeActive
+              isFocused={isFocused}
+              disableStickyPrompt
+              onFocusPane={handleFocus}
+              onPtyCreated={handlePtyCreated}
+              onPtyLost={handlePtyLost}
+              onUpdateTab={handleUpdateTab}
+            />
+          </Suspense>
+        </div>
+      </AgentCardFrame>
       {confirmOpen ? (
         <AgentCardCloseConfirm
-          projectName={slot.project.name}
+          projectName={project.name}
           onConfirm={handleConfirmClose}
           onClose={handleCloseConfirm}
         />
       ) : null}
-    </article>
+    </>
   );
 }
 
@@ -359,12 +421,17 @@ function HomeDashboardAgentModeComponent({ spawningPaneId = null }: HomeDashboar
     return next;
   }, [homeAgentQueue, projects]);
 
+  const overlayPaneIdsKey = useMemo(() => slots.map((slot) => slot.pane.id).join('\0'), [slots]);
+
   useLayoutEffect(() => {
-    setHomeAgentOverlayPaneIds(slots.map((slot) => slot.pane.id));
+    setHomeAgentOverlayPaneIds(overlayPaneIdsKey ? overlayPaneIdsKey.split('\0') : []);
+  }, [overlayPaneIdsKey]);
+
+  useLayoutEffect(() => {
     return () => {
       setHomeAgentOverlayPaneIds([]);
     };
-  }, [slots]);
+  }, []);
 
   useEffect(() => {
     if (slots.length === 0) {
@@ -377,14 +444,21 @@ function HomeDashboardAgentModeComponent({ spawningPaneId = null }: HomeDashboar
     }
   }, [focusedPaneId, slots]);
 
+  useAgentPipSync(slots);
+
   const handleFocus = useCallback((paneId: string) => {
     setFocusedPaneId(paneId);
   }, []);
 
   const handleRemove = useCallback(
-    (slot: HomeProjectAgentSlot) => {
-      forgetHomeDashboardProjectAgent(slot.project.id, slot.pane.id);
-      void closeTabForProject(slot.project.id, slot.pane.id);
+    (project: Project, pane: AgentTab) => {
+      const pinnedId = useAgentPipStore.getState().paneId;
+      if (pinnedId === pane.id) {
+        useAgentPipStore.getState().unpin();
+      }
+
+      forgetHomeDashboardProjectAgent(project.id, pane.id);
+      void closeTabForProject(project.id, pane.id);
     },
     [closeTabForProject],
   );
@@ -403,7 +477,8 @@ function HomeDashboardAgentModeComponent({ spawningPaneId = null }: HomeDashboar
           {slots.map((slot, index) => (
             <AgentCard
               key={`${slot.project.id}-${slot.pane.id}`}
-              slot={slot}
+              project={slot.project}
+              pane={slot.pane}
               enterDelayMs={spawningPaneId === slot.pane.id ? 0 : 40 + index * 35}
               isFocused={focusedPaneId === slot.pane.id}
               isSpawning={spawningPaneId === slot.pane.id}

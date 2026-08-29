@@ -13,6 +13,8 @@ export const MAX_AGENT_TURN_HISTORY_BYTES = 512 * 1024;
 export const MAX_RUNNING_TURN_HISTORY_BYTES = 2 * 1024 * 1024;
 export const HEAVY_AGENT_TURN_THRESHOLD = 12;
 export const HEAVY_AGENT_ACTIVITY_THRESHOLD = 80;
+const MAX_PIP_TURN_COUNT = 8;
+const MAX_PIP_SETTLED_ACTIVITIES = 16;
 
 const MAX_USER_CONTENT_CHARS = 16_000;
 const MAX_AGENT_PROMPT_CHARS = 16_000;
@@ -281,6 +283,34 @@ function computeTrimmedAgentTurnHistory(turns: AgentTurn[]): AgentTurn[] {
   );
 
   return enforceByteBudget(next, MAX_AGENT_TURN_HISTORY_BYTES);
+}
+
+export function slimAgentTurnsForPip(turns: AgentTurn[]): AgentTurn[] {
+  if (turns.length === 0) {
+    return turns;
+  }
+
+  const sliced = turns.length > MAX_PIP_TURN_COUNT ? turns.slice(-MAX_PIP_TURN_COUNT) : turns;
+
+  return stripPersistedAttachments(
+    sliced.map((turn, index) => {
+      const compacted = compactTurnFields(turn);
+      const isTail = index === sliced.length - 1;
+
+      if (compacted.running || isTail) {
+        return compacted;
+      }
+
+      if (compacted.activities.length <= MAX_PIP_SETTLED_ACTIVITIES) {
+        return compacted;
+      }
+
+      return {
+        ...compacted,
+        activities: compacted.activities.slice(-MAX_PIP_SETTLED_ACTIVITIES),
+      };
+    }),
+  );
 }
 
 export function sanitizeAgentTurnHistory(turns: AgentTurn[]): AgentTurn[] {

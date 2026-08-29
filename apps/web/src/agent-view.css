@@ -944,11 +944,19 @@
 .agent-view__files-changed-list {
   display: flex;
   flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: calc(3 * (16px + 10px) + 6px);
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 0 4px 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
 }
 
 .agent-view__files-changed-row {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -1379,6 +1387,11 @@
   text-underline-offset: 2px;
 }
 
+html.cmd-pressed .agent-view__response-body.markdown-preview a:hover {
+  cursor: pointer;
+  filter: brightness(1.12);
+}
+
 .agent-view__response-body.markdown-preview img,
 .agent-view__response-body.markdown-preview .markdown-preview__img {
   display: block;
@@ -1412,13 +1425,13 @@
 .agent-view__response-body.markdown-preview .markdown-preview__img--pending {
   min-width: min(100%, 280px);
   min-height: 140px;
-  background:
-    linear-gradient(
-      110deg,
-      rgba(255, 255, 255, 0.04) 20%,
-      rgba(255, 255, 255, 0.1) 40%,
-      rgba(255, 255, 255, 0.04) 60%
-    );
+  cursor: default;
+  background: linear-gradient(
+    110deg,
+    rgba(255, 255, 255, 0.04) 20%,
+    rgba(255, 255, 255, 0.1) 40%,
+    rgba(255, 255, 255, 0.04) 60%
+  );
   background-size: 200% 100%;
   animation: markdown-preview-img-pending 1.2s ease-in infinite;
 }

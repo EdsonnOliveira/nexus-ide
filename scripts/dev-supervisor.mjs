@@ -68,7 +68,7 @@ function startVite() {
       return;
     }
 
-    if (signal === 'SIGINT' || signal === 'SIGTERM') {
+    if (signal === 'SIGINT') {
       process.exit(0);
       return;
     }
@@ -94,7 +94,9 @@ function requestStop(signal) {
 }
 
 process.on('SIGINT', () => requestStop('SIGINT'));
-process.on('SIGTERM', () => requestStop('SIGTERM'));
+process.on('SIGTERM', () => {
+  console.warn('[dev-supervisor] ignored SIGTERM');
+});
 process.on('SIGHUP', () => {
   console.warn('[dev-supervisor] ignored SIGHUP');
 });

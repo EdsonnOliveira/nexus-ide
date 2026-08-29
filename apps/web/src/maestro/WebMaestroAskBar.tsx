@@ -15,7 +15,12 @@ import { createPortal } from 'react-dom';
 import { ArrowUp, Bot, FileText, FolderKanban, Image, Paperclip, X } from 'lucide-react';
 import type { CloudProject, DeviceRecord } from '@nexus/protocol';
 import { useWebStore, type WebAgentSession } from '../store';
+import { WebAskAiProviderMenu } from './WebAskAiProviderMenu';
 import { WebAskMenuSelect } from './WebAskMenuSelect';
+import {
+  webAiProviderToAgentCommand,
+  type WebAskAiProviderId,
+} from './webAiProviders';
 import { WebMacSelect } from './WebMacSelect';
 import { WebAgentPromptImageMentionText } from './WebAgentPromptImageMentionText';
 import { WebMarkdownImageLightbox } from './WebMarkdownImageLightbox';
@@ -55,6 +60,7 @@ interface WebMaestroAskBarProps {
     prompt: string,
     imageDataUrls?: string[],
     fileAttachments?: WebFileAttachmentPayload[],
+    agentCommand?: string,
   ) => boolean | Promise<boolean>;
   desktopAgents: WebAgentSession[];
   onSelectAgent: (agentId: string) => void;
@@ -119,6 +125,7 @@ export function WebMaestroAskBar({
   const [previewImageName, setPreviewImageName] = useState('imagem.png');
   const [desktopAgentsPhase, setDesktopAgentsPhase] = useState<'closed' | 'in' | 'out'>('closed');
   const [desktopAgentsLoading, setDesktopAgentsLoading] = useState(false);
+  const [aiProvider, setAiProvider] = useState<WebAskAiProviderId>('cursor');
   const [desktopAgentsMenuRect, setDesktopAgentsMenuRect] = useState<{
     left: number;
     top?: number;
@@ -201,8 +208,25 @@ export function WebMaestroAskBar({
   }, []);
 
   const resizeAskInput = useCallback((element: HTMLTextAreaElement) => {
-    element.style.height = 'auto';
-    element.style.height = `${Math.min(element.scrollHeight, 96)}px`;
+    const styles = window.getComputedStyle(element);
+    const minHeight = Number.parseFloat(styles.minHeight);
+    const maxHeight = Number.parseFloat(styles.maxHeight);
+    const minPx = Number.isFinite(minHeight) && minHeight > 0 ? minHeight : 40;
+    const maxPx = Number.isFinite(maxHeight) && maxHeight > 0 ? maxHeight : 96;
+
+    if (!element.value) {
+      element.style.height = `${minPx}px`;
+      element.style.overflowY = 'hidden';
+      return;
+    }
+
+    element.style.overflowY = 'hidden';
+    element.style.height = '0px';
+    void element.offsetHeight;
+    const contentHeight = element.scrollHeight;
+    const nextHeight = Math.min(maxPx, Math.max(minPx, contentHeight));
+    element.style.height = `${nextHeight}px`;
+    element.style.overflowY = contentHeight > nextHeight ? 'auto' : 'hidden';
   }, []);
 
   const syncCaretIndex = useCallback(() => {
@@ -700,7 +724,9 @@ export function WebMaestroAskBar({
       inputRef.current.style.height = 'auto';
     }
 
-    void Promise.resolve(onSubmit(nextPrompt, imageDataUrls, fileAttachments))
+    void Promise.resolve(
+      onSubmit(nextPrompt, imageDataUrls, fileAttachments, webAiProviderToAgentCommand(aiProvider)),
+    )
       .then((ok) => {
         if (ok === false) {
           restoreSnapshot();
@@ -713,6 +739,7 @@ export function WebMaestroAskBar({
         submitInFlightRef.current = false;
       });
   }, [
+    aiProvider,
     canSubmit,
     onSubmit,
     pendingFiles,
@@ -1096,6 +1123,11 @@ export function WebMaestroAskBar({
           >
             <Paperclip size={16} strokeWidth={2} aria-hidden='true' />
           </button>
+          <WebAskAiProviderMenu
+            value={aiProvider}
+            disabled={submitting}
+            onChange={setAiProvider}
+          />
           <button
             type='submit'
             className='home-dashboard__ask-send app-button app-button--enter'

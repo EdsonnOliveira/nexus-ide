@@ -52,11 +52,102 @@ function renderWebMarkdownImage(alt: string, src: string): string {
     (trimmed.length > 0 && !/^[a-z][a-z0-9.+-]*:/i.test(trimmed) && !/[\s<>"']/.test(trimmed))
   ) {
     return wrapWebMarkdownImage(
-      `<img class="markdown-preview__img markdown-preview__img--pending" alt="${safeAlt}" data-image-path="${safeRef}" loading="lazy" />`,
+      `<span class="markdown-preview__img markdown-preview__img--pending" data-image-path="${safeRef}" role="img" aria-label="${safeAlt}"></span>`,
     );
   }
 
   return `<span class="markdown-preview__img-missing" title="${safeRef}">${safeAlt || safeRef}</span>`;
+}
+
+const WEB_BARE_URL_REGEX =
+  /https?:\/\/[^\s<>"']+|localhost(?::\d+)?(?:\/[^\s<>"']*)?|127\.0\.0\.1(?::\d+)?(?:\/[^\s<>"']*)?/gi;
+
+function stripTrailingWebUrlChars(value: string): string {
+  return value.replace(/[.,;:!?)>\]}"']+$/g, '');
+}
+
+function normalizeWebUrl(href: string): string {
+  const trimmed = href.trim();
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (trimmed.startsWith('localhost') || trimmed.startsWith('127.0.0.1')) {
+    return `http://${trimmed}`;
+  }
+
+  return '';
+}
+
+function renderWebMarkdownLink(href: string, label: string): string {
+  const normalized = normalizeWebUrl(href);
+
+  if (!normalized) {
+    return label;
+  }
+
+  return `<a class="markdown-preview__link" href="${escapeHtml(normalized)}" target="_blank" rel="noreferrer noopener">${label}</a>`;
+}
+
+function autolinkWebMarkdownUrls(value: string): string {
+  return value.replace(/(^|>)([^<]+)/g, (_, prefix: string, text: string) => {
+    const linked = text.replace(WEB_BARE_URL_REGEX, (match: string) => {
+      const cleaned = stripTrailingWebUrlChars(match);
+      const trailing = match.slice(cleaned.length);
+
+      if (!cleaned) {
+        return match;
+      }
+
+      return `${renderWebMarkdownLink(cleaned, cleaned)}${trailing}`;
+    });
+
+    return `${prefix}${linked}`;
+  });
+}
+
+function resolveWebMarkdownPreviewUrl(raw: string): string | null {
+  const cleaned = stripTrailingWebUrlChars(raw.trim());
+  const normalized = normalizeWebUrl(cleaned);
+  return normalized || null;
+}
+
+export function findWebMarkdownPreviewUrl(event: MouseEvent): string | null {
+  const target = event.target;
+
+  if (target instanceof Element) {
+    const link = target.closest('a.markdown-preview__link, a[href^="http"]');
+
+    if (link instanceof HTMLAnchorElement && link.closest('.markdown-preview')) {
+      return resolveWebMarkdownPreviewUrl(link.getAttribute('href')?.trim() || link.href);
+    }
+
+    if (!target.closest('.markdown-preview')) {
+      return null;
+    }
+  } else {
+    return null;
+  }
+
+  const range = document.caretRangeFromPoint(event.clientX, event.clientY);
+
+  if (range?.startContainer.nodeType === Node.TEXT_NODE) {
+    const text = range.startContainer.textContent ?? '';
+    const offset = range.startOffset;
+    const regex = new RegExp(WEB_BARE_URL_REGEX.source, 'gi');
+
+    for (const match of text.matchAll(regex)) {
+      const start = match.index ?? 0;
+      const cleaned = stripTrailingWebUrlChars(match[0]);
+
+      if (cleaned && offset >= start && offset <= start + cleaned.length) {
+        return resolveWebMarkdownPreviewUrl(cleaned);
+      }
+    }
+  }
+
+  return resolveWebMarkdownPreviewUrl(target.textContent ?? '');
 }
 
 function formatInline(value: string): string {
@@ -70,9 +161,9 @@ function formatInline(value: string): string {
   html = html.replace(/(^|[\s(])\*([^*]+)\*(?=[\s).,]|$)/g, '$1<em>$2</em>');
   html = html.replace(
     /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
-    (_match, label: string, href: string) =>
-      `<a href="${href}" target="_blank" rel="noreferrer noopener">${label}</a>`,
+    (_match, label: string, href: string) => renderWebMarkdownLink(href, label),
   );
+  html = autolinkWebMarkdownUrls(html);
   return html;
 }
 
@@ -87,7 +178,10 @@ function isTableSeparator(line: string): boolean {
 }
 
 function parseTableCells(line: string): string[] {
-  const trimmed = line.trim().replace(/^\*\*(.+)\*\*$/, '$1').trim();
+  const trimmed = line
+    .trim()
+    .replace(/^\*\*(.+)\*\*$/, '$1')
+    .trim();
 
   if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
     return trimmed
@@ -100,7 +194,10 @@ function parseTableCells(line: string): string[] {
 }
 
 function isTableRow(line: string): boolean {
-  const trimmed = line.trim().replace(/^\*\*(.+)\*\*$/, '$1').trim();
+  const trimmed = line
+    .trim()
+    .replace(/^\*\*(.+)\*\*$/, '$1')
+    .trim();
 
   if (!trimmed.includes('|')) {
     return false;
@@ -180,18 +277,12 @@ function renderMarkdownTable(tableLines: string[]): string {
 
   const [header, ...body] = rows;
   const thead = `<thead><tr>${header
-    .map(
-      (cell) =>
-        `<th><span class="markdown-table-th-knockout">${formatInline(cell)}</span></th>`,
-    )
+    .map((cell) => `<th><span class="markdown-table-th-knockout">${formatInline(cell)}</span></th>`)
     .join('')}</tr></thead>`;
   const tbody =
     body.length > 0
       ? `<tbody>${body
-          .map(
-            (row) =>
-              `<tr>${row.map((cell) => `<td>${formatInline(cell)}</td>`).join('')}</tr>`,
-          )
+          .map((row) => `<tr>${row.map((cell) => `<td>${formatInline(cell)}</td>`).join('')}</tr>`)
           .join('')}</tbody>`
       : '';
 

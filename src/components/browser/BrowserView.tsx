@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { Camera, Check, ChevronLeft, ChevronRight, RotateCw, Smartphone, SquareTerminal, ZoomIn, ZoomOut } from 'lucide-react';
+import { Camera, Check, ChevronLeft, ChevronRight, ExternalLink, RotateCw, Smartphone, SquareTerminal, ZoomIn, ZoomOut } from 'lucide-react';
 import type { WebviewTag } from 'electron';
 import {
   BROWSER_DEVICE_PRESETS,
@@ -1328,6 +1328,27 @@ function BrowserViewComponent({
     });
   }, []);
 
+  const handleOpenInBrowser = useCallback(() => {
+    const webview = webviewRef.current;
+    let targetUrl = normalizedUrl;
+
+    try {
+      const currentUrl = webview?.getURL();
+      if (currentUrl?.startsWith('http://') || currentUrl?.startsWith('https://')) {
+        targetUrl = currentUrl;
+      }
+    } catch {
+      targetUrl = normalizedUrl;
+    }
+
+    const trimmed = targetUrl.trim();
+    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+      return;
+    }
+
+    void window.nexus.tasks.openExternalUrl(trimmed);
+  }, [normalizedUrl]);
+
   const handleToggleDevTools = useCallback(() => {
     const webview = webviewRef.current;
 
@@ -1537,6 +1558,16 @@ function BrowserViewComponent({
               onClick={handleScreenshot}
             >
               {screenshotCopied ? <Check size={14} strokeWidth={2} /> : <Camera size={14} strokeWidth={2} />}
+            </button>
+            <button
+              type='button'
+              className='browser-panel__url-action app-button app-button--enter'
+              aria-label='Abrir no navegador'
+              title='Abrir no navegador'
+              disabled={!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')}
+              onClick={handleOpenInBrowser}
+            >
+              <ExternalLink size={14} strokeWidth={2} />
             </button>
           </div>
         </div>

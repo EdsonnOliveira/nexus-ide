@@ -67,7 +67,8 @@ export async function resolveWebMarkdownImage(
     });
     const result = await waitForCommandResult(commandId, 30000);
     const dataUrl = result.data_url;
-    const resolved = typeof dataUrl === 'string' && dataUrl.startsWith('data:image/') ? dataUrl : null;
+    const resolved =
+      typeof dataUrl === 'string' && dataUrl.startsWith('data:image/') ? dataUrl : null;
 
     if (resolved) {
       remoteImageCache.set(key, resolved);
@@ -120,8 +121,7 @@ export async function hydrateWebMarkdownImages(
     isPending: boolean;
   }> = [];
 
-  const imgRegex =
-    /<img\b([^>]*?\bclass="[^"]*\bmarkdown-preview__img\b[^"]*"[^>]*)\/?>/gi;
+  const imgRegex = /<img\b([^>]*?\bclass="[^"]*\bmarkdown-preview__img\b[^"]*"[^>]*)\/?>/gi;
   let match = imgRegex.exec(html);
 
   while (match) {
@@ -146,6 +146,30 @@ export async function hydrateWebMarkdownImages(
     }
 
     match = imgRegex.exec(html);
+  }
+
+  const pendingSpanRegex =
+    /<span\b([^>]*?\bclass="[^"]*\bmarkdown-preview__img--pending\b[^"]*"[^>]*)><\/span>/gi;
+  let pendingMatch = pendingSpanRegex.exec(html);
+
+  while (pendingMatch) {
+    const attrs = pendingMatch[1] ?? '';
+    const altMatch = attrs.match(/\baria-label="([^"]*)"/i);
+    const pathMatch = attrs.match(/\bdata-image-path="([^"]*)"/i);
+    const imageRef = decodeHtmlAttr(pathMatch?.[1] ?? '');
+    const alt = decodeHtmlAttr(altMatch?.[1] ?? '');
+
+    if (imageRef) {
+      jobs.push({
+        fullMatch: pendingMatch[0],
+        src: '',
+        alt,
+        imageRef,
+        isPending: true,
+      });
+    }
+
+    pendingMatch = pendingSpanRegex.exec(html);
   }
 
   const missingRegex =
@@ -189,7 +213,9 @@ export async function hydrateWebMarkdownImages(
     const dataUrl = await resolveWebMarkdownImage(job.imageRef, context);
 
     if (dataUrl) {
-      nextHtml = nextHtml.split(job.fullMatch).join(buildHydratedImageTag(job.alt, dataUrl, job.imageRef));
+      nextHtml = nextHtml
+        .split(job.fullMatch)
+        .join(buildHydratedImageTag(job.alt, dataUrl, job.imageRef));
     } else if (job.isPending || !job.src) {
       nextHtml = nextHtml.split(job.fullMatch).join(buildMissingChip(job.alt, job.imageRef));
     }

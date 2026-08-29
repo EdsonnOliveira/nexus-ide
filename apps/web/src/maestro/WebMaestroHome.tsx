@@ -6,6 +6,7 @@ import {
   createAgentSession,
   isDeviceOnline,
   listOpenAgentSessionBundles,
+  primeDesktopAgentViewedPublisher,
   updateAgentSessionMeta,
 } from '@nexus/supabase';
 import type { Unsubscribe } from '@nexus/protocol';
@@ -33,11 +34,13 @@ import { WebEmulatorPanel } from './WebEmulatorPanel';
 import { WebPreviewPanel } from './WebPreviewPanel';
 import { useWebEmulatorProjectIds } from './useWebEmulatorProjectIds';
 import { useWebPreviewProjectIds } from './useWebPreviewProjectIds';
+import { useWebMarkdownCmdLinks } from './useWebMarkdownCmdLinks';
 import { useWebNavHistory, type WebNavHistoryState } from './useWebNavHistory';
 import { useWebVercelDeployments } from './useWebVercelDeployments';
 import { WebMobileReleaseCard } from './WebMobileReleaseCard';
 import { useWebMobileReleases } from './useWebMobileReleases';
 import type { WebFileAttachmentPayload } from './webAgentPromptImages';
+import { normalizeWebAgentCommand } from './webAiProviders';
 import { buildWebTaskPrompt, type WebProjectTask } from './webProjectTasks';
 import { dismissWebAgentTerminal, handleWebAgentShellToolEvents } from './webShellTerminal';
 import {
@@ -130,6 +133,7 @@ async function resolveAgentWorkspaceId(projectId: string | null): Promise<string
 }
 
 export function WebMaestroHome() {
+  useWebMarkdownCmdLinks();
   const projects = useWebStore((state) => state.projects);
   const devices = useWebStore((state) => state.devices);
   const selectedProjectId = useWebStore((state) => state.selectedProjectId);
@@ -148,6 +152,7 @@ export function WebMaestroHome() {
   const patchAgentTurn = useWebStore((state) => state.patchAgentTurn);
   const setAgentCursorSessionId = useWebStore((state) => state.setAgentCursorSessionId);
   const setAgentModelId = useWebStore((state) => state.setAgentModelId);
+  const setAgentCommand = useWebStore((state) => state.setAgentCommand);
   const setAgentModeId = useWebStore((state) => state.setAgentModeId);
   const setAgentStatus = useWebStore((state) => state.setAgentStatus);
   const removeAgent = useWebStore((state) => state.removeAgent);
@@ -204,6 +209,9 @@ export function WebMaestroHome() {
     }, 5_000);
     return () => window.clearInterval(timer);
   }, []);
+  useEffect(() => {
+    void primeDesktopAgentViewedPublisher(supabase, selectedDeviceId);
+  }, [selectedDeviceId]);
   const selectedDeviceOnline = useMemo(() => {
     const device =
       devices.find((item) => item.id === selectedDeviceId) ??
@@ -807,6 +815,7 @@ export function WebMaestroHome() {
       prompt: string,
       imageDataUrls: string[] = [],
       fileAttachments: WebFileAttachmentPayload[] = [],
+      agentCommand = 'cursor-agent',
     ): Promise<boolean> => {
       const deviceId = resolveDeviceId();
       if (!deviceId) {
@@ -861,6 +870,7 @@ export function WebMaestroHome() {
           title: titleSource.slice(0, 80),
           created_by: user.id,
           model_id: 'auto',
+          agent_command: agentCommand,
         });
         createdSessionId = agentId;
         const commandId = crypto.randomUUID();
@@ -876,6 +886,7 @@ export function WebMaestroHome() {
           logoUrl: project.logo_url ?? null,
           cursorSessionId: null,
           modelId: 'auto',
+          agentCommand,
           modeId: 'agent',
           source: 'cloud',
           stream: '',
@@ -913,7 +924,7 @@ export function WebMaestroHome() {
             prompt: trimmedPrompt,
             ...(imageDataUrls.length > 0 ? { image_data_urls: imageDataUrls } : {}),
             ...(fileAttachments.length > 0 ? { file_attachments: fileAttachments } : {}),
-            agent_command: 'cursor-agent',
+            agent_command: agentCommand,
             model: 'auto',
             session_id: agentId,
           },
@@ -995,6 +1006,7 @@ export function WebMaestroHome() {
           incompleteContinueCountRef.current.set(agentId, 0);
         }
         subscribeAgent(agentId, commandId);
+        const agentCommand = normalizeWebAgentCommand(agent.agentCommand);
         await bridge.executeCommand({
           id: commandId,
           workspace_id: workspaceId,
@@ -1006,7 +1018,7 @@ export function WebMaestroHome() {
             prompt,
             ...(imageDataUrls.length > 0 ? { image_data_urls: imageDataUrls } : {}),
             ...(fileAttachments.length > 0 ? { file_attachments: fileAttachments } : {}),
-            agent_command: 'cursor-agent',
+            agent_command: agentCommand,
             model: agent.modelId || 'auto',
             mode: agent.modeId && agent.modeId !== 'agent' ? agent.modeId : undefined,
             session_id: agent.id,
@@ -1256,6 +1268,14 @@ export function WebMaestroHome() {
     [setAgentModelId],
   );
 
+  const handleAgentCommandChange = useCallback(
+    (agentId: string, agentCommand: string) => {
+      setAgentCommand(agentId, agentCommand);
+      void updateAgentSessionMeta(supabase, agentId, { agent_command: agentCommand });
+    },
+    [setAgentCommand],
+  );
+
   const handleModeChange = useCallback(
     (agentId: string, modeId: 'agent' | 'plan' | 'debug' | 'multitask' | 'ask') => {
       setAgentModeId(agentId, modeId);
@@ -1366,8 +1386,8 @@ export function WebMaestroHome() {
             deviceId={selectedDeviceId}
             onDeviceChange={setSelectedDeviceId}
             submitting={submitting}
-            onSubmit={(prompt, imageDataUrls, fileAttachments) =>
-              handleSubmit(prompt, imageDataUrls, fileAttachments)
+            onSubmit={(prompt, imageDataUrls, fileAttachments, agentCommand) =>
+              handleSubmit(prompt, imageDataUrls, fileAttachments, agentCommand)
             }
             desktopAgents={desktopAgentsCatalog}
             onSelectAgent={handleSelectAgent}
@@ -1410,6 +1430,7 @@ export function WebMaestroHome() {
           }
           onStop={(agentId) => void handleStop(agentId)}
           onModelChange={handleModelChange}
+          onAgentCommandChange={handleAgentCommandChange}
           onModeChange={handleModeChange}
           onExecuteTask={(task) => void handleExecuteTask(task)}
           onScrollChange={setHeroScrolled}

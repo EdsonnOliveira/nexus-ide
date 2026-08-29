@@ -14,6 +14,11 @@ import {
 } from 'react';
 import { ArrowUp, FileText, Paperclip, Square, X } from 'lucide-react';
 import { useWebStore, type WebAgentSession, type WebAgentTurn, type WebAgentActivity } from '../store';
+import { WebAskAiProviderMenu } from './WebAskAiProviderMenu';
+import {
+  agentCommandToWebAiProvider,
+  webAiProviderToAgentCommand,
+} from './webAiProviders';
 import {
   buildWebActionBlockSummary,
   buildWebActivityRenderChunks,
@@ -60,6 +65,7 @@ interface WebAgentChatProps {
   ) => boolean | Promise<boolean>;
   onStop: (agentId: string) => void;
   onModelChange: (agentId: string, modelId: string) => void;
+  onAgentCommandChange: (agentId: string, agentCommand: string) => void;
   onModeChange: (agentId: string, modeId: WebAgentMode) => void;
 }
 
@@ -765,6 +771,7 @@ export function WebAgentChat({
   onFollowUp,
   onStop,
   onModelChange,
+  onAgentCommandChange,
   onModeChange,
 }: WebAgentChatProps) {
   const [draft, setDraft] = useState('');
@@ -1590,6 +1597,13 @@ export function WebAgentChat({
             >
               <Paperclip size={16} strokeWidth={2} aria-hidden='true' />
             </button>
+            <WebAskAiProviderMenu
+              value={agentCommandToWebAiProvider(agent.agentCommand)}
+              disabled={attachDisabled || agent.source === 'desktop_pane'}
+              onChange={(provider) => {
+                onAgentCommandChange(agent.id, webAiProviderToAgentCommand(provider));
+              }}
+            />
             <button
               type={canStop ? 'button' : 'submit'}
               className={`home-dashboard__ask-send app-button app-button--enter${

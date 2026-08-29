@@ -117,17 +117,20 @@ export function cancelActiveAgentProcess(input: {
   return true;
 }
 
-function resolveCursorAgentExecutable(agentCommand: string): string {
-  if (agentCommand !== 'cursor-agent' && path.isAbsolute(agentCommand)) {
-    return agentCommand;
+function resolveCliAgentExecutable(agentCommand: string): string {
+  const base = agentCommand.trim().split(/\s+/)[0] || 'cursor-agent';
+
+  if (base !== 'cursor-agent' && path.isAbsolute(base)) {
+    return base;
   }
 
   const home = os.homedir();
   const candidates = [
-    path.join(home, '.local', 'bin', 'cursor-agent'),
-    path.join(home, '.cursor', 'bin', 'cursor-agent'),
-    '/opt/homebrew/bin/cursor-agent',
-    '/usr/local/bin/cursor-agent',
+    path.join(home, '.local', 'bin', base),
+    path.join(home, '.cursor', 'bin', base),
+    path.join(home, 'bin', base),
+    `/opt/homebrew/bin/${base}`,
+    `/usr/local/bin/${base}`,
   ];
 
   for (const candidate of candidates) {
@@ -136,7 +139,112 @@ function resolveCursorAgentExecutable(agentCommand: string): string {
     }
   }
 
-  return agentCommand || 'cursor-agent';
+  return base;
+}
+
+function buildAgentPromptArgs(
+  agentCommand: string,
+  options: {
+    cwd: string;
+    fullPrompt: string;
+    resumeChatId: string;
+    continueSession: boolean;
+    model: string;
+    mode: string;
+  },
+): string[] {
+  const base = agentCommand.trim().split(/\s+/)[0] || 'cursor-agent';
+  const model = options.model.trim();
+
+  if (base === 'opencode') {
+    const args = ['run', '--format', 'json', '--auto', '--thinking', '--dir', options.cwd];
+    if (options.resumeChatId) {
+      args.push('--session', options.resumeChatId);
+    } else if (options.continueSession) {
+      args.push('--continue');
+    }
+    if (model && model.toLowerCase() !== 'auto') {
+      args.push('--model', model);
+    }
+    if (options.fullPrompt) {
+      args.push('--', options.fullPrompt);
+    }
+    return args;
+  }
+
+  if (base === 'agy') {
+    const args = [
+      '-p',
+      options.fullPrompt,
+      '--output-format',
+      'stream-json',
+      '--dangerously-skip-permissions',
+    ];
+    if (options.resumeChatId) {
+      args.push('--conversation', options.resumeChatId);
+    } else if (options.continueSession) {
+      args.push('--continue');
+    }
+    if (options.mode === 'plan') {
+      args.push('--mode', 'plan');
+    }
+    if (model && model.toLowerCase() !== 'auto') {
+      args.push('--model', model);
+    }
+    return args;
+  }
+
+  if (base === 'claude') {
+    const args = [
+      '-p',
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--dangerously-skip-permissions',
+    ];
+    if (options.resumeChatId) {
+      args.push('--resume', options.resumeChatId);
+    }
+    if (model && model.toLowerCase() !== 'auto') {
+      args.push('--model', model);
+    }
+    if (options.fullPrompt) {
+      args.push('--', options.fullPrompt);
+    }
+    return args;
+  }
+
+  const args = [
+    '-p',
+    '--output-format',
+    'stream-json',
+    '--stream-partial-output',
+    '--trust',
+    '--force',
+    '--approve-mcps',
+    '--workspace',
+    options.cwd,
+  ];
+
+  if (options.resumeChatId) {
+    args.push('--resume', options.resumeChatId);
+  } else if (options.continueSession) {
+    args.push('--continue');
+  }
+
+  if (model && model.toLowerCase() !== 'auto') {
+    args.push('--model', model);
+  }
+
+  if (options.mode === 'plan' || options.mode === 'ask') {
+    args.push('--mode', options.mode);
+  }
+
+  if (options.fullPrompt) {
+    args.push('--', options.fullPrompt);
+  }
+
+  return args;
 }
 
 function buildCliPathEnv(): string {
@@ -755,6 +863,7 @@ async function runAgentPrompt(
           project_id: command.project_id,
           model_id: model || null,
           title: prompt.slice(0, 80),
+          agent_command: agentCommand,
           updated_at: new Date().toISOString(),
         })
         .eq('id', existing.id)
@@ -778,6 +887,7 @@ async function runAgentPrompt(
         title: prompt.slice(0, 80),
         status: 'running',
         model_id: model || null,
+        agent_command: agentCommand,
         created_by: command.created_by,
       })
       .select('id')
@@ -803,33 +913,7 @@ async function runAgentPrompt(
   let output = '';
   let sequence = 0;
   let planWaitingNotified = false;
-  const executable = resolveCursorAgentExecutable(agentCommand);
-  const args = [
-    '-p',
-    '--output-format',
-    'stream-json',
-    '--stream-partial-output',
-    '--trust',
-    '--force',
-    '--approve-mcps',
-    '--workspace',
-    cwd,
-  ];
-
-  if (resumeChatId) {
-    args.push('--resume', resumeChatId);
-  } else if (continueSession) {
-    args.push('--continue');
-  }
-
-  if (model && model.toLowerCase() !== 'auto') {
-    args.push('--model', model);
-  }
-
-  if (mode === 'plan' || mode === 'ask') {
-    args.push('--mode', mode);
-  }
-
+  const executable = resolveCliAgentExecutable(agentCommand);
   const imageRefs = projectRoot
     ? saveAgentPromptImageDataUrls(projectRoot, session!.id, imageDataUrls)
     : [];
@@ -837,10 +921,14 @@ async function runAgentPrompt(
     ? saveAgentPromptFileAttachments(projectRoot, session!.id, fileAttachments)
     : [];
   const fullPrompt = [prompt, ...imageRefs, ...fileRefs].filter(Boolean).join(' ').trim();
-
-  if (fullPrompt) {
-    args.push('--', fullPrompt);
-  }
+  const args = buildAgentPromptArgs(agentCommand, {
+    cwd,
+    fullPrompt,
+    resumeChatId,
+    continueSession,
+    model,
+    mode,
+  });
 
   let projectName = 'Projeto';
   if (command.project_id) {

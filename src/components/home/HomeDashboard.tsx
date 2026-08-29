@@ -186,6 +186,7 @@ function HomeDashboardComponent() {
   }, [homeAgentQueue, projects]);
 
   const compactChrome = homeAgentCount + cloudSessionCount >= 4 || viewMode === 'calendar';
+  const hideHeroBrand = homeAgentCount + cloudSessionCount >= 4;
 
   const detailProject = useMemo(() => {
     if (!detailEntry) {
@@ -615,6 +616,7 @@ function HomeDashboardComponent() {
       <HomeDashboardAskBar
         projects={visibleProjects}
         viewMode={viewMode}
+        compact={compactChrome}
         onAgentOpened={handleShowAgentMode}
         onPromptFlightStart={handlePromptFlightStart}
         onPromptFlightLand={handlePromptFlightLand}
@@ -643,6 +645,7 @@ function HomeDashboardComponent() {
       <HomeDashboardHero
         compact={compactChrome}
         dense={viewMode === 'agent' && maestroDense}
+        hideBrand={hideHeroBrand}
         showDensityToggle={viewMode === 'agent'}
         onDensityToggle={handleMaestroDensityToggle}
         askSlot={askBar}

@@ -499,14 +499,15 @@ function AgentTranscriptComponent({
     const flushScrollToBottom = () => {
       scrollRafRef.current = null;
 
-      if (!stickToBottomRef.current) {
+      if (!stickToBottomRef.current || programmaticScrollRef.current) {
         return;
       }
 
       const targetTop = getScrollContainerTargetTop(container);
       const distanceFromBottom = targetTop - container.scrollTop;
+      const nextHeight = content.offsetHeight;
 
-      contentHeightRef.current = container.scrollHeight;
+      contentHeightRef.current = nextHeight;
 
       if (distanceFromBottom <= 1) {
         notifyAtBottomChange(true);
@@ -519,9 +520,16 @@ function AgentTranscriptComponent({
       notifyAtBottomChange(true);
     };
 
-    const scheduleScrollToBottom = () => {
-      if (!stickToBottomRef.current) {
+    const scheduleScrollToBottom = (entries?: ResizeObserverEntry[]) => {
+      if (!stickToBottomRef.current || programmaticScrollRef.current) {
         return;
+      }
+
+      if (entries && entries.length > 0) {
+        const nextHeight = content.offsetHeight;
+        if (nextHeight <= contentHeightRef.current + 0.5) {
+          return;
+        }
       }
 
       if (scrollRafRef.current !== null) {
@@ -531,11 +539,10 @@ function AgentTranscriptComponent({
       scrollRafRef.current = window.requestAnimationFrame(flushScrollToBottom);
     };
 
-    contentHeightRef.current = container.scrollHeight;
+    contentHeightRef.current = content.offsetHeight;
 
     const observer = new ResizeObserver(scheduleScrollToBottom);
     observer.observe(content);
-    observer.observe(container);
 
     return () => {
       observer.disconnect();

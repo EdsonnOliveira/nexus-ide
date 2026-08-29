@@ -123,7 +123,7 @@ function renderMarkdownImage(alt: string, src: string): string {
     (trimmed.length > 0 && !/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !/[\s<>"']/.test(trimmed))
   ) {
     return wrapMarkdownImage(
-      `<img class="markdown-preview__img markdown-preview__img--pending" alt="${safeAlt}" data-image-path="${safeRef}" loading="lazy" />`,
+      `<span class="markdown-preview__img markdown-preview__img--pending" data-image-path="${safeRef}" role="img" aria-label="${safeAlt}"></span>`,
     );
   }
 

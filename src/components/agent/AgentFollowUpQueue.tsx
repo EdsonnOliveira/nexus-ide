@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useLayoutEffect, useRef } from 'react';
 import { ArrowUp, BookOpen, CornerDownLeft, Pencil, X } from 'lucide-react';
 import type { AgentFollowUp } from '@/types';
 import {
@@ -19,6 +19,47 @@ interface AgentFollowUpQueueProps {
 }
 
 function AgentFollowUpQueueComponent({ items, onEdit, onSendNow, onRemove }: AgentFollowUpQueueProps) {
+  const listRef = useRef<HTMLUListElement>(null);
+
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list) {
+      return;
+    }
+
+    const syncVisibleHeight = () => {
+      const inMaestro = Boolean(list.closest('.home-dashboard--maestro'));
+      if (!inMaestro || items.length <= 1) {
+        if (list.style.getPropertyValue('--follow-up-visible-max')) {
+          list.style.removeProperty('--follow-up-visible-max');
+        }
+        return;
+      }
+
+      const firstItem = list.querySelector<HTMLElement>(':scope > .agent-view__follow-up-item');
+      if (!firstItem) {
+        return;
+      }
+
+      const nextHeight = `${firstItem.offsetHeight}px`;
+      if (list.style.getPropertyValue('--follow-up-visible-max') === nextHeight) {
+        return;
+      }
+
+      list.style.setProperty('--follow-up-visible-max', nextHeight);
+    };
+
+    syncVisibleHeight();
+    const observer = new ResizeObserver(syncVisibleHeight);
+    for (const child of list.children) {
+      observer.observe(child);
+    }
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [items]);
+
   const handleEdit = useCallback(
     (id: string) => () => {
       onEdit(id);
@@ -58,7 +99,7 @@ function AgentFollowUpQueueComponent({ items, onEdit, onSendNow, onRemove }: Age
             </span>
           </div>
         </div>
-        <ul className='agent-view__follow-up-list'>
+        <ul ref={listRef} className='agent-view__follow-up-list'>
           {items.map((item) => {
             const { hasSkillPrompt, skillChipLabel, promptBody } = resolveAgentSkillDisplayState({
               content: item.content,

@@ -37,6 +37,10 @@ function TerminalQuickCommandPillsComponent({
 }: TerminalQuickCommandPillsProps) {
   const updateProject = useProjectStore((state) => state.updateProject);
   const projects = useProjectStore((state) => state.projects);
+  const projectExists = useMemo(
+    () => projects.some((project) => project.id === projectId),
+    [projectId, projects],
+  );
   const configuredCommands = useMemo(
     () => projects.find((project) => project.id === projectId)?.terminalQuickCommands ?? [],
     [projectId, projects],
@@ -180,6 +184,10 @@ function TerminalQuickCommandPillsComponent({
     [onRunCommand],
   );
 
+  if (!projectExists) {
+    return null;
+  }
+
   return (
     <>
       <div className='terminal-footer__quick-commands'>
@@ -261,7 +269,9 @@ function TerminalQuickCommandPillsComponent({
                       })}
                     </div>
                   ) : (
-                    <span className='project-dialog__presets-empty'>Nenhum comando correspondente</span>
+                    <span className='project-dialog__presets-empty'>
+                      Nenhum comando correspondente
+                    </span>
                   )}
                 </div>
               ) : null}

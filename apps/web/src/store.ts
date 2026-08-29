@@ -55,6 +55,7 @@ export interface WebAgentSession {
   logoUrl: string | null;
   cursorSessionId: string | null;
   modelId: string;
+  agentCommand: string;
   modeId: 'agent' | 'plan' | 'debug' | 'multitask' | 'ask';
   source: 'cloud' | 'desktop_pane';
   stream: string;
@@ -100,6 +101,7 @@ interface WebState {
   ) => void;
   setAgentCursorSessionId: (agentId: string, cursorSessionId: string | null) => void;
   setAgentModelId: (agentId: string, modelId: string) => void;
+  setAgentCommand: (agentId: string, agentCommand: string) => void;
   setAgentModeId: (agentId: string, modeId: WebAgentSession['modeId']) => void;
   setAgentStatus: (id: string, status: WebAgentSession['status']) => void;
   addAgentTurn: (agentId: string, turn: WebAgentTurn) => void;
@@ -155,6 +157,7 @@ function mergeWebAgentSession(
       ...existing,
       commandId: existing.commandId || incoming.commandId,
       cursorSessionId: existing.cursorSessionId ?? incoming.cursorSessionId,
+      agentCommand: existing.agentCommand || incoming.agentCommand,
     };
   }
 
@@ -168,6 +171,7 @@ function mergeWebAgentSession(
       ...existing,
       commandId: existing.commandId || incoming.commandId,
       cursorSessionId: existing.cursorSessionId ?? incoming.cursorSessionId,
+      agentCommand: existing.agentCommand || incoming.agentCommand,
     };
   }
 
@@ -181,6 +185,7 @@ function mergeWebAgentSession(
       status: incoming.status,
       commandId: existing.commandId || incoming.commandId,
       cursorSessionId: existing.cursorSessionId ?? incoming.cursorSessionId,
+      agentCommand: existing.agentCommand || incoming.agentCommand,
       turns: existing.turns.map((turn, index) =>
         index === existing.turns.length - 1
           ? {
@@ -205,6 +210,7 @@ function mergeWebAgentSession(
     ...incoming,
     modelId: existing.modelId,
     modeId: existing.modeId,
+    agentCommand: existing.agentCommand || incoming.agentCommand,
     terminals:
       existing.terminals.length >= incoming.terminals.length
         ? existing.terminals
@@ -295,6 +301,19 @@ export const useWebStore = create<WebState>((set) => ({
   setAgentModelId: (agentId, modelId) =>
     set((state) => ({
       agents: state.agents.map((agent) => (agent.id === agentId ? { ...agent, modelId } : agent)),
+    })),
+  setAgentCommand: (agentId, agentCommand) =>
+    set((state) => ({
+      agents: state.agents.map((agent) =>
+        agent.id === agentId
+          ? {
+              ...agent,
+              agentCommand,
+              cursorSessionId:
+                agent.agentCommand === agentCommand ? agent.cursorSessionId : null,
+            }
+          : agent,
+      ),
     })),
   setAgentModeId: (agentId, modeId) =>
     set((state) => ({

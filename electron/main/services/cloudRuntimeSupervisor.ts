@@ -278,19 +278,53 @@ function resolvePackagedRuntimeEntry(): string | null {
   return null;
 }
 
-function resolveDevRuntimeLaunch(): { command: string; args: string[]; cwd: string } | null {
+function resolveNodeBinary(): string | null {
+  const candidates = [
+    process.env.npm_node_execpath,
+    process.env.NODE_BINARY,
+    process.env.NVM_BIN ? path.join(process.env.NVM_BIN, 'node') : '',
+  ].filter((value): value is string => Boolean(value));
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  try {
+    const resolved = execFileSync('/usr/bin/which', ['node'], {
+      encoding: 'utf8',
+      env: process.env,
+    }).trim();
+    if (resolved && existsSync(resolved)) {
+      return resolved;
+    }
+  } catch {
+  }
+
+  return null;
+}
+
+function resolveDevRuntimeLaunch(): {
+  command: string;
+  args: string[];
+  cwd: string;
+  envExtras: Record<string, string>;
+} | null {
   const projectRoot = getProjectRoot();
   const entry = path.join(projectRoot, 'apps/runtime/src/index.ts');
   const tsxCli = path.join(projectRoot, 'node_modules/tsx/dist/cli.mjs');
+  const nodeBinary = resolveNodeBinary();
 
-  if (!existsSync(entry) || !existsSync(tsxCli)) {
+  if (!existsSync(entry) || !existsSync(tsxCli) || !nodeBinary) {
     return null;
   }
 
   return {
-    command: process.execPath,
+    command: nodeBinary,
     args: [tsxCli, entry],
     cwd: projectRoot,
+    envExtras: {},
   };
 }
 
@@ -301,20 +335,12 @@ function resolveRuntimeLaunch(): {
   envExtras: Record<string, string>;
 } | null {
   if (!app.isPackaged) {
-    const launch = resolveDevRuntimeLaunch();
-    if (!launch) {
-      return null;
-    }
-    return { ...launch, envExtras: {} };
+    return resolveDevRuntimeLaunch();
   }
 
   const entry = resolvePackagedRuntimeEntry();
   if (!entry) {
-    const fallback = resolveDevRuntimeLaunch();
-    if (fallback) {
-      return { ...fallback, envExtras: {} };
-    }
-    return null;
+    return resolveDevRuntimeLaunch();
   }
 
   const runtimeDir = path.dirname(entry);

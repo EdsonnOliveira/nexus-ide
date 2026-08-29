@@ -3,6 +3,7 @@ import type { Automation } from '@/types/automation';
 import type { ProjectTestEntry } from '@/types/test';
 import type { PasswordCollection } from '@/types/password';
 import type { AgentGitChangeGroup } from '@/types/agentGit';
+import type { AgentPipSnapshot, AgentPipCommand, AgentPipHostRequest } from '@/types/agentPip';
 import type {
   ProjectTask,
   TaskAttachment,
@@ -23,6 +24,8 @@ import type {
   GitStatusResult,
   GitStashEntry,
 } from '@/types/git';
+
+export type { AgentPipSnapshot, AgentPipCommand, AgentPipHostRequest } from '@/types/agentPip';
 
 export type {
   ProjectTask,
@@ -113,6 +116,7 @@ export interface AgentPromptSubmitOptions {
   displayContent?: string;
   skillLabel?: string;
   forceNewTurn?: boolean;
+  attachments?: AgentPromptAttachment[];
 }
 
 export type AgentActivityKind =
@@ -1585,6 +1589,18 @@ export interface NexusAPI {
     pingRuntime: () => Promise<boolean>;
     listOpenAgentSessions: () => Promise<import('@nexus/supabase').AgentSessionBundle[]>;
     writeMobileReleaseSnapshot: (payload: unknown) => Promise<{ ok: boolean; path: string }>;
+  };
+  agentPip: {
+    pin: (snapshot: AgentPipSnapshot) => Promise<void>;
+    update: (snapshot: AgentPipSnapshot) => Promise<boolean>;
+    unpin: () => Promise<void>;
+    getSnapshot: () => Promise<AgentPipSnapshot | null>;
+    focusMain: () => Promise<void>;
+    command: (payload: AgentPipCommand) => Promise<boolean>;
+    onSnapshot: (callback: (snapshot: AgentPipSnapshot) => void) => () => void;
+    onUnpinned: (callback: () => void) => () => void;
+    onHostCommand: (callback: (request: AgentPipHostRequest) => void) => () => void;
+    replyHostCommand: (requestId: string, ok: boolean) => void;
   };
 }
 

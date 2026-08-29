@@ -161,10 +161,7 @@ export async function getPrimaryWorkspace(client: NexusClient): Promise<Workspac
   return data as WorkspaceMemberRow | null;
 }
 
-export async function listDevices(
-  client: NexusClient,
-  workspaceId?: string,
-): Promise<DeviceRow[]> {
+export async function listDevices(client: NexusClient, workspaceId?: string): Promise<DeviceRow[]> {
   let query = client.from('devices').select('*').order('name', { ascending: true });
 
   if (workspaceId) {
@@ -218,9 +215,7 @@ export async function createDevicePairing(
 export async function listPendingPairings(
   client: NexusClient,
   workspaceId?: string,
-): Promise<
-  Array<{ id: string; code: string; name: string; expires_at: string; status: string }>
-> {
+): Promise<Array<{ id: string; code: string; name: string; expires_at: string; status: string }>> {
   let query = client
     .from('device_pairings')
     .select('id, code, name, expires_at, status')
@@ -305,7 +300,10 @@ export async function listWorkspaces(client: NexusClient): Promise<WorkspaceRow[
   return (data ?? []) as WorkspaceRow[];
 }
 
-export async function listProjects(client: NexusClient, workspaceId?: string): Promise<ProjectRow[]> {
+export async function listProjects(
+  client: NexusClient,
+  workspaceId?: string,
+): Promise<ProjectRow[]> {
   let query = client
     .from('projects')
     .select('*, device_projects(local_path, device_id, is_available)')
@@ -326,7 +324,9 @@ export async function listProjects(client: NexusClient, workspaceId?: string): P
     const record = row as ProjectRow & {
       device_projects?: Array<{ local_path?: string; is_available?: boolean }>;
     };
-    const deviceProject = (record.device_projects ?? []).find((item) => item.is_available !== false);
+    const deviceProject = (record.device_projects ?? []).find(
+      (item) => item.is_available !== false,
+    );
     return {
       ...record,
       local_path: deviceProject?.local_path ?? null,
@@ -355,7 +355,10 @@ export async function requestLocalSync(
   return command.id;
 }
 
-export async function createCommand(client: NexusClient, input: CommandInsert): Promise<CommandRow> {
+export async function createCommand(
+  client: NexusClient,
+  input: CommandInsert,
+): Promise<CommandRow> {
   const { data, error } = await client.from('commands').insert(input).select('*').single();
 
   if (error) {
@@ -688,10 +691,7 @@ export async function listPushSubscriptions(
   client: NexusClient,
   userId: string,
 ): Promise<PushSubscriptionRow[]> {
-  const { data, error } = await client
-    .from('push_subscriptions')
-    .select('*')
-    .eq('user_id', userId);
+  const { data, error } = await client.from('push_subscriptions').select('*').eq('user_id', userId);
   if (error) {
     throw error;
   }
@@ -808,10 +808,7 @@ export async function upsertUserVercelToken(
   }
 }
 
-export async function deleteUserVercelToken(
-  client: NexusClient,
-  userId: string,
-): Promise<void> {
+export async function deleteUserVercelToken(client: NexusClient, userId: string): Promise<void> {
   const { error } = await client.from('user_vercel_tokens').delete().eq('user_id', userId);
   if (error) {
     throw error;
@@ -827,6 +824,7 @@ export interface AgentSessionRow {
   status: string;
   cursor_chat_id: string | null;
   model_id: string | null;
+  agent_command?: string | null;
   source?: string | null;
   created_by: string | null;
   created_at: string;
@@ -872,6 +870,7 @@ export async function createAgentSession(
     title: string;
     created_by: string;
     model_id?: string | null;
+    agent_command?: string | null;
   },
 ): Promise<AgentSessionRow> {
   const { data, error } = await client
@@ -885,6 +884,7 @@ export async function createAgentSession(
       status: 'running',
       source: 'cloud',
       model_id: input.model_id ?? 'auto',
+      agent_command: input.agent_command ?? 'cursor-agent',
       created_by: input.created_by,
     })
     .select('*')
@@ -895,10 +895,7 @@ export async function createAgentSession(
   return data as AgentSessionRow;
 }
 
-export async function closeAgentSession(
-  client: NexusClient,
-  sessionId: string,
-): Promise<void> {
+export async function closeAgentSession(client: NexusClient, sessionId: string): Promise<void> {
   const { error } = await client
     .from('agent_sessions')
     .update({
@@ -917,6 +914,7 @@ export async function updateAgentSessionMeta(
   patch: {
     cursor_chat_id?: string | null;
     model_id?: string | null;
+    agent_command?: string | null;
     status?: string;
   },
 ): Promise<void> {
@@ -950,7 +948,10 @@ export async function listAgentHistoryCursorChatMeta(
     return [];
   }
 
-  const byChatId = new Map<string, { cursorChatId: string; title: string | null; fromWeb: boolean }>();
+  const byChatId = new Map<
+    string,
+    { cursorChatId: string; title: string | null; fromWeb: boolean }
+  >();
   const chunkSize = 100;
 
   for (let offset = 0; offset < uniqueIds.length; offset += chunkSize) {
@@ -1093,7 +1094,7 @@ export async function listOpenAgentSessionBundles(
   }
 
   return rows.map((session) => {
-    const project = session.project_id ? projectsById.get(session.project_id) ?? null : null;
+    const project = session.project_id ? (projectsById.get(session.project_id) ?? null) : null;
     const matchingDeviceProjects = deviceProjectsList.filter(
       (entry) => entry.project_id === session.project_id,
     );
@@ -1114,5 +1115,141 @@ export async function listOpenAgentSessionBundles(
       executions: executionsBySession.get(session.id) ?? [],
       messages: messagesBySession.get(session.id) ?? [],
     };
+  });
+}
+
+const DESKTOP_AGENT_VIEWED_EVENT = 'viewed';
+
+type DesktopAgentViewedChannel = ReturnType<NexusClient['channel']>;
+
+const desktopAgentViewedPublisherByClient = new WeakMap<
+  NexusClient,
+  { deviceId: string; channel: DesktopAgentViewedChannel; ready: Promise<void> }
+>();
+
+export function desktopAgentViewedChannelName(deviceId: string): string {
+  return `desktop-agent-viewed:${deviceId}`;
+}
+
+export function parseDesktopAgentViewedPaneId(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const paneId = (payload as { paneId?: unknown }).paneId;
+  if (typeof paneId !== 'string') {
+    return null;
+  }
+
+  const trimmed = paneId.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function subscribeDesktopAgentViewedChannel(
+  client: NexusClient,
+  deviceId: string,
+  onViewed?: (paneId: string) => void,
+): { channel: DesktopAgentViewedChannel; ready: Promise<void> } {
+  const channel = client.channel(desktopAgentViewedChannelName(deviceId), {
+    config: {
+      broadcast: { self: false, ack: false },
+    },
+  });
+
+  if (onViewed) {
+    channel.on('broadcast', { event: DESKTOP_AGENT_VIEWED_EVENT }, (message) => {
+      const paneId = parseDesktopAgentViewedPaneId(message.payload);
+      if (paneId) {
+        onViewed(paneId);
+      }
+    });
+  }
+
+  const ready = new Promise<void>((resolve) => {
+    const timer = setTimeout(() => resolve(), 2500);
+    channel.subscribe((status) => {
+      if (
+        status === 'SUBSCRIBED' ||
+        status === 'CHANNEL_ERROR' ||
+        status === 'TIMED_OUT' ||
+        status === 'CLOSED'
+      ) {
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+  });
+
+  return { channel, ready };
+}
+
+export function subscribeDesktopAgentViewed(
+  client: NexusClient,
+  deviceId: string,
+  onViewed: (paneId: string) => void,
+): () => void {
+  const { channel } = subscribeDesktopAgentViewedChannel(client, deviceId, onViewed);
+  return () => {
+    void client.removeChannel(channel);
+  };
+}
+
+async function ensureDesktopAgentViewedPublisher(
+  client: NexusClient,
+  deviceId: string,
+): Promise<DesktopAgentViewedChannel | null> {
+  const existing = desktopAgentViewedPublisherByClient.get(client);
+  if (existing && existing.deviceId === deviceId) {
+    await existing.ready;
+    return existing.channel;
+  }
+
+  if (existing) {
+    void client.removeChannel(existing.channel);
+    desktopAgentViewedPublisherByClient.delete(client);
+  }
+
+  const next = subscribeDesktopAgentViewedChannel(client, deviceId);
+  desktopAgentViewedPublisherByClient.set(client, {
+    deviceId,
+    channel: next.channel,
+    ready: next.ready,
+  });
+  await next.ready;
+  return next.channel;
+}
+
+export async function primeDesktopAgentViewedPublisher(
+  client: NexusClient,
+  deviceId: string | null | undefined,
+): Promise<void> {
+  const id = deviceId?.trim() ?? '';
+  if (!id) {
+    return;
+  }
+
+  await ensureDesktopAgentViewedPublisher(client, id);
+}
+
+export async function ackDesktopAgentViewed(
+  client: NexusClient,
+  paneId: string,
+  deviceId: string | null | undefined,
+): Promise<void> {
+  const id = paneId.trim();
+  const targetDeviceId = deviceId?.trim() ?? '';
+  if (!id || !targetDeviceId) {
+    return;
+  }
+
+  const channel = await ensureDesktopAgentViewedPublisher(client, targetDeviceId);
+  if (!channel) {
+    return;
+  }
+
+  await channel.send({
+    type: 'broadcast',
+    event: DESKTOP_AGENT_VIEWED_EVENT,
+    payload: { paneId: id },
   });
 }

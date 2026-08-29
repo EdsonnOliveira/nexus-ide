@@ -1,9 +1,15 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, ChevronDown, ChevronRight, Globe, X } from 'lucide-react';
+import { Bot, ChevronDown, ChevronRight, Globe, Maximize2, Minimize2, Pin, X } from 'lucide-react';
 import { closeAgentSession } from '@nexus/supabase';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
+import {
+  AgentCardFrame,
+  useAgentCardFullscreen,
+} from '@/components/home/AgentCardFullscreenOverlay';
 import { cloudSupabase } from '@/lib/nexusCloud';
 import { useCloudAgentSessionsStore } from '@/stores/useCloudAgentSessionsStore';
+import { useAgentPipStore } from '@/stores/useAgentPipStore';
+import { CLOUD_AGENT_PIP_PREFIX } from '@/utils/agentPipSnapshot';
 import {
   useDeferredMarkdownHtml,
   useMarkdownCodeHighlight,
@@ -176,7 +182,7 @@ function CloudAgentResponseBody({
   );
 }
 
-function CloudAgentTurnView({
+export function CloudAgentTurnView({
   turn,
   projectPath,
 }: {
@@ -232,6 +238,12 @@ function HomeDashboardCloudAgentCardComponent({
     (state) => state.sessions.find((item) => item.id === sessionId) ?? null,
   );
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const fullscreen = useAgentCardFullscreen();
+  const pinnedPaneId = useAgentPipStore((state) => state.paneId);
+  const pinAgent = useAgentPipStore((state) => state.pin);
+  const unpinAgent = useAgentPipStore((state) => state.unpin);
+  const pipPaneId = `${CLOUD_AGENT_PIP_PREFIX}${sessionId}`;
+  const isPinned = pinnedPaneId === pipPaneId;
   const removeSession = useCloudAgentSessionsStore((state) => state.removeSession);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const turns = useMemo(() => session?.turns ?? [], [session?.turns]);
@@ -259,6 +271,10 @@ function HomeDashboardCloudAgentCardComponent({
       return;
     }
 
+    if (useAgentPipStore.getState().paneId === `${CLOUD_AGENT_PIP_PREFIX}${session.id}`) {
+      useAgentPipStore.getState().unpin();
+    }
+
     removeSession(session.id);
 
     if (cloudSupabase) {
@@ -266,52 +282,101 @@ function HomeDashboardCloudAgentCardComponent({
     }
   }, [removeSession, session]);
 
+  const handleTogglePin = useCallback(() => {
+    if (isPinned) {
+      unpinAgent();
+      return;
+    }
+
+    pinAgent(pipPaneId);
+  }, [isPinned, pinAgent, pipPaneId, unpinAgent]);
+
+  const handleToggleFullscreen = useCallback(() => {
+    if (fullscreen.open) {
+      fullscreen.closeFullscreen();
+      return;
+    }
+
+    fullscreen.openFullscreen();
+  }, [fullscreen.closeFullscreen, fullscreen.open, fullscreen.openFullscreen]);
+
   if (!session) {
     return null;
   }
 
   return (
-    <article
-      className='home-dashboard__agent-card home-dashboard__agent-card--cloud app-button--enter'
-      style={{ animationDelay: `${enterDelayMs}ms` }}
-    >
-      <div className='home-dashboard__agent-card-head'>
-        <span className='home-dashboard__agent-card-thumb-wrap'>
-          <CloudAgentThumb logoUrl={session.logoUrl} color={session.projectColor} />
-        </span>
-        <div className='home-dashboard__agent-card-copy'>
-          <span className='home-dashboard__agent-card-project'>{session.projectName}</span>
-        </div>
-        <div className='home-dashboard__agent-card-aside'>
-          <span className='home-dashboard__agent-card-web-badge' title='Agent iniciado na web'>
-            <Globe size={11} strokeWidth={2.25} aria-hidden='true' />
-            <span>Web</span>
+    <>
+      <AgentCardFrame
+        className='home-dashboard__agent-card home-dashboard__agent-card--cloud app-button--enter'
+        style={{ animationDelay: `${enterDelayMs}ms` }}
+        fullscreen={fullscreen}
+      >
+        <div className='home-dashboard__agent-card-head'>
+          <span className='home-dashboard__agent-card-thumb-wrap'>
+            <CloudAgentThumb logoUrl={session.logoUrl} color={session.projectColor} />
           </span>
-          <button
-            type='button'
-            className='home-dashboard__agent-card-close app-button app-button--enter'
-            aria-label='Fechar agent'
-            onClick={handleOpenConfirm}
-          >
-            <X size={14} strokeWidth={2.25} aria-hidden='true' />
-          </button>
+          <div className='home-dashboard__agent-card-copy'>
+            <span className='home-dashboard__agent-card-project'>{session.projectName}</span>
+          </div>
+          <div className='home-dashboard__agent-card-aside'>
+            <span className='home-dashboard__agent-card-web-badge' title='Agent iniciado na web'>
+              <Globe size={11} strokeWidth={2.25} aria-hidden='true' />
+              <span>Web</span>
+            </span>
+            <button
+              type='button'
+              className={`home-dashboard__agent-card-terminal app-button app-button--enter${isPinned ? ' home-dashboard__agent-card-terminal--pinned' : ''}`}
+              aria-label={isPinned ? 'Desafixar agent' : 'Fixar agent'}
+              aria-pressed={isPinned}
+              title={isPinned ? 'Desafixar' : 'Fixar'}
+              onClick={handleTogglePin}
+            >
+              <Pin
+                size={14}
+                strokeWidth={2.25}
+                fill={isPinned ? 'currentColor' : 'none'}
+                aria-hidden='true'
+              />
+            </button>
+            <button
+              type='button'
+              className='home-dashboard__agent-card-terminal app-button app-button--enter'
+              aria-label={fullscreen.open ? 'Sair da tela cheia' : 'Tela cheia'}
+              aria-pressed={fullscreen.open}
+              title={fullscreen.open ? 'Sair da tela cheia' : 'Tela cheia'}
+              onClick={handleToggleFullscreen}
+            >
+              {fullscreen.open ? (
+                <Minimize2 size={14} strokeWidth={2.25} aria-hidden='true' />
+              ) : (
+                <Maximize2 size={14} strokeWidth={2.25} aria-hidden='true' />
+              )}
+            </button>
+            <button
+              type='button'
+              className='home-dashboard__agent-card-close app-button app-button--enter'
+              aria-label='Fechar agent'
+              onClick={handleOpenConfirm}
+            >
+              <X size={14} strokeWidth={2.25} aria-hidden='true' />
+            </button>
+          </div>
         </div>
-      </div>
-      <div className='home-dashboard__agent-card-body'>
-        <div className='agent-view' style={{ ['--agent-accent' as string]: session.projectColor }}>
-          <div className='agent-view__transcript-shell'>
-            <div className='agent-view__transcript' ref={transcriptRef}>
-              {turns.map((turn) => (
-                <CloudAgentTurnView
-                  key={turn.id}
-                  turn={turn}
-                  projectPath={session.projectPath}
-                />
-              ))}
+        <div className='home-dashboard__agent-card-body'>
+          <div
+            className='agent-view'
+            style={{ ['--agent-accent' as string]: session.projectColor }}
+          >
+            <div className='agent-view__transcript-shell'>
+              <div className='agent-view__transcript' ref={transcriptRef}>
+                {turns.map((turn) => (
+                  <CloudAgentTurnView key={turn.id} turn={turn} projectPath={session.projectPath} />
+                ))}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      </AgentCardFrame>
       {confirmOpen ? (
         <CloudAgentCloseConfirm
           projectName={session.projectName}
@@ -319,7 +384,7 @@ function HomeDashboardCloudAgentCardComponent({
           onClose={handleCloseConfirm}
         />
       ) : null}
-    </article>
+    </>
   );
 }
 

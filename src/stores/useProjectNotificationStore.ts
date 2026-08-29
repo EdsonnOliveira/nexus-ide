@@ -56,14 +56,13 @@ export const useProjectNotificationStore = create<ProjectNotificationState>((set
     });
   },
   clearNotificationForPane: (paneId) => {
-    const projectId = findProjectIdByPaneId(paneId);
-
-    if (!projectId) {
-      return;
-    }
-
     set((state) => {
-      if (state.notifiedAgentPaneByProject[projectId] !== paneId) {
+      const matchedProjectId = Object.entries(state.notifiedAgentPaneByProject).find(
+        ([, notifiedPaneId]) => notifiedPaneId === paneId,
+      )?.[0];
+      const projectId = findProjectIdByPaneId(paneId) ?? matchedProjectId;
+
+      if (!projectId || state.notifiedAgentPaneByProject[projectId] !== paneId) {
         return state;
       }
 

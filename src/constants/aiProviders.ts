@@ -18,6 +18,13 @@ export const AI_PROVIDER_OPTIONS: AiProviderOption[] = [
   { id: 'nexus', label: 'Nexus', subtitle: 'Em breve', disabled: true },
 ];
 
+export const ASK_AI_PROVIDER_OPTIONS: { id: Exclude<AiProviderId, 'nexus'>; label: string }[] = [
+  { id: 'cursor', label: 'Cursor' },
+  { id: 'claude', label: 'Claude' },
+  { id: 'opencode', label: 'OpenCode' },
+  { id: 'antigravity', label: 'Antigravity' },
+];
+
 export const DEFAULT_AI_PROVIDER: Exclude<AiProviderId, 'nexus'> = 'cursor';
 
 export function isAiProviderId(value: string): value is AiProviderId {
@@ -53,4 +60,22 @@ export function preferredAiProviderToCli(provider: AiProviderId): CliAgentComman
   }
 
   return DEFAULT_CLI_AGENT_COMMAND;
+}
+
+export function cliAgentToAiProvider(cliAgent: string): Exclude<AiProviderId, 'nexus'> {
+  const base = cliAgent.trim().split(/\s+/)[0] ?? '';
+
+  if (base === 'claude') {
+    return 'claude';
+  }
+
+  if (base === 'opencode') {
+    return 'opencode';
+  }
+
+  if (base === 'agy') {
+    return 'antigravity';
+  }
+
+  return DEFAULT_AI_PROVIDER;
 }

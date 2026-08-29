@@ -24,6 +24,7 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { registerApiHandlers } from './ipc/api';
+import { registerAgentPipHandlers } from './ipc/agentPip';
 import { registerBrowserHandlers } from './ipc/browser';
 import { registerDialogHandlers } from './ipc/dialog';
 import { cleanupEmulatorSessions, registerEmulatorHandlers } from './ipc/emulator';
@@ -32,10 +33,8 @@ import {
   stopDesktopControlServer,
 } from './services/desktopControlServer';
 import { startIdleWakeLock, stopIdleWakeLock } from './services/idleWakeLock';
-import {
-  startManagedRuntime,
-  stopManagedRuntime,
-} from './services/cloudRuntimeSupervisor';
+import { startManagedRuntime, stopManagedRuntime } from './services/cloudRuntimeSupervisor';
+import { ensureDevServerRunning, stopEnsuredDevServer } from './services/devServerKeepAlive';
 import { registerFileHandlers } from './ipc/files';
 import { registerProjectHandlers } from './ipc/projects';
 import { registerGitHandlers } from './ipc/git';
@@ -60,9 +59,11 @@ import { registerSystemStatusHandlers } from './ipc/systemStatus';
 import { registerSystemNotificationsHandlers } from './ipc/systemNotifications';
 import { registerCloudHandlers } from './ipc/cloud';
 import {
-  registerLocalFileProtocol,
-  registerLocalFileScheme,
-} from './protocol/localFiles';
+  bindAgentPipMainWindow,
+  configureAgentPipWindow,
+  destroyAgentPipWindow,
+} from './services/agentPipWindow';
+import { registerLocalFileProtocol, registerLocalFileScheme } from './protocol/localFiles';
 import { applyChromeUserAgentToWebContents } from './services/browserChromeUserAgent';
 import { attachBrowserWebviewContextMenu } from './services/browserWebviewContextMenu';
 import { registerYouTubeSidebarWebviewSession } from './services/youtubeSidebarWebviewSession';
@@ -99,6 +100,26 @@ process.env.APP_ROOT = path.join(__dirname, '../..');
 export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron');
 export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist');
 export const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
+
+function resolveDevServerUrl(): string | undefined {
+  if (!VITE_DEV_SERVER_URL) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(VITE_DEV_SERVER_URL);
+
+    if (url.hostname === 'localhost' || url.hostname === '::1') {
+      url.hostname = '127.0.0.1';
+    }
+
+    return url.toString();
+  } catch {
+    return VITE_DEV_SERVER_URL;
+  }
+}
+
+const DEV_SERVER_URL = resolveDevServerUrl();
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
   ? path.join(process.env.APP_ROOT, 'public')
@@ -150,8 +171,7 @@ function trimLifecycleLogIfNeeded(logPath: string): void {
     closeSync(fd);
     const newline = keep.indexOf(10);
     writeFileSync(logPath, keep.subarray(newline >= 0 ? newline + 1 : 0));
-  } catch {
-  }
+  } catch {}
 }
 
 function logLifecycle(message: string, extra?: unknown): void {
@@ -162,9 +182,10 @@ function logLifecycle(message: string, extra?: unknown): void {
   isWritingLifecycleLog = true;
 
   try {
-    const line = extra === undefined
-      ? `[lifecycle] ${message}`
-      : `[lifecycle] ${message} ${JSON.stringify(extra)}`;
+    const line =
+      extra === undefined
+        ? `[lifecycle] ${message}`
+        : `[lifecycle] ${message} ${JSON.stringify(extra)}`;
     const logPath = resolveLifecycleLogPath();
     appendFileSync(logPath, `${new Date().toISOString()} ${line}\n`);
     lifecycleWriteCount += 1;
@@ -191,6 +212,7 @@ const MEMORY_RELOAD_THRESHOLD_KB = 1536 * 1024;
 const MEMORY_RELOAD_COOLDOWN_MS = 5 * 60_000;
 const RECOVERY_TOAST_DELAY_MS = 900;
 const DEV_LOAD_RETRY_MS = 1500;
+const DEV_HEARTBEAT_MS = 3000;
 const DEV_LOAD_FAIL_CODES = new Set([-2, -101, -102, -103, -106, -118, -324]);
 const DEV_RECONNECT_MARKER = 'nexus-dev-reconnect';
 
@@ -201,6 +223,7 @@ let failLoadRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let lastMainFrameLoadFailed = false;
 let currentLoadFailed = false;
 let watchingDevServer = false;
+let devServerHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let flushMode: 'quit' | 'close' = 'quit';
 let isSessionFlushing = false;
 let sessionFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -238,10 +261,7 @@ if (VITE_DEV_SERVER_URL) {
 
 function shouldRecoverRendererProcess(reason: string): boolean {
   return (
-    reason === 'crashed' ||
-    reason === 'oom' ||
-    reason === 'abnormal-exit' ||
-    reason === 'killed'
+    reason === 'crashed' || reason === 'oom' || reason === 'abnormal-exit' || reason === 'killed'
   );
 }
 
@@ -337,14 +357,14 @@ function isDevReconnectUrl(url: string): boolean {
 }
 
 function probeDevServer(): Promise<boolean> {
-  if (!VITE_DEV_SERVER_URL) {
+  if (!DEV_SERVER_URL) {
     return Promise.resolve(false);
   }
 
   let parsed: URL;
 
   try {
-    parsed = new URL(VITE_DEV_SERVER_URL);
+    parsed = new URL(DEV_SERVER_URL);
   } catch {
     return Promise.resolve(false);
   }
@@ -384,6 +404,8 @@ function probeDevServer(): Promise<boolean> {
 }
 
 function buildDevReconnectHtml(): string {
+  const targetJson = JSON.stringify(DEV_SERVER_URL ?? 'http://127.0.0.1:5260/');
+
   return `<!doctype html>
 <html>
 <head>
@@ -397,6 +419,16 @@ p{margin:0;opacity:.72;font-size:14px;}
 </head>
 <body data-${DEV_RECONNECT_MARKER}="1">
 <div class="wrap"><p>Reconectando ao Nexus…</p></div>
+<script>
+const target = ${targetJson};
+const ping = () => {
+  fetch(target, { mode: 'no-cors', cache: 'no-store' })
+    .then(() => { location.replace(target); })
+    .catch(() => {});
+};
+ping();
+setInterval(ping, 1500);
+</script>
 </body>
 </html>`;
 }
@@ -415,7 +447,7 @@ function showDevReconnectPage(): void {
 }
 
 async function tickDevServerWatch(source: string): Promise<void> {
-  if (!watchingDevServer || !VITE_DEV_SERVER_URL || isQuitting) {
+  if (!watchingDevServer || !DEV_SERVER_URL || isQuitting) {
     return;
   }
 
@@ -433,7 +465,7 @@ async function tickDevServerWatch(source: string): Promise<void> {
     currentLoadFailed = false;
 
     try {
-      await win.loadURL(VITE_DEV_SERVER_URL);
+      await win.loadURL(DEV_SERVER_URL);
     } catch (error: unknown) {
       logLifecycle('retry loadURL failed', String(error));
       watchDevServer('load-failed');
@@ -442,6 +474,7 @@ async function tickDevServerWatch(source: string): Promise<void> {
     return;
   }
 
+  ensureDevServerRunning(process.env.APP_ROOT ?? '', logLifecycle);
   showDevReconnectPage();
   clearFailLoadRetry();
   failLoadRetryTimer = setTimeout(() => {
@@ -451,7 +484,7 @@ async function tickDevServerWatch(source: string): Promise<void> {
 }
 
 function watchDevServer(source: string): void {
-  if (!VITE_DEV_SERVER_URL || isQuitting) {
+  if (!DEV_SERVER_URL || isQuitting) {
     return;
   }
 
@@ -464,6 +497,54 @@ function watchDevServer(source: string): void {
   watchingDevServer = true;
   logLifecycle('watching dev server', source);
   void tickDevServerWatch(source);
+}
+
+function stopDevServerHeartbeat(): void {
+  if (!devServerHeartbeatTimer) {
+    return;
+  }
+
+  clearInterval(devServerHeartbeatTimer);
+  devServerHeartbeatTimer = null;
+}
+
+function startDevServerHeartbeat(): void {
+  if (!DEV_SERVER_URL || devServerHeartbeatTimer) {
+    return;
+  }
+
+  const beat = () => {
+    if (isQuitting) {
+      return;
+    }
+
+    void probeDevServer().then((up) => {
+      if (isQuitting || !win || win.isDestroyed() || win.webContents.isDestroyed()) {
+        return;
+      }
+
+      const url = win.webContents.getURL();
+      const onReconnect = isDevReconnectUrl(url);
+
+      if (up) {
+        if (onReconnect) {
+          watchDevServer('heartbeat-up');
+        }
+
+        return;
+      }
+
+      logLifecycle('dev server lost');
+      ensureDevServerRunning(process.env.APP_ROOT ?? '', logLifecycle);
+
+      if (onReconnect || lastMainFrameLoadFailed) {
+        watchDevServer('heartbeat');
+      }
+    });
+  };
+
+  beat();
+  devServerHeartbeatTimer = setInterval(beat, DEV_HEARTBEAT_MS);
 }
 
 function scheduleRendererRecovery(webContents: Electron.WebContents | null, source: string): void {
@@ -511,8 +592,8 @@ function scheduleRendererRecovery(webContents: Electron.WebContents | null, sour
           return;
         }
 
-        if (up) {
-          win.webContents.reload();
+        if (up && DEV_SERVER_URL) {
+          void win.loadURL(DEV_SERVER_URL);
           return;
         }
 
@@ -721,6 +802,21 @@ function requestSessionFlush(mode: 'quit' | 'close'): void {
 
 const indexHtml = path.join(RENDERER_DIST, 'index.html');
 
+configureAgentPipWindow({
+  getMainWindow: () => win,
+  preload,
+  loadUrl: async (window) => {
+    if (DEV_SERVER_URL) {
+      const url = new URL(DEV_SERVER_URL);
+      url.hash = 'agent-pip';
+      await window.loadURL(url.toString());
+      return;
+    }
+
+    await window.loadFile(indexHtml, { hash: 'agent-pip' });
+  },
+});
+
 function resolveAppIcon(): NativeImage | undefined {
   const appRoot = process.env.APP_ROOT ?? '';
   const candidates =
@@ -791,6 +887,7 @@ async function createWindow(appIcon?: NativeImage) {
   ptyManager.setWindow(win);
   agentPrintRunner.setWindow(win);
   testRunnerSession.setWindow(win);
+  bindAgentPipMainWindow(win);
 
   if (windowIcon && process.platform !== 'darwin') {
     win.setIcon(windowIcon);
@@ -817,23 +914,28 @@ async function createWindow(appIcon?: NativeImage) {
     currentLoadFailed = false;
   });
 
-  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-    if (!isMainFrame || errorCode === -3) {
-      return;
-    }
+  win.webContents.on(
+    'did-fail-load',
+    (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame || errorCode === -3) {
+        return;
+      }
 
-    currentLoadFailed = true;
-    lastMainFrameLoadFailed = true;
-    logLifecycle('did-fail-load', { errorCode, errorDescription, validatedURL });
+      currentLoadFailed = true;
+      lastMainFrameLoadFailed = true;
+      logLifecycle('did-fail-load', { errorCode, errorDescription, validatedURL });
 
-    const failedDevUrl = Boolean(
-      VITE_DEV_SERVER_URL && validatedURL && validatedURL.startsWith(VITE_DEV_SERVER_URL),
-    );
+      const failedDevUrl = Boolean(
+        validatedURL &&
+        ((DEV_SERVER_URL && validatedURL.startsWith(DEV_SERVER_URL)) ||
+          (VITE_DEV_SERVER_URL && validatedURL.startsWith(VITE_DEV_SERVER_URL))),
+      );
 
-    if (failedDevUrl || DEV_LOAD_FAIL_CODES.has(errorCode)) {
-      watchDevServer(errorDescription);
-    }
-  });
+      if (failedDevUrl || DEV_LOAD_FAIL_CODES.has(errorCode)) {
+        watchDevServer(errorDescription);
+      }
+    },
+  );
 
   win.webContents.on('did-finish-load', () => {
     const url = win?.webContents.getURL() ?? '';
@@ -857,9 +959,11 @@ async function createWindow(appIcon?: NativeImage) {
     win?.focus();
   });
 
-  if (VITE_DEV_SERVER_URL) {
+  if (DEV_SERVER_URL) {
+    startDevServerHeartbeat();
+
     try {
-      await win.loadURL(VITE_DEV_SERVER_URL);
+      await win.loadURL(DEV_SERVER_URL);
     } catch (error) {
       logLifecycle('loadURL failed', String(error));
       watchDevServer('loadURL failed');
@@ -906,6 +1010,13 @@ async function createWindow(appIcon?: NativeImage) {
 
     logLifecycle('window close requested');
     event.preventDefault();
+
+    if (process.platform !== 'darwin') {
+      markUserQuitRequested('window-close');
+      requestSessionFlush('quit');
+      return;
+    }
+
     requestSessionFlush('close');
   });
 
@@ -1100,6 +1211,7 @@ app.whenReady().then(() => {
   pruneBrowserDayCacheOnBoot();
   registerProjectHandlers();
   registerCloudHandlers();
+  registerAgentPipHandlers();
   registerFileHandlers(() => win);
   registerTerminalHandlers();
   registerAgentPrintHandlers();
@@ -1136,6 +1248,11 @@ app.whenReady().then(() => {
   powerMonitor.on('shutdown', () => {
     markUserQuitRequested('shutdown');
   });
+  if (process.platform === 'win32') {
+    powerMonitor.on('session-end', () => {
+      markUserQuitRequested('session-end');
+    });
+  }
   createWindow(appIcon);
   registerShortcuts();
   startMemoryWatch();
@@ -1246,6 +1363,13 @@ app.on('before-quit', (event) => {
   }
 
   if (!userQuitRequested) {
+    if (process.platform !== 'darwin' && windowCount === 0) {
+      stopMemoryWatch();
+      stopBrowserDayCacheWatch();
+      logLifecycle('allowing quit after last window closed');
+      return;
+    }
+
     event.preventDefault();
     cancelPendingSessionFlush();
     logLifecycle('blocked unexpected quit');
@@ -1300,6 +1424,8 @@ app.on('activate', () => {
 
 app.on('will-quit', () => {
   stopDevServerWatch();
+  stopDevServerHeartbeat();
+  stopEnsuredDevServer();
   stopMemoryWatch();
   stopBrowserDayCacheWatch();
   globalShortcut.unregisterAll();
@@ -1310,6 +1436,7 @@ app.on('will-quit', () => {
   stopDesktopControlServer();
   stopIdleWakeLock();
   void cleanupEmulatorSessions();
+  destroyAgentPipWindow();
 });
 
 app.on('second-instance', () => {

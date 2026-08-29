@@ -1,9 +1,16 @@
-import { preferredAiProviderToCli } from '@/constants/aiProviders';
+import {
+  preferredAiProviderToCli,
+  type AiProviderId,
+} from '@/constants/aiProviders';
 import { useAppSettingsStore } from '@/stores/useAppSettingsStore';
 import { buildAgentPaneLaunchCommand } from '@/utils/agentCliSession';
 
-export async function resolveAgentLaunchCommand(_projectPath: string | null): Promise<string> {
-  const preferredAiProvider = useAppSettingsStore.getState().preferredAiProvider;
+export async function resolveAgentLaunchCommand(
+  _projectPath: string | null,
+  provider?: Exclude<AiProviderId, 'nexus'>,
+): Promise<string> {
+  const preferredAiProvider =
+    provider ?? useAppSettingsStore.getState().preferredAiProvider;
 
   return buildAgentPaneLaunchCommand(preferredAiProviderToCli(preferredAiProvider));
 }

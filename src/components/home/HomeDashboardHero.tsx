@@ -6,6 +6,7 @@ import { useHomeDashboardClock } from '@/hooks/useHomeDashboardClock';
 interface HomeDashboardHeroProps {
   compact?: boolean;
   dense?: boolean;
+  hideBrand?: boolean;
   showDensityToggle?: boolean;
   onDensityToggle?: () => void;
   askSlot: ReactNode;
@@ -26,6 +27,7 @@ function HomeDashboardClockLabels() {
 function HomeDashboardHeroComponent({
   compact = false,
   dense = false,
+  hideBrand = false,
   showDensityToggle = false,
   onDensityToggle,
   askSlot,
@@ -42,7 +44,7 @@ function HomeDashboardHeroComponent({
     <header
       className={`home-dashboard__hero app-button--enter${
         compact ? ' home-dashboard__hero--compact' : ''
-      }`}
+      }${hideBrand ? ' home-dashboard__hero--no-brand' : ''}`}
     >
       {showDensityToggle ? (
         <button
@@ -70,7 +72,7 @@ function HomeDashboardHeroComponent({
         </button>
       ) : null}
       <HomeDashboardClockLabels />
-      <div className='home-dashboard__hero-brand'>
+      <div className='home-dashboard__hero-brand' aria-hidden={hideBrand}>
         <NexusLogo
           size={compact ? 28 : dense ? 36 : 56}
           className='nexus-brand-logo home-dashboard__hero-logo'

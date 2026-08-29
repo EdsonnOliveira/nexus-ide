@@ -18,7 +18,7 @@ import type {
   AgentTurn,
   AgentUserMessage,
 } from '@/types';
-import { registerAgentPaneHandlers } from '@/utils/agentPaneRegistry';
+import { registerAgentPaneHandlers, setAgentPaneLiveTranscript } from '@/utils/agentPaneRegistry';
 import { registerAgentPrintPaneHandlers } from '@/utils/agentPrintBridge';
 import {
   getOrCreateAgentStreamJsonSession,
@@ -347,6 +347,7 @@ export function useAgentPaneSession({
   const [isAgentReady, setIsAgentReady] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [contextUsage, setContextUsage] = useState<AgentContextUsageSnapshot | null>(null);
+  const contextUsageRef = useRef<AgentContextUsageSnapshot | null>(null);
   const [contextUsageLoading, setContextUsageLoading] = useState(false);
   const contextUsageReportTimerRef = useRef<number | null>(null);
   const contextUsageReportPendingRef = useRef(false);
@@ -372,11 +373,23 @@ export function useAgentPaneSession({
   onPtyLostRef.current = onPtyLost;
   onAppendDraftRef.current = onAppendDraft;
   onRestoreDraftRef.current = onRestoreDraft;
-  followUpsRef.current = followUps.filter((item) => !consumedFollowUpIdsRef.current.has(item.id));
+  contextUsageRef.current = contextUsage;
+  if (isVisible || isRuntimeActive) {
+    setAgentPaneLiveTranscript(tab.id, {
+      turns: turnsRef.current,
+      followUps: followUpsRef.current,
+      contextUsage: contextUsageRef.current,
+    });
+  }
 
   const persistFollowUps = useCallback((next: AgentFollowUp[]) => {
     const cleaned = next.filter((item) => !consumedFollowUpIdsRef.current.has(item.id));
     followUpsRef.current = cleaned;
+    setAgentPaneLiveTranscript(paneIdRef.current, {
+      turns: turnsRef.current,
+      followUps: cleaned,
+      contextUsage: contextUsageRef.current,
+    });
     setFollowUps(cleaned);
     onFollowUpsChangeRef.current(cleaned);
   }, []);
@@ -712,6 +725,11 @@ export function useAgentPaneSession({
   const persistTurns = useCallback(
     (nextTurns: AgentTurn[], options?: { flush?: boolean }) => {
       turnsRef.current = nextTurns;
+      setAgentPaneLiveTranscript(paneIdRef.current, {
+        turns: nextTurns,
+        followUps: followUpsRef.current,
+        contextUsage: contextUsageRef.current,
+      });
       setTurnsRevision((revision) => revision + 1);
 
       if (options?.flush) {
@@ -1249,8 +1267,7 @@ export function useAgentPaneSession({
 
     const lastReply = [...state.activities]
       .reverse()
-      .find((entry) => entry.kind === 'response' && entry.label.trim())
-      ?.label;
+      .find((entry) => entry.kind === 'response' && entry.label.trim())?.label;
     const liveServer = looksLikeLiveServerReply(lastReply ?? state.pendingResponseText);
     const handoffAfterMs = liveServer
       ? STREAM_JSON_READY_SHELL_HANDOFF_MS
@@ -2395,15 +2412,29 @@ export function useAgentPaneSession({
       const trimmed = prompt.trim();
       const hasDisplayOverride = options?.displayContent !== undefined;
       const displayContent = hasDisplayOverride ? options.displayContent!.trim() : trimmed;
-      const attachments = snapshotAttachments(paneIdRef.current);
+      const attachments =
+        options?.attachments && options.attachments.length > 0
+          ? options.attachments
+          : snapshotAttachments(paneIdRef.current);
       const imageRefs = attachments
         .map((attachment) =>
           attachment.relativePath ? buildImagePathReference(attachment.relativePath) : '',
         )
         .filter(Boolean);
 
-      if ((!trimmed && imageRefs.length === 0) || (!usesStreamJson && !ptyIdRef.current)) {
+      if (
+        (!trimmed && attachments.length === 0 && imageRefs.length === 0) ||
+        (!usesStreamJson && !ptyIdRef.current)
+      ) {
         return false;
+      }
+
+      const hasRunningTurn = turnsRef.current.some((turn) => turn.running);
+      const editingTurnId = editingTurnIdRef.current;
+
+      if (hasRunningTurn && !editingTurnId && !options?.forceNewTurn) {
+        useTerminalPasteImageStore.getState().clearPaneImages(paneIdRef.current);
+        return enqueueFollowUp(trimmed, attachments);
       }
 
       if (submitInFlightRef.current && !options?.forceNewTurn) {
@@ -2414,17 +2445,8 @@ export function useAgentPaneSession({
         stopAgent();
       }
 
-      const hasRunningTurn = turnsRef.current.some((turn) => turn.running);
-
-      const editingTurnId = editingTurnIdRef.current;
-
-      if (hasRunningTurn && !editingTurnId) {
-        if (options?.forceNewTurn) {
-          stopAgent();
-        } else {
-          useTerminalPasteImageStore.getState().clearPaneImages(paneIdRef.current);
-          return enqueueFollowUp(trimmed, attachments);
-        }
+      if (hasRunningTurn && !editingTurnId && options?.forceNewTurn) {
+        stopAgent();
       }
 
       if (editingTurnId) {
@@ -3649,7 +3671,7 @@ export function useAgentPaneSession({
   ]);
 
   useEffect(() => {
-    if (!usesStreamJson || !isTurnRunning) {
+    if (!usesStreamJson || !isTurnRunning || !isVisible || !isRuntimeActive) {
       return;
     }
 
@@ -3729,9 +3751,7 @@ export function useAgentPaneSession({
 
           const hungIdleExceeded =
             idleMs >=
-            (hasBlockingToolWork
-              ? STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS
-              : STREAM_JSON_HUNG_IDLE_MS);
+            (hasBlockingToolWork ? STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS : STREAM_JSON_HUNG_IDLE_MS);
 
           if (hungIdleExceeded) {
             forceSettleStreamJsonInFlightWork(streamJsonStateRef.current);
@@ -3904,6 +3924,8 @@ export function useAgentPaneSession({
     finalizeActiveTurn,
     finalizeStreamJsonTurnFromEvent,
     isTurnRunning,
+    isVisible,
+    isRuntimeActive,
     syncStreamJsonStallLiveStatus,
     tryFinalizeSettledStreamJsonTurn,
     tryHandoffLongRunningDevShell,
@@ -3962,14 +3984,51 @@ export function useAgentPaneSession({
   }, [finalizeActiveTurn, finalizeStreamJsonTurnFromEvent, isTurnRunning, usesStreamJson]);
 
   useEffect(() => {
+    const paneId = tab.id;
+    return () => {
+      setAgentPaneLiveTranscript(paneId, null);
+    };
+  }, [tab.id]);
+
+  useEffect(() => {
     return registerAgentPaneHandlers(paneIdRef.current, {
       submit: submitPrompt,
       stop: stopAgent,
       write: appendDraft,
       runCommand,
       redo: redoAgentTurn,
+      editTurn: editAgentTurn,
+      cancelEdit: cancelAgentTurnEdit,
+      flushFollowUp: () => tryFlushFollowUpQueue({ force: true }),
+      sendFollowUpNow,
+      removeFollowUp,
+      editFollowUp,
+      submitQuestion: submitQuestionAnswers,
+      acceptPlan,
+      rejectPlan,
+      getLiveTranscript: () => ({
+        turns: turnsRef.current,
+        followUps: followUpsRef.current,
+        contextUsage: contextUsageRef.current,
+      }),
     });
-  }, [appendDraft, redoAgentTurn, runCommand, stopAgent, submitPrompt, tab.id]);
+  }, [
+    acceptPlan,
+    appendDraft,
+    cancelAgentTurnEdit,
+    editAgentTurn,
+    editFollowUp,
+    redoAgentTurn,
+    rejectPlan,
+    removeFollowUp,
+    runCommand,
+    sendFollowUpNow,
+    stopAgent,
+    submitPrompt,
+    submitQuestionAnswers,
+    tab.id,
+    tryFlushFollowUpQueue,
+  ]);
 
   const flushNextFollowUp = useCallback(() => {
     return tryFlushFollowUpQueue({ force: true });

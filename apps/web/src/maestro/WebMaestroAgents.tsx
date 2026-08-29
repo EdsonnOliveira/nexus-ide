@@ -18,8 +18,10 @@ import {
   Smartphone,
   Trash2,
 } from 'lucide-react';
+import { ackDesktopAgentViewed } from '@nexus/supabase';
 import type { CloudProject } from '@nexus/protocol';
-import type { WebAgentSession } from '../store';
+import { supabase } from '../lib/supabase';
+import { useWebStore, type WebAgentSession } from '../store';
 import { WebAgentChat } from './WebAgentChat';
 import type { WebAgentMode } from './WebAgentPlusMenu';
 import { WebAgentShellTerminals } from './WebAgentShellTerminals';
@@ -61,6 +63,7 @@ interface WebMaestroAgentsProps {
   ) => boolean | Promise<boolean>;
   onStop: (agentId: string) => void;
   onModelChange: (agentId: string, modelId: string) => void;
+  onAgentCommandChange: (agentId: string, agentCommand: string) => void;
   onModeChange: (agentId: string, modeId: WebAgentMode) => void;
   onExecuteTask?: (task: WebProjectTask) => void | Promise<void>;
   onScrollChange?: (scrolled: boolean) => void;
@@ -393,6 +396,7 @@ function AgentFullscreen({
   onFollowUp,
   onStop,
   onModelChange,
+  onAgentCommandChange,
   onModeChange,
 }: {
   agent: WebAgentSession;
@@ -412,6 +416,7 @@ function AgentFullscreen({
   ) => boolean | Promise<boolean>;
   onStop: (agentId: string) => void;
   onModelChange: (agentId: string, modelId: string) => void;
+  onAgentCommandChange: (agentId: string, agentCommand: string) => void;
   onModeChange: (agentId: string, modeId: WebAgentMode) => void;
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -503,6 +508,7 @@ function AgentFullscreen({
           onFollowUp={onFollowUp}
           onStop={onStop}
           onModelChange={onModelChange}
+          onAgentCommandChange={onAgentCommandChange}
           onModeChange={onModeChange}
         />
       </div>
@@ -652,6 +658,7 @@ export function WebMaestroAgents({
   onFollowUp,
   onStop,
   onModelChange,
+  onAgentCommandChange,
   onModeChange,
   onExecuteTask,
   onScrollChange,
@@ -701,6 +708,7 @@ export function WebMaestroAgents({
     () => (openAgentId ? (projectAgents.find((agent) => agent.id === openAgentId) ?? null) : null),
     [openAgentId, projectAgents],
   );
+  const lastAckedDesktopPaneIdRef = useRef<string | null>(null);
   const hasEmulator = Boolean(selectedProjectId && emulatorProjectIds?.has(selectedProjectId));
   const hasPreview = Boolean(selectedProjectId && previewProjectIds?.has(selectedProjectId));
 
@@ -727,6 +735,36 @@ export function WebMaestroAgents({
   useEffect(() => {
     setDetailTask(null);
   }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (!openAgentId) {
+      lastAckedDesktopPaneIdRef.current = null;
+      return;
+    }
+
+    if (lastAckedDesktopPaneIdRef.current === openAgentId) {
+      return;
+    }
+
+    const agent =
+      openAgent?.id === openAgentId
+        ? openAgent
+        : (agents.find((item) => item.id === openAgentId) ??
+          projectAgents.find((item) => item.id === openAgentId) ??
+          useWebStore.getState().agents.find((item) => item.id === openAgentId) ??
+          null);
+
+    if (!agent) {
+      return;
+    }
+
+    lastAckedDesktopPaneIdRef.current = openAgentId;
+    if (agent.source !== 'desktop_pane') {
+      return;
+    }
+
+    void ackDesktopAgentViewed(supabase, openAgentId, agent.deviceId || deviceId);
+  }, [agents, deviceId, openAgent, openAgentId, projectAgents]);
 
   useEffect(() => {
     if (showingProjects) {
@@ -876,6 +914,7 @@ export function WebMaestroAgents({
           onFollowUp={onFollowUp}
           onStop={onStop}
           onModelChange={onModelChange}
+          onAgentCommandChange={onAgentCommandChange}
           onModeChange={onModeChange}
         />
       </section>

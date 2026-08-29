@@ -93,6 +93,7 @@ export function hydrateWebAgentsFromBundles(bundles: AgentSessionBundle[]): WebA
       logoUrl: project?.logo_url ?? null,
       cursorSessionId,
       modelId: session.model_id || 'auto',
+      agentCommand: session.agent_command || 'cursor-agent',
       modeId: 'agent',
       source: session.source === 'desktop_pane' ? 'desktop_pane' : 'cloud',
       stream: '',

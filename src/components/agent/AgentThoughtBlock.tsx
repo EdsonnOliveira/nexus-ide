@@ -137,10 +137,12 @@ function AgentThoughtBlockComponent({
       return;
     }
 
+    let lastBodyHeight = body.offsetHeight;
+
     const flushScrollToBottom = () => {
       scrollRafRef.current = null;
 
-      if (!stickToBottomRef.current) {
+      if (!stickToBottomRef.current || programmaticScrollRef.current) {
         return;
       }
 
@@ -158,7 +160,7 @@ function AgentThoughtBlockComponent({
     };
 
     const scheduleScrollToBottom = () => {
-      if (!stickToBottomRef.current) {
+      if (!stickToBottomRef.current || programmaticScrollRef.current) {
         return;
       }
 
@@ -169,7 +171,15 @@ function AgentThoughtBlockComponent({
       scrollRafRef.current = window.requestAnimationFrame(flushScrollToBottom);
     };
 
-    const observer = new ResizeObserver(scheduleScrollToBottom);
+    const observer = new ResizeObserver(() => {
+      const nextHeight = body.offsetHeight;
+      if (nextHeight <= lastBodyHeight + 0.5) {
+        return;
+      }
+
+      lastBodyHeight = nextHeight;
+      scheduleScrollToBottom();
+    });
     observer.observe(body);
     scheduleScrollToBottom();
 
@@ -181,7 +191,7 @@ function AgentThoughtBlockComponent({
         scrollRafRef.current = null;
       }
     };
-  }, [activity.id, activity.streaming, bodyHtml, bodyText, expanded]);
+  }, [activity.id, activity.streaming, expanded]);
 
   const handleToggle = useCallback(() => {
     if (!canToggle) {
