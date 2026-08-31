@@ -6,6 +6,8 @@ import type { TerminalCommandHint } from './terminalHints';
 const execFileAsync = promisify(execFile);
 const MAX_MODEL_HINTS = 8;
 
+export type AgentModelProvider = 'cursor' | 'claude' | 'opencode' | 'antigravity';
+
 type ModelBadgeIcon = NonNullable<TerminalCommandHint['badgeIcon']>;
 
 const MODEL_BADGE_COLORS: Record<ModelBadgeIcon, string> = {
@@ -29,12 +31,34 @@ interface AgentModelEntry {
   isCurrent: boolean;
 }
 
-const FALLBACK_MODELS: AgentModelEntry[] = [
+export interface AgentModelOption {
+  id: string;
+  label: string;
+}
+
+const CURSOR_FALLBACK_MODELS: AgentModelEntry[] = [
   { id: 'auto', label: 'Auto', isCurrent: false },
   { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isCurrent: true },
   { id: 'claude-opus-4-8-thinking-high', label: 'Opus 4.8 Thinking', isCurrent: false },
   { id: 'gpt-5.3-codex', label: 'Codex 5.3', isCurrent: false },
   { id: 'gpt-5.4-high', label: 'GPT-5.4 High', isCurrent: false },
+];
+
+const CLAUDE_FALLBACK_MODELS: AgentModelOption[] = [
+  { id: 'sonnet', label: 'Sonnet' },
+  { id: 'opus', label: 'Opus' },
+  { id: 'haiku', label: 'Haiku' },
+];
+
+const OPENCODE_FALLBACK_MODELS: AgentModelOption[] = [
+  { id: 'opencode/big-pickle', label: 'Big Pickle' },
+  { id: 'opencode/mimo-v2.5-free', label: 'MiMo v2.5 Free' },
+];
+
+const ANTIGRAVITY_FALLBACK_MODELS: AgentModelOption[] = [
+  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+  { id: 'gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' },
 ];
 
 const MODEL_PRIORITY_PATTERNS = [
@@ -54,13 +78,25 @@ const MODEL_PRIORITY_PATTERNS = [
   /fable-5-medium$/,
 ];
 
-let cachedModels: AgentModelEntry[] | null = null;
-let cacheTimestamp = 0;
-let refreshInFlight: Promise<void> | null = null;
+let cachedCursorModels: AgentModelEntry[] | null = null;
+let cursorCacheTimestamp = 0;
+let cursorRefreshInFlight: Promise<void> | null = null;
+
+let cachedOpenCodeModels: AgentModelOption[] | null = null;
+let openCodeCacheTimestamp = 0;
+let openCodeRefreshInFlight: Promise<void> | null = null;
+
+let cachedClaudeModels: AgentModelOption[] | null = null;
+let claudeCacheTimestamp = 0;
+let claudeRefreshInFlight: Promise<void> | null = null;
+
+let cachedAntigravityModels: AgentModelOption[] | null = null;
+let antigravityCacheTimestamp = 0;
+let antigravityRefreshInFlight: Promise<void> | null = null;
 
 const CACHE_TTL_MS = 60_000;
 
-function parseModelsOutput(output: string): AgentModelEntry[] {
+function parseCursorModelsOutput(output: string): AgentModelEntry[] {
   const models: AgentModelEntry[] = [];
 
   for (const line of output.split('\n')) {
@@ -87,12 +123,47 @@ function parseModelsOutput(output: string): AgentModelEntry[] {
   return models;
 }
 
-function scheduleModelsRefresh(): void {
-  if (refreshInFlight) {
+function parseIdListModelsOutput(output: string): AgentModelOption[] {
+  const models: AgentModelOption[] = [];
+  const seen = new Set<string>();
+
+  for (const line of output.split('\n')) {
+    const trimmed = line.trim();
+
+    if (
+      !trimmed ||
+      /^error:/i.test(trimmed) ||
+      trimmed.startsWith('Available') ||
+      /^(usage|commands|options|positionals)/i.test(trimmed)
+    ) {
+      continue;
+    }
+
+    const id = trimmed.split(/\s+/)[0]?.trim();
+
+    if (!id || seen.has(id) || !/^[\w.@:+/-]+$/.test(id)) {
+      continue;
+    }
+
+    seen.add(id);
+    const shortLabel = id.includes('/') ? id.slice(id.lastIndexOf('/') + 1) : id;
+    models.push({
+      id,
+      label: shortLabel
+        .replace(/-/g, ' ')
+        .replace(/\b\w/g, (char) => char.toUpperCase()),
+    });
+  }
+
+  return models;
+}
+
+function scheduleCursorModelsRefresh(): void {
+  if (cursorRefreshInFlight) {
     return;
   }
 
-  refreshInFlight = (async () => {
+  cursorRefreshInFlight = (async () => {
     try {
       const { stdout } = await execFileAsync('cursor-agent', ['models'], {
         encoding: 'utf8',
@@ -101,36 +172,36 @@ function scheduleModelsRefresh(): void {
         maxBuffer: 2 * 1024 * 1024,
       });
 
-      const parsed = parseModelsOutput(stdout);
+      const parsed = parseCursorModelsOutput(stdout);
 
       if (parsed.length > 0) {
-        cachedModels = parsed;
-      } else if (!cachedModels) {
-        cachedModels = FALLBACK_MODELS;
+        cachedCursorModels = parsed;
+      } else if (!cachedCursorModels) {
+        cachedCursorModels = CURSOR_FALLBACK_MODELS;
       }
 
-      cacheTimestamp = Date.now();
+      cursorCacheTimestamp = Date.now();
     } catch {
-      if (!cachedModels) {
-        cachedModels = FALLBACK_MODELS;
+      if (!cachedCursorModels) {
+        cachedCursorModels = CURSOR_FALLBACK_MODELS;
       }
 
-      cacheTimestamp = Date.now();
+      cursorCacheTimestamp = Date.now();
     } finally {
-      refreshInFlight = null;
+      cursorRefreshInFlight = null;
     }
   })();
 }
 
-function loadAvailableModels(): AgentModelEntry[] {
+function loadAvailableCursorModels(): AgentModelEntry[] {
   const now = Date.now();
 
-  if (cachedModels && now - cacheTimestamp < CACHE_TTL_MS) {
-    return cachedModels;
+  if (cachedCursorModels && now - cursorCacheTimestamp < CACHE_TTL_MS) {
+    return cachedCursorModels;
   }
 
-  scheduleModelsRefresh();
-  return cachedModels ?? FALLBACK_MODELS;
+  scheduleCursorModelsRefresh();
+  return cachedCursorModels ?? CURSOR_FALLBACK_MODELS;
 }
 
 function prioritizeModels(models: AgentModelEntry[]): AgentModelEntry[] {
@@ -221,7 +292,7 @@ function resolveModelBadgeIcon(modelId: string, label: string): ModelBadgeIcon {
 }
 
 export function getAgentModelHints(): TerminalCommandHint[] {
-  const models = prioritizeModels(loadAvailableModels());
+  const models = prioritizeModels(loadAvailableCursorModels());
 
   return models.map((model) => {
     const badgeIcon = resolveModelBadgeIcon(model.id, model.label);
@@ -236,4 +307,143 @@ export function getAgentModelHints(): TerminalCommandHint[] {
       hintKind: 'model',
     };
   });
+}
+
+function isAgentModelProvider(value: string): value is AgentModelProvider {
+  return (
+    value === 'cursor' ||
+    value === 'claude' ||
+    value === 'opencode' ||
+    value === 'antigravity'
+  );
+}
+
+async function fetchCliIdModels(
+  command: string,
+  args: string[],
+): Promise<AgentModelOption[]> {
+  const { stdout } = await execFileAsync(command, args, {
+    encoding: 'utf8',
+    env: { ...process.env, PATH: buildCliPathEnv() },
+    timeout: 12_000,
+    maxBuffer: 2 * 1024 * 1024,
+  });
+
+  return parseIdListModelsOutput(stdout);
+}
+
+async function loadOpenCodeModels(): Promise<AgentModelOption[]> {
+  const now = Date.now();
+
+  if (cachedOpenCodeModels && now - openCodeCacheTimestamp < CACHE_TTL_MS) {
+    return cachedOpenCodeModels;
+  }
+
+  if (!openCodeRefreshInFlight) {
+    openCodeRefreshInFlight = (async () => {
+      try {
+        const parsed = await fetchCliIdModels('opencode', ['models']);
+        cachedOpenCodeModels = parsed.length > 0 ? parsed : OPENCODE_FALLBACK_MODELS;
+      } catch {
+        cachedOpenCodeModels = cachedOpenCodeModels ?? OPENCODE_FALLBACK_MODELS;
+      } finally {
+        openCodeCacheTimestamp = Date.now();
+        openCodeRefreshInFlight = null;
+      }
+    })();
+  }
+
+  await openCodeRefreshInFlight;
+  return cachedOpenCodeModels ?? OPENCODE_FALLBACK_MODELS;
+}
+
+async function loadClaudeModels(): Promise<AgentModelOption[]> {
+  const now = Date.now();
+
+  if (cachedClaudeModels && now - claudeCacheTimestamp < CACHE_TTL_MS) {
+    return cachedClaudeModels;
+  }
+
+  if (!claudeRefreshInFlight) {
+    claudeRefreshInFlight = (async () => {
+      try {
+        const parsed = await fetchCliIdModels('claude', ['models']);
+        cachedClaudeModels = parsed.length > 0 ? parsed : CLAUDE_FALLBACK_MODELS;
+      } catch {
+        cachedClaudeModels = cachedClaudeModels ?? CLAUDE_FALLBACK_MODELS;
+      } finally {
+        claudeCacheTimestamp = Date.now();
+        claudeRefreshInFlight = null;
+      }
+    })();
+  }
+
+  await claudeRefreshInFlight;
+  return cachedClaudeModels ?? CLAUDE_FALLBACK_MODELS;
+}
+
+async function loadAntigravityModels(): Promise<AgentModelOption[]> {
+  const now = Date.now();
+
+  if (cachedAntigravityModels && now - antigravityCacheTimestamp < CACHE_TTL_MS) {
+    return cachedAntigravityModels;
+  }
+
+  if (!antigravityRefreshInFlight) {
+    antigravityRefreshInFlight = (async () => {
+      try {
+        const parsed = await fetchCliIdModels('agy', ['models']);
+        cachedAntigravityModels =
+          parsed.length > 0 ? parsed : ANTIGRAVITY_FALLBACK_MODELS;
+      } catch {
+        cachedAntigravityModels =
+          cachedAntigravityModels ?? ANTIGRAVITY_FALLBACK_MODELS;
+      } finally {
+        antigravityCacheTimestamp = Date.now();
+        antigravityRefreshInFlight = null;
+      }
+    })();
+  }
+
+  await antigravityRefreshInFlight;
+  return cachedAntigravityModels ?? ANTIGRAVITY_FALLBACK_MODELS;
+}
+
+async function loadCursorModelOptions(): Promise<AgentModelOption[]> {
+  const now = Date.now();
+
+  if (!cachedCursorModels || now - cursorCacheTimestamp >= CACHE_TTL_MS) {
+    scheduleCursorModelsRefresh();
+
+    if (cursorRefreshInFlight) {
+      await cursorRefreshInFlight;
+    }
+  }
+
+  const models = prioritizeModels(loadAvailableCursorModels());
+
+  return models.map((model) => ({
+    id: model.id,
+    label: shortenModelLabel(model.label),
+  }));
+}
+
+export async function listAgentModelsForProvider(
+  providerInput: string,
+): Promise<AgentModelOption[]> {
+  const provider = isAgentModelProvider(providerInput) ? providerInput : 'cursor';
+
+  if (provider === 'opencode') {
+    return loadOpenCodeModels();
+  }
+
+  if (provider === 'claude') {
+    return loadClaudeModels();
+  }
+
+  if (provider === 'antigravity') {
+    return loadAntigravityModels();
+  }
+
+  return loadCursorModelOptions();
 }

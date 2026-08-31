@@ -23,6 +23,8 @@ import { registerAgentPrintPaneHandlers } from '@/utils/agentPrintBridge';
 import {
   getOrCreateAgentStreamJsonSession,
   replaceAgentStreamJsonSession,
+  beginAgentStreamJsonIncompleteContinue,
+  clearAgentStreamJsonIncompleteContinue,
 } from '@/utils/agentStreamJsonSession';
 import { recordHomeDashboardActivity } from '@/utils/recordHomeDashboardActivity';
 import { cliAgentToTerminalAgent, resolveAgentTabCli } from '@/utils/agentTabHelpers';
@@ -83,8 +85,12 @@ import {
   hasIncompleteStreamJsonTurnEnding,
   hasMeaningfulStreamJsonTurnOutput,
   hasPendingStreamJsonInteraction,
+  hasPostToolFinalResponse,
+  hasResumableStreamJsonTurnProgress,
   hasStreamJsonVisibleProgress,
+  hydrateAgentStreamJsonSessionFromTurn,
   isAgentStreamJsonStateAwaitingCompletion,
+  isInjectedDevServerHandoffReply,
   looksLikeLiveServerReply,
   resolveStreamJsonStallLiveStatus,
   tryMarkStreamJsonReadyToFinalize,
@@ -119,7 +125,11 @@ import {
   type AgentContextUsageSnapshot,
   type AgentStreamJsonTokenUsage,
 } from '@/utils/agentContextUsageParser';
-import { trimAgentTurnHistory, sanitizeAgentTurnHistory } from '@/utils/trimAgentTurnHistory';
+import {
+  trimAgentTurnHistory,
+  sanitizeAgentTurnHistory,
+  reuseStableAgentTurns,
+} from '@/utils/trimAgentTurnHistory';
 import { shouldPreferLocalAgentTurnHistory } from '@/utils/paneAgentSession';
 import { writeDebugSessionLog } from '@/utils/debugSessionLog';
 import { useToastStore } from '@/stores/useToastStore';
@@ -139,13 +149,13 @@ const STREAM_JSON_ORPHAN_FINALIZE_MS = 2_000;
 const STREAM_JSON_INCOMPLETE_ORPHAN_FINALIZE_MS = 45_000;
 const STREAM_JSON_HUNG_IDLE_MS = 1_800_000;
 const STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS = 7_200_000;
-const STREAM_JSON_EMPTY_HUNG_IDLE_MS = 120_000;
+const STREAM_JSON_EMPTY_HUNG_IDLE_MS = 600_000;
 const STREAM_JSON_DEAD_PROCESS_FINALIZE_MS = 2_000;
 const STREAM_JSON_IDLE_CHECK_MS = 500;
 const STREAM_JSON_RESPONSE_IDLE_FINALIZE_MS = 400;
 const STREAM_JSON_STALL_UI_MS = 4_000;
-const STREAM_JSON_LONG_SHELL_HANDOFF_MS = 45_000;
 const STREAM_JSON_READY_SHELL_HANDOFF_MS = 8_000;
+const STREAM_JSON_COMPLETE_RESPONSE_IDLE_FINALIZE_MS = 2_000;
 const STREAM_JSON_STARTUP_GRACE_MS = 45_000;
 const APPROVAL_CONFIRM_DELAY_MS = 450;
 const SUBMIT_GATE_TIMEOUT_MS = 20_000;
@@ -153,10 +163,11 @@ const SUBMIT_SETUP_TIMEOUT_MS = 8_000;
 const COMPOSER_READY_POLL_MS = 250;
 const COMPOSER_READY_MAX_MS = 12_000;
 const STREAM_JSON_AUTO_RETRY_DELAY_MS = 250;
+const STREAM_JSON_RECOVER_CONTINUE_MIN_TURN_MS = 3_000;
 const STREAM_JSON_MAX_INCOMPLETE_CONTINUES = 4;
 const STREAM_JSON_INCOMPLETE_CONTINUE_PROMPT =
   'Continue from where you left off. Finish the incomplete response.';
-const STREAMING_TURNS_UI_MS = 40;
+const STREAMING_TURNS_UI_MS = 80;
 const PERSIST_TURNS_DEBOUNCE_MS = 1200;
 const CONTEXT_USAGE_REPORT_DELAY_MS = 700;
 const AGENT_OUTPUT_TAIL_SIZE = 8192;
@@ -417,13 +428,20 @@ export function useAgentPaneSession({
     lastStreamJsonChunkAtRef.current = Date.now();
   }, []);
 
-  const bindAgentPrintRunToken = useCallback((paneId: string, runToken: string) => {
-    agentPrintRunTokenRef.current = runToken;
-    agentPrintRunActiveRef.current = true;
-    hasStreamJsonChunkRef.current = false;
-    lastStreamJsonChunkAtRef.current = Date.now();
-    useTerminalSessionStore.getState().setAgentPrintRunToken(paneId, runToken);
-  }, []);
+  const bindAgentPrintRunToken = useCallback(
+    (paneId: string, runToken: string, resetProgress = true) => {
+      agentPrintRunTokenRef.current = runToken;
+      agentPrintRunActiveRef.current = true;
+
+      if (resetProgress) {
+        hasStreamJsonChunkRef.current = false;
+        lastStreamJsonChunkAtRef.current = Date.now();
+      }
+
+      useTerminalSessionStore.getState().setAgentPrintRunToken(paneId, runToken);
+    },
+    [],
+  );
 
   const clearAgentPrintRunToken = useCallback((paneId: string) => {
     agentPrintRunTokenRef.current = '';
@@ -602,6 +620,13 @@ export function useAgentPaneSession({
 
   useEffect(() => {
     const incoming = sanitizeAgentTurnHistory(tab.turns ?? []);
+
+    if (!isRuntimeActive) {
+      turnsRef.current = incoming;
+      setTurnsRevision((revision) => revision + 1);
+      return;
+    }
+
     const localTurns = turnsRef.current;
     const localRunning = localTurns.some((turn) => turn.running);
     const session = useTerminalSessionStore.getState();
@@ -648,7 +673,7 @@ export function useAgentPaneSession({
 
     turnsRef.current = incoming;
     setTurnsRevision((revision) => revision + 1);
-  }, [persistFollowUps, tab.turns]);
+  }, [isRuntimeActive, persistFollowUps, tab.turns]);
 
   useEffect(() => {
     if (tab.ptyId) {
@@ -724,9 +749,10 @@ export function useAgentPaneSession({
 
   const persistTurns = useCallback(
     (nextTurns: AgentTurn[], options?: { flush?: boolean }) => {
-      turnsRef.current = nextTurns;
+      const stableTurns = reuseStableAgentTurns(turnsRef.current, nextTurns);
+      turnsRef.current = stableTurns;
       setAgentPaneLiveTranscript(paneIdRef.current, {
-        turns: nextTurns,
+        turns: stableTurns,
         followUps: followUpsRef.current,
         contextUsage: contextUsageRef.current,
       });
@@ -738,7 +764,7 @@ export function useAgentPaneSession({
           streamingTurnsUiRef.current = null;
         }
 
-        onTurnsChangeRef.current(nextTurns, { persist: false });
+        onTurnsChangeRef.current(stableTurns, { persist: false });
         flushPersistTurns();
         return;
       }
@@ -801,7 +827,6 @@ export function useAgentPaneSession({
 
       nextTurns[resolvedIndex] = updatedTurn;
       turnsRef.current = nextTurns;
-      setTurnsRevision((revision) => revision + 1);
       scheduleStreamingTurnsUi();
       schedulePersistTurns();
     },
@@ -1247,11 +1272,16 @@ export function useAgentPaneSession({
 
   const tryHandoffLongRunningDevShell = useCallback((idleMs: number): boolean => {
     const state = streamJsonStateRef.current;
-    const streamingThought = state.activities.find(
-      (entry) => entry.kind === 'thought' && entry.streaming && Boolean(entry.label.trim()),
-    );
 
-    if (streamingThought || hasPendingStreamJsonInteraction(state)) {
+    if (hasPendingStreamJsonInteraction(state) || hasIncompleteStreamJsonTurnEnding(state)) {
+      return false;
+    }
+
+    if (state.activities.some((entry) => entry.kind === 'thought' && entry.streaming)) {
+      return false;
+    }
+
+    if (hasBlockingAgentToolWork(state.activities)) {
       return false;
     }
 
@@ -1259,38 +1289,27 @@ export function useAgentPaneSession({
       .reverse()
       .find((entry) => entry.kind === 'tool_run' && entry.streaming && entry.toolCommand?.trim());
     const command = streamingShell?.toolCommand?.trim() ?? '';
-    const hasDevShell = Boolean(command && shouldOpenAgentShellToolTerminal(command));
 
-    if (!hasDevShell) {
+    if (!command || !shouldOpenAgentShellToolTerminal(command)) {
       return false;
     }
 
     const lastReply = [...state.activities]
       .reverse()
-      .find((entry) => entry.kind === 'response' && entry.label.trim())?.label;
+      .find(
+        (entry) =>
+          entry.kind === 'response' &&
+          entry.label.trim() &&
+          !isInjectedDevServerHandoffReply(entry.label),
+      )?.label;
     const liveServer = looksLikeLiveServerReply(lastReply ?? state.pendingResponseText);
-    const handoffAfterMs = liveServer
-      ? STREAM_JSON_READY_SHELL_HANDOFF_MS
-      : STREAM_JSON_LONG_SHELL_HANDOFF_MS;
 
-    if (idleMs < handoffAfterMs) {
+    if (!liveServer) {
       return false;
     }
 
-    forceSettleStreamJsonInFlightWork(state);
-
-    if (!state.pendingResponseText.trim() && !hasMeaningfulStreamJsonTurnOutput(state)) {
-      feedAgentStreamJsonChunk(
-        state,
-        `${JSON.stringify({
-          type: 'assistant',
-          message: {
-            content: [
-              { text: 'Servidor de desenvolvimento em execução. Acompanhe pelo terminal.' },
-            ],
-          },
-        })}\n`,
-      );
+    if (idleMs < STREAM_JSON_READY_SHELL_HANDOFF_MS) {
+      return false;
     }
 
     preserveAgentShellChildrenRef.current = true;
@@ -1299,11 +1318,56 @@ export function useAgentPaneSession({
     writeDebugSessionLog({
       location: 'useAgentPaneSession.ts:tryHandoff',
       message: 'handoff accepted',
-      data: { idleMs, liveServer, command: command.slice(0, 120) },
+      data: {
+        idleMs,
+        liveServer,
+        command: command.slice(0, 120),
+      },
       hypothesisId: 'H2',
     });
     return true;
   }, []);
+
+  const tryFinalizeCompleteStreamJsonResponse = useCallback(
+    (idleMs: number, source: string): boolean => {
+      if (idleMs < STREAM_JSON_COMPLETE_RESPONSE_IDLE_FINALIZE_MS) {
+        return false;
+      }
+
+      const state = streamJsonStateRef.current;
+
+      if (hasPendingStreamJsonInteraction(state)) {
+        return false;
+      }
+
+      if (hasBlockingAgentToolWork(state.activities)) {
+        return false;
+      }
+
+      forceSettleStreamJsonInFlightWork(state);
+
+      if (hasIncompleteStreamJsonTurnEnding(state) || !hasPostToolFinalResponse(state)) {
+        return false;
+      }
+
+      preserveAgentShellChildrenRef.current =
+        shouldKeepAgentShellsAlive(paneIdRef.current, state.activities) ||
+        state.activities.some(
+          (entry) =>
+            entry.kind === 'tool_run' &&
+            shouldOpenAgentShellToolTerminal(entry.toolCommand ?? ''),
+        );
+
+      agentPrintRunActiveRef.current = false;
+      window.nexus.agentPrint.stop(paneIdRef.current, {
+        preserveChildren: resolvePreserveAgentPrintChildren(),
+      });
+      clearAgentPrintRunToken(paneIdRef.current);
+      finalizeStreamJsonTurnFromEvent(source);
+      return true;
+    },
+    [clearAgentPrintRunToken, finalizeStreamJsonTurnFromEvent],
+  );
 
   const scheduleStreamJsonSettleCheck = useCallback(() => {
     if (!usesStreamJson) {
@@ -1335,6 +1399,10 @@ export function useAgentPaneSession({
             return;
           }
 
+          if (tryFinalizeCompleteStreamJsonResponse(idleMs, 'settleTimer-complete-response')) {
+            return;
+          }
+
           if (idleMs >= STREAM_JSON_STALL_UI_MS) {
             syncStreamJsonStallLiveStatus(idleMs);
           }
@@ -1350,6 +1418,7 @@ export function useAgentPaneSession({
     clearStreamJsonSettleTimer,
     finalizeStreamJsonTurnFromEvent,
     syncStreamJsonStallLiveStatus,
+    tryFinalizeCompleteStreamJsonResponse,
     tryFinalizeSettledStreamJsonTurn,
     tryHandoffLongRunningDevShell,
     usesStreamJson,
@@ -1373,7 +1442,7 @@ export function useAgentPaneSession({
         onlyLongRunningShellProgress &&
         hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current);
 
-      if (chunk && (streamUpdate.hasUpdate || streamUpdate.shouldFinalize) && !skipIdleReset) {
+      if (chunk && !skipIdleReset) {
         lastStreamJsonChunkAtRef.current = Date.now();
       }
       const hasMeaningfulProgress =
@@ -1404,6 +1473,11 @@ export function useAgentPaneSession({
         useTerminalSessionStore
           .getState()
           .setResumeChatId(paneIdRef.current, streamUpdate.sessionId);
+        updateActiveTurn((turn) =>
+          turn.resumeChatId === streamUpdate.sessionId
+            ? turn
+            : { ...turn, resumeChatId: streamUpdate.sessionId },
+        );
       }
 
       if (streamUpdate.hasUpdate || clearedStall) {
@@ -1468,7 +1542,13 @@ export function useAgentPaneSession({
         imageRefs,
         root,
       );
-      const storedResumeChatId = session.resumeChatIdByPane[paneId]?.trim() ?? null;
+      const storedResumeChatId =
+        session.resumeChatIdByPane[paneId]?.trim() ||
+        [...turnsRef.current]
+          .reverse()
+          .find((turn) => turn.resumeChatId?.trim())
+          ?.resumeChatId?.trim() ||
+        null;
 
       if (!resolvedPrompt && attachmentPaths.length === 0) {
         return false;
@@ -1498,6 +1578,7 @@ export function useAgentPaneSession({
         streamJsonAutoRetryRef.current = false;
         streamJsonIncompleteContinueRef.current = false;
         streamJsonIncompleteContinueCountRef.current = 0;
+        clearAgentStreamJsonIncompleteContinue(paneId);
       }
 
       session.setLastCommand(paneId, resolvedPrompt);
@@ -1602,11 +1683,9 @@ export function useAgentPaneSession({
         return false;
       }
 
-      if (!hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current)) {
-        return false;
-      }
+      const runningTurn = [...turnsRef.current].reverse().find((turn) => turn.running);
 
-      if (!turnsRef.current.some((turn) => turn.running)) {
+      if (!runningTurn) {
         return false;
       }
 
@@ -1615,11 +1694,33 @@ export function useAgentPaneSession({
       const resumeChatId =
         streamJsonStateRef.current.sessionId?.trim() ||
         session.resumeChatIdByPane[paneId]?.trim() ||
+        runningTurn.resumeChatId?.trim() ||
         null;
+
+      hydrateAgentStreamJsonSessionFromTurn(streamJsonStateRef.current, runningTurn, resumeChatId);
+
+      if (
+        !hasIncompleteStreamJsonTurnEnding(
+          streamJsonStateRef.current,
+          streamJsonStateRef.current.activities.length > 0
+            ? streamJsonStateRef.current.activities
+            : runningTurn.activities,
+        )
+      ) {
+        return false;
+      }
+
       const canContinueWithoutId =
-        !resumeChatId && (cursorAgentContinueRef.current || hasStreamJsonChunkRef.current);
+        !resumeChatId &&
+        (cursorAgentContinueRef.current ||
+          hasStreamJsonChunkRef.current ||
+          hasResumableStreamJsonTurnProgress(runningTurn));
 
       if (!resumeChatId && !canContinueWithoutId) {
+        return false;
+      }
+
+      if (!beginAgentStreamJsonIncompleteContinue(paneId)) {
         return false;
       }
 
@@ -1634,6 +1735,7 @@ export function useAgentPaneSession({
       updateActiveTurn((turn) => ({
         ...turn,
         activities: streamJsonStateRef.current.activities.map((entry) => ({ ...entry })),
+        ...(resumeChatId ? { resumeChatId } : {}),
       }));
 
       const currentMode = session.activeAgentModeByPane[paneId] ?? 'agent';
@@ -1654,7 +1756,7 @@ export function useAgentPaneSession({
       session.markAwaitingResponse(paneId);
       cursorAgentContinueRef.current = true;
 
-      const continueTurnId = turnsRef.current.find((turn) => turn.running)?.id ?? null;
+      const continueTurnId = runningTurn.id;
 
       clearStreamJsonDeferredStart();
       streamJsonDeferredStartTimerRef.current = window.setTimeout(() => {
@@ -1664,11 +1766,13 @@ export function useAgentPaneSession({
 
         if (!activeTurn || activeTurn.id !== continueTurnId) {
           streamJsonIncompleteContinueRef.current = false;
+          clearAgentStreamJsonIncompleteContinue(paneId);
           return;
         }
 
         if (resolveAgentPrintRunToken(paneId) !== runToken) {
           streamJsonIncompleteContinueRef.current = false;
+          clearAgentStreamJsonIncompleteContinue(paneId);
           return;
         }
 
@@ -1925,6 +2029,7 @@ export function useAgentPaneSession({
       streamJsonIncompleteContinueRef.current = false;
 
       clearAgentPrintRunToken(paneId);
+      clearAgentStreamJsonIncompleteContinue(paneId);
       session.takePendingLaunchCommand(paneId);
       session.resetAgentWorkload(paneId);
 
@@ -2954,14 +3059,33 @@ export function useAgentPaneSession({
     paneIdRef.current = tab.id;
     const sessionState = getOrCreateAgentStreamJsonSession(tab.id);
     streamJsonStateRef.current = sessionState;
+    const runningTurn = turnsRef.current.find((turn) => turn.running);
+    const storedResumeChatId =
+      useTerminalSessionStore.getState().resumeChatIdByPane[tab.id]?.trim() ||
+      runningTurn?.resumeChatId?.trim() ||
+      sessionState.sessionId?.trim() ||
+      null;
+
+    if (runningTurn) {
+      hydrateAgentStreamJsonSessionFromTurn(sessionState, runningTurn, storedResumeChatId);
+    } else if (storedResumeChatId) {
+      sessionState.sessionId = storedResumeChatId;
+    }
 
     if (
       sessionState.activities.length > 0 ||
       sessionState.pendingResponseText.trim().length > 0 ||
-      sessionState.jsonBuffer.trim().length > 0
+      sessionState.jsonBuffer.trim().length > 0 ||
+      Boolean(runningTurn && hasResumableStreamJsonTurnProgress(runningTurn))
     ) {
       hasStreamJsonChunkRef.current = true;
+      cursorAgentContinueRef.current = true;
       lastStreamJsonChunkAtRef.current = Date.now();
+    }
+
+    if (storedResumeChatId) {
+      cursorAgentContinueRef.current = true;
+      useTerminalSessionStore.getState().setResumeChatId(tab.id, storedResumeChatId);
     }
 
     const storedToken = useTerminalSessionStore.getState().agentPrintRunTokenByPane[tab.id];
@@ -2971,6 +3095,80 @@ export function useAgentPaneSession({
       agentPrintRunActiveRef.current = true;
     }
   }, [tab.id]);
+
+  useEffect(() => {
+    if (!usesStreamJson) {
+      return;
+    }
+
+    const paneId = tab.id;
+    let cancelled = false;
+
+    const recover = async () => {
+      let snapshot: {
+        running: boolean;
+        runToken: string | null;
+        exit: { code: number; error?: string; runToken: string } | null;
+      };
+
+      try {
+        const adopt = window.nexus.agentPrint.adopt;
+        snapshot = adopt
+          ? await adopt(paneId)
+          : {
+              running: await window.nexus.agentPrint.isRunning(paneId),
+              runToken: resolveAgentPrintRunToken(paneId) || null,
+              exit: null,
+            };
+      } catch {
+        snapshot = {
+          running: await window.nexus.agentPrint.isRunning(paneId).catch(() => false),
+          runToken: resolveAgentPrintRunToken(paneId) || null,
+          exit: null,
+        };
+      }
+
+      if (cancelled) {
+        return;
+      }
+
+      if (snapshot.runToken) {
+        bindAgentPrintRunToken(paneId, snapshot.runToken, false);
+      }
+
+      if (snapshot.running) {
+        agentPrintRunActiveRef.current = true;
+        lastStreamJsonChunkAtRef.current = Date.now();
+        return;
+      }
+
+      const runningTurn = turnsRef.current.find((turn) => turn.running);
+
+      if (!runningTurn) {
+        return;
+      }
+
+      if (Date.now() - runningTurn.startedAt < STREAM_JSON_RECOVER_CONTINUE_MIN_TURN_MS) {
+        return;
+      }
+
+      tryContinueIncompleteStreamJsonTurnRef.current(() => {
+        clearAgentPrintRunToken(paneId);
+      });
+    };
+
+    void recover();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    bindAgentPrintRunToken,
+    clearAgentPrintRunToken,
+    resolveAgentPrintRunToken,
+    tab.id,
+    usesStreamJson,
+  ]);
 
   const bootstrapStreamJsonAgent = useCallback(() => {
     if (streamJsonBootstrappedRef.current) {
@@ -3365,7 +3563,7 @@ export function useAgentPaneSession({
           !streamJsonAutoRetryRef.current &&
           !streamJsonIncompleteContinueRef.current
         ) {
-          bindAgentPrintRunToken(paneIdRef.current, runToken);
+          bindAgentPrintRunToken(paneIdRef.current, runToken, false);
           expectedToken = runToken;
         }
 
@@ -3399,7 +3597,7 @@ export function useAgentPaneSession({
           !streamJsonAutoRetryRef.current &&
           !streamJsonIncompleteContinueRef.current
         ) {
-          bindAgentPrintRunToken(paneIdRef.current, payload.runToken);
+          bindAgentPrintRunToken(paneIdRef.current, payload.runToken, false);
           expectedToken = payload.runToken;
         }
 
@@ -3434,8 +3632,6 @@ export function useAgentPaneSession({
         applyStreamJsonChunk('');
 
         if (
-          payload.code === 0 &&
-          !payload.error &&
           turnsRef.current.some((turn) => turn.running) &&
           tryContinueIncompleteStreamJsonTurnRef.current(finishAgentPrintRun)
         ) {
@@ -3499,22 +3695,30 @@ export function useAgentPaneSession({
             }
           }
 
-          updateActiveTurn((turn) => ({
-            ...turn,
-            activities: [
-              ...turn.activities.filter(
-                (entry) =>
-                  entry.kind !== 'response' &&
-                  !(entry.kind === 'thought' && !entry.label.trim()) &&
-                  entry.kind !== 'live_status' &&
-                  entry.kind !== 'tool_run',
-              ),
-              createFailedPromptActivity(payload.error),
-            ],
-          }));
-          finalizeActiveTurn(true);
-          finishAgentPrintRun();
-          return;
+          const runningTurn = turnsRef.current.find((turn) => turn.running);
+          const hasProgress =
+            hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current) ||
+            hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current) ||
+            Boolean(runningTurn && hasResumableStreamJsonTurnProgress(runningTurn));
+
+          if (!hasProgress) {
+            updateActiveTurn((turn) => ({
+              ...turn,
+              activities: [
+                ...turn.activities.filter(
+                  (entry) =>
+                    entry.kind !== 'response' &&
+                    !(entry.kind === 'thought' && !entry.label.trim()) &&
+                    entry.kind !== 'live_status' &&
+                    entry.kind !== 'tool_run',
+                ),
+                createFailedPromptActivity(payload.error),
+              ],
+            }));
+            finalizeActiveTurn(true);
+            finishAgentPrintRun();
+            return;
+          }
         }
 
         if (
@@ -3522,25 +3726,33 @@ export function useAgentPaneSession({
           !streamJsonStateRef.current.shouldFinalize &&
           !streamJsonStateRef.current.pendingResponseText.trim()
         ) {
-          updateActiveTurn((turn) => ({
-            ...turn,
-            activities: [
-              ...turn.activities.filter(
-                (entry) =>
-                  entry.kind !== 'response' &&
-                  !(entry.kind === 'thought' && !entry.label.trim()) &&
-                  entry.kind !== 'live_status' &&
-                  entry.kind !== 'tool_run',
-              ),
-              createFailedPromptActivity(
-                payload.error ??
-                  'Não foi possível executar o agent. Verifique se o CLI do provedor está instalado.',
-              ),
-            ],
-          }));
-          finalizeActiveTurn(true);
-          finishAgentPrintRun();
-          return;
+          const runningTurn = turnsRef.current.find((turn) => turn.running);
+          const hasProgress =
+            hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current) ||
+            hasIncompleteStreamJsonTurnEnding(streamJsonStateRef.current) ||
+            Boolean(runningTurn && hasResumableStreamJsonTurnProgress(runningTurn));
+
+          if (!hasProgress) {
+            updateActiveTurn((turn) => ({
+              ...turn,
+              activities: [
+                ...turn.activities.filter(
+                  (entry) =>
+                    entry.kind !== 'response' &&
+                    !(entry.kind === 'thought' && !entry.label.trim()) &&
+                    entry.kind !== 'live_status' &&
+                    entry.kind !== 'tool_run',
+                ),
+                createFailedPromptActivity(
+                  payload.error ??
+                    'Não foi possível executar o agent. Verifique se o CLI do provedor está instalado.',
+                ),
+              ],
+            }));
+            finalizeActiveTurn(true);
+            finishAgentPrintRun();
+            return;
+          }
         }
 
         if (streamJsonStateRef.current.shouldFinalize) {
@@ -3671,7 +3883,7 @@ export function useAgentPaneSession({
   ]);
 
   useEffect(() => {
-    if (!usesStreamJson || !isTurnRunning || !isVisible || !isRuntimeActive) {
+    if (!usesStreamJson || !isTurnRunning || !isRuntimeActive) {
       return;
     }
 
@@ -3705,6 +3917,10 @@ export function useAgentPaneSession({
             });
             clearAgentPrintRunToken(paneId);
             finalizeStreamJsonTurnFromEvent('longShell-handoff');
+            return;
+          }
+
+          if (tryFinalizeCompleteStreamJsonResponse(idleMs, 'idleInterval-complete-response')) {
             return;
           }
 
@@ -3924,9 +4140,9 @@ export function useAgentPaneSession({
     finalizeActiveTurn,
     finalizeStreamJsonTurnFromEvent,
     isTurnRunning,
-    isVisible,
     isRuntimeActive,
     syncStreamJsonStallLiveStatus,
+    tryFinalizeCompleteStreamJsonResponse,
     tryFinalizeSettledStreamJsonTurn,
     tryHandoffLongRunningDevShell,
     tryScheduleStreamJsonAutoRetry,
@@ -3991,6 +4207,10 @@ export function useAgentPaneSession({
   }, [tab.id]);
 
   useEffect(() => {
+    if (!isRuntimeActive) {
+      return;
+    }
+
     return registerAgentPaneHandlers(paneIdRef.current, {
       submit: submitPrompt,
       stop: stopAgent,
@@ -4018,6 +4238,7 @@ export function useAgentPaneSession({
     cancelAgentTurnEdit,
     editAgentTurn,
     editFollowUp,
+    isRuntimeActive,
     redoAgentTurn,
     rejectPlan,
     removeFollowUp,

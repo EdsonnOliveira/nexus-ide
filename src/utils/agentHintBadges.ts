@@ -81,6 +81,10 @@ export function resolveModelBadgeIcon(modelId: string, label: string): AgentHint
     return 'gemini';
   }
 
+  if (id.includes('opencode') || id.startsWith('ollama/') || text.includes('opencode')) {
+    return 'opencode';
+  }
+
   if (id.includes('antigravity') || text.includes('antigravity')) {
     return 'antigravity';
   }

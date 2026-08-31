@@ -63,6 +63,7 @@ import {
   type GitFlatChange,
 } from '@/utils/gitFlatChanges';
 import { toRepoAbsolutePath } from '@/utils/gitPaths';
+import { emitGitProjectRefresh } from '@/utils/gitRepoRefresh';
 import { buildGitPromptGroupSections } from '@/utils/agentGitPromptGroups';
 import { resolvePaneAgentCommand } from '@/utils/projectAgentStatus';
 import { sanitizeAgentPrompt } from '@/utils/terminalShellPrompt';
@@ -811,7 +812,6 @@ function ProjectGitDrawerComponent({
     loading,
     actionLoading,
     error,
-    refresh,
     stage,
     unstage,
     discard,
@@ -823,6 +823,10 @@ function ProjectGitDrawerComponent({
     stash,
     stashPop,
   } = useGitStatus(selectedRepoPath, Boolean(selectedRepoPath));
+
+  const handleRefresh = useCallback(() => {
+    void emitGitProjectRefresh(rootPath);
+  }, [rootPath]);
 
   const selectedRepo = useMemo(
     () => discoveredRepos.find((repo) => repo.path === selectedRepoPath) ?? null,
@@ -1329,7 +1333,7 @@ function ProjectGitDrawerComponent({
           anchorRect={moreAnchor}
           actionLoading={actionLoading}
           onClose={() => setMoreAnchor(null)}
-          onRefresh={() => void refresh()}
+          onRefresh={handleRefresh}
           onPull={() => void pull()}
           onPush={() => void push()}
           onStash={() => void stash()}
@@ -1350,7 +1354,7 @@ function ProjectGitDrawerComponent({
             <button
               type='button'
               className='git-panel__refresh-btn app-button app-button--enter'
-              onClick={() => void refresh()}
+              onClick={handleRefresh}
             >
               Atualizar
             </button>

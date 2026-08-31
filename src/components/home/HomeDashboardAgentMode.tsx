@@ -20,10 +20,13 @@ import {
   useAgentCardFullscreen,
 } from '@/components/home/AgentCardFullscreenOverlay';
 import { HomeDashboardCloudAgentCard } from '@/components/home/HomeDashboardCloudAgentCard';
+import { MissionCard } from '@/components/mission/MissionCard';
 import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
 import { useAgentPipSync } from '@/hooks/useAgentPipSync';
 import { useHomeSurfaceProjects } from '@/hooks/useHomeDashboardData';
+import { useMissionHydration } from '@/hooks/useMissionHydration';
 import { useAgentPipStore } from '@/stores/useAgentPipStore';
+import { useMissionStore } from '@/stores/useMissionStore';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useCloudAgentSessionsStore } from '@/stores/useCloudAgentSessionsStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
@@ -99,7 +102,6 @@ function AgentProjectThumbComponent({
         className='home-dashboard__agent-card-logo'
         onError={() => {
           setLogoFailed(true);
-          setLogoSrc(null);
         }}
       />
     );
@@ -125,34 +127,22 @@ function AgentCardCloseConfirmComponent({
   onConfirm,
   onClose,
 }: AgentCardCloseConfirmProps) {
-  const handleConfirm = useCallback(
-    (requestClose: () => void) => {
-      onConfirm();
-      requestClose();
-    },
-    [onConfirm],
-  );
-
   return (
-    <AnimatedModal onClose={onClose} panelClassName='project-dialog'>
+    <AnimatedModal panelClassName='project-dialog' onClose={onClose}>
       {(requestClose) => (
         <>
-          <span className='project-dialog__title'>Fechar agent?</span>
+          <h2 className='project-dialog__title'>Fechar agent</h2>
           <p className='project-dialog__message'>
-            Tem certeza que deseja fechar o agent de <strong>{projectName}</strong>?
+            Remover o agent de <strong>{projectName}</strong> da área do Maestro?
           </p>
           <div className='project-dialog__actions'>
-            <button
-              type='button'
-              className='project-dialog__btn project-dialog__btn--ghost app-button'
-              onClick={requestClose}
-            >
+            <button type='button' className='project-dialog__btn app-button' onClick={requestClose}>
               Cancelar
             </button>
             <button
               type='button'
-              className='project-dialog__btn project-dialog__btn--danger app-button app-button--enter'
-              onClick={() => handleConfirm(requestClose)}
+              className='project-dialog__btn project-dialog__btn--danger app-button'
+              onClick={onConfirm}
             >
               Fechar
             </button>
@@ -171,7 +161,8 @@ interface AgentCardProps {
   enterDelayMs: number;
   isFocused: boolean;
   isSpawning: boolean;
-  onFocus: (paneId: string) => void;
+  isMultiSelected: boolean;
+  onFocus: (paneId: string, additive: boolean) => void;
   onRemove: (project: Project, pane: AgentTab) => void;
 }
 
@@ -181,6 +172,7 @@ function AgentCardComponent({
   enterDelayMs,
   isFocused,
   isSpawning,
+  isMultiSelected,
   onFocus,
   onRemove,
 }: AgentCardProps) {
@@ -192,6 +184,13 @@ function AgentCardComponent({
   const hasReadyPing = useProjectNotificationStore(
     (state) => state.notifiedAgentPaneByProject[project.id] === paneId,
   );
+  const missionForPane = useMissionStore((state) =>
+    state.missions.find(
+      (mission) =>
+        mission.sourcePaneId === paneId ||
+        mission.nodes.some((node) => node.paneId === paneId),
+    ),
+  );
   const { updateAgentTab } = useTabActions();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const fullscreen = useAgentCardFullscreen();
@@ -200,10 +199,14 @@ function AgentCardComponent({
   const unpinAgent = useAgentPipStore((state) => state.unpin);
   const isPinned = pinnedPaneId === paneId;
 
-  const handleFocus = useCallback(() => {
-    onFocus(paneId);
-    clearNotificationForPane(paneId);
-  }, [clearNotificationForPane, onFocus, paneId]);
+  const handleFocus = useCallback(
+    (event?: ReactMouseEvent) => {
+      const additive = Boolean(event && (event.metaKey || event.ctrlKey));
+      onFocus(paneId, additive);
+      clearNotificationForPane(paneId);
+    },
+    [clearNotificationForPane, onFocus, paneId],
+  );
 
   const handlePtyCreated = useCallback(
     (ptyId: string) => {
@@ -260,14 +263,18 @@ function AgentCardComponent({
     pinAgent(paneId);
   }, [isPinned, paneId, pinAgent, unpinAgent]);
 
+  if (missionForPane && missionForPane.nodes.some((node) => node.paneId === paneId)) {
+    return null;
+  }
+
   return (
     <>
       <AgentCardFrame
-        className={`home-dashboard__agent-card app-button--enter${isFocused ? ' home-dashboard__agent-card--focused' : ''}${hasReadyPing ? ' home-dashboard__agent-card--ping' : ''}${isSpawning ? ' home-dashboard__agent-card--spawn' : ''}`}
+        className={`home-dashboard__agent-card app-button--enter${isFocused ? ' home-dashboard__agent-card--focused' : ''}${hasReadyPing ? ' home-dashboard__agent-card--ping' : ''}${isSpawning ? ' home-dashboard__agent-card--spawn' : ''}${isMultiSelected ? ' home-dashboard__agent-card--multi' : ''}`}
         style={{ animationDelay: `${enterDelayMs}ms` }}
         fullscreen={fullscreen}
         dataHomeAgentPane={pane.id}
-        onMouseDown={handleFocus}
+        onMouseDown={(event) => handleFocus(event)}
       >
         <div className='home-dashboard__agent-card-head'>
           <span className='home-dashboard__agent-card-thumb-wrap'>
@@ -286,6 +293,7 @@ function AgentCardComponent({
             className='home-dashboard__agent-card-aside'
             onClick={stopCardFocusSteal}
             onPointerDown={stopCardFocusSteal}
+            onMouseDown={stopCardFocusSteal}
           >
             <AgentShellTerminalDock
               agentPaneId={pane.id}
@@ -343,7 +351,7 @@ function AgentCardComponent({
               isRuntimeActive
               isFocused={isFocused}
               disableStickyPrompt
-              onFocusPane={handleFocus}
+              onFocusPane={() => handleFocus()}
               onPtyCreated={handlePtyCreated}
               onPtyLost={handlePtyLost}
               onUpdateTab={handleUpdateTab}
@@ -366,13 +374,23 @@ const AgentCard = memo(AgentCardComponent);
 
 interface HomeDashboardAgentModeProps {
   spawningPaneId?: string | null;
+  onOpenMission: (missionId: string) => void;
 }
 
-function HomeDashboardAgentModeComponent({ spawningPaneId = null }: HomeDashboardAgentModeProps) {
+function HomeDashboardAgentModeComponent({
+  spawningPaneId = null,
+  onOpenMission,
+}: HomeDashboardAgentModeProps) {
+  useMissionHydration();
   const projects = useHomeSurfaceProjects();
   const { closeTabForProject } = useTabActions();
   const [homeAgentQueue, setHomeAgentQueue] = useState(readHomeAgentQueue);
   const [focusedPaneId, setFocusedPaneId] = useState<string | null>(null);
+  const missions = useMissionStore((state) => state.missions);
+  const selectedPaneIds = useMissionStore((state) => state.selectedPaneIds);
+  const toggleSelectedPaneId = useMissionStore((state) => state.toggleSelectedPaneId);
+  const clearSelectedPaneIds = useMissionStore((state) => state.clearSelectedPaneIds);
+  const removeMission = useMissionStore((state) => state.removeMission);
   const cloudSessionIds = useCloudAgentSessionsStore(
     useShallow((state) => state.sessions.map((session) => session.id)),
   );
@@ -421,6 +439,11 @@ function HomeDashboardAgentModeComponent({ spawningPaneId = null }: HomeDashboar
     return next;
   }, [homeAgentQueue, projects]);
 
+  const visibleMissions = useMemo(
+    () => missions.filter((mission) => mission.status !== 'cancelled'),
+    [missions],
+  );
+
   const overlayPaneIdsKey = useMemo(() => slots.map((slot) => slot.pane.id).join('\0'), [slots]);
 
   useLayoutEffect(() => {
@@ -446,9 +469,17 @@ function HomeDashboardAgentModeComponent({ spawningPaneId = null }: HomeDashboar
 
   useAgentPipSync(slots);
 
-  const handleFocus = useCallback((paneId: string) => {
-    setFocusedPaneId(paneId);
-  }, []);
+  const handleFocus = useCallback(
+    (paneId: string, additive: boolean) => {
+      setFocusedPaneId(paneId);
+      if (additive) {
+        toggleSelectedPaneId(paneId, true);
+        return;
+      }
+      clearSelectedPaneIds();
+    },
+    [clearSelectedPaneIds, toggleSelectedPaneId],
+  );
 
   const handleRemove = useCallback(
     (project: Project, pane: AgentTab) => {
@@ -465,7 +496,7 @@ function HomeDashboardAgentModeComponent({ spawningPaneId = null }: HomeDashboar
 
   return (
     <section className='home-dashboard__agent-mode app-button--enter'>
-      {slots.length === 0 && cloudSessionIds.length === 0 ? (
+      {slots.length === 0 && cloudSessionIds.length === 0 && visibleMissions.length === 0 ? (
         <EmptyState
           icon={Bot}
           title='Nenhum agent na área'
@@ -474,6 +505,17 @@ function HomeDashboardAgentModeComponent({ spawningPaneId = null }: HomeDashboar
         />
       ) : (
         <div className='home-dashboard__agent-grid'>
+          {visibleMissions.map((mission, index) => (
+            <MissionCard
+              key={mission.id}
+              mission={mission}
+              enterDelayMs={40 + index * 35}
+              onOpen={onOpenMission}
+              onClose={(missionId) => {
+                void removeMission(missionId);
+              }}
+            />
+          ))}
           {slots.map((slot, index) => (
             <AgentCard
               key={`${slot.project.id}-${slot.pane.id}`}
@@ -482,6 +524,9 @@ function HomeDashboardAgentModeComponent({ spawningPaneId = null }: HomeDashboar
               enterDelayMs={spawningPaneId === slot.pane.id ? 0 : 40 + index * 35}
               isFocused={focusedPaneId === slot.pane.id}
               isSpawning={spawningPaneId === slot.pane.id}
+              isMultiSelected={
+                selectedPaneIds.length > 1 && selectedPaneIds.includes(slot.pane.id)
+              }
               onFocus={handleFocus}
               onRemove={handleRemove}
             />

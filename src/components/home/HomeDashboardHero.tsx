@@ -1,5 +1,5 @@
 import { memo, useCallback, useState, type ReactNode } from 'react';
-import { Maximize2, Minimize2 } from 'lucide-react';
+import { GitBranch, Maximize2, Minimize2 } from 'lucide-react';
 import { NexusLogo } from '@/components/overlay/NexusLogo';
 import { useHomeDashboardClock } from '@/hooks/useHomeDashboardClock';
 
@@ -9,6 +9,8 @@ interface HomeDashboardHeroProps {
   hideBrand?: boolean;
   showDensityToggle?: boolean;
   onDensityToggle?: () => void;
+  showCreateMission?: boolean;
+  onCreateMission?: () => void;
   askSlot: ReactNode;
   switchSlot?: ReactNode;
 }
@@ -30,6 +32,8 @@ function HomeDashboardHeroComponent({
   hideBrand = false,
   showDensityToggle = false,
   onDensityToggle,
+  showCreateMission = false,
+  onCreateMission,
   askSlot,
   switchSlot,
 }: HomeDashboardHeroProps) {
@@ -46,30 +50,45 @@ function HomeDashboardHeroComponent({
         compact ? ' home-dashboard__hero--compact' : ''
       }${hideBrand ? ' home-dashboard__hero--no-brand' : ''}`}
     >
-      {showDensityToggle ? (
-        <button
-          type='button'
-          className={`home-dashboard__hero-density app-button app-button--enter${
-            dense ? ' home-dashboard__hero-density--active' : ''
-          }${densityMotion ? ' home-dashboard__hero-density--motion' : ''}`}
-          aria-label={dense ? 'Sair da tela cheia' : 'Tela cheia'}
-          aria-pressed={dense}
-          title={dense ? 'Sair da tela cheia' : 'Tela cheia'}
-          onClick={handleDensityToggle}
-        >
-          <span className='home-dashboard__hero-density-icons' aria-hidden='true'>
-            <Maximize2
-              size={18}
-              strokeWidth={2.1}
-              className='home-dashboard__hero-density-icon home-dashboard__hero-density-icon--max'
-            />
-            <Minimize2
-              size={18}
-              strokeWidth={2.1}
-              className='home-dashboard__hero-density-icon home-dashboard__hero-density-icon--min'
-            />
-          </span>
-        </button>
+      {showDensityToggle || showCreateMission ? (
+        <div className='home-dashboard__hero-actions'>
+          {showDensityToggle ? (
+            <button
+              type='button'
+              className={`home-dashboard__hero-density app-button app-button--enter${
+                dense ? ' home-dashboard__hero-density--active' : ''
+              }${densityMotion ? ' home-dashboard__hero-density--motion' : ''}`}
+              aria-label={dense ? 'Sair da tela cheia' : 'Tela cheia'}
+              aria-pressed={dense}
+              title={dense ? 'Sair da tela cheia' : 'Tela cheia'}
+              onClick={handleDensityToggle}
+            >
+              <span className='home-dashboard__hero-density-icons' aria-hidden='true'>
+                <Maximize2
+                  size={18}
+                  strokeWidth={2.1}
+                  className='home-dashboard__hero-density-icon home-dashboard__hero-density-icon--max'
+                />
+                <Minimize2
+                  size={18}
+                  strokeWidth={2.1}
+                  className='home-dashboard__hero-density-icon home-dashboard__hero-density-icon--min'
+                />
+              </span>
+            </button>
+          ) : null}
+          {showCreateMission ? (
+            <button
+              type='button'
+              className='home-dashboard__hero-density app-button app-button--enter'
+              aria-label='Nova missão'
+              title='Nova missão'
+              onClick={onCreateMission}
+            >
+              <GitBranch size={18} strokeWidth={2.1} aria-hidden='true' />
+            </button>
+          ) : null}
+        </div>
       ) : null}
       <HomeDashboardClockLabels />
       <div className='home-dashboard__hero-brand' aria-hidden={hideBrand}>

@@ -11,6 +11,13 @@ import {
 import { createPortal } from 'react-dom';
 import { Bell, Bot, CalendarDays, ListTodo } from 'lucide-react';
 import { HomeDashboardAgentMode } from '@/components/home/HomeDashboardAgentMode';
+import { CreateMissionDialog } from '@/components/mission/CreateMissionDialog';
+import { MissionGraphView } from '@/components/mission/MissionGraphView';
+import { MissionInbox } from '@/components/mission/MissionInbox';
+import { MissionMultiSelectBar } from '@/components/mission/MissionMultiSelectBar';
+import { useMissionStore } from '@/stores/useMissionStore';
+import { useMissionHydration } from '@/hooks/useMissionHydration';
+import { useMissionOrchestration } from '@/hooks/useMissionOrchestration';
 import { HomeCalendarView } from '@/components/home/calendar/HomeCalendarView';
 import { HomeDashboardMailCard } from '@/components/home/HomeDashboardMailCard';
 import { HomeDashboardMacParakeetCard } from '@/components/home/HomeDashboardMacParakeetCard';
@@ -157,6 +164,21 @@ function HomeDashboardComponent() {
   const [promptFlight, setPromptFlight] = useState<PromptFlightState | null>(null);
   const [spawningPaneId, setSpawningPaneId] = useState<string | null>(null);
   const [homeAgentQueue, setHomeAgentQueue] = useState(readHomeAgentQueue);
+  const [createMissionOpen, setCreateMissionOpen] = useState(false);
+  const activeMissionId = useMissionStore((state) => state.activeMissionId);
+  const setStoreActiveMissionId = useMissionStore((state) => state.setActiveMissionId);
+  const missionInboxCount = useMissionStore(
+    (state) => state.inbox.filter((item) => !item.resolvedAt).length,
+  );
+  const missionCardCount = useMissionStore(
+    (state) =>
+      state.missions.reduce(
+        (count, mission) => (mission.status !== 'cancelled' ? count + 1 : count),
+        0,
+      ),
+  );
+  useMissionHydration();
+  useMissionOrchestration();
   const promptFlightClearRef = useRef<number | null>(null);
   const spawningClearRef = useRef<number | null>(null);
 
@@ -185,8 +207,9 @@ function HomeDashboardComponent() {
     return count;
   }, [homeAgentQueue, projects]);
 
-  const compactChrome = homeAgentCount + cloudSessionCount >= 4 || viewMode === 'calendar';
-  const hideHeroBrand = homeAgentCount + cloudSessionCount >= 4;
+  const maestroCardCount = homeAgentCount + cloudSessionCount + missionCardCount;
+  const compactChrome = maestroCardCount >= 4 || viewMode === 'calendar';
+  const hideHeroBrand = maestroCardCount >= 4;
 
   const detailProject = useMemo(() => {
     if (!detailEntry) {
@@ -633,66 +656,88 @@ function HomeDashboardComponent() {
         compactChrome ? ' home-dashboard--compact-chrome' : ''
       }${viewMode === 'agent' && maestroDense ? ' home-dashboard--maestro-dense' : ''}${
         promptFlight ? ' home-dashboard--prompt-flight' : ''
-      }`}
+      }${activeMissionId ? ' home-dashboard--mission' : ''}`}
     >
-      {viewMode === 'agent' ? (
-        <div className='home-dashboard__aurora' aria-hidden='true'>
-          <span className='home-dashboard__aurora-blob home-dashboard__aurora-blob--a' />
-          <span className='home-dashboard__aurora-blob home-dashboard__aurora-blob--b' />
-          <span className='home-dashboard__aurora-blob home-dashboard__aurora-blob--c' />
-        </div>
-      ) : null}
-      <HomeDashboardHero
-        compact={compactChrome}
-        dense={viewMode === 'agent' && maestroDense}
-        hideBrand={hideHeroBrand}
-        showDensityToggle={viewMode === 'agent'}
-        onDensityToggle={handleMaestroDensityToggle}
-        askSlot={askBar}
-        switchSlot={
-          compactChrome ? (
-            <HomeDashboardModeSwitch
-              mode={viewMode}
-              hasMaestroPing={hasMaestroPing}
-              onChange={handleViewModeChange}
-            />
-          ) : null
-        }
-      />
-
-      {compactChrome ? null : (
-        <div className='home-dashboard__mode-switch-wrap'>
-          <HomeDashboardModeSwitch
-            mode={viewMode}
-            hasMaestroPing={hasMaestroPing}
-            onChange={handleViewModeChange}
-          />
-        </div>
-      )}
-
-      {viewMode === 'calendar' ? (
-        <HomeCalendarView />
-      ) : viewMode === 'agent' ? (
-        <HomeDashboardAgentMode spawningPaneId={spawningPaneId} />
-      ) : viewMode === 'tasks' ? (
-        <HomeDashboardTasksBoard
-          projects={visibleProjects}
-          entries={allTasks}
-          onOpen={handleOpenTask}
-          onExecute={handleExecuteTask}
-          onCreate={handleCreateTask}
+      {activeMissionId ? (
+        <MissionGraphView
+          missionId={activeMissionId}
+          onClose={() => {
+            setStoreActiveMissionId(null);
+          }}
         />
       ) : (
         <>
-          <HomeDashboardDailyCard projects={visibleProjects} enterDelayMs={40} />
+          {viewMode === 'agent' ? (
+            <div className='home-dashboard__aurora' aria-hidden='true'>
+              <span className='home-dashboard__aurora-blob home-dashboard__aurora-blob--a' />
+              <span className='home-dashboard__aurora-blob home-dashboard__aurora-blob--b' />
+              <span className='home-dashboard__aurora-blob home-dashboard__aurora-blob--c' />
+            </div>
+          ) : null}
+          <HomeDashboardHero
+            compact={compactChrome}
+            dense={viewMode === 'agent' && maestroDense}
+            hideBrand={hideHeroBrand}
+            showDensityToggle={viewMode === 'agent'}
+            onDensityToggle={handleMaestroDensityToggle}
+            showCreateMission={viewMode === 'agent'}
+            onCreateMission={() => setCreateMissionOpen(true)}
+            askSlot={askBar}
+            switchSlot={
+              compactChrome ? (
+                <HomeDashboardModeSwitch
+                  mode={viewMode}
+                  hasMaestroPing={hasMaestroPing}
+                  onChange={handleViewModeChange}
+                />
+              ) : null
+            }
+          />
 
-          <div className='home-dashboard__bento'>
-            <HomeDashboardSection
-              icon={Bell}
-              title='Notificações'
-              accent='#94a3b8'
-              enterDelayMs={80}
-            >
+          {compactChrome ? null : (
+            <div className='home-dashboard__mode-switch-wrap'>
+              <HomeDashboardModeSwitch
+                mode={viewMode}
+                hasMaestroPing={hasMaestroPing}
+                onChange={handleViewModeChange}
+              />
+            </div>
+          )}
+
+          {viewMode === 'calendar' ? (
+            <HomeCalendarView />
+          ) : viewMode === 'agent' ? (
+            <>
+              {missionInboxCount > 0 ? (
+                <MissionInbox onOpenMission={(missionId) => setStoreActiveMissionId(missionId)} />
+              ) : null}
+              <MissionMultiSelectBar />
+              <HomeDashboardAgentMode
+                spawningPaneId={spawningPaneId}
+                onOpenMission={(missionId) => {
+                  setStoreActiveMissionId(missionId);
+                }}
+              />
+            </>
+          ) : viewMode === 'tasks' ? (
+            <HomeDashboardTasksBoard
+              projects={visibleProjects}
+              entries={allTasks}
+              onOpen={handleOpenTask}
+              onExecute={handleExecuteTask}
+              onCreate={handleCreateTask}
+            />
+          ) : (
+            <>
+              <HomeDashboardDailyCard projects={visibleProjects} enterDelayMs={40} />
+
+              <div className='home-dashboard__bento'>
+                <HomeDashboardSection
+                  icon={Bell}
+                  title='Notificações'
+                  accent='#94a3b8'
+                  enterDelayMs={80}
+                >
               {showNotificationSkeleton ? (
                 <HomeDashboardNotificationSkeleton />
               ) : !hasNotifications ? (
@@ -830,6 +875,8 @@ function HomeDashboardComponent() {
           </HomeDashboardSection>
         </>
       )}
+        </>
+      )}
 
       {calendarPopup ? (
         <SidebarCalendarEventPopup
@@ -865,6 +912,15 @@ function HomeDashboardComponent() {
       ) : null}
       {executionModals}
       {promptFlightNode}
+      {createMissionOpen ? (
+        <CreateMissionDialog
+          onClose={() => setCreateMissionOpen(false)}
+          onCreated={(missionId) => {
+            setCreateMissionOpen(false);
+            setStoreActiveMissionId(missionId);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

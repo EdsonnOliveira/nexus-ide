@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { NexusClient } from '@nexus/supabase';
 import { userDataDir } from './userDataDir';
+import { notifyPush } from './notifyPush';
 
 interface LocalProject {
   id: string;
@@ -33,6 +34,7 @@ interface DesktopAgentPane {
   paneId: string;
   title: string;
   localProjectId: string;
+  projectName: string;
   turns: DesktopAgentTurn[];
 }
 
@@ -233,6 +235,8 @@ function readDesktopAgentPanes(): DesktopAgentPane[] {
         paneId: pane.id,
         title: pane.title,
         localProjectId: project.id,
+        projectName:
+          typeof project.name === 'string' && project.name.trim() ? project.name.trim() : 'Projeto',
         turns: pane.turns,
       });
     }
@@ -244,6 +248,7 @@ async function syncDesktopPaneTurns(
   client: NexusClient,
   sessionId: string,
   turns: DesktopAgentTurn[],
+  notify: { userId: string; projectName: string } | null,
 ): Promise<void> {
   const { data: existingRows } = await client
     .from('agent_executions')
@@ -339,6 +344,25 @@ async function syncDesktopPaneTurns(
 
     if (messages.length > 0) {
       await client.from('agent_messages').insert(messages);
+    }
+
+    const wasRunning =
+      typeof existingResult?.fingerprint === 'string' && existingResult.fingerprint.startsWith('1');
+    if (notify && wasRunning && !turn.running) {
+      await notifyPush({
+        userId: notify.userId,
+        kind: 'agent',
+        title: 'Agent concluiu',
+        body: notify.projectName,
+        dedupeKey: `agent:${turn.id}:completed`,
+        data: {
+          kind: 'agent',
+          sessionId,
+          executionId: turn.id,
+          status: 'completed',
+          source: 'desktop',
+        },
+      });
     }
   }
 }
@@ -438,7 +462,10 @@ async function publishDesktopAgentPanesUnlocked(
         .eq('source', 'desktop_pane');
       if (!error) {
         published += 1;
-        await syncDesktopPaneTurns(client, pane.paneId, pane.turns);
+        await syncDesktopPaneTurns(client, pane.paneId, pane.turns, {
+          userId,
+          projectName: pane.projectName,
+        });
       }
       continue;
     }
@@ -451,7 +478,10 @@ async function publishDesktopAgentPanesUnlocked(
 
     if (!error) {
       published += 1;
-      await syncDesktopPaneTurns(client, pane.paneId, pane.turns);
+      await syncDesktopPaneTurns(client, pane.paneId, pane.turns, {
+        userId,
+        projectName: pane.projectName,
+      });
     }
   }
 

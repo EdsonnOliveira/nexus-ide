@@ -1,5 +1,5 @@
 import { createServer } from 'node:net';
-import { existsSync, unlinkSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, unlinkSync, writeFileSync, mkdirSync, watch } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -25,6 +25,7 @@ import { notifyMacOnline, runPushMaintenance } from './pushMaintenance';
 import { syncMobileReleaseSnapshotFromDisk } from './syncMobileReleaseSnapshot';
 import { publishDesktopAgentPanes } from './publishDesktopAgentPanes';
 import { isNamedPipePath } from './localIpcPath';
+import { userDataDir } from './userDataDir';
 
 const HEARTBEAT_MS = 15_000;
 const POLL_MS = 2_000;
@@ -341,10 +342,12 @@ async function main(): Promise<void> {
     }
   };
 
-  const runPublishPanes = () => {
-    void publishDesktopAgentPanes(client, deviceId, session.user.id).catch((error) => {
-      console.error('[nexus-runtime] publish panes failed', error);
-    });
+  const runPublishPanes = (force = false) => {
+    void publishDesktopAgentPanes(client, deviceId, session.user.id, force ? { force: true } : undefined).catch(
+      (error) => {
+        console.error('[nexus-runtime] publish panes failed', error);
+      },
+    );
   };
 
   void runHeartbeat();
@@ -354,8 +357,28 @@ async function main(): Promise<void> {
 
   setTimeout(() => {
     runPublishPanes();
-    setInterval(runPublishPanes, 60_000);
+    setInterval(() => {
+      runPublishPanes();
+    }, 60_000);
   }, 45_000);
+
+  let publishWatchTimer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    watch(userDataDir(), (_event, filename) => {
+      if (filename !== 'projects.json') {
+        return;
+      }
+      if (publishWatchTimer) {
+        clearTimeout(publishWatchTimer);
+      }
+      publishWatchTimer = setTimeout(() => {
+        publishWatchTimer = null;
+        runPublishPanes(true);
+      }, 1_500);
+    });
+  } catch (error) {
+    console.warn('[nexus-runtime] projects.json watch failed', error);
+  }
 
   const FAST_INPUT_TYPES = new Set([
     'emulator_tap',

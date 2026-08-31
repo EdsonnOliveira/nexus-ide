@@ -33,6 +33,19 @@ async function fetchProjectChangeCounts(projectPath: string): Promise<GitChangeC
   };
 }
 
+function isChangeCountPathMatch(
+  changedPath: string,
+  projectPath: string,
+  repoPaths: string[],
+): boolean {
+  return (
+    repoPaths.includes(changedPath) ||
+    changedPath === projectPath ||
+    changedPath.startsWith(`${projectPath}/`) ||
+    projectPath.startsWith(`${changedPath}/`)
+  );
+}
+
 export function useGitChangeCounts(
   projectPath: string | null,
   options: UseGitChangeCountsOptions = {},
@@ -52,12 +65,15 @@ export function useGitChangeCounts(
 
     let cancelled = false;
     let setupTimer: number | null = null;
+    let requestId = 0;
 
     const refreshCounts = async () => {
+      const currentRequest = ++requestId;
+
       try {
         const next = await fetchProjectChangeCounts(projectPath);
 
-        if (cancelled) {
+        if (cancelled || currentRequest !== requestId) {
           return;
         }
 
@@ -88,11 +104,7 @@ export function useGitChangeCounts(
 
     const unsubscribe = watch
       ? subscribeGitRepoChange((changedPath) => {
-          if (
-            !repoPathsRef.current.includes(changedPath) &&
-            !changedPath.startsWith(`${projectPath}/`) &&
-            changedPath !== projectPath
-          ) {
+          if (!isChangeCountPathMatch(changedPath, projectPath, repoPathsRef.current)) {
             return;
           }
 
@@ -103,19 +115,29 @@ export function useGitChangeCounts(
     const handleGitRefresh = (event: Event) => {
       const detail = (event as CustomEvent<{ repoPath: string }>).detail;
 
-      if (
-        !repoPathsRef.current.includes(detail.repoPath) &&
-        detail.repoPath !== projectPath &&
-        !detail.repoPath.startsWith(`${projectPath}/`)
-      ) {
+      if (!isChangeCountPathMatch(detail.repoPath, projectPath, repoPathsRef.current)) {
         return;
       }
 
       debouncedRefresh.schedule();
     };
 
+    const handleWindowFocus = () => {
+      if (document.visibilityState === 'hidden') {
+        return;
+      }
+
+      void window.nexus.git.invalidateCache(projectPath).then(() => {
+        if (!cancelled) {
+          debouncedRefresh.schedule();
+        }
+      });
+    };
+
     if (watch) {
       window.addEventListener(GIT_REPO_REFRESH_EVENT, handleGitRefresh);
+      window.addEventListener('focus', handleWindowFocus);
+      document.addEventListener('visibilitychange', handleWindowFocus);
     }
 
     return () => {
@@ -130,6 +152,8 @@ export function useGitChangeCounts(
 
       if (watch) {
         window.removeEventListener(GIT_REPO_REFRESH_EVENT, handleGitRefresh);
+        window.removeEventListener('focus', handleWindowFocus);
+        document.removeEventListener('visibilitychange', handleWindowFocus);
 
         for (const repoPath of repoPathsRef.current) {
           void window.nexus.git.unwatch(repoPath);

@@ -3,6 +3,7 @@ import { Bot, Braces, Clock, Globe, Layers, Play, Smartphone, Terminal } from 'l
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useTabActions } from '@/stores/useTabStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
+import { useFileDirtyStore } from '@/stores/useFileDirtyStore';
 import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
 import { ApiView } from '@/components/api/ApiView';
 import { BrowserView } from '@/components/browser/BrowserView';
@@ -138,7 +139,12 @@ interface TabPaneProps {
   ) => void;
   onUpdateAgentTab: (
     tabId: string,
-    patch: Partial<Pick<AgentTab, 'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'>>,
+    patch: Partial<
+      Pick<
+        AgentTab,
+        'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'
+      >
+    >,
   ) => void;
 }
 
@@ -170,7 +176,9 @@ const TabPane = memo(function TabPaneComponent({
   const [hintsActiveIndex, setHintsActiveIndex] = useState(0);
   const [explorerDropActive, setExplorerDropActive] = useState(false);
   const hintsCountRef = useRef(0);
-  const storedActiveAgent = useTerminalSessionStore((state) => state.activeAgentByPane[tab.id] ?? null);
+  const storedActiveAgent = useTerminalSessionStore(
+    (state) => state.activeAgentByPane[tab.id] ?? null,
+  );
   const activeAgent = useMemo(() => {
     if (tab.type === 'agent') {
       return tab.cliAgent;
@@ -266,13 +274,16 @@ const TabPane = memo(function TabPaneComponent({
     [terminalRef],
   );
 
-  const handleCwdChange = useCallback((nextCwd: string) => {
-    setTerminalCwd(nextCwd);
+  const handleCwdChange = useCallback(
+    (nextCwd: string) => {
+      setTerminalCwd(nextCwd);
 
-    if (tab.type === 'terminal') {
-      persistTerminalCwd(tab.id, nextCwd);
-    }
-  }, [tab]);
+      if (tab.type === 'terminal') {
+        persistTerminalCwd(tab.id, nextCwd);
+      }
+    },
+    [tab],
+  );
 
   const handlePtyLost = useCallback(() => {
     const { pendingLaunchCommands, setActiveAgent } = useTerminalSessionStore.getState();
@@ -596,11 +607,7 @@ const ProjectPaneSlot = memo(function ProjectPaneSlotComponent({ paneId }: { pan
         onUpdateAgentTab={onUpdateAgentTab}
       />
       {showPaneDropOverlay && tabDropOverlay ? (
-        <WorkspaceDropOverlay
-          mode={tabDropOverlay.mode}
-          variant='pane'
-          onDrop={handlePaneDrop}
-        />
+        <WorkspaceDropOverlay mode={tabDropOverlay.mode} variant='pane' onDrop={handlePaneDrop} />
       ) : null}
     </div>
   );
@@ -688,9 +695,7 @@ const WorkspaceSplit = memo(function WorkspaceSplitComponent({
   }
 
   const isVertical = node.orientation === 'vertical';
-  const orientationClass = isVertical
-    ? 'workspace-split--vertical'
-    : 'workspace-split--horizontal';
+  const orientationClass = isVertical ? 'workspace-split--vertical' : 'workspace-split--horizontal';
   const dividerClass = isVertical
     ? `workspace-split__divider workspace-split__divider--row${isDragging ? ' workspace-split__divider--dragging' : ''}`
     : `workspace-split__divider${isDragging ? ' workspace-split__divider--dragging' : ''}`;
@@ -745,6 +750,7 @@ function isPaneInActiveLayout(project: Project, isProjectActive: boolean, paneId
 function paneNeedsBackgroundKeepAlive(
   pane: Tab,
   agentSession: PaneAgentSessionSnapshot,
+  dirtyByTabId: Record<string, boolean>,
 ): boolean {
   if (isPaneAgentSessionLive(pane.id, agentSession)) {
     return true;
@@ -766,7 +772,7 @@ function paneNeedsBackgroundKeepAlive(
   }
 
   if (pane.type === 'file' && pane.viewMode === 'code') {
-    return true;
+    return Boolean(dirtyByTabId[pane.id]);
   }
 
   return false;
@@ -777,6 +783,7 @@ function isPaneRuntimeActive(
   isProjectActive: boolean,
   paneId: string,
   agentSession: PaneAgentSessionSnapshot,
+  dirtyByTabId: Record<string, boolean>,
 ): boolean {
   const pane = findPaneTab(project.tabs, paneId);
 
@@ -784,7 +791,7 @@ function isPaneRuntimeActive(
     return false;
   }
 
-  if (paneNeedsBackgroundKeepAlive(pane, agentSession)) {
+  if (paneNeedsBackgroundKeepAlive(pane, agentSession, dirtyByTabId)) {
     return true;
   }
 
@@ -799,12 +806,15 @@ function shouldKeepTabAliveForProject(
   item: TabBarItem,
   _isProjectActive: boolean,
   agentSession: PaneAgentSessionSnapshot,
+  dirtyByTabId: Record<string, boolean>,
 ): boolean {
   if (item.type === 'split') {
-    return item.panes.some((pane) => paneNeedsBackgroundKeepAlive(pane, agentSession));
+    return item.panes.some((pane) =>
+      paneNeedsBackgroundKeepAlive(pane, agentSession, dirtyByTabId),
+    );
   }
 
-  return paneNeedsBackgroundKeepAlive(item, agentSession);
+  return paneNeedsBackgroundKeepAlive(item, agentSession, dirtyByTabId);
 }
 
 function isPaneFocused(project: Project, isProjectActive: boolean, paneId: string): boolean {
@@ -850,13 +860,14 @@ interface ProjectWorkspaceProps {
   ) => void;
   onUpdateAgentTab: (
     tabId: string,
-    patch: Partial<Pick<AgentTab, 'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'>>,
+    patch: Partial<
+      Pick<
+        AgentTab,
+        'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'
+      >
+    >,
   ) => void;
-  onSplitRatioCommit: (
-    splitTabId: string,
-    path: readonly number[],
-    ratio: number,
-  ) => void;
+  onSplitRatioCommit: (splitTabId: string, path: readonly number[], ratio: number) => void;
 }
 
 const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
@@ -876,6 +887,7 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
   onUpdateAgentTab,
   onSplitRatioCommit,
 }: ProjectWorkspaceProps) {
+  const dirtyByTabId = useFileDirtyStore((state) => state.dirtyByTabId);
   const activeTabItem = useMemo(() => {
     const resolved = resolveActiveTabBarItem(project.tabs, project.activeTabId);
 
@@ -897,8 +909,9 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
   );
 
   const isPaneRuntimeActiveForProject = useCallback(
-    (paneId: string) => isPaneRuntimeActive(project, isProjectActive, paneId, agentSession),
-    [agentSession, isProjectActive, project],
+    (paneId: string) =>
+      isPaneRuntimeActive(project, isProjectActive, paneId, agentSession, dirtyByTabId),
+    [agentSession, dirtyByTabId, isProjectActive, project],
   );
 
   const workspacePaneContext = useMemo<WorkspacePaneContextValue>(
@@ -980,9 +993,16 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
         return true;
       }
 
-      return shouldKeepTabAliveForProject(item, isProjectActive, agentSession);
+      return shouldKeepTabAliveForProject(item, isProjectActive, agentSession, dirtyByTabId);
     });
-  }, [activeTabItem, agentSession, isProjectActive, project.tabs, runningShellTerminalCount]);
+  }, [
+    activeTabItem,
+    agentSession,
+    dirtyByTabId,
+    isProjectActive,
+    project.tabs,
+    runningShellTerminalCount,
+  ]);
 
   if (!project.tabs.length || !activeTabItem) {
     return null;
@@ -1012,7 +1032,9 @@ function TerminalPanelComponent() {
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const sidePanel = useProjectStore((state) => state.sidePanel);
   const projects = useProjectStore((state) => state.projects);
-  const agentPrintRunTokenByPane = useTerminalSessionStore((state) => state.agentPrintRunTokenByPane);
+  const agentPrintRunTokenByPane = useTerminalSessionStore(
+    (state) => state.agentPrintRunTokenByPane,
+  );
   const agentBusyByPane = useTerminalSessionStore((state) => state.agentBusyByPane);
   const awaitingResponseByPane = useTerminalSessionStore((state) => state.awaitingResponseByPane);
   const agentSession = useMemo<PaneAgentSessionSnapshot>(
@@ -1039,8 +1061,18 @@ function TerminalPanelComponent() {
   const completionTrackersRef = useRef(new Map<string, PaneCompletionTracker>());
   const ptyToPaneRef = useRef(new Map<string, string>());
   const paneByIdRef = useRef(new Map<string, Tab>());
-  const { selectPane, updateBrowserUrl, updateEmulatorTab, updateApiTab, updateAgentTab, splitTab, openBrowserTab, addTab, addAgentTab, setSplitRatio } =
-    useTabActions();
+  const {
+    selectPane,
+    updateBrowserUrl,
+    updateEmulatorTab,
+    updateApiTab,
+    updateAgentTab,
+    splitTab,
+    openBrowserTab,
+    addTab,
+    addAgentTab,
+    setSplitRatio,
+  } = useTabActions();
   const setTabPtyId = useProjectStore((state) => state.setTabPtyId);
   const terminalRefs = useRef<Record<string, XTermViewHandle | null>>({});
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
@@ -1094,7 +1126,9 @@ function TerminalPanelComponent() {
         return;
       }
 
-      const automation = (activeProject.automations ?? []).find((entry) => entry.id === automationId);
+      const automation = (activeProject.automations ?? []).find(
+        (entry) => entry.id === automationId,
+      );
 
       if (!automation) {
         return;
@@ -1256,7 +1290,12 @@ function TerminalPanelComponent() {
   const handleUpdateAgentTab = useCallback(
     (
       tabId: string,
-      patch: Partial<Pick<AgentTab, 'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'>>,
+      patch: Partial<
+        Pick<
+          AgentTab,
+          'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'
+        >
+      >,
     ) => {
       void updateAgentTab(tabId, patch);
     },
@@ -1408,7 +1447,6 @@ function TerminalPanelComponent() {
         completionTrackersRef.current.delete(paneId);
       }
     }
-
   }, [activeProject, paneHostReady]);
 
   useEffect(() => {
@@ -1467,21 +1505,23 @@ function TerminalPanelComponent() {
       const paneId = pane.id;
       const tracker = completionTrackersRef.current.get(paneId);
 
-      void window.nexus.terminal.getScrollbackTail(pane.ptyId, TURN_BUFFER_SIZE).then((scrollback) => {
-        const tail = (scrollback ?? '').slice(-TURN_BUFFER_SIZE);
-        const session = useTerminalSessionStore.getState();
+      void window.nexus.terminal
+        .getScrollbackTail(pane.ptyId, TURN_BUFFER_SIZE)
+        .then((scrollback) => {
+          const tail = (scrollback ?? '').slice(-TURN_BUFFER_SIZE);
+          const session = useTerminalSessionStore.getState();
 
-        if (tracker && tail) {
-          tracker.busyBuffer = tail;
-        }
+          if (tracker && tail) {
+            tracker.busyBuffer = tail;
+          }
 
-        syncAgentBusyFromTail(
-          paneId,
-          tail,
-          Boolean(session.activeAgentByPane[paneId]),
-          session.setAgentBusy,
-        );
-      });
+          syncAgentBusyFromTail(
+            paneId,
+            tail,
+            Boolean(session.activeAgentByPane[paneId]),
+            session.setAgentBusy,
+          );
+        });
     }
   }, [activeProject, hostedProjects, paneHostReady]);
 
@@ -1595,11 +1635,7 @@ function TerminalPanelComponent() {
                       style={{ animationDelay: `${200 + index * 40}ms` }}
                       onClick={() => handleRunAutomation(automation.id)}
                     >
-                      {automation.trigger === 'interval' ? (
-                        <Clock size={14} />
-                      ) : (
-                        <Play size={14} />
-                      )}
+                      {automation.trigger === 'interval' ? <Clock size={14} /> : <Play size={14} />}
                       {automation.name}
                     </button>
                   ))}

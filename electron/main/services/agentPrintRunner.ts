@@ -12,6 +12,12 @@ export interface AgentPrintStopOptions {
   preserveChildren?: boolean;
 }
 
+export interface AgentPrintAdoptSnapshot {
+  running: boolean;
+  runToken: string | null;
+  exit: { code: number; error?: string; runToken: string } | null;
+}
+
 export interface AgentPrintRunOptions {
   paneId: string;
   cwd: string;
@@ -53,7 +59,7 @@ function spawnCliProcess(
 
   return spawn(executable, args, options);
 }
-const STDOUT_WATCHDOG_MS = 180_000;
+const STDOUT_WATCHDOG_MS = 600_000;
 const STDOUT_STARTUP_EXTEND_MS = 90_000;
 const STDOUT_IDLE_WATCHDOG_MS = 7_200_000;
 const STDOUT_FLUSH_MS = 12;
@@ -277,6 +283,8 @@ function resolveAgentPrintCwd(cwd: string): string {
 class AgentPrintRunner {
   private window: BrowserWindow | null = null;
   private processes = new Map<string, ChildProcessWithoutNullStreams>();
+  private runTokens = new Map<string, string>();
+  private lastExit = new Map<string, { code: number; error?: string; runToken: string }>();
   private watchdogs = new Map<string, ReturnType<typeof setTimeout>>();
   private stdoutBatches = new Map<string, StdoutBatch>();
   private warmPromise: Promise<void> | null = null;
@@ -330,9 +338,21 @@ class AgentPrintRunner {
 
     try {
       this.window.webContents.send(channel, payload);
-    } catch {
-      this.window = null;
+    } catch {}
+  }
+
+  private rememberExit(
+    paneId: string,
+    child: ChildProcessWithoutNullStreams,
+    payload: { code: number; error?: string; runToken: string },
+  ): void {
+    const current = this.processes.get(paneId);
+
+    if (current && current !== child) {
+      return;
     }
+
+    this.lastExit.set(paneId, payload);
   }
 
   private flushStdoutBatch(paneId: string): void {
@@ -482,9 +502,11 @@ class AgentPrintRunner {
   }
 
   start(options: AgentPrintRunOptions): void {
+    this.lastExit.delete(options.paneId);
     this.stop(options.paneId, { preserveChildren: options.preserveChildren });
 
     const runToken = options.runToken;
+    this.runTokens.set(options.paneId, runToken);
     const resolvedCwd = resolveAgentPrintCwd(options.cwd);
     const cliAgent = options.cliAgent ?? 'cursor-agent';
     const args = buildAgentPrintArgs(options, resolvedCwd);
@@ -546,6 +568,11 @@ class AgentPrintRunner {
         this.signalChild(child, 'SIGTERM', false);
       }
 
+      this.rememberExit(options.paneId, child, {
+        runToken,
+        code,
+        error,
+      });
       this.emit('agent:printDone', {
         paneId: options.paneId,
         runToken,
@@ -652,12 +679,18 @@ class AgentPrintRunner {
       });
       // #endregion
 
-      this.emit('agent:printDone', {
+      const exitPayload = {
         paneId: options.paneId,
         runToken,
         code: code ?? 1,
         ...(error ? { error } : {}),
+      };
+      this.rememberExit(options.paneId, child, {
+        runToken,
+        code: exitPayload.code,
+        ...(error ? { error } : {}),
       });
+      this.emit('agent:printDone', exitPayload);
     });
 
     child.on('error', (error) => {
@@ -700,6 +733,22 @@ class AgentPrintRunner {
 
   isRunning(paneId: string): boolean {
     return this.processes.has(paneId);
+  }
+
+  adopt(paneId: string): AgentPrintAdoptSnapshot {
+    const running = this.processes.has(paneId);
+    const exit = running ? null : (this.lastExit.get(paneId) ?? null);
+    const runToken = this.runTokens.get(paneId) ?? exit?.runToken ?? null;
+
+    if (!running) {
+      this.lastExit.delete(paneId);
+    }
+
+    return {
+      running,
+      runToken,
+      exit,
+    };
   }
 
   hasRunning(): boolean {

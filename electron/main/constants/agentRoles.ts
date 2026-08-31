@@ -1,0 +1,210 @@
+import type { AgentRole } from '../../types/mission';
+
+export const BUILTIN_AGENT_ROLES: AgentRole[] = [
+  {
+    id: 'role-investigation',
+    name: 'Investigação',
+    description: 'Encontrar causa raiz, analisar código e logs, levantar evidências.',
+    instructions:
+      'Foque em causa raiz. Analise código, logs e dependências. Levante evidências claras. Não modifique código salvo se for estritamente necessário para diagnóstico.',
+    permissions: ['READ', 'SEARCH', 'DIAGNOSTIC_COMMANDS'],
+    tools: ['filesystem', 'terminal', 'git'],
+    expectedOutput: 'Causa raiz, evidências e arquivos relacionados.',
+    preferredMode: 'ask',
+    builtin: true,
+  },
+  {
+    id: 'role-planning',
+    name: 'Planejamento',
+    description: 'Criar estratégia, decompor tarefa e definir ordem de execução.',
+    instructions:
+      'Crie um plano claro e ordenado. Avalie impacto. Determine ordem de execução. Não implemente alterações ainda.',
+    permissions: ['READ', 'SEARCH'],
+    tools: ['filesystem', 'git'],
+    expectedOutput: 'Plano de execução com etapas e riscos.',
+    preferredMode: 'plan',
+    builtin: true,
+  },
+  {
+    id: 'role-execution',
+    name: 'Execução',
+    description: 'Implementar solução, modificar código e criar testes.',
+    instructions:
+      'Implemente a solução com alterações pequenas e seguras. Siga os padrões do projeto. Crie testes relevantes. Não faça deploy sem autorização.',
+    permissions: ['READ', 'WRITE', 'TERMINAL', 'TEST', 'BRANCH', 'COMMIT'],
+    tools: ['filesystem', 'terminal', 'git'],
+    expectedOutput: 'Alterações aplicadas, diff e resumo do que foi feito.',
+    preferredMode: 'agent',
+    builtin: true,
+  },
+  {
+    id: 'role-validation',
+    name: 'Validação',
+    description: 'Verificar se a implementação atende ao objetivo e critérios de aceite.',
+    instructions:
+      'Valide critérios de aceite. Execute testes e verifique build. Procure regressões. Idealmente não corrija o próprio código — reporte falhas.',
+    permissions: ['READ', 'TERMINAL', 'TEST'],
+    tools: ['filesystem', 'terminal', 'git'],
+    expectedOutput: 'Aprovação ou reprovação com evidências.',
+    preferredMode: 'ask',
+    builtin: true,
+  },
+  {
+    id: 'role-qa',
+    name: 'QA',
+    description: 'Testes, edge cases, regressões e aprovação/reprovação.',
+    instructions:
+      'Cubra edge cases e regressões. Gere evidências. Aprove ou reprove com critérios claros.',
+    permissions: ['READ', 'TERMINAL', 'TEST'],
+    tools: ['filesystem', 'terminal', 'git'],
+    expectedOutput: 'Resultado QA com evidências e veredito.',
+    preferredMode: 'ask',
+    builtin: true,
+  },
+  {
+    id: 'role-review',
+    name: 'Review',
+    description: 'Code review de arquitetura, qualidade, performance e segurança.',
+    instructions:
+      'Faça code review focado em arquitetura, qualidade, performance, segurança e padrões internos. Não implemente correções grandes — liste findings.',
+    permissions: ['READ', 'SEARCH'],
+    tools: ['filesystem', 'git'],
+    expectedOutput: 'Lista de findings priorizados.',
+    preferredMode: 'ask',
+    builtin: true,
+  },
+  {
+    id: 'role-research',
+    name: 'Pesquisa',
+    description: 'Documentação, bibliotecas, APIs e referências externas.',
+    instructions:
+      'Pesquise documentação, bibliotecas e APIs. Traga referências concretas e recomendações.',
+    permissions: ['READ', 'SEARCH'],
+    tools: ['filesystem'],
+    expectedOutput: 'Resumo de pesquisa com referências.',
+    preferredMode: 'ask',
+    builtin: true,
+  },
+  {
+    id: 'role-documentation',
+    name: 'Documentação',
+    description: 'Atualizar docs, changelog, notas técnicas e decisões.',
+    instructions:
+      'Atualize documentação, changelog e notas técnicas. Registre decisões relevantes de forma clara.',
+    permissions: ['READ', 'WRITE'],
+    tools: ['filesystem', 'git'],
+    expectedOutput: 'Documentação atualizada e resumo das mudanças.',
+    preferredMode: 'agent',
+    builtin: true,
+  },
+  {
+    id: 'role-deploy',
+    name: 'Deploy',
+    description: 'Build, release, deployment e health check.',
+    instructions:
+      'Execute build e health checks. Só faça deploy/release se autorizado. Prepare rollback quando aplicável.',
+    permissions: ['READ', 'TERMINAL', 'TEST'],
+    tools: ['filesystem', 'terminal', 'git'],
+    expectedOutput: 'Status de build/deploy e próximos passos.',
+    preferredMode: 'agent',
+    builtin: true,
+  },
+  {
+    id: 'role-supervisor',
+    name: 'Supervisor',
+    description: 'Coordenar agents, acompanhar progresso e consolidar resultados.',
+    instructions:
+      'Coordene o trabalho dos outros agents. Avalie falhas, redistribua tarefas e consolide resultados. Não implemente código salvo se necessário para coordenação.',
+    permissions: ['READ', 'SEARCH'],
+    tools: ['filesystem'],
+    expectedOutput: 'Status da missão e consolidação.',
+    preferredMode: 'ask',
+    builtin: true,
+  },
+  {
+    id: 'role-ceo',
+    name: 'CEO',
+    description: 'Direção geral, priorização e decisões estratégicas.',
+    instructions:
+      'Defina visão, prioridades e trade-offs. Alinhe objetivos de negócio com a execução. Tome decisões claras e comunique o porquê.',
+    permissions: ['READ', 'SEARCH'],
+    tools: ['filesystem'],
+    expectedOutput: 'Diretrizes estratégicas, prioridades e decisões.',
+    preferredMode: 'ask',
+    builtin: true,
+  },
+  {
+    id: 'role-cto',
+    name: 'CTO',
+    description: 'Direção técnica, arquitetura e roadmap de engenharia.',
+    instructions:
+      'Oriente decisões técnicas e arquiteturais. Avalie risco, escopo e qualidade. Priorize sustentabilidade do sistema.',
+    permissions: ['READ', 'SEARCH'],
+    tools: ['filesystem', 'git'],
+    expectedOutput: 'Diretrizes técnicas e recomendações de arquitetura.',
+    preferredMode: 'ask',
+    builtin: true,
+  },
+  {
+    id: 'role-cfo',
+    name: 'CFO',
+    description: 'Custos, orçamento, ROI e viabilidade financeira.',
+    instructions:
+      'Avalie custo, orçamento e retorno. Identifique riscos financeiros. Recomende decisões com impacto de custo claro.',
+    permissions: ['READ', 'SEARCH'],
+    tools: ['filesystem'],
+    expectedOutput: 'Análise financeira e recomendações de investimento.',
+    preferredMode: 'ask',
+    builtin: true,
+  },
+  {
+    id: 'role-cmo',
+    name: 'CMO',
+    description: 'Posicionamento, messaging, go-to-market e crescimento.',
+    instructions:
+      'Foque em posicionamento, mensagem e aquisição. Alinhe produto e comunicação. Proponha ações mensuráveis de crescimento.',
+    permissions: ['READ', 'SEARCH'],
+    tools: ['filesystem'],
+    expectedOutput: 'Plano de marketing e messaging.',
+    preferredMode: 'ask',
+    builtin: true,
+  },
+  {
+    id: 'role-coo',
+    name: 'COO',
+    description: 'Operações, processos, eficiência e execução do dia a dia.',
+    instructions:
+      'Organize processos, handoffs e operação. Remova gargalos. Garanta execução previsível e eficiência.',
+    permissions: ['READ', 'SEARCH'],
+    tools: ['filesystem'],
+    expectedOutput: 'Plano operacional e melhorias de processo.',
+    preferredMode: 'ask',
+    builtin: true,
+  },
+  {
+    id: 'role-cpo',
+    name: 'CPO',
+    description: 'Produto, discovery, roadmap e experiência do usuário.',
+    instructions:
+      'Priorize valor para o usuário. Defina escopo de produto e critérios de sucesso. Conecte discovery à entrega.',
+    permissions: ['READ', 'SEARCH'],
+    tools: ['filesystem'],
+    expectedOutput: 'Diretrizes de produto e prioridades do roadmap.',
+    preferredMode: 'ask',
+    builtin: true,
+  },
+  {
+    id: 'role-custom',
+    name: 'Personalizado',
+    description: 'Papel customizado pelo usuário.',
+    instructions: 'Siga as instruções personalizadas fornecidas pelo usuário.',
+    permissions: ['READ'],
+    tools: ['filesystem'],
+    preferredMode: 'agent',
+    builtin: true,
+  },
+];
+
+export function getBuiltinRoleById(roleId: string): AgentRole | undefined {
+  return BUILTIN_AGENT_ROLES.find((role) => role.id === roleId);
+}

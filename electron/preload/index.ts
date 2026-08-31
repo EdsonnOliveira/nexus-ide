@@ -102,6 +102,13 @@ const nexusApi = {
     },
     isRunning: (paneId: string): Promise<boolean> =>
       ipcRenderer.invoke('agent:printIsRunning', paneId),
+    adopt: (
+      paneId: string,
+    ): Promise<{
+      running: boolean;
+      runToken: string | null;
+      exit: { code: number; error?: string; runToken: string } | null;
+    }> => ipcRenderer.invoke('agent:printAdopt', paneId),
     warm: (): Promise<void> => ipcRenderer.invoke('agent:printWarm'),
     onData: (callback: (paneId: string, data: string, runToken: string) => void): (() => void) => {
       const listener = (
@@ -166,6 +173,7 @@ const nexusApi = {
       ipcRenderer.invoke('files:resolveCdPath', cwd, target),
     getTerminalHints: (cwd: string) => ipcRenderer.invoke('files:getTerminalHints', cwd),
     getAgentSkillHints: (cwd: string) => ipcRenderer.invoke('files:getAgentSkillHints', cwd),
+    getAgentModels: (provider: string) => ipcRenderer.invoke('files:getAgentModels', provider),
     listCursorAgentHistory: (cwd: string) =>
       ipcRenderer.invoke('files:listCursorAgentHistory', cwd),
     loadCursorAgentSessionTranscript: (cwd: string, sessionId: string) =>
@@ -259,6 +267,11 @@ const nexusApi = {
     watch: (dirPath: string) => ipcRenderer.invoke('git:watch', dirPath),
     unwatch: (dirPath: string) => ipcRenderer.invoke('git:unwatch', dirPath),
     invalidateCache: (dirPath: string) => ipcRenderer.invoke('git:invalidateCache', dirPath),
+    listWorktrees: (dirPath: string) => ipcRenderer.invoke('git:listWorktrees', dirPath),
+    addWorktree: (dirPath: string, worktreePath: string, branch: string) =>
+      ipcRenderer.invoke('git:addWorktree', dirPath, worktreePath, branch),
+    removeWorktree: (dirPath: string, worktreePath: string, force?: boolean) =>
+      ipcRenderer.invoke('git:removeWorktree', dirPath, worktreePath, force),
     onRepoChange: (callback: (repoPath: string) => void): (() => void) => {
       const listener = (_: Electron.IpcRendererEvent, payload: { repoPath: string }) => {
         callback(payload.repoPath);
@@ -782,6 +795,113 @@ const nexusApi = {
     > => ipcRenderer.invoke('cloud:listOpenAgentSessions'),
     writeMobileReleaseSnapshot: (payload: unknown): Promise<{ ok: boolean; path: string }> =>
       ipcRenderer.invoke('cloud:writeMobileReleaseSnapshot', payload),
+  },
+  missions: {
+    list: (): Promise<import('../types/mission').Mission[]> => ipcRenderer.invoke('missions:list'),
+    get: (id: string): Promise<import('../types/mission').Mission | null> =>
+      ipcRenderer.invoke('missions:get', id),
+    create: (
+      input: import('../types/mission').CreateMissionInput,
+    ): Promise<import('../types/mission').Mission> => ipcRenderer.invoke('missions:create', input),
+    update: (
+      id: string,
+      patch: Partial<import('../types/mission').Mission>,
+    ): Promise<import('../types/mission').Mission | null> =>
+      ipcRenderer.invoke('missions:update', id, patch),
+    remove: (id: string): Promise<boolean> => ipcRenderer.invoke('missions:remove', id),
+    saveAttachment: (
+      missionId: string,
+      sourcePath: string,
+    ): Promise<import('../types/mission').MissionAttachment | null> =>
+      ipcRenderer.invoke('missions:saveAttachment', missionId, sourcePath),
+    savePendingAttachmentFromDataUrl: (
+      dataUrl: string,
+      fileName?: string,
+    ): Promise<{ id: string; name: string; sourcePath: string } | null> =>
+      ipcRenderer.invoke('missions:savePendingAttachmentFromDataUrl', dataUrl, fileName),
+    upsertNode: (
+      missionId: string,
+      node: import('../types/mission').MissionAgentNode,
+    ): Promise<import('../types/mission').Mission | null> =>
+      ipcRenderer.invoke('missions:upsertNode', missionId, node),
+    removeNode: (
+      missionId: string,
+      nodeId: string,
+    ): Promise<import('../types/mission').Mission | null> =>
+      ipcRenderer.invoke('missions:removeNode', missionId, nodeId),
+    upsertEdge: (
+      missionId: string,
+      edge: import('../types/mission').MissionEdge,
+    ): Promise<import('../types/mission').Mission | null> =>
+      ipcRenderer.invoke('missions:upsertEdge', missionId, edge),
+    removeEdge: (
+      missionId: string,
+      edgeId: string,
+    ): Promise<import('../types/mission').Mission | null> =>
+      ipcRenderer.invoke('missions:removeEdge', missionId, edgeId),
+    upsertInboxItem: (
+      missionId: string,
+      item: import('../types/mission').MissionInboxItem,
+    ): Promise<import('../types/mission').Mission | null> =>
+      ipcRenderer.invoke('missions:upsertInboxItem', missionId, item),
+    listInbox: (): Promise<import('../types/mission').MissionInboxItem[]> =>
+      ipcRenderer.invoke('missions:listInbox'),
+    listCustomRoles: (): Promise<import('../types/mission').AgentRole[]> =>
+      ipcRenderer.invoke('missions:listCustomRoles'),
+    listCustomTemplates: (): Promise<import('../types/mission').AgentTemplate[]> =>
+      ipcRenderer.invoke('missions:listCustomTemplates'),
+    listFlowTemplates: (): Promise<import('../types/mission').MissionFlowTemplate[]> =>
+      ipcRenderer.invoke('missions:listFlowTemplates'),
+    saveCustomRole: (
+      role: import('../types/mission').AgentRole,
+    ): Promise<import('../types/mission').AgentRole | null> =>
+      ipcRenderer.invoke('missions:saveCustomRole', role),
+    saveCustomTemplate: (
+      template: import('../types/mission').AgentTemplate,
+    ): Promise<import('../types/mission').AgentTemplate | null> =>
+      ipcRenderer.invoke('missions:saveCustomTemplate', template),
+    saveFlowTemplate: (
+      template: import('../types/mission').MissionFlowTemplate,
+    ): Promise<import('../types/mission').MissionFlowTemplate | null> =>
+      ipcRenderer.invoke('missions:saveFlowTemplate', template),
+    removeFlowTemplate: (id: string): Promise<boolean> =>
+      ipcRenderer.invoke('missions:removeFlowTemplate', id),
+    runShell: (payload: {
+      command: string;
+      cwd: string;
+    }): Promise<{
+      ok: boolean;
+      stdout: string;
+      stderr: string;
+      exitCode: number | null;
+      error?: string;
+    }> => ipcRenderer.invoke('missions:runShell', payload),
+    onUpdated: (
+      callback: (mission: import('../types/mission').Mission) => void,
+    ): (() => void) => {
+      const listener = (
+        _: Electron.IpcRendererEvent,
+        payload: import('../types/mission').Mission,
+      ) => {
+        callback(payload);
+      };
+
+      ipcRenderer.on('mission:updated', listener);
+      return () => ipcRenderer.off('mission:updated', listener);
+    },
+    onInbox: (
+      callback: (items: import('../types/mission').MissionInboxItem[]) => void,
+    ): (() => void) => {
+      const listener = (
+        _: Electron.IpcRendererEvent,
+        payload: import('../types/mission').MissionInboxItem[],
+      ) => {
+        callback(payload);
+      };
+
+      ipcRenderer.on('mission:inbox', listener);
+      return () => ipcRenderer.off('mission:inbox', listener);
+    },
   },
   agentPip: {
     pin: (snapshot: import('../types/agentPip').AgentPipSnapshot): Promise<void> =>

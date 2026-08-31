@@ -7,6 +7,7 @@ import {
   statPathEntry,
 } from '../services/directoryListing';
 import { getAgentFooterHints } from '../services/agentFooterHints';
+import { listAgentModelsForProvider } from '../services/agentModels';
 import { listCursorAgentHistory, loadCursorAgentSessionTranscript } from '../services/agentHistory';
 import { getTerminalHints } from '../services/terminalHints';
 import { detectProjectKinds } from '../services/projectKind';
@@ -56,6 +57,10 @@ export function registerFileHandlers(getWindow: () => Electron.BrowserWindow | n
 
   ipcMain.handle('files:getAgentSkillHints', async (_, cwd: string) =>
     getAgentFooterHints(resolveDirectoryPath(cwd)),
+  );
+
+  ipcMain.handle('files:getAgentModels', async (_, provider: string) =>
+    listAgentModelsForProvider(typeof provider === 'string' ? provider : 'cursor'),
   );
 
   ipcMain.handle('files:listCursorAgentHistory', async (_, cwd: string) =>

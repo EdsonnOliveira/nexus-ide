@@ -1,11 +1,20 @@
 import { useEffect } from 'react';
+import type { Automation } from '@/types/automation';
 import { useProjectStore } from '@/stores/useProjectStore';
-import { clearAllAutomationSchedulers, syncAutomationSchedulers } from '@/utils/automationScheduler';
+import {
+  clearAllAutomationSchedulers,
+  syncAutomationSchedulers,
+} from '@/utils/automationScheduler';
+
+const EMPTY_AUTOMATIONS: Automation[] = [];
 
 export function useAutomationScheduler(): void {
   const projectsMigrated = useProjectStore((state) => state.projectsMigrated);
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
-  const projects = useProjectStore((state) => state.projects);
+  const automations = useProjectStore((state) => {
+    const project = state.projects.find((item) => item.id === state.activeProjectId);
+    return project?.automations ?? EMPTY_AUTOMATIONS;
+  });
 
   useEffect(() => {
     if (!projectsMigrated) {
@@ -13,11 +22,10 @@ export function useAutomationScheduler(): void {
     }
 
     clearAllAutomationSchedulers();
-    const project = projects.find((item) => item.id === activeProjectId) ?? null;
-    syncAutomationSchedulers(project?.id ?? null, project?.automations ?? []);
+    syncAutomationSchedulers(activeProjectId, automations);
 
     return () => {
       clearAllAutomationSchedulers();
     };
-  }, [activeProjectId, projects, projectsMigrated]);
+  }, [activeProjectId, automations, projectsMigrated]);
 }

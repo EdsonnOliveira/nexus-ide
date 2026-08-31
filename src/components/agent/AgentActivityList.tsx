@@ -49,7 +49,7 @@ import {
   sanitizeResponseText,
   isValidReadFileTarget,
 } from '@/utils/agentTranscriptParser';
-import { looksLikeTruncatedAgentResponse } from '@/utils/agentStreamJsonParser';
+import { isInjectedDevServerHandoffReply, looksLikeTruncatedAgentResponse } from '@/utils/agentStreamJsonParser';
 import { parseAgentLiveFileStatus } from '@/utils/agentActivityLabel';
 import { copyHtmlImageToClipboard, findMarkdownPreviewImage } from '@/utils/downloadImageSrc';
 import { normalizeMarkdownSource } from '@/utils/markdownText';
@@ -78,10 +78,32 @@ function getSanitizedResponseLabel(label: string): string {
   return sanitized || normalized.trim();
 }
 
+function looksLikeWorkingComment(label: string): boolean {
+  const trimmed = label.trim();
+
+  if (!trimmed || trimmed.length > 220) {
+    return false;
+  }
+
+  if (trimmed.includes('\n') || trimmed.includes('```') || trimmed.includes('**')) {
+    return false;
+  }
+
+  if (/^#{1,6}\s/m.test(trimmed) || /^\s*[-*]\s/m.test(trimmed)) {
+    return false;
+  }
+
+  return true;
+}
+
 const INCOMPLETE_THOUGHT_CLOSING_MESSAGE =
   'O agente parou durante o raciocínio sem concluir a resposta. Envie novamente para continuar.';
 
-function isRenderableActivity(activity: AgentActivity, running: boolean): boolean {
+function isRenderableActivity(
+  activity: AgentActivity,
+  running: boolean,
+  options?: { hideWorkingCommentResponses?: boolean },
+): boolean {
   if (activity.kind === 'section') {
     return false;
   }
@@ -117,7 +139,21 @@ function isRenderableActivity(activity: AgentActivity, running: boolean): boolea
   }
 
   if (activity.kind === 'response') {
-    return Boolean(getSanitizedResponseLabel(activity.label).trim());
+    const label = getSanitizedResponseLabel(activity.label).trim();
+
+    if (!label) {
+      return false;
+    }
+
+    if (isInjectedDevServerHandoffReply(label)) {
+      return false;
+    }
+
+    if (!running && options?.hideWorkingCommentResponses && looksLikeWorkingComment(label)) {
+      return false;
+    }
+
+    return true;
   }
 
   if (activity.kind === 'question') {
@@ -399,12 +435,15 @@ function AgentActivityListComponent({
   isLatestTurn = false,
   onSubmitQuestion,
 }: AgentActivityListProps) {
-  const visibleActivities = useMemo(
-    () => activities.filter((activity) => isRenderableActivity(activity, running)),
-    [activities, running],
-  );
-
   const showSummary = !running && isAgentTurnSummaryVisible(summary);
+  const hideWorkingCommentResponses = Boolean(showSummary && summary);
+  const visibleActivities = useMemo(
+    () =>
+      activities.filter((activity) =>
+        isRenderableActivity(activity, running, { hideWorkingCommentResponses }),
+      ),
+    [activities, hideWorkingCommentResponses, running],
+  );
 
   const lastResponseId = useMemo(() => {
     for (let index = visibleActivities.length - 1; index >= 0; index -= 1) {
@@ -549,6 +588,22 @@ function AgentActivityListComponent({
         return null;
       }
 
+      if (looksLikeWorkingComment(label) && (running || Boolean(summary))) {
+        if (!running) {
+          return null;
+        }
+
+        return (
+          <div
+            key={activity.id}
+            className={`agent-view__status-line app-button--enter${activity.streaming ? ' agent-view__status-line--live' : ''}`}
+          >
+            <AgentActivityIcon kind={resolveAgentActivityIconFromLabel(label)} />
+            <span>{label}</span>
+          </div>
+        );
+      }
+
       const isLastResponse = activity.id === lastResponseId;
       const split =
         isLastResponse && showSummary && summary && !hasSettledActionSummaries
@@ -680,8 +735,7 @@ function AgentActivityListComponent({
 
   const needsWaitingStatus = running && !hasLiveProgressIndicator;
   const [showWaitingStatus, setShowWaitingStatus] = useState(false);
-  const waitingLabel =
-    visibleActivities.length === 0 ? 'Trabalhando...' : 'Planejando próximo passo...';
+  const waitingLabel = 'Pensando...';
 
   useEffect(() => {
     if (!running || !needsWaitingStatus) {

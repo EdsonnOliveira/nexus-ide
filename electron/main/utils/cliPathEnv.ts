@@ -21,6 +21,7 @@ function getCliPathSegments(home: string): string[] {
     path.join(home, 'bin'),
     path.join(home, '.local', 'bin'),
     path.join(home, '.cursor', 'bin'),
+    path.join(home, '.antigravity', 'antigravity', 'bin'),
     '/opt/homebrew/bin',
     '/usr/local/bin',
     '/usr/bin',

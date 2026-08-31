@@ -81,6 +81,9 @@ function generateMacAppIcons() {
   }
 
   const iconsetDir = path.join(rootDir, 'build/icon.iconset');
+  if (existsSync(iconsetDir)) {
+    rmSync(iconsetDir, { recursive: true, force: true });
+  }
   run('mkdir', ['-p', iconsetDir]);
 
   const sizes = [

@@ -57,6 +57,10 @@ export interface AddTabOptions {
 
 export interface TabStoreActions {
   addTab: (type: TabType, options?: AddTabOptions) => Promise<void>;
+  addTabForProject: (
+    projectId: string,
+    type: Exclude<TabType, 'agent'>,
+  ) => Promise<string | null>;
   addAgentTab: (command: string) => Promise<void>;
   addAgentTabForProject: (projectId: string, command: string) => Promise<string | null>;
   replaceAgentTab: (tabId: string) => Promise<void>;
@@ -283,6 +287,83 @@ export function useTabActions(): TabStoreActions {
         activeTabId: tabId,
         activePaneId: null,
       });
+    },
+    addTabForProject: async (projectId, type) => {
+      const project = useProjectStore.getState().projects.find((entry) => entry.id === projectId);
+
+      if (!project) {
+        return null;
+      }
+
+      const tabId = crypto.randomUUID();
+      const badgeColorIndex = createBadgeColorIndex(project.tabs);
+
+      if (type === 'emulator') {
+        const platform = await resolveDefaultEmulatorPlatform(project.path);
+        const nextTab: EmulatorTab = {
+          id: tabId,
+          title: `Emulador ${countPanesByType(project.tabs, 'emulator') + 1}`,
+          type: 'emulator',
+          platform,
+          deviceId: null,
+          sessionId: null,
+          badgeColorIndex,
+        };
+        await updateProject(project.id, {
+          tabs: [...project.tabs, nextTab],
+          activeTabId: tabId,
+          activePaneId: null,
+        });
+        return tabId;
+      }
+
+      if (type === 'api') {
+        const nextTab: ApiTab = {
+          id: tabId,
+          title: `API Client ${countPanesByType(project.tabs, 'api') + 1}`,
+          type: 'api',
+          requestId: null,
+          collectionId: null,
+          badgeColorIndex,
+        };
+        await updateProject(project.id, {
+          tabs: [...project.tabs, nextTab],
+          activeTabId: tabId,
+          activePaneId: null,
+        });
+        return tabId;
+      }
+
+      if (type === 'browser') {
+        const nextTab: BrowserTab = {
+          id: tabId,
+          title: `Navegador ${countPanesByType(project.tabs, 'browser') + 1}`,
+          type: 'browser',
+          url: DEFAULT_BROWSER_URL,
+          badgeColorIndex,
+        };
+        await updateProject(project.id, {
+          tabs: [...project.tabs, nextTab],
+          activeTabId: tabId,
+          activePaneId: null,
+        });
+        return tabId;
+      }
+
+      const nextTab: Tab = {
+        id: tabId,
+        title: `Terminal ${countPanesByType(project.tabs, 'terminal') + 1}`,
+        type: 'terminal',
+        ptyId: null,
+        agent: 'shell',
+        badgeColorIndex,
+      };
+      await updateProject(project.id, {
+        tabs: [...project.tabs, nextTab],
+        activeTabId: tabId,
+        activePaneId: null,
+      });
+      return tabId;
     },
     addAgentTab: async (command) => {
       const project = getProjectSnapshot();

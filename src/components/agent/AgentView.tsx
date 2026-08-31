@@ -18,6 +18,7 @@ export interface AgentViewProps {
   isRuntimeActive: boolean;
   isFocused: boolean;
   disableStickyPrompt?: boolean;
+  eagerSession?: boolean;
   onFocusPane: () => void;
   onPtyCreated: (ptyId: string) => void;
   onPtyLost: () => void;
@@ -43,7 +44,7 @@ function AgentViewShell({
 }
 
 function AgentViewComponent(props: AgentViewProps) {
-  const [sessionReady, setSessionReady] = useState(false);
+  const [sessionReady, setSessionReady] = useState(Boolean(props.eagerSession));
   const tab = useMemo(() => resolveSanitizedAgentTab(props.tab), [props.tab]);
   const terminalAgent = cliAgentToTerminalAgent(tab.cliAgent);
   const agentConfig = TERMINAL_AGENTS[terminalAgent];
@@ -53,6 +54,11 @@ function AgentViewComponent(props: AgentViewProps) {
   }, [props.onFocusPane]);
 
   useEffect(() => {
+    if (props.eagerSession) {
+      setSessionReady(true);
+      return;
+    }
+
     setSessionReady(false);
     let cancelled = false;
     const idleId = window.requestIdleCallback(
@@ -68,7 +74,7 @@ function AgentViewComponent(props: AgentViewProps) {
       cancelled = true;
       window.cancelIdleCallback(idleId);
     };
-  }, [props.projectId, props.tab.id]);
+  }, [props.eagerSession, props.projectId, props.tab.id]);
 
   const shell = (
     <AgentViewShell

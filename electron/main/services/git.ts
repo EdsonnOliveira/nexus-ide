@@ -98,12 +98,21 @@ const lightChangeCountInFlight = new Map<
   string,
   Promise<{ total: number; byRepo: Record<string, number> }>
 >();
+const cacheGenerations = new Map<string, number>();
 const LIGHT_CHANGE_COUNT_TTL_MS = 4_000;
 const LIGHT_CHANGE_COUNT_TIMEOUT_MS = 15_000;
 const LIGHT_CHANGE_COUNT_CONCURRENCY = 4;
+const GIT_WATCH_META_FILES = new Set([
+  'HEAD',
+  'index',
+  'packed-refs',
+  'COMMIT_EDITMSG',
+  'FETCH_HEAD',
+  'ORIG_HEAD',
+]);
 
 function buildGitPorcelainStatusArgs(): string[] {
-  return ['status', '--porcelain=1', '-b', '--untracked-files=all'];
+  return ['status', '--porcelain=1', '-b', '--untracked-files=normal'];
 }
 
 function buildGitStatusArgs(): string[] {
@@ -133,6 +142,7 @@ const GIT_DISCOVERY_IGNORED_DIRS = new Set([
   '.terraform',
   '.turbo',
   '.vercel',
+  '.vite',
   '.vscode',
   '.idea',
   '.cache',
@@ -432,16 +442,37 @@ function resolveProjectGitRepo(projectPath: string): string | null {
   return discoverGitRepos(resolved)[0]?.path ?? null;
 }
 
+function bumpCacheGeneration(dirPath: string): number {
+  const next = (cacheGenerations.get(dirPath) ?? 0) + 1;
+  cacheGenerations.set(dirPath, next);
+  return next;
+}
+
+function isRelatedGitCacheKey(resolved: string, key: string): boolean {
+  return key === resolved || resolved.startsWith(`${key}/`) || key.startsWith(`${resolved}/`);
+}
+
 function invalidateCache(dirPath: string): void {
   const resolved = resolveRepo(dirPath);
+  bumpCacheGeneration(resolved);
   statusCache.delete(resolved);
   discoveryCache.delete(resolved);
   lightChangeCountCache.delete(resolved);
+  lightChangeCountInFlight.delete(resolved);
 
-  for (const key of lightChangeCountCache.keys()) {
-    if (resolved.startsWith(`${key}/`) || key.startsWith(`${resolved}/`)) {
-      lightChangeCountCache.delete(key);
+  const relatedKeys = new Set<string>([
+    ...lightChangeCountCache.keys(),
+    ...lightChangeCountInFlight.keys(),
+  ]);
+
+  for (const key of relatedKeys) {
+    if (!isRelatedGitCacheKey(resolved, key)) {
+      continue;
     }
+
+    bumpCacheGeneration(key);
+    lightChangeCountCache.delete(key);
+    lightChangeCountInFlight.delete(key);
   }
 }
 
@@ -759,7 +790,7 @@ async function countPorcelainChanges(repoPath: string): Promise<number> {
       },
     );
 
-    let count = 0;
+    const paths: string[] = [];
 
     for (const line of output.split('\n')) {
       if (!line || line.startsWith('##')) {
@@ -771,15 +802,21 @@ async function countPorcelainChanges(repoPath: string): Promise<number> {
         : line.length >= 3
           ? (line.slice(3).trim().split(' -> ').pop()?.trim() ?? '')
           : '';
+      const normalizedPath = entryPath.replace(/\\/g, '/').replace(/\/+$/, '');
 
-      if (!entryPath || isGitStatusExcludedPath(entryPath)) {
+      if (!normalizedPath || isGitStatusExcludedPath(normalizedPath)) {
         continue;
       }
 
-      count += 1;
+      paths.push(normalizedPath);
     }
 
-    return count;
+    if (paths.length === 0) {
+      return 0;
+    }
+
+    const ignored = await getGitIgnoredPathSet(repoPath, paths);
+    return paths.filter((entryPath) => !ignored.has(entryPath)).length;
   } catch {
     return 0;
   }
@@ -803,6 +840,7 @@ export async function getProjectGitChangeCounts(
     return existing;
   }
 
+  const generation = cacheGenerations.get(resolved) ?? 0;
   const request = (async () => {
     const repos = discoverGitRepos(resolved);
     const entries = await mapWithConcurrency(
@@ -812,10 +850,13 @@ export async function getProjectGitChangeCounts(
     );
     const byRepo = Object.fromEntries(entries);
     const total = Object.values(byRepo).reduce((sum, count) => sum + count, 0);
-    lightChangeCountCache.set(resolved, {
-      expiresAt: Date.now() + LIGHT_CHANGE_COUNT_TTL_MS,
-      byRepo,
-    });
+
+    if ((cacheGenerations.get(resolved) ?? 0) === generation) {
+      lightChangeCountCache.set(resolved, {
+        expiresAt: Date.now() + LIGHT_CHANGE_COUNT_TTL_MS,
+        byRepo,
+      });
+    }
 
     return { total, byRepo };
   })();
@@ -1052,7 +1093,7 @@ async function getNumstatMap(
   }
 }
 
-function countUntrackedLines(resolved: string, filePath: string): number {
+async function countUntrackedLines(resolved: string, filePath: string): Promise<number> {
   const absolutePath = path.join(resolved, filePath);
 
   try {
@@ -1062,7 +1103,7 @@ function countUntrackedLines(resolved: string, filePath: string): number {
       return 0;
     }
 
-    const content = readFileSync(absolutePath, 'utf8');
+    const content = await readFile(absolutePath, 'utf8');
 
     if (!content || content.includes('\0')) {
       return 0;
@@ -1100,15 +1141,20 @@ async function enrichStatusWithStats(
     getNumstatMap(resolved, false),
   ]);
 
+  const untracked = await Promise.all(
+    result.untracked.map(async (entry, index) => ({
+      ...entry,
+      additions:
+        index < MAX_UNTRACKED_LINE_STATS ? await countUntrackedLines(resolved, entry.path) : 0,
+      deletions: 0,
+    })),
+  );
+
   return {
     ...result,
     staged: result.staged.map((entry) => applyStatsToEntry(entry, stagedStats)),
     unstaged: result.unstaged.map((entry) => applyStatsToEntry(entry, unstagedStats)),
-    untracked: result.untracked.map((entry, index) => ({
-      ...entry,
-      additions: index < MAX_UNTRACKED_LINE_STATS ? countUntrackedLines(resolved, entry.path) : 0,
-      deletions: 0,
-    })),
+    untracked,
   };
 }
 
@@ -1174,6 +1220,7 @@ export async function getGitStatus(dirPath: string): Promise<GitStatusResult> {
     return empty;
   }
 
+  const generation = cacheGenerations.get(resolved) ?? 0;
   const output = await runGit(resolved, buildGitStatusArgs());
   const parsed = parseStatusOutput(output, resolved);
   const expandedUntracked = {
@@ -1183,7 +1230,10 @@ export async function getGitStatus(dirPath: string): Promise<GitStatusResult> {
   const pathFiltered = applyGitStatusPathExclusions(expandedUntracked);
   const enriched = await enrichStatusWithStats(resolved, pathFiltered);
   const result = await filterCommitRelevantStatus(resolved, enriched);
-  statusCache.set(resolved, { expiresAt: now + CACHE_TTL_MS, result });
+
+  if ((cacheGenerations.get(resolved) ?? 0) === generation) {
+    statusCache.set(resolved, { expiresAt: now + CACHE_TTL_MS, result });
+  }
 
   return result;
 }
@@ -1731,6 +1781,57 @@ function notifyRepoChanged(repoPath: string): void {
   }
 }
 
+function isGitWatchMetaFile(filename: string | Buffer | null | undefined): boolean {
+  if (!filename) {
+    return false;
+  }
+
+  const normalized = String(filename).replace(/\\/g, '/');
+  const base = normalized.split('/').pop() ?? normalized;
+
+  if (GIT_WATCH_META_FILES.has(base)) {
+    return true;
+  }
+
+  return normalized.startsWith('refs/') || normalized.startsWith('logs/HEAD');
+}
+
+function attachGitMetaWatchers(gitDir: string, onChange: () => void): FSWatcher[] {
+  try {
+    return [
+      watch(gitDir, { recursive: true }, (_event, filename) => {
+        if (isGitWatchMetaFile(filename)) {
+          onChange();
+        }
+      }),
+    ];
+  } catch {
+    const fallback: FSWatcher[] = [];
+
+    for (const metaFile of ['HEAD', 'index'] as const) {
+      const metaPath = path.join(gitDir, metaFile);
+
+      if (!existsSync(metaPath) || !statSync(metaPath).isFile()) {
+        continue;
+      }
+
+      try {
+        fallback.push(watch(metaPath, onChange));
+      } catch {}
+    }
+
+    const refsDir = path.join(gitDir, 'refs');
+
+    if (existsSync(refsDir)) {
+      try {
+        fallback.push(watch(refsDir, { recursive: true }, onChange));
+      } catch {}
+    }
+
+    return fallback;
+  }
+}
+
 function scheduleRepoNotify(resolved: string): void {
   const state = watchStates.get(resolved);
 
@@ -1782,24 +1883,11 @@ export function watchGitRepo(dirPath: string): void {
     return;
   }
 
-  const metaWatchers: FSWatcher[] = [];
   const resolvedGitDir = resolveGitDir(resolved);
-
-  if (resolvedGitDir && existsSync(resolvedGitDir) && statSync(resolvedGitDir).isDirectory()) {
-    for (const metaFile of ['HEAD', 'index'] as const) {
-      const metaPath = path.join(resolvedGitDir, metaFile);
-
-      if (!existsSync(metaPath) || !statSync(metaPath).isFile()) {
-        continue;
-      }
-
-      try {
-        metaWatchers.push(watch(metaPath, () => scheduleRepoNotify(resolved)));
-      } catch {
-        // ignore metadata watch failures
-      }
-    }
-  }
+  const metaWatchers =
+    resolvedGitDir && existsSync(resolvedGitDir) && statSync(resolvedGitDir).isDirectory()
+      ? attachGitMetaWatchers(resolvedGitDir, () => scheduleRepoNotify(resolved))
+      : [];
 
   watchStates.set(resolved, { metaWatchers, debounceTimer: null, repoPath: resolved });
 }
@@ -1830,4 +1918,130 @@ export function unwatchGitRepo(dirPath: string): void {
   }
 
   watchStates.delete(resolved);
+}
+
+export interface GitWorktreeInfo {
+  path: string;
+  branch: string | null;
+  bare: boolean;
+}
+
+export async function listGitWorktrees(dirPath: string): Promise<GitWorktreeInfo[]> {
+  const resolved = resolveRepo(dirPath);
+
+  try {
+    const stdout = await runGit(resolved, ['worktree', 'list', '--porcelain']);
+    const blocks = stdout.split('\n\n').filter(Boolean);
+    const result: GitWorktreeInfo[] = [];
+
+    for (const block of blocks) {
+      const lines = block.split('\n');
+      const worktreeLine = lines.find((line) => line.startsWith('worktree '));
+      const branchLine = lines.find((line) => line.startsWith('branch '));
+      const bare = lines.includes('bare');
+
+      if (!worktreeLine) {
+        continue;
+      }
+
+      result.push({
+        path: worktreeLine.slice('worktree '.length),
+        branch: branchLine
+          ? branchLine.slice('branch '.length).replace(/^refs\/heads\//, '')
+          : null,
+        bare,
+      });
+    }
+
+    return result;
+  } catch {
+    return [];
+  }
+}
+
+function isSafeGitBranchName(branch: string): boolean {
+  return (
+    branch.length > 0 &&
+    branch.length <= 200 &&
+    !branch.startsWith('-') &&
+    !branch.includes('..') &&
+    /^[A-Za-z0-9._/\-]+$/.test(branch)
+  );
+}
+
+function isSafeWorktreePath(repoPath: string, worktreePath: string): string | null {
+  const resolvedWorktree = path.resolve(expandUserPath(worktreePath));
+  const nexusRoot = path.join(repoPath, '.nexus', 'worktrees');
+  const relative = path.relative(nexusRoot, resolvedWorktree);
+
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    return null;
+  }
+
+  return resolvedWorktree;
+}
+
+export async function addGitWorktree(
+  dirPath: string,
+  worktreePath: string,
+  branch: string,
+): Promise<GitCommandResult & { path?: string }> {
+  if (typeof worktreePath !== 'string' || typeof branch !== 'string') {
+    return { ok: false, error: 'Parâmetros de worktree inválidos.' };
+  }
+
+  const resolved = resolveRepo(dirPath);
+
+  if (!isSafeGitBranchName(branch)) {
+    return { ok: false, error: 'Nome de branch inválido.' };
+  }
+
+  const safePath = isSafeWorktreePath(resolved, worktreePath);
+
+  if (!safePath) {
+    return { ok: false, error: 'Caminho de worktree inválido.' };
+  }
+
+  try {
+    await runGit(resolved, ['worktree', 'add', '-b', branch, '--', safePath]);
+    invalidateCacheAndNotify(resolved);
+    return { ok: true, path: safePath };
+  } catch (error) {
+    const existing = toCommandResult(error);
+    try {
+      await runGit(resolved, ['worktree', 'add', '--', safePath, branch]);
+      invalidateCacheAndNotify(resolved);
+      return { ok: true, path: safePath };
+    } catch {
+      return existing;
+    }
+  }
+}
+
+export async function removeGitWorktree(
+  dirPath: string,
+  worktreePath: string,
+  force = false,
+): Promise<GitCommandResult> {
+  if (typeof worktreePath !== 'string') {
+    return { ok: false, error: 'Caminho de worktree inválido.' };
+  }
+
+  const resolved = resolveRepo(dirPath);
+  const safePath = isSafeWorktreePath(resolved, worktreePath);
+
+  if (!safePath) {
+    return { ok: false, error: 'Caminho de worktree inválido.' };
+  }
+
+  try {
+    const args = force
+      ? ['worktree', 'remove', '--force', '--', safePath]
+      : ['worktree', 'remove', '--', safePath];
+    await runGit(resolved, args);
+    invalidateCacheAndNotify(resolved);
+    return { ok: true };
+  } catch (error) {
+    return toCommandResult(error);
+  }
 }

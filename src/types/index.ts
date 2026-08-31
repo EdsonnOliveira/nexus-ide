@@ -24,8 +24,34 @@ import type {
   GitStatusResult,
   GitStashEntry,
 } from '@/types/git';
+import type {
+  AgentRole,
+  AgentTemplate,
+  CreateMissionInput,
+  Mission,
+  MissionAgentNode,
+  MissionAttachment,
+  MissionEdge,
+  MissionFlowTemplate,
+  MissionInboxItem,
+} from '@/types/mission';
 
 export type { AgentPipSnapshot, AgentPipCommand, AgentPipHostRequest } from '@/types/agentPip';
+
+export type {
+  AgentRole,
+  AgentTemplate,
+  ContextCapsule,
+  CreateMissionInput,
+  Mission,
+  MissionAgentNode,
+  MissionEdge,
+  MissionFlowTemplate,
+  MissionInboxItem,
+  MissionNodeKind,
+  MissionStatus,
+  MissionNodeStatus,
+} from '@/types/mission';
 
 export type {
   ProjectTask,
@@ -235,6 +261,7 @@ export interface AgentTurn {
   pendingFollowUp?: boolean;
   summary?: AgentTurnSummary;
   usage?: AgentTurnUsage;
+  resumeChatId?: string | null;
 }
 
 export interface AgentTab {
@@ -1068,6 +1095,11 @@ export interface NexusAPI {
     }) => Promise<void>;
     stop: (paneId: string, options?: { preserveChildren?: boolean }) => void;
     isRunning: (paneId: string) => Promise<boolean>;
+    adopt: (paneId: string) => Promise<{
+      running: boolean;
+      runToken: string | null;
+      exit: { code: number; error?: string; runToken: string } | null;
+    }>;
     warm: () => Promise<void>;
     onData: (callback: (paneId: string, data: string, runToken: string) => void) => () => void;
     onDone: (
@@ -1217,6 +1249,7 @@ export interface NexusAPI {
     resolveCdPath: (cwd: string, target: string) => Promise<string>;
     getTerminalHints: (cwd: string) => Promise<TerminalCommandHint[]>;
     getAgentSkillHints: (cwd: string) => Promise<TerminalCommandHint[]>;
+    getAgentModels: (provider: string) => Promise<Array<{ id: string; label: string }>>;
     listCursorAgentHistory: (cwd: string) => Promise<CursorAgentHistoryEntry[]>;
     loadCursorAgentSessionTranscript: (cwd: string, sessionId: string) => Promise<string | null>;
     getGitBranch: (dirPath: string) => Promise<string | null>;
@@ -1338,6 +1371,19 @@ export interface NexusAPI {
     watch: (dirPath: string) => Promise<void>;
     unwatch: (dirPath: string) => Promise<void>;
     invalidateCache: (dirPath: string) => Promise<void>;
+    listWorktrees: (dirPath: string) => Promise<
+      Array<{ path: string; branch: string | null; bare: boolean }>
+    >;
+    addWorktree: (
+      dirPath: string,
+      worktreePath: string,
+      branch: string,
+    ) => Promise<GitCommandResult & { path?: string }>;
+    removeWorktree: (
+      dirPath: string,
+      worktreePath: string,
+      force?: boolean,
+    ) => Promise<GitCommandResult>;
     onRepoChange: (callback: (repoPath: string) => void) => () => void;
   };
   homeDashboard: {
@@ -1346,6 +1392,43 @@ export interface NexusAPI {
       provider?: 'cursor' | 'claude' | 'opencode' | 'antigravity',
     ) => Promise<HomeDashboardActivityComparison>;
     recordActivity: (kind: HomeDashboardActivityKind) => Promise<void>;
+  };
+  missions: {
+    list: () => Promise<Mission[]>;
+    get: (id: string) => Promise<Mission | null>;
+    create: (input: CreateMissionInput) => Promise<Mission>;
+    update: (id: string, patch: Partial<Mission>) => Promise<Mission | null>;
+    remove: (id: string) => Promise<boolean>;
+    saveAttachment: (missionId: string, sourcePath: string) => Promise<MissionAttachment | null>;
+    savePendingAttachmentFromDataUrl: (
+      dataUrl: string,
+      fileName?: string,
+    ) => Promise<{ id: string; name: string; sourcePath: string } | null>;
+    upsertNode: (missionId: string, node: MissionAgentNode) => Promise<Mission | null>;
+    removeNode: (missionId: string, nodeId: string) => Promise<Mission | null>;
+    upsertEdge: (missionId: string, edge: MissionEdge) => Promise<Mission | null>;
+    removeEdge: (missionId: string, edgeId: string) => Promise<Mission | null>;
+    upsertInboxItem: (missionId: string, item: MissionInboxItem) => Promise<Mission | null>;
+    listInbox: () => Promise<MissionInboxItem[]>;
+    listCustomRoles: () => Promise<AgentRole[]>;
+    listCustomTemplates: () => Promise<AgentTemplate[]>;
+    listFlowTemplates: () => Promise<MissionFlowTemplate[]>;
+    saveCustomRole: (role: AgentRole) => Promise<AgentRole | null>;
+    saveCustomTemplate: (template: AgentTemplate) => Promise<AgentTemplate | null>;
+    saveFlowTemplate: (template: MissionFlowTemplate) => Promise<MissionFlowTemplate | null>;
+    removeFlowTemplate: (id: string) => Promise<boolean>;
+    runShell: (payload: {
+      command: string;
+      cwd: string;
+    }) => Promise<{
+      ok: boolean;
+      stdout: string;
+      stderr: string;
+      exitCode: number | null;
+      error?: string;
+    }>;
+    onUpdated: (callback: (mission: Mission) => void) => () => void;
+    onInbox: (callback: (items: MissionInboxItem[]) => void) => () => void;
   };
   onToggleExplorer: (callback: () => void) => () => void;
   onOpenTabAddMenu: (callback: () => void) => () => void;

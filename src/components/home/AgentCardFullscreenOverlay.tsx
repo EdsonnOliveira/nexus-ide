@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { OVERLAY_MODAL_DURATION_MS, useAnimatedUnmount } from '@/hooks/useAnimatedUnmount';
 import { registerModalOpen } from '@/utils/overlayBlocking';
@@ -64,7 +64,7 @@ interface AgentCardFrameProps {
   style?: CSSProperties;
   fullscreen: ReturnType<typeof useAgentCardFullscreen>;
   children: ReactNode;
-  onMouseDown?: () => void;
+  onMouseDown?: (event: MouseEvent) => void;
   dataHomeAgentPane?: string;
 }
 

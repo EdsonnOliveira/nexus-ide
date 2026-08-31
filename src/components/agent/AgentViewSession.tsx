@@ -70,6 +70,13 @@ function AgentViewSessionComponent({
     const incomingTurns = sessionTab.turns ?? [];
     const incomingTurnCount = incomingTurns.length;
     const hadTurnsBefore = previousTurnCountRef.current > 0;
+
+    if (!isRuntimeActive) {
+      previousTurnCountRef.current = incomingTurnCount;
+      setTurns(incomingTurns);
+      return;
+    }
+
     const sessionLive = isPaneAgentSessionLive(tab.id, readPaneAgentSessionSnapshot());
     const localRunning = turns.some((turn) => turn.running);
 
@@ -111,7 +118,14 @@ function AgentViewSessionComponent({
     }
 
     setTurns(incomingTurns);
-  }, [clearPaneDraft, resumeChatId, sessionTab.turns, tab.id, turns]);
+  }, [
+    clearPaneDraft,
+    isRuntimeActive,
+    resumeChatId,
+    sessionTab.turns,
+    tab.id,
+    turns,
+  ]);
 
   useEffect(() => {
     if (!isVisible || turns.length === 0) {

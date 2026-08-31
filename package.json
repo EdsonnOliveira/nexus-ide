@@ -1,6 +1,6 @@
 {
   "name": "nexus-ide",
-  "version": "1.0.59",
+  "version": "1.0.60",
   "private": true,
   "description": "Nexus IDE — AI-powered desktop IDE",
   "engines": {
@@ -47,6 +47,7 @@
     "@vscode/ripgrep": "^1.18.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
+    "@xyflow/react": "^12.11.5",
     "electron-store": "^10.0.1",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.460.0",
@@ -109,7 +110,9 @@
       {
         "from": "node_modules/@vscode",
         "to": "node_modules/@vscode",
-        "filter": ["ripgrep-*/**/*"]
+        "filter": [
+          "ripgrep-*/**/*"
+        ]
       },
       "!**/*.map"
     ],

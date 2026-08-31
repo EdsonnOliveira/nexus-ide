@@ -1,13 +1,18 @@
-import { ChevronDown, ChevronRight, FilePlus, FolderOpen, FolderPlus, GitBranch, Search } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  FilePlus,
+  FolderOpen,
+  FolderPlus,
+  GitBranch,
+  Search,
+} from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ProjectGitDrawer } from '@/components/git/ProjectGitDrawer';
 import { ExplorerEntryContextMenu } from '@/components/explorer/ExplorerEntryContextMenu';
 import { ExplorerEnvEditorModal } from '@/components/explorer/ExplorerEnvEditorModal';
 import { ExplorerEnvHints } from '@/components/explorer/ExplorerEnvHints';
-import {
-  ExplorerDirectoryIcon,
-  ExplorerFileIcon,
-} from '@/components/explorer/ExplorerTreeIcon';
+import { ExplorerDirectoryIcon, ExplorerFileIcon } from '@/components/explorer/ExplorerTreeIcon';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { ProjectPromptDialog } from '@/components/sidebar/ProjectPromptDialog';
 import { EXPLORER_ENTRY_DRAG_MIME } from '@/constants/explorerDrag';
@@ -19,11 +24,7 @@ import { useExplorerGitDecorations } from '@/hooks/useExplorerGitDecorations';
 import { useGitChangeCount } from '@/hooks/useGitChangeCount';
 import type { ExplorerGitDecoration } from '@/hooks/useExplorerGitDecorations';
 import { useDelayedHoverHint } from '@/hooks/useDelayedHoverHint';
-import {
-  EXPLORER_ROOT_COLORS,
-  type ProjectDirectoryEntry,
-  type ProjectKind,
-} from '@/types';
+import { EXPLORER_ROOT_COLORS, type ProjectDirectoryEntry, type ProjectKind } from '@/types';
 import { isImageFileName } from '@/utils/fileViewMode';
 import {
   DEFAULT_EXPLORER_SEARCH_OPTIONS,
@@ -200,9 +201,7 @@ function areDirectoryEntriesEqual(
   return left.every((entry, index) => {
     const other = right[index];
 
-    return (
-      entry.path === other.path && entry.name === other.name && entry.type === other.type
-    );
+    return entry.path === other.path && entry.name === other.name && entry.type === other.type;
   });
 }
 
@@ -262,8 +261,11 @@ const ExplorerTreeNode = memo(function ExplorerTreeNodeComponent({
     () => (!isDirectory && isImageFileName(entry.name) ? entry.path : null),
     [entry.name, entry.path, isDirectory],
   );
-  const { onMouseEnter: onFileHintEnter, onMouseLeave: onFileHintLeave, hintNode } =
-    useDelayedHoverHint(fileHintText, undefined, { imagePath: imageHintPath });
+  const {
+    onMouseEnter: onFileHintEnter,
+    onMouseLeave: onFileHintLeave,
+    hintNode,
+  } = useDelayedHoverHint(fileHintText, undefined, { imagePath: imageHintPath });
   const isDropTarget = isDirectory && dropTargetPath === entry.path;
   const rowDropClass = getDropTargetClasses(
     isDropTarget,
@@ -306,22 +308,33 @@ const ExplorerTreeNode = memo(function ExplorerTreeNodeComponent({
     let cancelled = false;
     setLoading(true);
 
-    void window.nexus.files.listDirectoryEntries(entry.path).then((entries) => {
-      if (!cancelled) {
-        setChildren(entries);
-        setLoading(false);
-      }
-    }).catch(() => {
-      if (!cancelled) {
-        setChildren([]);
-        setLoading(false);
-      }
-    });
+    void window.nexus.files
+      .listDirectoryEntries(entry.path)
+      .then((entries) => {
+        if (!cancelled) {
+          setChildren(entries);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setChildren([]);
+          setLoading(false);
+        }
+      });
 
     return () => {
       cancelled = true;
     };
-  }, [children, entry.path, expanded, initialExpanded, isDirectory, isSearchTree, preloadedChildren]);
+  }, [
+    children,
+    entry.path,
+    expanded,
+    initialExpanded,
+    isDirectory,
+    isSearchTree,
+    preloadedChildren,
+  ]);
 
   useEffect(() => {
     if (
@@ -336,17 +349,22 @@ const ExplorerTreeNode = memo(function ExplorerTreeNodeComponent({
 
     let cancelled = false;
 
-    void window.nexus.files.listDirectoryEntries(entry.path).then((entries) => {
-      if (!cancelled) {
-        setChildren((current) => (areDirectoryEntriesEqual(current ?? [], entries) ? current : entries));
-        setLoading(false);
-      }
-    }).catch(() => {
-      if (!cancelled) {
-        setChildren([]);
-        setLoading(false);
-      }
-    });
+    void window.nexus.files
+      .listDirectoryEntries(entry.path)
+      .then((entries) => {
+        if (!cancelled) {
+          setChildren((current) =>
+            areDirectoryEntriesEqual(current ?? [], entries) ? current : entries,
+          );
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setChildren([]);
+          setLoading(false);
+        }
+      });
 
     return () => {
       cancelled = true;
@@ -452,7 +470,9 @@ const ExplorerTreeNode = memo(function ExplorerTreeNodeComponent({
   );
 
   return (
-    <div className={`project-explorer__branch${expanded ? ' project-explorer__branch--expanded' : ''}`}>
+    <div
+      className={`project-explorer__branch${expanded ? ' project-explorer__branch--expanded' : ''}`}
+    >
       <button
         type='button'
         className={`project-explorer__row app-button app-button--enter${isSelected ? ' project-explorer__row--selected' : ''}${rowDropClass}`}
@@ -469,7 +489,11 @@ const ExplorerTreeNode = memo(function ExplorerTreeNodeComponent({
       >
         <span className='project-explorer__chevron' aria-hidden='true'>
           {isDirectory ? (
-            expanded ? <ChevronDown size={12} strokeWidth={2} /> : <ChevronRight size={12} strokeWidth={2} />
+            expanded ? (
+              <ChevronDown size={12} strokeWidth={2} />
+            ) : (
+              <ChevronRight size={12} strokeWidth={2} />
+            )
           ) : null}
         </span>
         {isRootProject && projectKind ? (
@@ -498,7 +522,9 @@ const ExplorerTreeNode = memo(function ExplorerTreeNodeComponent({
           </span>
         ) : null}
         {isDropTarget && dropDragMode ? (
-          <span className={`project-explorer__drop-badge project-explorer__drop-badge--${dropDragMode}`}>
+          <span
+            className={`project-explorer__drop-badge project-explorer__drop-badge--${dropDragMode}`}
+          >
             {dropDragMode === 'external' ? 'Importar' : 'Mover'}
           </span>
         ) : null}
@@ -523,15 +549,22 @@ const ExplorerTreeNode = memo(function ExplorerTreeNodeComponent({
       ))}
 
       {isDirectory ? (
-        <div className={`project-explorer__children${expanded ? ' project-explorer__children--open' : ''}`}>
+        <div
+          className={`project-explorer__children${expanded ? ' project-explorer__children--open' : ''}`}
+        >
           <div
             className={`project-explorer__children-inner${childrenDropClass}`}
             onDragOver={handleChildrenDragOver}
             onDrop={handleChildrenDrop}
           >
-            {expanded && loading ? <div className='project-explorer__loading'>Carregando...</div> : null}
+            {expanded && loading ? (
+              <div className='project-explorer__loading'>Carregando...</div>
+            ) : null}
             {expanded && !loading && children?.length === 0 ? (
-              <div className='project-explorer__empty-folder' style={{ paddingLeft: `${22 + depth * 14}px` }}>
+              <div
+                className='project-explorer__empty-folder'
+                style={{ paddingLeft: `${22 + depth * 14}px` }}
+              >
                 <FolderOpen size={12} strokeWidth={2} aria-hidden />
                 <span>Pasta vazia</span>
               </div>
@@ -583,7 +616,9 @@ function ProjectExplorerDrawerComponent({
   onSelectPane,
   onOpenDiff,
 }: ProjectExplorerDrawerProps) {
-  const project = useProjectStore((state) => state.projects.find((item) => item.id === projectId) ?? null);
+  const project = useProjectStore(
+    (state) => state.projects.find((item) => item.id === projectId) ?? null,
+  );
   const explorerView = useProjectStore((state) => state.explorerView);
   const toggleExplorerGit = useProjectStore((state) => state.toggleExplorerGit);
   const gitChangeCount = useGitChangeCount(rootPath);
@@ -644,43 +679,46 @@ function ProjectExplorerDrawerComponent({
     setTreeRevision((value) => value + 1);
   }, []);
 
-  const loadRootEntries = useCallback(async (options?: { silent?: boolean }) => {
-    if (!options?.silent) {
-      setLoading(true);
-    }
-
-    try {
-      const entries = await window.nexus.files.listDirectoryEntries(rootPath);
-      const directoryPaths = entries
-        .filter((entry) => entry.type === 'directory')
-        .map((entry) => entry.path);
-
-      let kinds: Record<string, ProjectKind | null> = {};
+  const loadRootEntries = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!options?.silent) {
+        setLoading(true);
+      }
 
       try {
-        kinds =
-          directoryPaths.length > 0
-            ? await window.nexus.files.detectProjectKinds(directoryPaths)
-            : {};
-      } catch {
-        kinds = {};
-      }
+        const entries = await window.nexus.files.listDirectoryEntries(rootPath);
+        const directoryPaths = entries
+          .filter((entry) => entry.type === 'directory')
+          .map((entry) => entry.path);
 
-      if (!areDirectoryEntriesEqual(rootEntriesRef.current, entries)) {
-        rootEntriesRef.current = entries;
-        setRootEntries(entries);
-        setProjectKinds(kinds);
+        let kinds: Record<string, ProjectKind | null> = {};
+
+        try {
+          kinds =
+            directoryPaths.length > 0
+              ? await window.nexus.files.detectProjectKinds(directoryPaths)
+              : {};
+        } catch {
+          kinds = {};
+        }
+
+        if (!areDirectoryEntriesEqual(rootEntriesRef.current, entries)) {
+          rootEntriesRef.current = entries;
+          setRootEntries(entries);
+          setProjectKinds(kinds);
+        }
+      } catch {
+        rootEntriesRef.current = [];
+        setRootEntries([]);
+        setProjectKinds({});
+      } finally {
+        if (!options?.silent) {
+          setLoading(false);
+        }
       }
-    } catch {
-      rootEntriesRef.current = [];
-      setRootEntries([]);
-      setProjectKinds({});
-    } finally {
-      if (!options?.silent) {
-        setLoading(false);
-      }
-    }
-  }, [rootPath]);
+    },
+    [rootPath],
+  );
 
   useEffect(() => {
     if (searchOpen) {
@@ -707,6 +745,10 @@ function ProjectExplorerDrawerComponent({
   useEffect(() => {
     return window.nexus.files.onProjectChange((payload) => {
       if (payload.projectPath !== rootPath) {
+        return;
+      }
+
+      if (payload.structural === false) {
         return;
       }
 
@@ -1159,256 +1201,262 @@ function ProjectExplorerDrawerComponent({
         }
       }}
     >
-        <div className='project-explorer__header'>
-          <span className='project-explorer__title'>Explorador</span>
-          <div className='project-explorer__header-actions'>
-            {!isGitView ? (
-              <>
-                <button
-                  type='button'
-                  className='project-explorer__header-btn app-button app-button--enter'
-                  aria-label='Novo arquivo'
-                  onClick={() => setCreatePromptMode('file')}
-                >
-                  <FilePlus size={14} strokeWidth={2} />
-                </button>
-                <button
-                  type='button'
-                  className='project-explorer__header-btn app-button app-button--enter'
-                  aria-label='Nova pasta'
-                  onClick={() => setCreatePromptMode('folder')}
-                >
-                  <FolderPlus size={14} strokeWidth={2} />
-                </button>
-                <button
-                  type='button'
-                  className={`project-explorer__header-btn app-button app-button--enter${searchOpen ? ' project-explorer__header-btn--active' : ''}`}
-                  aria-label='Buscar no projeto'
-                  onClick={handleToggleSearch}
-                >
-                  <Search size={14} strokeWidth={2} />
-                </button>
-              </>
-            ) : (
-              <div ref={setGitMoreActionsHost} className='project-explorer__header-git-more' />
-            )}
-            <button
-              type='button'
-              className={`project-explorer__header-btn project-explorer__header-btn--git app-button app-button--enter${isGitView ? ' project-explorer__header-btn--active' : ''}`}
-              aria-label='Controle de versão'
-              onClick={toggleExplorerGit}
-            >
-              <GitBranch size={14} strokeWidth={2} />
-              {gitChangeCount > 0 ? (
-                <span className='project-explorer__header-badge' aria-hidden='true'>
-                  {gitChangeCount > 99 ? '99+' : gitChangeCount}
-                </span>
-              ) : null}
-            </button>
-          </div>
+      <div className='project-explorer__header'>
+        <span className='project-explorer__title'>Explorador</span>
+        <div className='project-explorer__header-actions'>
+          {!isGitView ? (
+            <>
+              <button
+                type='button'
+                className='project-explorer__header-btn app-button app-button--enter'
+                aria-label='Novo arquivo'
+                onClick={() => setCreatePromptMode('file')}
+              >
+                <FilePlus size={14} strokeWidth={2} />
+              </button>
+              <button
+                type='button'
+                className='project-explorer__header-btn app-button app-button--enter'
+                aria-label='Nova pasta'
+                onClick={() => setCreatePromptMode('folder')}
+              >
+                <FolderPlus size={14} strokeWidth={2} />
+              </button>
+              <button
+                type='button'
+                className={`project-explorer__header-btn app-button app-button--enter${searchOpen ? ' project-explorer__header-btn--active' : ''}`}
+                aria-label='Buscar no projeto'
+                onClick={handleToggleSearch}
+              >
+                <Search size={14} strokeWidth={2} />
+              </button>
+            </>
+          ) : (
+            <div ref={setGitMoreActionsHost} className='project-explorer__header-git-more' />
+          )}
+          <button
+            type='button'
+            className={`project-explorer__header-btn project-explorer__header-btn--git app-button app-button--enter${isGitView ? ' project-explorer__header-btn--active' : ''}`}
+            aria-label='Controle de versão'
+            onClick={toggleExplorerGit}
+          >
+            <GitBranch size={14} strokeWidth={2} />
+            {gitChangeCount > 0 ? (
+              <span className='project-explorer__header-badge' aria-hidden='true'>
+                {gitChangeCount > 99 ? '99+' : gitChangeCount}
+              </span>
+            ) : null}
+          </button>
         </div>
+      </div>
 
-        {isGitView ? (
-          <ProjectGitDrawer
-            embedded
-            projectId={projectId}
-            rootPath={rootPath}
-            moreActionsHost={gitMoreActionsHost}
-            onOpenDiff={onOpenDiff}
-          />
-        ) : (
-          <>
-        <div className={`project-explorer__search${searchOpen ? ' project-explorer__search--open' : ''}`}>
-          <div className='project-explorer__search-inner'>
-            <div className='project-explorer__search-field'>
-              <input
-                ref={searchInputRef}
-                type='text'
-                className='project-explorer__search-input'
-                placeholder='Buscar no projeto'
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-              <div className='project-explorer__search-options'>
-                <button
-                  type='button'
-                  className={`project-explorer__search-option${searchOptions.matchCase ? ' project-explorer__search-option--active' : ''}`}
-                  aria-label='Diferenciar maiúsculas e minúsculas'
-                  aria-pressed={searchOptions.matchCase}
-                  onClick={() => toggleSearchOption('matchCase')}
-                >
-                  Aa
-                </button>
-                <button
-                  type='button'
-                  className={`project-explorer__search-option project-explorer__search-option--whole-word${searchOptions.matchWholeWord ? ' project-explorer__search-option--active' : ''}`}
-                  aria-label='Palavra inteira'
-                  aria-pressed={searchOptions.matchWholeWord}
-                  onClick={() => toggleSearchOption('matchWholeWord')}
-                >
-                  ab
-                </button>
-                <button
-                  type='button'
-                  className={`project-explorer__search-option${searchOptions.useRegex ? ' project-explorer__search-option--active' : ''}`}
-                  aria-label='Usar expressão regular'
-                  aria-pressed={searchOptions.useRegex}
-                  onClick={() => toggleSearchOption('useRegex')}
-                >
-                  .*
-                </button>
+      {isGitView ? (
+        <ProjectGitDrawer
+          embedded
+          projectId={projectId}
+          rootPath={rootPath}
+          moreActionsHost={gitMoreActionsHost}
+          onOpenDiff={onOpenDiff}
+        />
+      ) : (
+        <>
+          <div
+            className={`project-explorer__search${searchOpen ? ' project-explorer__search--open' : ''}`}
+          >
+            <div className='project-explorer__search-inner'>
+              <div className='project-explorer__search-field'>
+                <input
+                  ref={searchInputRef}
+                  type='text'
+                  className='project-explorer__search-input'
+                  placeholder='Buscar no projeto'
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+                <div className='project-explorer__search-options'>
+                  <button
+                    type='button'
+                    className={`project-explorer__search-option${searchOptions.matchCase ? ' project-explorer__search-option--active' : ''}`}
+                    aria-label='Diferenciar maiúsculas e minúsculas'
+                    aria-pressed={searchOptions.matchCase}
+                    onClick={() => toggleSearchOption('matchCase')}
+                  >
+                    Aa
+                  </button>
+                  <button
+                    type='button'
+                    className={`project-explorer__search-option project-explorer__search-option--whole-word${searchOptions.matchWholeWord ? ' project-explorer__search-option--active' : ''}`}
+                    aria-label='Palavra inteira'
+                    aria-pressed={searchOptions.matchWholeWord}
+                    onClick={() => toggleSearchOption('matchWholeWord')}
+                  >
+                    ab
+                  </button>
+                  <button
+                    type='button'
+                    className={`project-explorer__search-option${searchOptions.useRegex ? ' project-explorer__search-option--active' : ''}`}
+                    aria-label='Usar expressão regular'
+                    aria-pressed={searchOptions.useRegex}
+                    onClick={() => toggleSearchOption('useRegex')}
+                  >
+                    .*
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <div
-          className={`project-explorer__tree-shell${explorerDragMode ? ` project-explorer__tree-shell--${explorerDragMode}` : ''}`}
-        >
-          {dropFeedbackLabel ? (
-            <div className='project-explorer__drop-feedback app-button--enter'>
-              <span>{dropFeedbackLabel}</span>
-            </div>
-          ) : null}
           <div
-            className={`project-explorer__tree${treeDropClass}`}
-            onContextMenu={handleTreeContextMenu}
-            onDragOver={handleTreeDragOver}
-            onDragLeave={handleTreeDragLeave}
-            onDrop={handleTreeDrop}
+            className={`project-explorer__tree-shell${explorerDragMode ? ` project-explorer__tree-shell--${explorerDragMode}` : ''}`}
           >
-          {treeLoading ? <div className='project-explorer__loading'>Carregando arquivos...</div> : null}
-          {!treeLoading && visibleEntries.length === 0 ? (
-            <div className='project-explorer__loading'>Nenhum arquivo encontrado</div>
-          ) : null}
-          {!treeLoading
-            ? visibleEntries.map((entry, index) => (
-                <ExplorerTreeNode
-                  key={entry.path}
-                  entry={entry}
-                  rootPath={rootPath}
-                  depth={0}
-                  selectedPath={selectedPath}
-                  accentColor={
-                    entry.type === 'directory'
-                      ? EXPLORER_ROOT_COLORS[index % EXPLORER_ROOT_COLORS.length]
-                      : undefined
-                  }
-                  projectKind={entry.type === 'directory' ? projectKinds[entry.path] : null}
-                  dragEnabled={dragEnabled}
-                  dropTargetPath={dropTargetPath}
-                  dropDragMode={explorerDragMode}
-                  treeRevision={treeRevision}
-                  directoryInvalidation={directoryInvalidation}
-                  isSearchTree={isSearching}
-                  preloadedChildren={
-                    isSearching && entry.type === 'directory'
-                      ? ((entry as ExplorerSearchNode).children ?? null)
-                      : undefined
-                  }
-                  initialExpanded={isSearching || shouldAutoExpandSingleRootFolder}
-                  onSelect={handleSelect}
-                  onOpenFile={onOpenFile}
-                  onDragStartEntry={handleDragStartEntry}
-                  onDragEndEntry={handleDragEndEntry}
-                  onDragOverDropTarget={handleDragOverDropTarget}
-                  onDropOnTarget={handleDropOnTarget}
-                  onImportOnTarget={handleImportOnTarget}
-                  onContextMenu={handleContextMenu}
-                  resolveGitDecoration={resolveGitDecoration}
-                />
-              ))
-            : null}
+            {dropFeedbackLabel ? (
+              <div className='project-explorer__drop-feedback app-button--enter'>
+                <span>{dropFeedbackLabel}</span>
+              </div>
+            ) : null}
+            <div
+              className={`project-explorer__tree${treeDropClass}`}
+              onContextMenu={handleTreeContextMenu}
+              onDragOver={handleTreeDragOver}
+              onDragLeave={handleTreeDragLeave}
+              onDrop={handleTreeDrop}
+            >
+              {treeLoading ? (
+                <div className='project-explorer__loading'>Carregando arquivos...</div>
+              ) : null}
+              {!treeLoading && visibleEntries.length === 0 ? (
+                <div className='project-explorer__loading'>Nenhum arquivo encontrado</div>
+              ) : null}
+              {!treeLoading
+                ? visibleEntries.map((entry, index) => (
+                    <ExplorerTreeNode
+                      key={entry.path}
+                      entry={entry}
+                      rootPath={rootPath}
+                      depth={0}
+                      selectedPath={selectedPath}
+                      accentColor={
+                        entry.type === 'directory'
+                          ? EXPLORER_ROOT_COLORS[index % EXPLORER_ROOT_COLORS.length]
+                          : undefined
+                      }
+                      projectKind={entry.type === 'directory' ? projectKinds[entry.path] : null}
+                      dragEnabled={dragEnabled}
+                      dropTargetPath={dropTargetPath}
+                      dropDragMode={explorerDragMode}
+                      treeRevision={treeRevision}
+                      directoryInvalidation={directoryInvalidation}
+                      isSearchTree={isSearching}
+                      preloadedChildren={
+                        isSearching && entry.type === 'directory'
+                          ? ((entry as ExplorerSearchNode).children ?? null)
+                          : undefined
+                      }
+                      initialExpanded={isSearching || shouldAutoExpandSingleRootFolder}
+                      onSelect={handleSelect}
+                      onOpenFile={onOpenFile}
+                      onDragStartEntry={handleDragStartEntry}
+                      onDragEndEntry={handleDragEndEntry}
+                      onDragOverDropTarget={handleDragOverDropTarget}
+                      onDropOnTarget={handleDropOnTarget}
+                      onImportOnTarget={handleImportOnTarget}
+                      onContextMenu={handleContextMenu}
+                      resolveGitDecoration={resolveGitDecoration}
+                    />
+                  ))
+                : null}
+            </div>
           </div>
-        </div>
-        {!isSearching ? <ExplorerEnvHints hints={envHints} onOpenHint={handleOpenEnvHint} /> : null}
-          </>
-        )}
+          {!isSearching ? (
+            <ExplorerEnvHints hints={envHints} onOpenHint={handleOpenEnvHint} />
+          ) : null}
+        </>
+      )}
 
-        {activeEnvHint ? (
-          <ExplorerEnvEditorModal
-            hint={activeEnvHint}
-            onClose={handleCloseEnvHint}
-            onOpenAsTab={handleOpenEnvHintAsTab}
-          />
-        ) : null}
+      {activeEnvHint ? (
+        <ExplorerEnvEditorModal
+          hint={activeEnvHint}
+          onClose={handleCloseEnvHint}
+          onOpenAsTab={handleOpenEnvHintAsTab}
+        />
+      ) : null}
 
-        {createPromptMode ? (
-          <ProjectPromptDialog
-            mode='rename'
-            initialValue={createPromptMode === 'file' ? 'novo-arquivo.txt' : 'nova-pasta'}
-            dialogTitle={createPromptMode === 'file' ? 'Novo arquivo' : 'Nova pasta'}
-            dialogLabel={createPromptMode === 'file' ? 'Nome do arquivo' : 'Nome da pasta'}
-            onConfirm={(value) => {
-              void handleCreateConfirm(value);
-            }}
-            onClose={() => setCreatePromptMode(null)}
-          />
-        ) : null}
+      {createPromptMode ? (
+        <ProjectPromptDialog
+          mode='rename'
+          initialValue={createPromptMode === 'file' ? 'novo-arquivo.txt' : 'nova-pasta'}
+          dialogTitle={createPromptMode === 'file' ? 'Novo arquivo' : 'Nova pasta'}
+          dialogLabel={createPromptMode === 'file' ? 'Nome do arquivo' : 'Nome da pasta'}
+          onConfirm={(value) => {
+            void handleCreateConfirm(value);
+          }}
+          onClose={() => setCreatePromptMode(null)}
+        />
+      ) : null}
 
-        {contextMenu ? (
-          <ExplorerEntryContextMenu
-            entry={contextMenu.entry}
-            x={contextMenu.x}
-            y={contextMenu.y}
-            canAddToChat={canAddToChat}
-            onClose={handleCloseContextMenu}
-            onNewFile={handleNewFileFromMenu}
-            onNewFolder={handleNewFolderFromMenu}
-            onAddToChat={handleAddToChat}
-            onRevealInFolder={handleRevealInFolder}
-            onCopyPath={handleCopyPath}
-            onCopyRelativePath={handleCopyRelativePath}
-            onRename={handleRenameRequest}
-            onDelete={handleDeleteRequest}
-            onViewCode={handleViewCode}
-          />
-        ) : null}
+      {contextMenu ? (
+        <ExplorerEntryContextMenu
+          entry={contextMenu.entry}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          canAddToChat={canAddToChat}
+          onClose={handleCloseContextMenu}
+          onNewFile={handleNewFileFromMenu}
+          onNewFolder={handleNewFolderFromMenu}
+          onAddToChat={handleAddToChat}
+          onRevealInFolder={handleRevealInFolder}
+          onCopyPath={handleCopyPath}
+          onCopyRelativePath={handleCopyRelativePath}
+          onRename={handleRenameRequest}
+          onDelete={handleDeleteRequest}
+          onViewCode={handleViewCode}
+        />
+      ) : null}
 
-        {renameEntry ? (
-          <ProjectPromptDialog
-            mode='rename'
-            initialValue={renameEntry.name}
-            dialogTitle='Renomear'
-            dialogLabel={renameEntry.type === 'directory' ? 'Nome da pasta' : 'Nome do arquivo'}
-            onConfirm={(value) => {
-              void handleRenameConfirm(value);
-            }}
-            onClose={() => setRenameEntry(null)}
-          />
-        ) : null}
+      {renameEntry ? (
+        <ProjectPromptDialog
+          mode='rename'
+          initialValue={renameEntry.name}
+          dialogTitle='Renomear'
+          dialogLabel={renameEntry.type === 'directory' ? 'Nome da pasta' : 'Nome do arquivo'}
+          onConfirm={(value) => {
+            void handleRenameConfirm(value);
+          }}
+          onClose={() => setRenameEntry(null)}
+        />
+      ) : null}
 
-        {deleteEntry ? (
-          <AnimatedModal onClose={() => setDeleteEntry(null)} panelClassName='project-dialog'>
-            {(requestClose) => (
-              <>
-                <span className='project-dialog__title'>Deletar item</span>
-                <p className='project-dialog__message'>
-                  Tem certeza que deseja deletar <strong>{deleteEntry.name}</strong>?
-                </p>
-                <div className='project-dialog__actions'>
-                  <button
-                    type='button'
-                    className='project-dialog__btn project-dialog__btn--ghost app-button'
-                    onClick={requestClose}
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type='button'
-                    className='project-dialog__btn project-dialog__btn--danger app-button'
-                    onClick={() => {
-                      void handleDeleteConfirm(requestClose);
-                    }}
-                  >
-                    Deletar
-                  </button>
-                </div>
-              </>
-            )}
-          </AnimatedModal>
-        ) : null}
-      </aside>
+      {deleteEntry ? (
+        <AnimatedModal onClose={() => setDeleteEntry(null)} panelClassName='project-dialog'>
+          {(requestClose) => (
+            <>
+              <span className='project-dialog__title'>Deletar item</span>
+              <p className='project-dialog__message'>
+                Tem certeza que deseja deletar <strong>{deleteEntry.name}</strong>?
+              </p>
+              <div className='project-dialog__actions'>
+                <button
+                  type='button'
+                  className='project-dialog__btn project-dialog__btn--ghost app-button'
+                  onClick={requestClose}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type='button'
+                  className='project-dialog__btn project-dialog__btn--danger app-button'
+                  onClick={() => {
+                    void handleDeleteConfirm(requestClose);
+                  }}
+                >
+                  Deletar
+                </button>
+              </div>
+            </>
+          )}
+        </AnimatedModal>
+      ) : null}
+    </aside>
   );
 }
 

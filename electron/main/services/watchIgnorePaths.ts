@@ -20,6 +20,7 @@ const IGNORED_WATCH_SEGMENTS = new Set([
   '.terraform',
   '.turbo',
   '.vercel',
+  '.vite',
   '.vscode',
   '__pycache__',
   'DerivedData',

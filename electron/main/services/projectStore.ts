@@ -1,7 +1,15 @@
 import Store from 'electron-store';
 import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
-import type { AppState, Project, ProjectUpdatePayload, Tab, TabBarItem, Workspace, WorkspaceUpdatePayload } from '../../types';
+import type {
+  AppState,
+  Project,
+  ProjectUpdatePayload,
+  Tab,
+  TabBarItem,
+  Workspace,
+  WorkspaceUpdatePayload,
+} from '../../types';
 import type { ProjectTask, ProjectTaskLocalMeta } from '../../types/task';
 import { agentTurnHistoryChanged, sanitizeAgentTurnHistory } from './trimAgentTurnHistory';
 import { ensureNexusGitignore, hasNexusProjectDir } from './nexusProjectGitignore';
@@ -303,7 +311,10 @@ function normalizeWorkspace(
   };
 }
 
-function normalizeProject(project: Project & { layout?: unknown }, fallbackWorkspaceId: string): Project {
+function normalizeProject(
+  project: Project & { layout?: unknown },
+  fallbackWorkspaceId: string,
+): Project {
   return {
     ...project,
     workspaceId: project.workspaceId ?? fallbackWorkspaceId,
@@ -371,9 +382,14 @@ function migrateLegacyWhatsAppLink(state: AppState, legacyLink: string | null): 
   };
 }
 
+const PROJECT_STORE_WRITE_DEBOUNCE_MS = 800;
+
 class ProjectStoreService {
   private store: Store<AppState> | null = null;
   private nexusGitignoreEnsured = new Set<string>();
+  private cachedState: AppState | null = null;
+  private writeTimer: ReturnType<typeof setTimeout> | null = null;
+  private historyTrimChecked = false;
 
   private ensureNexusGitignoreForProject(projectPath: string, force = false): void {
     if (!force && this.nexusGitignoreEnsured.has(projectPath)) {
@@ -407,6 +423,10 @@ class ProjectStoreService {
   }
 
   private readState(): AppState {
+    if (this.cachedState) {
+      return this.cachedState;
+    }
+
     const store = this.getStore();
     const legacyWhatsAppLink =
       (store.get('sidebarWhatsAppLink' as keyof AppState) as string | null | undefined) ?? null;
@@ -428,12 +448,17 @@ class ProjectStoreService {
       store.delete('sidebarWhatsAppLink' as keyof AppState);
     }
 
+    this.cachedState = state;
     return state;
   }
 
-  private writeState(state: AppState): AppState {
+  private persistCachedState(): void {
+    if (!this.cachedState) {
+      return;
+    }
+
     const store = this.getStore();
-    const normalized = normalizeState(state);
+    const normalized = this.cachedState;
     store.set({
       projects: normalized.projects,
       workspaces: normalized.workspaces,
@@ -443,16 +468,46 @@ class ProjectStoreService {
       sidebarVideoSession: normalized.sidebarVideoSession ?? null,
       sidebarVideoLastLink: normalized.sidebarVideoLastLink ?? null,
     });
+  }
+
+  private scheduleDiskWrite(): void {
+    if (this.writeTimer) {
+      clearTimeout(this.writeTimer);
+    }
+
+    this.writeTimer = setTimeout(() => {
+      this.writeTimer = null;
+      this.persistCachedState();
+    }, PROJECT_STORE_WRITE_DEBOUNCE_MS);
+  }
+
+  flushWrites(): void {
+    if (this.writeTimer) {
+      clearTimeout(this.writeTimer);
+      this.writeTimer = null;
+    }
+
+    this.persistCachedState();
+  }
+
+  private writeState(state: AppState): AppState {
+    const normalized = normalizeState(state);
+    this.cachedState = normalized;
+    this.scheduleDiskWrite();
     return normalized;
   }
 
   list(): AppState {
-    const store = this.getStore();
-    const rawProjects = store.get('projects');
     const state = this.readState();
 
-    if (agentTurnHistoryChanged(rawProjects, state.projects)) {
-      this.writeState(state);
+    if (!this.historyTrimChecked) {
+      const rawProjects = this.getStore().get('projects');
+
+      if (agentTurnHistoryChanged(rawProjects, state.projects)) {
+        this.writeState(state);
+      }
+
+      this.historyTrimChecked = true;
     }
 
     this.ensureNexusGitignoreForProjects(state.projects);
@@ -466,7 +521,10 @@ class ProjectStoreService {
     const existing = projects.find((project) => project.path === projectPath);
 
     if (existing) {
-      this.getStore().set('activeProjectId', existing.id);
+      this.writeState({
+        ...state,
+        activeProjectId: existing.id,
+      });
       this.ensureNexusGitignoreForProject(projectPath, true);
       return existing;
     }
@@ -538,22 +596,20 @@ class ProjectStoreService {
   }
 
   select(id: string): void {
-    const store = this.getStore();
-    const projects = store.get('projects') ?? [];
-    const project = projects.find((item) => item.id === id);
+    const state = this.readState();
+    const project = state.projects.find((item) => item.id === id);
 
     if (!project) {
       return;
     }
 
-    const activeWorkspaceId = store.get('activeWorkspaceId') ?? null;
     let activeProjectIdByWorkspace = rememberProjectForWorkspace(
-      store.get('activeProjectIdByWorkspace') ?? {},
+      state.activeProjectIdByWorkspace ?? {},
       project.workspaceId,
       id,
     );
 
-    if (activeWorkspaceId === null) {
+    if (state.activeWorkspaceId === null) {
       activeProjectIdByWorkspace = rememberProjectForWorkspace(
         activeProjectIdByWorkspace,
         null,
@@ -562,13 +618,16 @@ class ProjectStoreService {
     } else {
       activeProjectIdByWorkspace = rememberProjectForWorkspace(
         activeProjectIdByWorkspace,
-        activeWorkspaceId,
+        state.activeWorkspaceId,
         id,
       );
     }
 
-    store.set('activeProjectId', id);
-    store.set('activeProjectIdByWorkspace', activeProjectIdByWorkspace);
+    this.writeState({
+      ...state,
+      activeProjectId: id,
+      activeProjectIdByWorkspace,
+    });
   }
 
   clearActiveProject(): void {
@@ -696,8 +755,7 @@ class ProjectStoreService {
     );
 
     const workspaces = state.workspaces.filter((workspace) => workspace.id !== id);
-    const activeWorkspaceId =
-      state.activeWorkspaceId === id ? null : state.activeWorkspaceId;
+    const activeWorkspaceId = state.activeWorkspaceId === id ? null : state.activeWorkspaceId;
     const activeProjectIdByWorkspace = { ...(state.activeProjectIdByWorkspace ?? {}) };
     delete activeProjectIdByWorkspace[id];
 
@@ -776,3 +834,7 @@ class ProjectStoreService {
 }
 
 export const projectStore = new ProjectStoreService();
+
+export function flushProjectStoreWrites(): void {
+  projectStore.flushWrites();
+}

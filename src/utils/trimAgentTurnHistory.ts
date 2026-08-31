@@ -211,9 +211,7 @@ function stripAttachmentDataUrls(turn: AgentTurn): AgentTurn {
     ...turn,
     user: {
       ...turn.user,
-      attachments: attachments.map((a) =>
-        a.dataUrl.length > 256 ? { ...a, dataUrl: '' } : a,
-      ),
+      attachments: attachments.map((a) => (a.dataUrl.length > 256 ? { ...a, dataUrl: '' } : a)),
     },
   };
 }
@@ -360,6 +358,39 @@ function trimAgentTab(tab: Tab): Tab {
     followUps: followUps.length > 0 ? followUps : undefined,
     ptyId: turns.length === 0 ? null : tab.ptyId,
   };
+}
+
+export function reuseStableAgentTurns(previous: AgentTurn[], next: AgentTurn[]): AgentTurn[] {
+  if (previous === next || next.length === 0) {
+    return next;
+  }
+
+  if (previous.length === 0) {
+    return next;
+  }
+
+  const lastIndex = next.length - 1;
+  let changed = previous.length !== next.length;
+  const reused = next.map((turn, index) => {
+    if (index === lastIndex) {
+      if (previous[index] !== turn) {
+        changed = true;
+      }
+
+      return turn;
+    }
+
+    const prev = previous[index];
+
+    if (prev && prev.id === turn.id && !turn.running) {
+      return prev;
+    }
+
+    changed = true;
+    return turn;
+  });
+
+  return changed ? reused : previous;
 }
 
 export function trimAgentTurnsInTabBarItems(items: TabBarItem[]): TabBarItem[] {

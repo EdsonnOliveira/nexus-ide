@@ -1125,6 +1125,39 @@ html.nexus-standalone .home-dashboard__ask-bar {
   background: rgba(255, 255, 255, 0.1);
 }
 
+.home-dashboard__agent-project--ping,
+.home-dashboard__agent-project--ping:hover:not(:disabled) {
+  border-color: #ef4444;
+  animation: home-dashboard-agent-card-ping 1.4s ease-out infinite;
+}
+
+.home-dashboard__agent-ready-ping {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f87171;
+  box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.45);
+  animation: home-dashboard-agent-ready-ping 1.4s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes home-dashboard-agent-ready-ping {
+  0% {
+    box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.45);
+  }
+
+  70% {
+    box-shadow: 0 0 0 6px rgba(248, 113, 113, 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(248, 113, 113, 0);
+  }
+}
+
 .home-dashboard__agent-project-icon-wrap {
   position: relative;
   flex-shrink: 0;
@@ -1552,6 +1585,12 @@ html.nexus-standalone .home-dashboard__ask-bar {
   filter: brightness(1.04);
 }
 
+.home-dashboard__agent-list-row--ping,
+.home-dashboard__agent-list-row--ping:hover:not(:disabled) {
+  border-color: #ef4444;
+  animation: home-dashboard-agent-card-ping 1.4s ease-out infinite;
+}
+
 .home-dashboard__agent-list-row-main {
   flex: 1;
   min-width: 0;
@@ -1730,6 +1769,17 @@ html.nexus-standalone .home-dashboard__ask-bar {
   }
 
   .home-dashboard__agent-list-row {
+    animation: none;
+  }
+
+  .home-dashboard__agent-list-row--ping,
+  .home-dashboard__agent-list-row--ping:hover:not(:disabled),
+  .home-dashboard__agent-project--ping,
+  .home-dashboard__agent-project--ping:hover:not(:disabled) {
+    animation: none;
+  }
+
+  .home-dashboard__agent-ready-ping {
     animation: none;
   }
 

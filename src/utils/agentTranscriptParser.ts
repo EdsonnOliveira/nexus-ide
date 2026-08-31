@@ -281,7 +281,7 @@ export function createAgentTranscriptParserState(): AgentTranscriptParserState {
 }
 
 export function createInitialTurnActivities(): AgentActivity[] {
-  return [createActivity('live_status', 'Trabalhando...')];
+  return [createActivity('live_status', 'Pensando...')];
 }
 
 function markAgentMarker(state: AgentTranscriptParserState): void {

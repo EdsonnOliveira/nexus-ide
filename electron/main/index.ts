@@ -37,8 +37,10 @@ import { startManagedRuntime, stopManagedRuntime } from './services/cloudRuntime
 import { ensureDevServerRunning, stopEnsuredDevServer } from './services/devServerKeepAlive';
 import { registerFileHandlers } from './ipc/files';
 import { registerProjectHandlers } from './ipc/projects';
+import { flushProjectStoreWrites } from './services/projectStore';
 import { registerGitHandlers } from './ipc/git';
 import { registerHomeDashboardHandlers } from './ipc/homeDashboard';
+import { registerMissionHandlers } from './ipc/missions';
 import { registerMusicHandlers } from './ipc/music';
 import { registerMailHandlers } from './ipc/mail';
 import { registerCalendarHandlers } from './ipc/calendar';
@@ -1224,6 +1226,7 @@ app.whenReady().then(() => {
   registerApiHandlers();
   registerGitHandlers(() => win);
   registerHomeDashboardHandlers();
+  registerMissionHandlers();
   registerMusicHandlers();
   registerSystemStatusHandlers();
   registerSystemNotificationsHandlers();
@@ -1423,6 +1426,7 @@ app.on('activate', () => {
 });
 
 app.on('will-quit', () => {
+  flushProjectStoreWrites();
   stopDevServerWatch();
   stopDevServerHeartbeat();
   stopEnsuredDevServer();

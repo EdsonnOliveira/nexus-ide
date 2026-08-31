@@ -1160,6 +1160,7 @@ async function runAgentPrompt(
       body: projectName,
       dedupeKey: `agent:${execution!.id}:${failed ? 'failed' : 'completed'}`,
       data: {
+        kind: 'agent',
         sessionId: session!.id,
         executionId: execution!.id,
         status: failed ? 'failed' : 'completed',

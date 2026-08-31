@@ -202,15 +202,18 @@ function AgentThoughtBlockComponent({
   }, [canToggle]);
 
   const isBriefThought = !activity.streaming && !bodyText;
+  const firstLine = bodyText.split('\n').find((line) => line.trim())?.trim() ?? '';
+  const streamingTitle =
+    firstLine.length > 88 ? `${firstLine.slice(0, 85)}…` : firstLine;
   const titleLabel = activity.streaming
-    ? `Pensando ${elapsedSeconds}s`
+    ? streamingTitle || `Pensando ${elapsedSeconds}s`
     : isBriefThought
       ? 'Pensou brevemente'
       : `Pensou por ${formatDuration(activity.durationMs)}`;
   const iconKind = useMemo(() => resolveAgentActivityIconKind(activity), [activity]);
 
   if (activity.streaming && !bodyText) {
-    return <AgentLiveStatus label='Trabalhando...' />;
+    return <AgentLiveStatus label='Pensando...' />;
   }
 
   return (

@@ -312,7 +312,7 @@ function AgentToolActivityScrollListComponent({
       Boolean(summary) &&
       (Boolean(detail?.streaming) ||
         detail?.kind === 'live_status' ||
-        /^(?:Executando|Running|Exploring|Editing|Planning|Thinking|Aguardando|Agent executando|Comando|Trabalhando|Planejando)\b/i.test(
+        /^(?:Executando|Running|Exploring|Editing|Planning|Thinking|Pensando|Aguardando|Agent executando|Comando|Trabalhando|Planejando)\b/i.test(
           summary ?? '',
         ));
 

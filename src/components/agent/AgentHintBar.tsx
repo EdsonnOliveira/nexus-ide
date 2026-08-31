@@ -13,19 +13,24 @@ import {
   Trash2,
 } from 'lucide-react';
 import { AgentHintLeading } from '@/components/agent/AgentHintLeading';
+import { cliAgentToAiProvider } from '@/constants/aiProviders';
 import {
   positionContextSubmenuWithinViewport,
   positionDropdownAboveAnchor,
   positionDropdownBelowAnchor,
   useAnchoredDropdownMenu,
 } from '@/hooks/useAnchoredDropdownMenu';
+import { useProjectStore } from '@/stores/useProjectStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import type { TerminalCommandHint } from '@/types';
 import { shouldShowAgentSkillHints } from '@/utils/parseAgentModeCommand';
 import {
   resolveModelBadgeColor,
   resolveModelBadgeIcon,
+  type AgentHintBadgeIcon,
 } from '@/utils/agentHintBadges';
+import { resolveAgentTabCli } from '@/utils/agentTabHelpers';
+import { findPaneTab } from '@/utils/tabGroups';
 
 type PlusSubmenu = 'models' | 'skills' | null;
 
@@ -51,30 +56,95 @@ function enrichModelHint(hint: TerminalCommandHint): TerminalCommandHint {
   };
 }
 
+function providerBadgeIcon(
+  provider: ReturnType<typeof cliAgentToAiProvider>,
+): AgentHintBadgeIcon {
+  if (provider === 'claude') {
+    return 'claude';
+  }
+
+  if (provider === 'antigravity') {
+    return 'antigravity';
+  }
+
+  if (provider === 'opencode') {
+    return 'opencode';
+  }
+
+  return 'cursor';
+}
+
+function usePaneCliAgent(paneId: string): string {
+  const activeAgent = useTerminalSessionStore((state) => state.activeAgentByPane[paneId]);
+  const tabCli = useProjectStore((state) => {
+    for (const project of state.projects) {
+      const pane = findPaneTab(project.tabs, paneId);
+      if (pane?.type === 'agent') {
+        return resolveAgentTabCli(pane);
+      }
+    }
+    return null;
+  });
+
+  return activeAgent?.trim() || tabCli || 'cursor-agent';
+}
+
 function useAgentHints(paneId: string, cwd: string, isVisible: boolean) {
   const [hints, setHints] = useState<TerminalCommandHint[]>([]);
   const activeAgentMode = useTerminalSessionStore(
     (state) => state.activeAgentModeByPane[paneId] ?? 'agent',
   );
   const showSkillHints = shouldShowAgentSkillHints(activeAgentMode);
+  const paneCliAgent = usePaneCliAgent(paneId);
+  const aiProvider = cliAgentToAiProvider(paneCliAgent);
 
   useEffect(() => {
-    if (!isVisible) {
+    if (!isVisible || !window.nexus?.files) {
       return;
     }
 
     let cancelled = false;
 
-    void window.nexus.files.getAgentSkillHints(cwd).then((entries) => {
-      if (!cancelled) {
-        setHints(entries);
+    void (async () => {
+      const footerHints = cwd
+        ? await window.nexus.files.getAgentSkillHints(cwd)
+        : [];
+
+      if (cancelled) {
+        return;
       }
-    });
+
+      let modelHints = footerHints.filter((hint) => hint.hintKind === 'model');
+
+      if (aiProvider !== 'cursor' && window.nexus.files.getAgentModels) {
+        const models = await window.nexus.files.getAgentModels(aiProvider);
+
+        if (cancelled) {
+          return;
+        }
+
+        const badgeIcon = providerBadgeIcon(aiProvider);
+        modelHints = models.map((model) => ({
+          id: `model-${model.id}`,
+          badge: badgeIcon === 'claude' ? 'A' : badgeIcon === 'opencode' ? 'O' : 'G',
+          badgeIcon,
+          badgeColor: resolveModelBadgeColor(badgeIcon),
+          label: model.label,
+          command: `/model ${model.id}\n`,
+          hintKind: 'model' as const,
+        }));
+      }
+
+      setHints([
+        ...footerHints.filter((hint) => hint.hintKind !== 'model'),
+        ...modelHints,
+      ]);
+    })();
 
     return () => {
       cancelled = true;
     };
-  }, [cwd, isVisible, paneId]);
+  }, [aiProvider, cwd, isVisible, paneId]);
 
   return useMemo(() => {
     const filtered = showSkillHints
@@ -566,6 +636,29 @@ function AgentComposerModelSelectComponent({
   const [selectedLabel, setSelectedLabel] = useState('Auto');
   const [selectedHintId, setSelectedHintId] = useState<string | null>(null);
   const { modelHints } = useAgentHints(paneId, cwd, isVisible);
+
+  useEffect(() => {
+    if (modelHints.length === 0) {
+      return;
+    }
+
+    const stillValid = modelHints.some(
+      (hint) =>
+        hint.id === selectedHintId || shortenMenuLabel(hint.label) === selectedLabel,
+    );
+
+    if (stillValid) {
+      return;
+    }
+
+    const next = modelHints[0];
+    if (!next) {
+      return;
+    }
+
+    setSelectedLabel(shortenMenuLabel(next.label));
+    setSelectedHintId(next.id);
+  }, [modelHints, selectedHintId, selectedLabel]);
 
   const selectedHint = useMemo(() => {
     if (selectedHintId) {

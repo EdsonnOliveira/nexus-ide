@@ -36,6 +36,7 @@ import { useWebEmulatorProjectIds } from './useWebEmulatorProjectIds';
 import { useWebPreviewProjectIds } from './useWebPreviewProjectIds';
 import { useWebMarkdownCmdLinks } from './useWebMarkdownCmdLinks';
 import { useWebNavHistory, type WebNavHistoryState } from './useWebNavHistory';
+import { useWebAgentCompletionNotify } from './useWebAgentCompletionNotify';
 import { useWebVercelDeployments } from './useWebVercelDeployments';
 import { WebMobileReleaseCard } from './WebMobileReleaseCard';
 import { useWebMobileReleases } from './useWebMobileReleases';
@@ -169,6 +170,7 @@ export function WebMaestroHome() {
   const [agentFilterProjectId, setAgentFilterProjectId] = useState<string | null>(null);
   const [focusedAgentId, setFocusedAgentId] = useState<string | null>(null);
   const [openAgentId, setOpenAgentId] = useState<string | null>(null);
+  useWebAgentCompletionNotify(openAgentId);
   const [heroScrolled, setHeroScrolled] = useState(false);
   const parsersRef = useRef(new Map<string, WebStreamJsonState>());
   const agentActivityRef = useRef(new Map<string, number>());

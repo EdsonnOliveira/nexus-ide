@@ -23,6 +23,9 @@ import {
   unwatchGitRepo,
   watchGitRepo,
   invalidateGitStatusCache,
+  listGitWorktrees,
+  addGitWorktree,
+  removeGitWorktree,
 } from '../services/git';
 
 export function registerGitHandlers(getWindow: () => Electron.BrowserWindow | null): void {
@@ -119,4 +122,20 @@ export function registerGitHandlers(getWindow: () => Electron.BrowserWindow | nu
   ipcMain.handle('git:invalidateCache', async (_, dirPath: string) => {
     invalidateGitStatusCache(resolveDirectoryPath(dirPath));
   });
+
+  ipcMain.handle('git:listWorktrees', async (_, dirPath: string) =>
+    listGitWorktrees(resolveDirectoryPath(dirPath)),
+  );
+
+  ipcMain.handle(
+    'git:addWorktree',
+    async (_, dirPath: string, worktreePath: string, branch: string) =>
+      addGitWorktree(resolveDirectoryPath(dirPath), worktreePath, branch),
+  );
+
+  ipcMain.handle(
+    'git:removeWorktree',
+    async (_, dirPath: string, worktreePath: string, force?: boolean) =>
+      removeGitWorktree(resolveDirectoryPath(dirPath), worktreePath, Boolean(force)),
+  );
 }

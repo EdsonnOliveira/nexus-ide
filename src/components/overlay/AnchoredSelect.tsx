@@ -27,6 +27,7 @@ interface AnchoredSelectMenuProps<T extends string> {
   menuClassName?: string;
   onClose: () => void;
   onSelect: (value: T | '') => void;
+  onOptionContextMenu?: (value: T, event: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
 function AnchoredSelectMenuComponent<T extends string>({
@@ -40,6 +41,7 @@ function AnchoredSelectMenuComponent<T extends string>({
   menuClassName,
   onClose,
   onSelect,
+  onOptionContextMenu,
 }: AnchoredSelectMenuProps<T>) {
   const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
     onClose,
@@ -108,12 +110,27 @@ function AnchoredSelectMenuComponent<T extends string>({
 
   const handleSelect = useCallback(
     (nextValue: T | '') => (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (event.button !== 0) {
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       onSelect(nextValue);
       requestClose();
     },
     [onSelect, requestClose],
+  );
+
+  const handleOptionContextMenu = useCallback(
+    (nextValue: T) => (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (!onOptionContextMenu) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      onOptionContextMenu(nextValue, event);
+    },
+    [onOptionContextMenu],
   );
 
   return createPortal(
@@ -145,6 +162,7 @@ function AnchoredSelectMenuComponent<T extends string>({
             className={`context-menu__item anchored-select__menu-item${isSelected ? ' context-menu__item--active' : ''}`}
             role='menuitem'
             onMouseDown={handleSelect(option.value)}
+            onContextMenu={handleOptionContextMenu(option.value)}
           >
             <span className='anchored-select__menu-item-content'>
               {option.icon ? (
@@ -191,6 +209,7 @@ interface AnchoredSelectProps<T extends string = string> {
   leadingIcon?: React.ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  onOptionContextMenu?: (value: T, event: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
 function AnchoredSelectComponent<T extends string = string>({
@@ -208,6 +227,7 @@ function AnchoredSelectComponent<T extends string = string>({
   leadingIcon,
   open: openProp,
   onOpenChange,
+  onOptionContextMenu,
 }: AnchoredSelectProps<T>) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
@@ -333,6 +353,7 @@ function AnchoredSelectComponent<T extends string = string>({
           menuClassName={menuClassName}
           onClose={handleClose}
           onSelect={onChange}
+          onOptionContextMenu={onOptionContextMenu}
         />
       ) : null}
     </div>

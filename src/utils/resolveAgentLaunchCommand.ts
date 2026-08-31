@@ -11,6 +11,8 @@ export async function resolveAgentLaunchCommand(
 ): Promise<string> {
   const preferredAiProvider =
     provider ?? useAppSettingsStore.getState().preferredAiProvider;
+  const cli = preferredAiProviderToCli(preferredAiProvider);
+  const launchCommand = buildAgentPaneLaunchCommand(cli);
 
-  return buildAgentPaneLaunchCommand(preferredAiProviderToCli(preferredAiProvider));
+  return launchCommand.trim() || cli;
 }

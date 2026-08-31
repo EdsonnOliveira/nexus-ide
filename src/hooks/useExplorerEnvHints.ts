@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { EXPLORER_ROOT_COLORS, type ProjectDirectoryEntry, type ProjectKind } from '@/types';
-import {
-  collectExplorerEnvHintsFromEntries,
-  type ExplorerEnvHint,
-} from '@/utils/explorerEnvHints';
+import { collectExplorerEnvHintsFromEntries, type ExplorerEnvHint } from '@/utils/explorerEnvHints';
 
 export function useExplorerEnvHints(
   rootPath: string,
@@ -52,6 +49,10 @@ export function useExplorerEnvHints(
 
     return window.nexus.files.onProjectChange((payload) => {
       if (payload.projectPath !== rootPath) {
+        return;
+      }
+
+      if (payload.structural === false) {
         return;
       }
 

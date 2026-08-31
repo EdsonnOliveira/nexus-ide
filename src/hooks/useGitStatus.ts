@@ -35,8 +35,11 @@ export function useGitStatus(repoPath: string | null, enabled: boolean): UseGitS
   const repoPathRef = useRef(repoPath);
   repoPathRef.current = repoPath;
 
+  const refreshRequestIdRef = useRef(0);
+
   const refresh = useCallback(async () => {
     const path = repoPathRef.current;
+    const currentRequest = ++refreshRequestIdRef.current;
 
     if (!path) {
       setStatus(null);
@@ -55,14 +58,24 @@ export function useGitStatus(repoPath: string | null, enabled: boolean): UseGitS
         window.nexus.git.stashList(path),
       ]);
 
+      if (currentRequest !== refreshRequestIdRef.current) {
+        return;
+      }
+
       setStatus(nextStatus);
       setBranches(nextBranches);
       setStashes(nextStashes);
     } catch (loadError) {
+      if (currentRequest !== refreshRequestIdRef.current) {
+        return;
+      }
+
       const message = loadError instanceof Error ? loadError.message : 'Falha ao carregar Git';
       setError(message);
     } finally {
-      setLoading(false);
+      if (currentRequest === refreshRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 

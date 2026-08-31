@@ -218,10 +218,12 @@ function AgentCloseConfirm({
 function AgentListRow({
   agent,
   enterIndex,
+  hasReadyPing,
   onOpen,
 }: {
   agent: WebAgentSession;
   enterIndex: number;
+  hasReadyPing: boolean;
   onOpen: (agentId: string) => void;
 }) {
   const title = resolveAgentTitle(agent);
@@ -232,9 +234,11 @@ function AgentListRow({
     <button
       type='button'
       data-agent-id={agent.id}
-      className='home-dashboard__agent-list-row app-button app-button--enter'
+      className={`home-dashboard__agent-list-row app-button app-button--enter${
+        hasReadyPing ? ' home-dashboard__agent-list-row--ping' : ''
+      }`}
       style={{ ['--enter-index' as string]: enterIndex }}
-      aria-label={`${title}. ${statusLabel}`}
+      aria-label={`${title}. ${statusLabel}${hasReadyPing ? '. Agent pronto' : ''}`}
       onClick={() => onOpen(agent.id)}
     >
       <span className='home-dashboard__agent-list-row-main'>
@@ -532,6 +536,7 @@ function AgentProjectRow({
   enterIndex,
   hasEmulator,
   hasPreview,
+  hasReadyPing,
   onSelect,
   onOpenEmulator,
   onOpenPreview,
@@ -540,6 +545,7 @@ function AgentProjectRow({
   enterIndex: number;
   hasEmulator: boolean;
   hasPreview: boolean;
+  hasReadyPing: boolean;
   onSelect: (projectId: string) => void;
   onOpenEmulator?: (projectId: string) => void;
   onOpenPreview?: (projectId: string) => void;
@@ -571,12 +577,14 @@ function AgentProjectRow({
 
   return (
     <div
-      className='home-dashboard__agent-project app-button app-button--enter'
+      className={`home-dashboard__agent-project app-button app-button--enter${
+        hasReadyPing ? ' home-dashboard__agent-project--ping' : ''
+      }`}
       style={{ ['--enter-index' as string]: enterIndex }}
       title={group.name}
       role='button'
       tabIndex={0}
-      aria-label={`Abrir agents de ${group.name}`}
+      aria-label={`Abrir agents de ${group.name}${hasReadyPing ? '. Agent pronto' : ''}`}
       onClick={handleClick}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
@@ -587,6 +595,9 @@ function AgentProjectRow({
     >
       <span className='home-dashboard__agent-project-icon-wrap'>
         <ProjectThumb logoUrl={group.logoUrl} color={group.color} name={group.name} />
+        {hasReadyPing ? (
+          <span className='home-dashboard__agent-ready-ping' aria-hidden='true' />
+        ) : null}
       </span>
       <span className='home-dashboard__agent-project-name'>{group.name}</span>
       <span className='home-dashboard__agent-project-indicators'>
@@ -664,6 +675,8 @@ export function WebMaestroAgents({
   onScrollChange,
 }: WebMaestroAgentsProps) {
   const sectionRef = useRef<HTMLElement>(null);
+  const notifiedAgentIds = useWebStore((state) => state.notifiedAgentIds);
+  const clearAgentNotification = useWebStore((state) => state.clearAgentNotification);
   const [openAgentId, setOpenAgentIdState] = useState<string | null>(openAgentIdProp);
   const [detailTask, setDetailTask] = useState<WebProjectTask | null>(null);
 
@@ -714,9 +727,10 @@ export function WebMaestroAgents({
 
   const handleOpenAgent = useCallback(
     (agentId: string) => {
+      clearAgentNotification(agentId);
       setOpenAgentId(agentId);
     },
-    [setOpenAgentId],
+    [clearAgentNotification, setOpenAgentId],
   );
 
   const handleCloseAgent = useCallback(() => {
@@ -884,6 +898,7 @@ export function WebMaestroAgents({
                 enterIndex={index}
                 hasEmulator={Boolean(emulatorProjectIds?.has(group.projectId))}
                 hasPreview={Boolean(previewProjectIds?.has(group.projectId))}
+                hasReadyPing={group.agents.some((agent) => Boolean(notifiedAgentIds[agent.id]))}
                 onSelect={onSelectProject}
                 onOpenEmulator={onOpenEmulator}
                 onOpenPreview={onOpenPreview}
@@ -1004,6 +1019,7 @@ export function WebMaestroAgents({
                   key={agent.id}
                   agent={agent}
                   enterIndex={index}
+                  hasReadyPing={Boolean(notifiedAgentIds[agent.id])}
                   onOpen={handleOpenAgent}
                 />
               ))}

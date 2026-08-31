@@ -38,6 +38,8 @@ import { useAgentShellTerminalStore } from '@/stores/useAgentShellTerminalStore'
 import { isAnyModalOpen, subscribeOverlayBlockingChange } from '@/utils/overlayBlocking';
 import { requestHomeAskFocus, getHomeDashboardViewMode } from '@/utils/homeDashboardAgents';
 import { useToastStore } from '@/stores/useToastStore';
+import { useMissionHydration } from '@/hooks/useMissionHydration';
+import { useMissionOrchestration } from '@/hooks/useMissionOrchestration';
 
 const LazyHomeDashboard = lazy(() =>
   import('@/components/home/HomeDashboard').then((module) => ({
@@ -152,6 +154,8 @@ function EmptyWorkspace() {
 
 function AppShellComponent() {
   const nexusReady = useNexusReady();
+  useMissionHydration();
+  useMissionOrchestration();
   useTestRunnerEvents();
   useMarkdownPreviewCmdLinks();
   const initialize = useProjectStore((state) => state.initialize);
@@ -170,7 +174,9 @@ function AppShellComponent() {
     [activeProjectId, projects],
   );
   const isDrawerSidePanel = Boolean(sidePanel && sidePanel !== 'brain');
-  const agentPrintRunTokenByPane = useTerminalSessionStore((state) => state.agentPrintRunTokenByPane);
+  const agentPrintRunTokenByPane = useTerminalSessionStore(
+    (state) => state.agentPrintRunTokenByPane,
+  );
   const agentBusyByPane = useTerminalSessionStore((state) => state.agentBusyByPane);
   const awaitingResponseByPane = useTerminalSessionStore((state) => state.awaitingResponseByPane);
   const runningShellTerminalCount = useAgentShellTerminalStore((state) => {
@@ -208,11 +214,17 @@ function AppShellComponent() {
   ]);
   const gitChangeCount = useGitChangeCount(
     projectsMigrated ? (activeProject?.path ?? null) : null,
-    { watch: false, deferMs: 250 },
+    { deferMs: 250 },
   );
   const activeProjectPath = activeProject?.path ?? null;
-  const { openFileTab, openFilePreviewTab, openFileCodeTab, openDiffTab, openBrowserTab, selectPane } =
-    useTabActions();
+  const {
+    openFileTab,
+    openFilePreviewTab,
+    openFileCodeTab,
+    openDiffTab,
+    openBrowserTab,
+    selectPane,
+  } = useTabActions();
   const { toggle: toggleJarvis } = useJarvisController();
 
   const handleOpenExplorerFile = useCallback(
@@ -265,8 +277,7 @@ function AppShellComponent() {
         window.clearTimeout(timer);
       }
 
-      const delayMs =
-        document.visibilityState === 'hidden' ? 120_000 : 60_000;
+      const delayMs = document.visibilityState === 'hidden' ? 120_000 : 60_000;
 
       timer = window.setTimeout(() => {
         void refreshCloud().finally(() => {
@@ -406,10 +417,7 @@ function AppShellComponent() {
     }
 
     const unsubscribe = window.nexus.onOpenGlobalSearch(() => {
-      if (
-        !useProjectStore.getState().activeProjectId &&
-        getHomeDashboardViewMode() === 'agent'
-      ) {
+      if (!useProjectStore.getState().activeProjectId && getHomeDashboardViewMode() === 'agent') {
         useGlobalSearchStore.getState().close();
         requestHomeAskFocus();
         return;
@@ -491,92 +499,96 @@ function AppShellComponent() {
   return (
     <DailyGenerationProvider>
       <div className={shellClassName}>
-      {isMac ? <TitleBar /> : null}
+        {isMac ? <TitleBar /> : null}
 
-      <ProjectSidebar />
+        <ProjectSidebar />
 
-      <div className='app-main'>
-        {activeProject || needsOffscreenAgentHost ? (
-          <div
-            className={`glass-panel${activeProject ? ' glass-panel--main' : ' app-shell__hidden-agent-host'}`}
-            hidden={!activeProject || undefined}
-            aria-hidden={!activeProject || undefined}
-          >
-            <PaneErrorBoundary>
-              {initialized ? (
-                <MainWorkspacePanel ready={initialized} />
-              ) : (
+        <div className='app-main'>
+          {activeProject || needsOffscreenAgentHost ? (
+            <div
+              className={`glass-panel${activeProject ? ' glass-panel--main' : ' app-shell__hidden-agent-host'}`}
+              hidden={!activeProject || undefined}
+              aria-hidden={!activeProject || undefined}
+            >
+              <PaneErrorBoundary>
+                {initialized ? (
+                  <MainWorkspacePanel ready={initialized} />
+                ) : (
+                  <div className='empty-state'>Carregando...</div>
+                )}
+              </PaneErrorBoundary>
+            </div>
+          ) : null}
+          {!activeProject ? (
+            <div className='glass-panel glass-panel--empty glass-panel--home'>
+              {!initialized ? (
                 <div className='empty-state'>Carregando...</div>
+              ) : projects.length === 0 ? (
+                <EmptyWorkspace />
+              ) : (
+                <Suspense fallback={<div className='empty-state'>Carregando...</div>}>
+                  <LazyHomeDashboard />
+                </Suspense>
               )}
-            </PaneErrorBoundary>
-          </div>
-        ) : null}
-        {!activeProject ? (
-          <div className='glass-panel glass-panel--empty glass-panel--home'>
-            {!initialized ? (
-              <div className='empty-state'>Carregando...</div>
-            ) : projects.length === 0 ? (
-              <EmptyWorkspace />
-            ) : (
-              <Suspense fallback={<div className='empty-state'>Carregando...</div>}>
-                <LazyHomeDashboard />
-              </Suspense>
-            )}
-          </div>
-        ) : null}
-      </div>
-
-      {activeProject ? (
-        <div
-          className={`project-explorer-slot side-panel-slot${isDrawerSidePanel ? ' project-explorer-slot--open side-panel-slot--open' : ''}`}
-          aria-hidden={!isDrawerSidePanel}
-        >
-          <Suspense
-            fallback={
-              <div className='project-explorer__loading'>
-                {sidePanel === 'passwords'
-                  ? 'Carregando formulário...'
-                  : sidePanel === 'automations'
-                    ? 'Carregando automações...'
-                    : sidePanel === 'tasks'
-                      ? 'Carregando tarefas...'
-                      : sidePanel === 'tests'
-                        ? 'Carregando testes...'
-                        : 'Carregando explorador...'}
-              </div>
-            }
-          >
-            {sidePanel === 'explorer' ? (
-              <ProjectExplorerDrawer
-                projectId={activeProject.id}
-                rootPath={activeProject.path}
-                onOpenFile={handleOpenExplorerFile}
-                onOpenFileCode={handleOpenExplorerFileCode}
-                onSelectPane={selectPane}
-                onOpenDiff={handleOpenGitDiff}
-              />
-            ) : null}
-            {sidePanel === 'passwords' ? (
-              <ProjectPasswordsDrawer projectId={activeProject.id} />
-            ) : null}
-            {sidePanel === 'automations' ? (
-              <ProjectAutomationsDrawer projectId={activeProject.id} />
-            ) : null}
-            {sidePanel === 'tasks' ? <ProjectTasksDrawer projectId={activeProject.id} /> : null}
-            {sidePanel === 'tests' ? <ProjectTestsDrawer projectId={activeProject.id} /> : null}
-          </Suspense>
+            </div>
+          ) : null}
         </div>
-      ) : null}
 
-      <StatusBar onToggleJarvis={() => { void toggleJarvis(); }} />
+        {activeProject ? (
+          <div
+            className={`project-explorer-slot side-panel-slot${isDrawerSidePanel ? ' project-explorer-slot--open side-panel-slot--open' : ''}`}
+            aria-hidden={!isDrawerSidePanel}
+          >
+            <Suspense
+              fallback={
+                <div className='project-explorer__loading'>
+                  {sidePanel === 'passwords'
+                    ? 'Carregando formulário...'
+                    : sidePanel === 'automations'
+                      ? 'Carregando automações...'
+                      : sidePanel === 'tasks'
+                        ? 'Carregando tarefas...'
+                        : sidePanel === 'tests'
+                          ? 'Carregando testes...'
+                          : 'Carregando explorador...'}
+                </div>
+              }
+            >
+              {sidePanel === 'explorer' ? (
+                <ProjectExplorerDrawer
+                  projectId={activeProject.id}
+                  rootPath={activeProject.path}
+                  onOpenFile={handleOpenExplorerFile}
+                  onOpenFileCode={handleOpenExplorerFileCode}
+                  onSelectPane={selectPane}
+                  onOpenDiff={handleOpenGitDiff}
+                />
+              ) : null}
+              {sidePanel === 'passwords' ? (
+                <ProjectPasswordsDrawer projectId={activeProject.id} />
+              ) : null}
+              {sidePanel === 'automations' ? (
+                <ProjectAutomationsDrawer projectId={activeProject.id} />
+              ) : null}
+              {sidePanel === 'tasks' ? <ProjectTasksDrawer projectId={activeProject.id} /> : null}
+              {sidePanel === 'tests' ? <ProjectTestsDrawer projectId={activeProject.id} /> : null}
+            </Suspense>
+          </div>
+        ) : null}
 
-      <div className='cloud-device-select-host'>
-        <CloudDeviceSelect />
-      </div>
-      <CloudDevicesDrawer />
-      <GlobalSearchPalette />
-      <CalendarEventAlertHost />
-      <AppToastHost />
+        <StatusBar
+          onToggleJarvis={() => {
+            void toggleJarvis();
+          }}
+        />
+
+        <div className='cloud-device-select-host'>
+          <CloudDeviceSelect />
+        </div>
+        <CloudDevicesDrawer />
+        <GlobalSearchPalette />
+        <CalendarEventAlertHost />
+        <AppToastHost />
       </div>
     </DailyGenerationProvider>
   );

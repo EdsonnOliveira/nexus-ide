@@ -43,6 +43,7 @@ const IGNORED_DIRECTORY_NAMES = new Set([
   '.kotlin',
   '.nexus',
   '.svn',
+  '.vite',
   '__pycache__',
   'DerivedData',
   'Pods',

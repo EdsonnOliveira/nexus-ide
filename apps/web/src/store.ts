@@ -76,6 +76,7 @@ interface WebState {
   selectedProjectId: string | null;
   activeWorkspaceId: string | null;
   agents: WebAgentSession[];
+  notifiedAgentIds: Record<string, true>;
   syncing: boolean;
   setSession: (session: Session | null) => void;
   setDevices: (devices: DeviceRecord[]) => void;
@@ -115,6 +116,8 @@ interface WebState {
   ) => void;
   removeAgentTerminal: (agentId: string, terminalId: string) => void;
   removeAgent: (id: string) => void;
+  markAgentReady: (id: string) => void;
+  clearAgentNotification: (id: string) => void;
 }
 
 function mapLastRunningTurn(
@@ -229,6 +232,7 @@ export const useWebStore = create<WebState>((set) => ({
   selectedProjectId: null,
   activeWorkspaceId: null,
   agents: [],
+  notifiedAgentIds: {},
   syncing: false,
   setSession: (session) => set({ session, user: session?.user ?? null }),
   setDevices: (devices) => set({ devices }),
@@ -407,7 +411,31 @@ export const useWebStore = create<WebState>((set) => ({
       }),
     })),
   removeAgent: (id) =>
-    set((state) => ({
-      agents: state.agents.filter((agent) => agent.id !== id),
-    })),
+    set((state) => {
+      if (!state.notifiedAgentIds[id]) {
+        return { agents: state.agents.filter((agent) => agent.id !== id) };
+      }
+      const next = { ...state.notifiedAgentIds };
+      delete next[id];
+      return {
+        agents: state.agents.filter((agent) => agent.id !== id),
+        notifiedAgentIds: next,
+      };
+    }),
+  markAgentReady: (id) =>
+    set((state) => {
+      if (state.notifiedAgentIds[id]) {
+        return state;
+      }
+      return { notifiedAgentIds: { ...state.notifiedAgentIds, [id]: true } };
+    }),
+  clearAgentNotification: (id) =>
+    set((state) => {
+      if (!state.notifiedAgentIds[id]) {
+        return state;
+      }
+      const next = { ...state.notifiedAgentIds };
+      delete next[id];
+      return { notifiedAgentIds: next };
+    }),
 }));

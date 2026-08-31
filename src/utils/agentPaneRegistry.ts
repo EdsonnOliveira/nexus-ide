@@ -49,15 +49,36 @@ interface AgentPaneAttachHandlers {
 }
 
 const handlersByPane = new Map<string, AgentPaneHandlers>();
+const handlerStacksByPane = new Map<string, AgentPaneHandlers[]>();
 const attachHandlersByPane = new Map<string, AgentPaneAttachHandlers>();
 
 export function registerAgentPaneHandlers(paneId: string, handlers: AgentPaneHandlers): () => void {
+  const stack = handlerStacksByPane.get(paneId) ?? [];
+  stack.push(handlers);
+  handlerStacksByPane.set(paneId, stack);
   handlersByPane.set(paneId, handlers);
 
   return () => {
-    if (handlersByPane.get(paneId) === handlers) {
-      handlersByPane.delete(paneId);
+    const current = handlerStacksByPane.get(paneId);
+    if (!current) {
+      return;
     }
+
+    const index = current.lastIndexOf(handlers);
+    if (index >= 0) {
+      current.splice(index, 1);
+    }
+
+    if (current.length === 0) {
+      handlerStacksByPane.delete(paneId);
+      if (handlersByPane.get(paneId) === handlers) {
+        handlersByPane.delete(paneId);
+      }
+      return;
+    }
+
+    handlerStacksByPane.set(paneId, current);
+    handlersByPane.set(paneId, current[current.length - 1]!);
   };
 }
 
