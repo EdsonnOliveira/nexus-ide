@@ -1781,55 +1781,42 @@ function notifyRepoChanged(repoPath: string): void {
   }
 }
 
-function isGitWatchMetaFile(filename: string | Buffer | null | undefined): boolean {
-  if (!filename) {
-    return false;
-  }
-
-  const normalized = String(filename).replace(/\\/g, '/');
-  const base = normalized.split('/').pop() ?? normalized;
-
-  if (GIT_WATCH_META_FILES.has(base)) {
-    return true;
-  }
-
-  return normalized.startsWith('refs/') || normalized.startsWith('logs/HEAD');
-}
-
 function attachGitMetaWatchers(gitDir: string, onChange: () => void): FSWatcher[] {
-  try {
-    return [
-      watch(gitDir, { recursive: true }, (_event, filename) => {
-        if (isGitWatchMetaFile(filename)) {
-          onChange();
-        }
-      }),
-    ];
-  } catch {
-    const fallback: FSWatcher[] = [];
+  const watchers: FSWatcher[] = [];
 
-    for (const metaFile of ['HEAD', 'index'] as const) {
-      const metaPath = path.join(gitDir, metaFile);
+  for (const metaFile of GIT_WATCH_META_FILES) {
+    const metaPath = path.join(gitDir, metaFile);
 
-      if (!existsSync(metaPath) || !statSync(metaPath).isFile()) {
+    if (!existsSync(metaPath)) {
+      continue;
+    }
+
+    try {
+      if (!statSync(metaPath).isFile()) {
         continue;
       }
 
-      try {
-        fallback.push(watch(metaPath, onChange));
-      } catch {}
-    }
-
-    const refsDir = path.join(gitDir, 'refs');
-
-    if (existsSync(refsDir)) {
-      try {
-        fallback.push(watch(refsDir, { recursive: true }, onChange));
-      } catch {}
-    }
-
-    return fallback;
+      watchers.push(watch(metaPath, onChange));
+    } catch {}
   }
+
+  const refsDir = path.join(gitDir, 'refs');
+
+  if (existsSync(refsDir)) {
+    try {
+      watchers.push(watch(refsDir, { recursive: true }, onChange));
+    } catch {}
+  }
+
+  const logsHead = path.join(gitDir, 'logs', 'HEAD');
+
+  if (existsSync(logsHead)) {
+    try {
+      watchers.push(watch(logsHead, onChange));
+    } catch {}
+  }
+
+  return watchers;
 }
 
 function scheduleRepoNotify(resolved: string): void {

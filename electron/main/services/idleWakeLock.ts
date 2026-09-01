@@ -39,7 +39,7 @@ function spawnCaffeinate(): void {
 
   const child = spawn(
     '/usr/bin/caffeinate',
-    ['-i', '-u', '-t', String(IDLE_ASSERTION_SECONDS), '-w', String(process.pid)],
+    ['-i', '-t', String(IDLE_ASSERTION_SECONDS), '-w', String(process.pid)],
     { stdio: 'ignore' },
   );
 
@@ -71,6 +71,15 @@ export function startIdleWakeLock(): void {
   isEnabled = true;
   startPowerBlocker();
   spawnCaffeinate();
+}
+
+export function setIdleWakeLockEnabled(enabled: boolean): void {
+  if (enabled) {
+    startIdleWakeLock();
+    return;
+  }
+
+  stopIdleWakeLock();
 }
 
 export function stopIdleWakeLock(): void {

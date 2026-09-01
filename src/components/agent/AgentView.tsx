@@ -44,7 +44,9 @@ function AgentViewShell({
 }
 
 function AgentViewComponent(props: AgentViewProps) {
-  const [sessionReady, setSessionReady] = useState(Boolean(props.eagerSession));
+  const [sessionReady, setSessionReady] = useState(
+    Boolean(props.eagerSession || props.isVisible),
+  );
   const tab = useMemo(() => resolveSanitizedAgentTab(props.tab), [props.tab]);
   const terminalAgent = cliAgentToTerminalAgent(tab.cliAgent);
   const agentConfig = TERMINAL_AGENTS[terminalAgent];
@@ -54,7 +56,7 @@ function AgentViewComponent(props: AgentViewProps) {
   }, [props.onFocusPane]);
 
   useEffect(() => {
-    if (props.eagerSession) {
+    if (props.eagerSession || props.isVisible) {
       setSessionReady(true);
       return;
     }
@@ -74,7 +76,7 @@ function AgentViewComponent(props: AgentViewProps) {
       cancelled = true;
       window.cancelIdleCallback(idleId);
     };
-  }, [props.eagerSession, props.projectId, props.tab.id]);
+  }, [props.eagerSession, props.isVisible, props.projectId, props.tab.id]);
 
   const shell = (
     <AgentViewShell

@@ -1,7 +1,6 @@
 import type { AgentTurn, Project } from '@/types';
-import { readHomeAgentMap } from '@/utils/homeDashboardAgents';
 import { isAgentTurnActivelyRunning } from '@/utils/projectAgentStatus';
-import { collectProjectPanes, findPaneTab } from '@/utils/tabGroups';
+import { collectProjectPanes } from '@/utils/tabGroups';
 import { useAgentShellTerminalStore } from '@/stores/useAgentShellTerminalStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 
@@ -160,15 +159,12 @@ export function projectNeedsBackgroundHost(
   );
 }
 
-const MAX_HOSTED_PROJECTS = 10;
-
 export function resolveHostedAgentProjects(
   projects: Project[],
   activeProjectId: string | null,
   session: PaneAgentSessionSnapshot,
 ): Project[] {
   const essentialIds = new Set<string>();
-  const homeOnlyIds = new Set<string>();
 
   if (activeProjectId) {
     const activeProject = projects.find((project) => project.id === activeProjectId);
@@ -178,8 +174,6 @@ export function resolveHostedAgentProjects(
     }
   }
 
-  const homeAgentMap = activeProjectId === null ? readHomeAgentMap() : null;
-
   for (const project of projects) {
     if (project.id === activeProjectId) {
       continue;
@@ -187,41 +181,10 @@ export function resolveHostedAgentProjects(
 
     if (projectNeedsBackgroundHost(project, session)) {
       essentialIds.add(project.id);
-      continue;
-    }
-
-    if (!homeAgentMap) {
-      continue;
-    }
-
-    const homePaneIds = homeAgentMap[project.id] ?? [];
-
-    if (
-      homePaneIds.some((homePaneId) => findPaneTab(project.tabs, homePaneId)?.type === 'agent')
-    ) {
-      homeOnlyIds.add(project.id);
-    }
-  }
-
-  const hostedIds = new Set(essentialIds);
-  const remainingSlots = Math.max(0, MAX_HOSTED_PROJECTS - essentialIds.size);
-
-  if (remainingSlots > 0 && homeOnlyIds.size > 0) {
-    let added = 0;
-
-    for (const project of projects) {
-      if (added >= remainingSlots) {
-        break;
-      }
-
-      if (homeOnlyIds.has(project.id)) {
-        hostedIds.add(project.id);
-        added += 1;
-      }
     }
   }
 
   return projects
-    .filter((project) => hostedIds.has(project.id))
+    .filter((project) => essentialIds.has(project.id))
     .sort((left, right) => left.id.localeCompare(right.id));
 }

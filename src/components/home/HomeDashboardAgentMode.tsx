@@ -349,6 +349,7 @@ function AgentCardComponent({
               projectPath={project.path}
               isVisible
               isRuntimeActive
+              eagerSession
               isFocused={isFocused}
               disableStickyPrompt
               onFocusPane={() => handleFocus()}

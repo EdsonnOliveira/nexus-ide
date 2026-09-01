@@ -107,20 +107,37 @@ interface AgentComposerProps {
 const EMPTY_PASTE_IMAGES: never[] = [];
 const COMPOSER_INPUT_MAX_HEIGHT = 160;
 
-function canNavigatePromptHistoryUp(textarea: HTMLTextAreaElement): boolean {
+let promptHistoryNavFrame = 0;
+
+function schedulePromptHistoryIfCaretDidNotMove(
+  textarea: HTMLTextAreaElement,
+  direction: 'up' | 'down',
+  navigate: (direction: 'up' | 'down') => void,
+): void {
   if (textarea.selectionStart !== textarea.selectionEnd) {
-    return false;
+    return;
   }
 
-  return !textarea.value.slice(0, textarea.selectionStart).includes('\n');
-}
+  const selectionStart = textarea.selectionStart;
+  const selectionEnd = textarea.selectionEnd;
 
-function canNavigatePromptHistoryDown(textarea: HTMLTextAreaElement): boolean {
-  if (textarea.selectionStart !== textarea.selectionEnd) {
-    return false;
+  if (promptHistoryNavFrame) {
+    window.cancelAnimationFrame(promptHistoryNavFrame);
   }
 
-  return !textarea.value.slice(textarea.selectionStart).includes('\n');
+  promptHistoryNavFrame = window.requestAnimationFrame(() => {
+    promptHistoryNavFrame = 0;
+
+    if (
+      !textarea.isConnected ||
+      textarea.selectionStart !== selectionStart ||
+      textarea.selectionEnd !== selectionEnd
+    ) {
+      return;
+    }
+
+    navigate(direction);
+  });
 }
 
 function resizeComposerInput(textarea: HTMLTextAreaElement): void {
@@ -1047,17 +1064,19 @@ function AgentComposerComponent({
         return;
       }
 
-      const textarea = event.currentTarget;
-
-      if (event.key === 'ArrowUp' && canNavigatePromptHistoryUp(textarea)) {
-        event.preventDefault();
-        navigatePromptHistory('up');
-        return;
-      }
-
-      if (event.key === 'ArrowDown' && canNavigatePromptHistoryDown(textarea)) {
-        event.preventDefault();
-        navigatePromptHistory('down');
+      if (
+        (event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.nativeEvent.isComposing
+      ) {
+        schedulePromptHistoryIfCaretDidNotMove(
+          event.currentTarget,
+          event.key === 'ArrowUp' ? 'up' : 'down',
+          navigatePromptHistory,
+        );
         return;
       }
 

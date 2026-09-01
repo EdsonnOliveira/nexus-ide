@@ -504,7 +504,7 @@ function MissionInspectorComponent({
     };
 
     syncLive();
-    const intervalId = window.setInterval(syncLive, 120);
+    const intervalId = window.setInterval(syncLive, 400);
     return () => {
       window.clearInterval(intervalId);
     };

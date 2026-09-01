@@ -948,7 +948,7 @@ function SidebarVideoPiPComponent({ session, onClose }: SidebarVideoPiPProps) {
                 }
               : {})}
             allowpopups={'true' as unknown as boolean}
-            webpreferences='contextIsolation=yes,javascript=yes,sandbox=no,backgroundThrottling=no'
+            webpreferences='contextIsolation=yes,javascript=yes,sandbox=no,backgroundThrottling=yes'
           />
           {renderLoadingOverlay()}
         </>

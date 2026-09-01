@@ -354,6 +354,20 @@ const nexusApi = {
     ipcRenderer.on('app:renderer-recovered', listener);
     return () => ipcRenderer.off('app:renderer-recovered', listener);
   },
+  onWindowFocusChange: (callback: (focused: boolean) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, focused: boolean) => {
+      callback(focused === true);
+    };
+    ipcRenderer.on('app:window-focus', listener);
+    return () => ipcRenderer.off('app:window-focus', listener);
+  },
+  onPowerSaveChange: (callback: (enabled: boolean) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, enabled: boolean) => {
+      callback(enabled === true);
+    };
+    ipcRenderer.on('app:power-save', listener);
+    return () => ipcRenderer.off('app:power-save', listener);
+  },
   systemNotifications: {
     list: (limit?: number) => ipcRenderer.invoke('systemNotifications:list', limit),
     getAppIcon: (appId: string, appLabel?: string) =>

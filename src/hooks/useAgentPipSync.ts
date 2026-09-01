@@ -81,7 +81,7 @@ async function handleHostCommand(request: AgentPipHostRequest): Promise<boolean>
   }
 }
 
-const PIP_SYNC_MS = 80;
+const PIP_SYNC_MS = 400;
 
 function liveAgentTabParts(pane: AgentTab): {
   turns: AgentTab['turns'];

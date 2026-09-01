@@ -311,18 +311,28 @@ function AppShellComponent() {
   }, [refreshCloud]);
 
   useEffect(() => {
-    const syncHidden = () => {
+    let powerSave = false;
+
+    const sync = () => {
       document.documentElement.classList.toggle('nexus-window-hidden', document.hidden);
+      document.documentElement.classList.toggle('nexus-power-save', powerSave);
     };
 
-    syncHidden();
-    document.addEventListener('visibilitychange', syncHidden);
+    sync();
+    document.addEventListener('visibilitychange', sync);
+    const unsubscribePowerSave = nexusReady
+      ? window.nexus.onPowerSaveChange((enabled) => {
+          powerSave = enabled;
+          sync();
+        })
+      : undefined;
 
     return () => {
-      document.removeEventListener('visibilitychange', syncHidden);
-      document.documentElement.classList.remove('nexus-window-hidden');
+      document.removeEventListener('visibilitychange', sync);
+      unsubscribePowerSave?.();
+      document.documentElement.classList.remove('nexus-window-hidden', 'nexus-power-save');
     };
-  }, []);
+  }, [nexusReady]);
 
   const isMac = useMemo(
     () => typeof navigator !== 'undefined' && /Mac|iPhone|iPod|iPad/i.test(navigator.platform),

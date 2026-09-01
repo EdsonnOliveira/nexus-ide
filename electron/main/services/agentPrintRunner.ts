@@ -7,6 +7,7 @@ import type { BrowserWindow } from 'electron';
 import { buildCliPathEnv } from '../utils/cliPathEnv';
 import { writeDebugSessionLog } from '../utils/debugSessionLog';
 import { killProcessTree } from '../utils/killProcessTree';
+import { setIdleWakeLockEnabled } from './idleWakeLock';
 
 export interface AgentPrintStopOptions {
   preserveChildren?: boolean;
@@ -77,6 +78,8 @@ interface StdoutBatch {
 }
 
 function syncAgentRunningMarker(running: boolean): void {
+  setIdleWakeLockEnabled(running);
+
   try {
     if (running) {
       fs.writeFileSync(AGENT_RUNNING_MARKER, String(Date.now()), 'utf8');

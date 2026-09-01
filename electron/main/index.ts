@@ -32,7 +32,8 @@ import {
   startDesktopControlServer,
   stopDesktopControlServer,
 } from './services/desktopControlServer';
-import { startIdleWakeLock, stopIdleWakeLock } from './services/idleWakeLock';
+import { stopIdleWakeLock } from './services/idleWakeLock';
+import { startGpuWatchdog, stopGpuWatchdog } from './services/gpuWatchdog';
 import { startManagedRuntime, stopManagedRuntime } from './services/cloudRuntimeSupervisor';
 import { ensureDevServerRunning, stopEnsuredDevServer } from './services/devServerKeepAlive';
 import { registerFileHandlers } from './ipc/files';
@@ -130,8 +131,6 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 app.setName(DOCK_APP_NAME);
 app.setPath('userData', path.join(app.getPath('appData'), 'nexus-ide'));
 app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
-app.commandLine.appendSwitch('disable-renderer-backgrounding');
-app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disk-cache-size', '268435456');
 
@@ -883,6 +882,7 @@ async function createWindow(appIcon?: NativeImage) {
       nodeIntegration: false,
       sandbox: false,
       webviewTag: true,
+      backgroundThrottling: false,
     },
   });
 
@@ -954,6 +954,28 @@ async function createWindow(appIcon?: NativeImage) {
     lastMainFrameLoadFailed = false;
     stopDevServerWatch();
     deliverPendingRecoveryMessage();
+  });
+
+  win.on('blur', () => {
+    if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
+      return;
+    }
+
+    win.webContents.send('app:window-focus', false);
+    void win.webContents
+      .executeJavaScript(`document.documentElement.classList.add('nexus-window-hidden')`)
+      .catch(() => undefined);
+  });
+
+  win.on('focus', () => {
+    if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
+      return;
+    }
+
+    win.webContents.send('app:window-focus', true);
+    void win.webContents
+      .executeJavaScript(`document.documentElement.classList.remove('nexus-window-hidden')`)
+      .catch(() => undefined);
   });
 
   win.once('ready-to-show', () => {
@@ -1240,7 +1262,6 @@ app.whenReady().then(() => {
   registerWhatsAppHandlers();
   registerEmulatorHandlers(() => win);
   startDesktopControlServer();
-  startIdleWakeLock();
   registerSessionHandlers(() => {
     completeSessionFlush();
   });
@@ -1259,6 +1280,7 @@ app.whenReady().then(() => {
   createWindow(appIcon);
   registerShortcuts();
   startMemoryWatch();
+  startGpuWatchdog(() => win);
   startBrowserDayCacheWatch();
   setImmediate(() => {
     startManagedRuntime();
@@ -1334,6 +1356,7 @@ app.on('window-all-closed', () => {
   stopIdleWakeLock();
   void cleanupEmulatorSessions();
   stopMemoryWatch();
+  stopGpuWatchdog();
   stopBrowserDayCacheWatch();
   stopManagedRuntime();
   app.quit();
@@ -1431,6 +1454,7 @@ app.on('will-quit', () => {
   stopDevServerHeartbeat();
   stopEnsuredDevServer();
   stopMemoryWatch();
+  stopGpuWatchdog();
   stopBrowserDayCacheWatch();
   globalShortcut.unregisterAll();
   ptyManager.killAll();
