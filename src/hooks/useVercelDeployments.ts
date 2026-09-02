@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { upsertUserVercelToken, upsertVercelDeploySnapshot } from '@nexus/supabase';
 import { cloudSupabase } from '@/lib/nexusCloud';
 import type { VercelActiveDeployment } from '@/types';
-import { isVercelInProgressDeployment } from '@/utils/vercelDeployment';
+import { notifyDeployWebPush } from '@/utils/notifyDeployWebPush';
+import { isVercelInProgressDeployment, isVercelNotifyDeployment } from '@/utils/vercelDeployment';
 
 const ACTIVE_POLL_MS = 5_000;
 const IDLE_POLL_MS = 30_000;
@@ -73,6 +74,32 @@ export function useVercelDeployments(enabled: boolean) {
   const [error, setError] = useState<string | null>(null);
   const [dismissedUid, setDismissedUid] = useState<string | null>(() => readDismissedDeployUid());
   const requestIdRef = useRef(0);
+  const deployStatesRef = useRef<Map<string, string>>(new Map());
+  const deployPrimedRef = useRef(false);
+
+  const observeDeployments = useCallback((deployments: VercelActiveDeployment[]) => {
+    if (!deployPrimedRef.current) {
+      for (const item of deployments) {
+        deployStatesRef.current.set(item.uid, item.state);
+      }
+      deployPrimedRef.current = true;
+      return;
+    }
+    for (const item of deployments) {
+      const previous = deployStatesRef.current.get(item.uid);
+      deployStatesRef.current.set(item.uid, item.state);
+      if (previous && previous !== item.state && isVercelNotifyDeployment(item.state)) {
+        notifyDeployWebPush({
+          provider: 'vercel',
+          uid: item.uid,
+          state: item.state,
+          projectName: item.projectName,
+          branch: item.branch,
+          dedupeKey: `deploy:${item.uid}:${item.state}`,
+        });
+      }
+    }
+  }, []);
 
   const refreshTokenConfigured = useCallback(async () => {
     if (!window.nexus?.vercel) {
@@ -124,6 +151,7 @@ export function useVercelDeployments(enabled: boolean) {
       if (requestIdRef.current === requestId) {
         setActiveDeployment(deployment);
         setError(null);
+        observeDeployments(deployments);
       }
 
       void syncVercelDeploySnapshot(deployment, deployments);
@@ -141,7 +169,7 @@ export function useVercelDeployments(enabled: boolean) {
         setLoading(false);
       }
     }
-  }, []);
+  }, [observeDeployments]);
 
   useEffect(() => {
     if (!enabled) {

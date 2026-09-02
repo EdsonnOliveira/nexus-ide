@@ -1,17 +1,19 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { CORS_HEADERS, jsonResponse } from '../_shared/cors.ts';
+import {
+  collectDeployStates,
+  deployPushCopy,
+  isVercelTerminalState,
+  readSnapshotUpdatedAt,
+  shouldNotifyDeploy,
+  type DeploySnapshotLike,
+} from '../_shared/deployPush.ts';
 import { createServiceClient, invokeSendPush } from '../_shared/supabaseAdmin.ts';
 
 const VERCEL_API_BASE = 'https://api.vercel.com';
 
 type VercelDeploymentState =
-  | 'READY'
-  | 'ERROR'
-  | 'BUILDING'
-  | 'QUEUED'
-  | 'INITIALIZING'
-  | 'CANCELED'
-  | 'BLOCKED';
+  'READY' | 'ERROR' | 'BUILDING' | 'QUEUED' | 'INITIALIZING' | 'CANCELED' | 'BLOCKED';
 
 interface VercelDeploymentRecord {
   uid?: string;
@@ -21,6 +23,7 @@ interface VercelDeploymentRecord {
   readyState?: string;
   created?: number;
   createdAt?: number;
+  ready?: number;
   projectId?: string;
   meta?: {
     githubCommitRef?: string;
@@ -36,6 +39,7 @@ interface ActiveDeployment {
   state: VercelDeploymentState;
   url: string | null;
   createdAt: number;
+  readyAt: number | null;
 }
 
 function normalizeState(
@@ -62,6 +66,13 @@ function normalizeState(
   return 'QUEUED';
 }
 
+function readTimestamp(value: number | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  return value < 1_000_000_000_000 ? value * 1000 : value;
+}
+
 async function listActive(token: string): Promise<{
   deployment: ActiveDeployment | null;
   deployments: ActiveDeployment[];
@@ -76,9 +87,7 @@ async function listActive(token: string): Promise<{
     });
     if (teamsResponse.ok) {
       const teamsJson = (await teamsResponse.json()) as { teams?: Array<{ id?: string }> };
-      teamIds = (teamsJson.teams ?? [])
-        .map((team) => team.id?.trim() ?? '')
-        .filter(Boolean);
+      teamIds = (teamsJson.teams ?? []).map((team) => team.id?.trim() ?? '').filter(Boolean);
     }
   } catch {
     teamIds = [];
@@ -86,9 +95,7 @@ async function listActive(token: string): Promise<{
 
   const paths = [
     '/v6/deployments?limit=20',
-    ...teamIds.map(
-      (teamId) => `/v6/deployments?limit=20&teamId=${encodeURIComponent(teamId)}`,
-    ),
+    ...teamIds.map((teamId) => `/v6/deployments?limit=20&teamId=${encodeURIComponent(teamId)}`),
   ];
   const records = new Map<string, VercelDeploymentRecord>();
   for (const path of paths) {
@@ -120,7 +127,7 @@ async function listActive(token: string): Promise<{
       if (!uid) {
         return null;
       }
-      const created = deployment.createdAt ?? deployment.created ?? Date.now();
+      const created = readTimestamp(deployment.createdAt ?? deployment.created) ?? Date.now();
       return {
         uid,
         projectName: deployment.name?.trim() || 'Projeto',
@@ -128,7 +135,8 @@ async function listActive(token: string): Promise<{
         commitMessage: deployment.meta?.githubCommitMessage?.trim() || '',
         state: normalizeState(deployment.state, deployment.readyState),
         url: deployment.url ?? null,
-        createdAt: created < 1_000_000_000_000 ? created * 1000 : created,
+        createdAt: created,
+        readyAt: readTimestamp(deployment.ready),
       } satisfies ActiveDeployment;
     })
     .filter((item): item is ActiveDeployment => item !== null)
@@ -161,9 +169,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const admin = createServiceClient();
-  const { data: tokens, error } = await admin
-    .from('user_vercel_tokens')
-    .select('user_id, token');
+  const { data: tokens, error } = await admin.from('user_vercel_tokens').select('user_id, token');
   if (error) {
     return jsonResponse({ error: error.message }, 500);
   }
@@ -188,13 +194,14 @@ Deno.serve(async (req: Request) => {
     try {
       const { data: previous } = await admin
         .from('vercel_deploy_snapshots')
-        .select('active_deployment')
+        .select('active_deployment, deployments, updated_at')
         .eq('user_id', userId)
         .maybeSingle();
 
-      const previousActive = previous?.active_deployment as ActiveDeployment | null | undefined;
-      const previousUid = previousActive?.uid ?? null;
-      const previousState = previousActive?.state ?? null;
+      const previousSnapshot = (previous as DeploySnapshotLike | null) ?? null;
+      const previousStates = collectDeployStates(previousSnapshot);
+      const previousUpdatedAt = readSnapshotUpdatedAt(previousSnapshot);
+      const hadSnapshot = previousSnapshot != null;
 
       const { deployment, deployments } = await listActive(token);
       await admin.from('vercel_deploy_snapshots').upsert(
@@ -207,22 +214,42 @@ Deno.serve(async (req: Request) => {
         { onConflict: 'user_id' },
       );
 
-      if (
-        hasPush &&
-        deployment &&
-        (deployment.state === 'READY' || deployment.state === 'ERROR') &&
-        (deployment.uid !== previousUid || deployment.state !== previousState)
-      ) {
-        const title =
-          deployment.state === 'READY' ? 'Deploy pronto' : 'Deploy com erro';
-        const body = `${deployment.projectName}${deployment.branch !== '—' ? ` · ${deployment.branch}` : ''}`;
+      if (!hasPush) {
+        continue;
+      }
+
+      for (const item of deployments) {
+        if (
+          !shouldNotifyDeploy({
+            hadSnapshot,
+            previousState: previousStates.get(item.uid),
+            isTerminal: isVercelTerminalState(item.state),
+            createdAt: item.createdAt,
+            readyAt: item.readyAt,
+            previousUpdatedAt,
+            currentState: item.state,
+          })
+        ) {
+          continue;
+        }
+        const copy = deployPushCopy({
+          provider: 'vercel',
+          state: item.state,
+          projectName: item.projectName,
+          branch: item.branch,
+        });
         await invokeSendPush({
           userId,
           kind: 'deploy',
-          title,
-          body,
-          dedupeKey: `deploy:${deployment.uid}:${deployment.state}`,
-          data: { uid: deployment.uid, state: deployment.state },
+          title: copy.title,
+          body: copy.body,
+          dedupeKey: `deploy:${item.uid}:${item.state}`,
+          data: {
+            kind: 'deploy',
+            provider: 'vercel',
+            uid: item.uid,
+            state: item.state,
+          },
         });
         notified += 1;
       }

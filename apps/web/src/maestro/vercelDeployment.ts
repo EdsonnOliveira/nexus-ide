@@ -127,6 +127,10 @@ export function isVercelFailedDeployment(state: VercelDeploymentState): boolean 
   return state === 'ERROR' || state === 'BLOCKED';
 }
 
+export function isVercelNotifyDeployment(state: VercelDeploymentState): boolean {
+  return state === 'READY' || isVercelFailedDeployment(state);
+}
+
 export function getVercelProjectInitial(projectName: string): string {
   const trimmed = projectName.trim();
   if (!trimmed) {

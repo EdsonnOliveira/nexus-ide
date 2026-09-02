@@ -7,16 +7,14 @@ import {
   upsertVercelDeploySnapshot,
 } from '@nexus/supabase';
 import { supabase } from '../lib/supabase';
-import {
-  fetchWebVercelActive,
-  readWebVercelToken,
-  writeWebVercelToken,
-} from './webVercelApi';
+import { fetchWebVercelActive, readWebVercelToken, writeWebVercelToken } from './webVercelApi';
 import {
   isVercelActiveDeployment,
   parseVercelDeployments,
   type VercelActiveDeployment,
 } from './vercelTypes';
+import { isVercelNotifyDeployment } from './vercelDeployment';
+import { notifyWebDeployFinished } from './webDeployNotify';
 
 const POLL_INTERVAL_MS = 5_000;
 const DISMISSED_DEPLOY_UID_STORAGE_KEY = 'nexus-web-vercel-dismissed-deploy-uid';
@@ -50,13 +48,45 @@ export function useWebVercelDeployments(enabled: boolean) {
   const [dismissedUid, setDismissedUid] = useState<string | null>(() => readDismissedDeployUid());
   const requestIdRef = useRef(0);
   const hydrateDoneRef = useRef(false);
+  const userIdRef = useRef<string | null>(null);
+  const deployStatesRef = useRef<Map<string, string>>(new Map());
+  const deployPrimedRef = useRef(false);
 
-  const applySnapshot = useCallback((active: unknown, list: unknown) => {
-    const parsedList = parseVercelDeployments(list);
-    const parsedActive = isVercelActiveDeployment(active) ? active : (parsedList[0] ?? null);
-    setDeployments(parsedList);
-    setActiveDeployment(parsedActive);
+  const observeDeployments = useCallback((list: VercelActiveDeployment[]) => {
+    if (!deployPrimedRef.current) {
+      for (const item of list) {
+        deployStatesRef.current.set(item.uid, item.state);
+      }
+      deployPrimedRef.current = true;
+      return;
+    }
+    for (const item of list) {
+      const previous = deployStatesRef.current.get(item.uid);
+      deployStatesRef.current.set(item.uid, item.state);
+      if (previous && previous !== item.state && isVercelNotifyDeployment(item.state)) {
+        notifyWebDeployFinished({
+          provider: 'vercel',
+          uid: item.uid,
+          state: item.state,
+          projectName: item.projectName,
+          branch: item.branch,
+          userId: userIdRef.current,
+          dedupeKey: `deploy:${item.uid}:${item.state}`,
+        });
+      }
+    }
   }, []);
+
+  const applySnapshot = useCallback(
+    (active: unknown, list: unknown) => {
+      const parsedList = parseVercelDeployments(list);
+      const parsedActive = isVercelActiveDeployment(active) ? active : (parsedList[0] ?? null);
+      setDeployments(parsedList);
+      setActiveDeployment(parsedActive);
+      observeDeployments(parsedList);
+    },
+    [observeDeployments],
+  );
 
   const refreshFromSnapshot = useCallback(async () => {
     try {
@@ -66,6 +96,7 @@ export function useWebVercelDeployments(enabled: boolean) {
       if (!session?.user?.id) {
         return null;
       }
+      userIdRef.current = session.user.id;
       const snapshot = await getVercelDeploySnapshot(supabase, session.user.id);
       if (!snapshot) {
         return null;
@@ -98,11 +129,13 @@ export function useWebVercelDeployments(enabled: boolean) {
       setActiveDeployment(result.deployment);
       setDeployments(result.deployments);
       setError(null);
+      observeDeployments(result.deployments);
 
       const {
         data: { session },
       } = await supabase.auth.getSession();
       if (session?.user?.id) {
+        userIdRef.current = session.user.id;
         void upsertUserVercelToken(supabase, session.user.id, token);
         void upsertVercelDeploySnapshot(supabase, {
           user_id: session.user.id,
@@ -130,7 +163,7 @@ export function useWebVercelDeployments(enabled: boolean) {
         setLoading(false);
       }
     }
-  }, []);
+  }, [observeDeployments]);
 
   const refresh = useCallback(async () => {
     if (readWebVercelToken()) {
@@ -173,8 +206,7 @@ export function useWebVercelDeployments(enabled: boolean) {
           setTokenConfigured(true);
           return;
         }
-      } catch {
-      }
+      } catch {}
       await refreshFromSnapshot();
     })();
   }, [enabled, refreshFromSnapshot]);
@@ -224,6 +256,7 @@ export function useWebVercelDeployments(enabled: boolean) {
       if (!session?.user?.id || cancelled) {
         return;
       }
+      userIdRef.current = session.user.id;
 
       channel = supabase
         .channel(`vercel-deploy-snapshots:${session.user.id}`)
@@ -267,14 +300,17 @@ export function useWebVercelDeployments(enabled: boolean) {
     }
   }, [activeDeployment?.uid, dismissedUid]);
 
-  const dismiss = useCallback((uid?: string) => {
-    const nextUid = uid ?? activeDeployment?.uid;
-    if (!nextUid) {
-      return;
-    }
-    setDismissedUid(nextUid);
-    writeDismissedDeployUid(nextUid);
-  }, [activeDeployment?.uid]);
+  const dismiss = useCallback(
+    (uid?: string) => {
+      const nextUid = uid ?? activeDeployment?.uid;
+      if (!nextUid) {
+        return;
+      }
+      setDismissedUid(nextUid);
+      writeDismissedDeployUid(nextUid);
+    },
+    [activeDeployment?.uid],
+  );
 
   const saveToken = useCallback(
     async (token: string) => {

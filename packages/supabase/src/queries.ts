@@ -815,6 +815,85 @@ export async function deleteUserVercelToken(client: NexusClient, userId: string)
   }
 }
 
+export interface RenderTokenInput {
+  credential_id: string;
+  label: string;
+  token: string;
+}
+
+export interface RenderDeploySnapshotRow {
+  user_id: string;
+  active_deployment: unknown;
+  deployments: unknown[];
+  updated_at: string;
+}
+
+export async function upsertUserRenderTokens(
+  client: NexusClient,
+  userId: string,
+  tokens: RenderTokenInput[],
+): Promise<void> {
+  if (tokens.length === 0) {
+    return;
+  }
+
+  const { error } = await client.from('user_render_tokens').upsert(
+    tokens.map((item) => ({
+      user_id: userId,
+      credential_id: item.credential_id.trim(),
+      label: item.label.trim() || 'Conta Render',
+      token: item.token.trim(),
+      updated_at: new Date().toISOString(),
+    })),
+    { onConflict: 'user_id,credential_id' },
+  );
+  if (error) {
+    throw error;
+  }
+}
+
+export async function getRenderDeploySnapshot(
+  client: NexusClient,
+  userId: string,
+): Promise<RenderDeploySnapshotRow | null> {
+  const { data, error } = await client
+    .from('render_deploy_snapshots')
+    .select('*')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error) {
+    throw error;
+  }
+  return (data as RenderDeploySnapshotRow | null) ?? null;
+}
+
+export async function upsertRenderDeploySnapshot(
+  client: NexusClient,
+  input: {
+    user_id: string;
+    active_deployment: unknown;
+    deployments: unknown[];
+  },
+): Promise<RenderDeploySnapshotRow> {
+  const { data, error } = await client
+    .from('render_deploy_snapshots')
+    .upsert(
+      {
+        user_id: input.user_id,
+        active_deployment: input.active_deployment,
+        deployments: input.deployments,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id' },
+    )
+    .select('*')
+    .single();
+  if (error) {
+    throw error;
+  }
+  return data as RenderDeploySnapshotRow;
+}
+
 export interface AgentSessionRow {
   id: string;
   workspace_id: string;

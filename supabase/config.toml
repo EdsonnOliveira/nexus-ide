@@ -6,6 +6,9 @@ verify_jwt = false
 [functions.poll-vercel-deploys]
 verify_jwt = false
 
+[functions.poll-render-deploys]
+verify_jwt = false
+
 [functions.check-devices-offline]
 verify_jwt = false
 

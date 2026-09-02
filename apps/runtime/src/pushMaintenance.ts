@@ -4,6 +4,10 @@ import { getServiceSupabaseClient } from './webPushSend';
 const OFFLINE_AFTER_MS = 5 * 60_000;
 const OFFLINE_NOTIFY_MAX_AGE_MS = 30 * 60_000;
 const VERCEL_API_BASE = 'https://api.vercel.com';
+const RENDER_API_BASE = 'https://api.render.com';
+const RENDER_SERVICES_LIMIT = 20;
+const RENDER_DEPLOYS_PER_SERVICE = 5;
+const RENDER_MAX_LISTED = 20;
 
 type DeployState = 'READY' | 'ERROR' | string;
 
@@ -13,6 +17,37 @@ interface ActiveDeployment {
   branch: string;
   state: DeployState;
   createdAt: number;
+  readyAt: number | null;
+}
+
+type RenderState =
+  | 'created'
+  | 'queued'
+  | 'build_in_progress'
+  | 'update_in_progress'
+  | 'pre_deploy_in_progress'
+  | 'live'
+  | 'deactivated'
+  | 'build_failed'
+  | 'update_failed'
+  | 'pre_deploy_failed'
+  | 'canceled'
+  | string;
+
+interface RenderActiveDeployment {
+  uid: string;
+  credentialId: string;
+  projectName: string;
+  branch: string;
+  state: RenderState;
+  createdAt: number;
+  readyAt: number | null;
+}
+
+interface DeploySnapshotLike {
+  active_deployment?: unknown;
+  deployments?: unknown;
+  updated_at?: unknown;
 }
 
 function presenceDedupeKey(deviceId: string, state: 'online' | 'offline'): string {
@@ -44,8 +79,18 @@ function shouldNotifyMacOffline(lastSeenAt: string | null | undefined): boolean 
 }
 
 function normalizeState(state?: string, readyState?: string): DeployState {
-  const candidates = [state, readyState].map((value) => value?.trim().toUpperCase()).filter(Boolean);
-  for (const item of ['ERROR', 'READY', 'BUILDING', 'QUEUED', 'CANCELED', 'BLOCKED', 'INITIALIZING']) {
+  const candidates = [state, readyState]
+    .map((value) => value?.trim().toUpperCase())
+    .filter(Boolean);
+  for (const item of [
+    'ERROR',
+    'READY',
+    'BUILDING',
+    'QUEUED',
+    'CANCELED',
+    'BLOCKED',
+    'INITIALIZING',
+  ]) {
     if (candidates.includes(item)) {
       return item;
     }
@@ -64,6 +109,7 @@ async function listActiveDeployments(token: string): Promise<{
     readyState?: string;
     created?: number;
     createdAt?: number;
+    ready?: number;
     meta?: { githubCommitRef?: string };
   };
 
@@ -77,9 +123,7 @@ async function listActiveDeployments(token: string): Promise<{
     });
     if (teamsResponse.ok) {
       const teamsJson = (await teamsResponse.json()) as { teams?: Array<{ id?: string }> };
-      teamIds = (teamsJson.teams ?? [])
-        .map((team) => team.id?.trim() ?? '')
-        .filter(Boolean);
+      teamIds = (teamsJson.teams ?? []).map((team) => team.id?.trim() ?? '').filter(Boolean);
     }
   } catch {
     teamIds = [];
@@ -120,12 +164,19 @@ async function listActiveDeployments(token: string): Promise<{
         return null;
       }
       const created = deployment.createdAt ?? deployment.created ?? Date.now();
+      const ready = deployment.ready;
       return {
         uid,
         projectName: deployment.name?.trim() || 'Projeto',
         branch: deployment.meta?.githubCommitRef?.trim() || '—',
         state: normalizeState(deployment.state, deployment.readyState),
         createdAt: created < 1_000_000_000_000 ? created * 1000 : created,
+        readyAt:
+          typeof ready === 'number' && Number.isFinite(ready) && ready > 0
+            ? ready < 1_000_000_000_000
+              ? ready * 1000
+              : ready
+            : null,
       } satisfies ActiveDeployment;
     })
     .filter((item): item is ActiveDeployment => item !== null)
@@ -228,6 +279,105 @@ async function checkDevicesOffline(skipDeviceId?: string): Promise<void> {
   }
 }
 
+function readSnapshotTimestamp(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return value < 1_000_000_000_000 ? value * 1000 : value;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function collectSnapshotStates(snapshot: DeploySnapshotLike | null): Map<string, string> {
+  const map = new Map<string, string>();
+  const items: unknown[] = [];
+  if (Array.isArray(snapshot?.deployments)) {
+    items.push(...snapshot.deployments);
+  }
+  if (snapshot?.active_deployment) {
+    items.push(snapshot.active_deployment);
+  }
+  for (const item of items) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+    const record = item as { uid?: unknown; credentialId?: unknown; state?: unknown };
+    const uid = typeof record.uid === 'string' ? record.uid.trim() : '';
+    const state = typeof record.state === 'string' ? record.state.trim() : '';
+    if (!uid || !state) {
+      continue;
+    }
+    const credentialId = typeof record.credentialId === 'string' ? record.credentialId.trim() : '';
+    const key = credentialId ? `${credentialId}:${uid}` : uid;
+    if (!map.has(key)) {
+      map.set(key, state);
+    }
+  }
+  return map;
+}
+
+function shouldNotifyFinishedDeploy(input: {
+  hadSnapshot: boolean;
+  previousState: string | undefined;
+  isTerminal: boolean;
+  currentState: string;
+  createdAt: number;
+  readyAt: number | null;
+  previousUpdatedAt: number | null;
+}): boolean {
+  if (!input.hadSnapshot || !input.isTerminal) {
+    return false;
+  }
+  if (input.previousState) {
+    return input.previousState !== input.currentState;
+  }
+  const finishedAt = input.readyAt && input.readyAt > 0 ? input.readyAt : input.createdAt;
+  if (input.previousUpdatedAt == null) {
+    return false;
+  }
+  return finishedAt >= input.previousUpdatedAt - 60_000;
+}
+
+function isVercelTerminal(state: string): boolean {
+  const normalized = state.trim().toUpperCase();
+  return normalized === 'READY' || normalized === 'ERROR' || normalized === 'BLOCKED';
+}
+
+function isRenderTerminal(state: string): boolean {
+  const normalized = state.trim().toLowerCase();
+  return (
+    normalized === 'live' ||
+    normalized === 'build_failed' ||
+    normalized === 'update_failed' ||
+    normalized === 'pre_deploy_failed'
+  );
+}
+
+function isRenderInProgress(state: string): boolean {
+  return (
+    state === 'created' ||
+    state === 'queued' ||
+    state === 'build_in_progress' ||
+    state === 'update_in_progress' ||
+    state === 'pre_deploy_in_progress'
+  );
+}
+
+function deployTitle(provider: 'vercel' | 'render', state: string): string {
+  const platform = provider === 'vercel' ? 'Vercel' : 'Render';
+  const failed =
+    provider === 'vercel' ? state.toUpperCase() !== 'READY' : state.toLowerCase() !== 'live';
+  return failed ? `Deploy ${platform} com erro` : `Deploy ${platform} pronto`;
+}
+
+function deployBody(projectName: string, branch: string): string {
+  return `${projectName}${branch !== '—' ? ` · ${branch}` : ''}`;
+}
+
 async function pollVercelDeploys(): Promise<void> {
   const admin = getServiceSupabaseClient();
   if (!admin) {
@@ -249,12 +399,13 @@ async function pollVercelDeploys(): Promise<void> {
     try {
       const { data: previous } = await admin
         .from('vercel_deploy_snapshots')
-        .select('active_deployment')
+        .select('active_deployment, deployments, updated_at')
         .eq('user_id', userId)
         .maybeSingle();
-      const previousActive = previous?.active_deployment as ActiveDeployment | null | undefined;
-      const previousUid = previousActive?.uid ?? null;
-      const previousState = previousActive?.state ?? null;
+      const previousSnapshot = (previous as DeploySnapshotLike | null) ?? null;
+      const previousStates = collectSnapshotStates(previousSnapshot);
+      const previousUpdatedAt = readSnapshotTimestamp(previousSnapshot?.updated_at);
+      const hadSnapshot = previousSnapshot != null;
       const { deployment, deployments } = await listActiveDeployments(token);
       await admin.from('vercel_deploy_snapshots').upsert(
         {
@@ -265,19 +416,232 @@ async function pollVercelDeploys(): Promise<void> {
         },
         { onConflict: 'user_id' },
       );
-      if (
-        hasPush &&
-        deployment &&
-        (deployment.state === 'READY' || deployment.state === 'ERROR') &&
-        (deployment.uid !== previousUid || deployment.state !== previousState)
-      ) {
+      if (!hasPush) {
+        continue;
+      }
+      for (const item of deployments) {
+        if (
+          !shouldNotifyFinishedDeploy({
+            hadSnapshot,
+            previousState: previousStates.get(item.uid),
+            isTerminal: isVercelTerminal(item.state),
+            currentState: item.state,
+            createdAt: item.createdAt,
+            readyAt: item.readyAt,
+            previousUpdatedAt,
+          })
+        ) {
+          continue;
+        }
         await notifyPush({
           userId,
           kind: 'deploy',
-          title: deployment.state === 'READY' ? 'Deploy pronto' : 'Deploy com erro',
-          body: `${deployment.projectName}${deployment.branch !== '—' ? ` · ${deployment.branch}` : ''}`,
-          dedupeKey: `deploy:${deployment.uid}:${deployment.state}`,
-          data: { uid: deployment.uid, state: deployment.state },
+          title: deployTitle('vercel', item.state),
+          body: deployBody(item.projectName, item.branch),
+          dedupeKey: `deploy:${item.uid}:${item.state}`,
+          data: { kind: 'deploy', provider: 'vercel', uid: item.uid, state: item.state },
+        });
+      }
+    } catch {
+      continue;
+    }
+  }
+}
+
+async function listRenderDeploymentsForToken(
+  credentialId: string,
+  token: string,
+): Promise<RenderActiveDeployment[]> {
+  type ServiceRecord = {
+    id?: string;
+    name?: string;
+    branch?: string;
+  };
+  type DeployRecord = {
+    id?: string;
+    status?: string;
+    createdAt?: string;
+    finishedAt?: string;
+  };
+
+  const servicesResponse = await fetch(
+    `${RENDER_API_BASE}/v1/services?limit=${RENDER_SERVICES_LIMIT}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    },
+  );
+  if (!servicesResponse.ok) {
+    const error = new Error(`Render API error ${servicesResponse.status}`) as Error & {
+      statusCode?: number;
+    };
+    error.statusCode = servicesResponse.status;
+    throw error;
+  }
+  const servicesJson = (await servicesResponse.json()) as Array<{ service?: ServiceRecord }>;
+  const services = (Array.isArray(servicesJson) ? servicesJson : [])
+    .map((item) => item.service)
+    .filter((service): service is ServiceRecord => Boolean(service?.id));
+
+  const grouped = await Promise.all(
+    services.map(async (service) => {
+      const serviceId = service.id?.trim();
+      if (!serviceId) {
+        return [] as RenderActiveDeployment[];
+      }
+      try {
+        const deploysResponse = await fetch(
+          `${RENDER_API_BASE}/v1/services/${encodeURIComponent(serviceId)}/deploys?limit=${RENDER_DEPLOYS_PER_SERVICE}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: 'application/json',
+            },
+          },
+        );
+        if (!deploysResponse.ok) {
+          return [] as RenderActiveDeployment[];
+        }
+        const deploysJson = (await deploysResponse.json()) as Array<{ deploy?: DeployRecord }>;
+        return (Array.isArray(deploysJson) ? deploysJson : [])
+          .map((entry) => entry.deploy)
+          .filter((deploy): deploy is DeployRecord => Boolean(deploy?.id))
+          .map((deploy) => {
+            const uid = deploy.id?.trim() ?? '';
+            const createdAt = readSnapshotTimestamp(deploy.createdAt) ?? Date.now();
+            return {
+              uid,
+              credentialId,
+              projectName: service.name?.trim() || 'Serviço',
+              branch: service.branch?.trim() || '—',
+              state: (deploy.status?.trim().toLowerCase() || 'queued') as RenderState,
+              createdAt,
+              readyAt: readSnapshotTimestamp(deploy.finishedAt),
+            } satisfies RenderActiveDeployment;
+          })
+          .filter((item) => Boolean(item.uid));
+      } catch {
+        return [] as RenderActiveDeployment[];
+      }
+    }),
+  );
+
+  const unique = new Map<string, RenderActiveDeployment>();
+  for (const deployment of grouped.flat()) {
+    unique.set(`${deployment.credentialId}:${deployment.uid}`, deployment);
+  }
+  return [...unique.values()]
+    .sort((left, right) => {
+      const leftActive = isRenderInProgress(left.state) ? 1 : 0;
+      const rightActive = isRenderInProgress(right.state) ? 1 : 0;
+      if (leftActive !== rightActive) {
+        return rightActive - leftActive;
+      }
+      return right.createdAt - left.createdAt;
+    })
+    .slice(0, RENDER_MAX_LISTED);
+}
+
+async function pollRenderDeploys(): Promise<void> {
+  const admin = getServiceSupabaseClient();
+  if (!admin) {
+    return;
+  }
+  const { data: tokens } = await admin
+    .from('user_render_tokens')
+    .select('user_id, credential_id, label, token');
+  const byUser = new Map<string, Array<{ credentialId: string; token: string }>>();
+  for (const row of tokens ?? []) {
+    const userId = String((row as { user_id: string }).user_id);
+    const credentialId = String((row as { credential_id: string }).credential_id ?? '').trim();
+    const token = String((row as { token: string }).token ?? '').trim();
+    if (!userId || !credentialId || !token) {
+      continue;
+    }
+    const list = byUser.get(userId) ?? [];
+    list.push({ credentialId, token });
+    byUser.set(userId, list);
+  }
+
+  for (const [userId, credentials] of byUser) {
+    const { count } = await admin
+      .from('push_subscriptions')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId);
+    const hasPush = Boolean(count);
+
+    try {
+      const { data: previous } = await admin
+        .from('render_deploy_snapshots')
+        .select('active_deployment, deployments, updated_at')
+        .eq('user_id', userId)
+        .maybeSingle();
+      const previousSnapshot = (previous as DeploySnapshotLike | null) ?? null;
+      const previousStates = collectSnapshotStates(previousSnapshot);
+      const previousUpdatedAt = readSnapshotTimestamp(previousSnapshot?.updated_at);
+      const hadSnapshot = previousSnapshot != null;
+
+      const grouped = await Promise.all(
+        credentials.map(async (credential) => {
+          try {
+            return await listRenderDeploymentsForToken(credential.credentialId, credential.token);
+          } catch {
+            return [] as RenderActiveDeployment[];
+          }
+        }),
+      );
+      const unique = new Map<string, RenderActiveDeployment>();
+      for (const deployment of grouped.flat()) {
+        unique.set(`${deployment.credentialId}:${deployment.uid}`, deployment);
+      }
+      const deployments = [...unique.values()].sort((left, right) => {
+        const leftActive = isRenderInProgress(left.state) ? 1 : 0;
+        const rightActive = isRenderInProgress(right.state) ? 1 : 0;
+        if (leftActive !== rightActive) {
+          return rightActive - leftActive;
+        }
+        return right.createdAt - left.createdAt;
+      });
+      const deployment = deployments[0] ?? null;
+
+      await admin.from('render_deploy_snapshots').upsert(
+        {
+          user_id: userId,
+          active_deployment: deployment,
+          deployments,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id' },
+      );
+
+      if (!hasPush) {
+        continue;
+      }
+
+      for (const item of deployments) {
+        const key = `${item.credentialId}:${item.uid}`;
+        if (
+          !shouldNotifyFinishedDeploy({
+            hadSnapshot,
+            previousState: previousStates.get(key) ?? previousStates.get(item.uid),
+            isTerminal: isRenderTerminal(item.state),
+            currentState: item.state,
+            createdAt: item.createdAt,
+            readyAt: item.readyAt,
+            previousUpdatedAt,
+          })
+        ) {
+          continue;
+        }
+        await notifyPush({
+          userId,
+          kind: 'deploy',
+          title: deployTitle('render', item.state),
+          body: deployBody(item.projectName, item.branch),
+          dedupeKey: `deploy:render:${item.credentialId}:${item.uid}:${item.state}`,
+          data: { kind: 'deploy', provider: 'render', uid: item.uid, state: item.state },
         });
       }
     } catch {
@@ -289,4 +653,5 @@ async function pollVercelDeploys(): Promise<void> {
 export async function runPushMaintenance(skipDeviceId?: string): Promise<void> {
   await checkDevicesOffline(skipDeviceId);
   await pollVercelDeploys();
+  await pollRenderDeploys();
 }

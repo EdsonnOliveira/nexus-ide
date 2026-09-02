@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { upsertUserRenderTokens, upsertRenderDeploySnapshot } from '@nexus/supabase';
+import { cloudSupabase } from '@/lib/nexusCloud';
 import type { RenderActiveDeployment } from '@/types';
-import { isRenderInProgressDeployment } from '@/utils/renderDeployment';
+import { notifyDeployWebPush } from '@/utils/notifyDeployWebPush';
+import { isRenderInProgressDeployment, isRenderNotifyDeployment } from '@/utils/renderDeployment';
 
 const ACTIVE_POLL_MS = 5_000;
 const IDLE_POLL_MS = 30_000;
@@ -28,6 +31,51 @@ function writeDismissedDeployUid(uid: string | null): void {
   }
 }
 
+async function syncRenderDeployCloud(
+  activeDeployment: RenderActiveDeployment | null,
+  deployments: RenderActiveDeployment[],
+): Promise<void> {
+  if (!cloudSupabase || !window.nexus?.render) {
+    return;
+  }
+
+  try {
+    const {
+      data: { session },
+    } = await cloudSupabase.auth.getSession();
+
+    if (!session?.user?.id) {
+      return;
+    }
+
+    const keys = await window.nexus.render.listKeys();
+    const tokens: Array<{ credential_id: string; label: string; token: string }> = [];
+    for (const key of keys) {
+      try {
+        const token = await window.nexus.render.getKeyToken(key.id);
+        if (typeof token === 'string' && token.trim()) {
+          tokens.push({
+            credential_id: key.id,
+            label: key.label,
+            token: token.trim(),
+          });
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    await upsertUserRenderTokens(cloudSupabase, session.user.id, tokens);
+    await upsertRenderDeploySnapshot(cloudSupabase, {
+      user_id: session.user.id,
+      active_deployment: activeDeployment,
+      deployments,
+    });
+  } catch {
+    return;
+  }
+}
+
 export function useRenderDeployments(enabled: boolean) {
   const [keysConfigured, setKeysConfigured] = useState(false);
   const [activeDeployment, setActiveDeployment] = useState<RenderActiveDeployment | null>(null);
@@ -35,6 +83,33 @@ export function useRenderDeployments(enabled: boolean) {
   const [error, setError] = useState<string | null>(null);
   const [dismissedUid, setDismissedUid] = useState<string | null>(() => readDismissedDeployUid());
   const requestIdRef = useRef(0);
+  const deployStatesRef = useRef<Map<string, string>>(new Map());
+  const deployPrimedRef = useRef(false);
+
+  const observeDeployments = useCallback((deployments: RenderActiveDeployment[]) => {
+    if (!deployPrimedRef.current) {
+      for (const item of deployments) {
+        deployStatesRef.current.set(`${item.credentialId}:${item.uid}`, item.state);
+      }
+      deployPrimedRef.current = true;
+      return;
+    }
+    for (const item of deployments) {
+      const key = `${item.credentialId}:${item.uid}`;
+      const previous = deployStatesRef.current.get(key);
+      deployStatesRef.current.set(key, item.state);
+      if (previous && previous !== item.state && isRenderNotifyDeployment(item.state)) {
+        notifyDeployWebPush({
+          provider: 'render',
+          uid: item.uid,
+          state: item.state,
+          projectName: item.projectName,
+          branch: item.branch,
+          dedupeKey: `deploy:render:${item.credentialId}:${item.uid}:${item.state}`,
+        });
+      }
+    }
+  }, []);
 
   const refreshKeysConfigured = useCallback(async () => {
     if (!window.nexus?.render) {
@@ -86,7 +161,10 @@ export function useRenderDeployments(enabled: boolean) {
       if (requestIdRef.current === requestId) {
         setActiveDeployment(deployment);
         setError(null);
+        observeDeployments(deployments);
       }
+
+      void syncRenderDeployCloud(deployment, deployments);
 
       return deployment;
     } catch {
@@ -101,7 +179,7 @@ export function useRenderDeployments(enabled: boolean) {
         setLoading(false);
       }
     }
-  }, []);
+  }, [observeDeployments]);
 
   useEffect(() => {
     if (!enabled) {

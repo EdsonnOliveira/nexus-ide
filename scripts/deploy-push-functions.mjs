@@ -75,6 +75,7 @@ const deploy = spawnSync(
     'deploy',
     'send-push',
     'poll-vercel-deploys',
+    'poll-render-deploys',
     'check-devices-offline',
     '--project-ref',
     projectRef,
@@ -111,7 +112,7 @@ declare
 begin
   for jid in
     select jobid from cron.job
-    where jobname in ('nexus-poll-vercel-deploys', 'nexus-check-devices-offline')
+    where jobname in ('nexus-poll-vercel-deploys', 'nexus-poll-render-deploys', 'nexus-check-devices-offline')
   loop
     perform cron.unschedule(jid);
   end loop;
@@ -120,6 +121,12 @@ begin
     'nexus-poll-vercel-deploys',
     '*/2 * * * *',
     $cron$ select public.invoke_nexus_edge_function('poll-vercel-deploys'); $cron$
+  );
+
+  perform cron.schedule(
+    'nexus-poll-render-deploys',
+    '*/2 * * * *',
+    $cron$ select public.invoke_nexus_edge_function('poll-render-deploys'); $cron$
   );
 
   perform cron.schedule(

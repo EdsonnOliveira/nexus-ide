@@ -47,6 +47,10 @@ export function isRenderFailedDeployment(state: RenderDeploymentState): boolean 
   return state === 'build_failed' || state === 'update_failed' || state === 'pre_deploy_failed';
 }
 
+export function isRenderNotifyDeployment(state: RenderDeploymentState): boolean {
+  return state === 'live' || isRenderFailedDeployment(state);
+}
+
 export function getRenderDeploymentStatusLabel(state: RenderDeploymentState): string {
   switch (state) {
     case 'live':

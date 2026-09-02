@@ -186,6 +186,10 @@ export function isVercelFailedDeployment(state: VercelDeploymentState): boolean 
   return state === 'ERROR' || state === 'BLOCKED';
 }
 
+export function isVercelNotifyDeployment(state: VercelDeploymentState): boolean {
+  return state === 'READY' || isVercelFailedDeployment(state);
+}
+
 export function isVercelInProgressDeployment(state: VercelDeploymentState): boolean {
   return state === 'BUILDING' || state === 'QUEUED' || state === 'INITIALIZING';
 }
