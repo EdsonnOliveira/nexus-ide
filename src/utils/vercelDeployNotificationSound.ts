@@ -1,3 +1,4 @@
+import { isNotificationSoundEnabled } from '@/stores/useAppSettingsStore';
 import type { VercelDeploymentState } from '@/types';
 
 export type VercelDeploySoundKind = 'building' | 'error' | 'deployed';
@@ -87,7 +88,7 @@ export function getVercelDeploySoundKind(state: VercelDeploymentState): VercelDe
 }
 
 export function playVercelDeployNotificationSound(kind: VercelDeploySoundKind): void {
-  if (isReducedMotionPreferred()) {
+  if (!isNotificationSoundEnabled() || isReducedMotionPreferred()) {
     return;
   }
 

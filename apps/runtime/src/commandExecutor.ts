@@ -214,6 +214,29 @@ function buildAgentPromptArgs(
     return args;
   }
 
+  if (base === 'codex') {
+    const args = [
+      'exec',
+      '--json',
+      '--skip-git-repo-check',
+      '--full-auto',
+      '-C',
+      options.cwd,
+    ];
+    if (model && model.toLowerCase() !== 'auto') {
+      args.push('--model', model);
+    }
+    if (options.resumeChatId) {
+      args.push('resume', options.resumeChatId);
+    } else if (options.continueSession) {
+      args.push('resume', '--last');
+    }
+    if (options.fullPrompt) {
+      args.push(options.fullPrompt);
+    }
+    return args;
+  }
+
   const args = [
     '-p',
     '--output-format',

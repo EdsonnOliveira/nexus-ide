@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import logoAntigravity from '@/assets/logo-antigravity.svg';
 import logoClaude from '@/assets/logo-claude.svg';
+import logoCodex from '@/assets/logo-codex.svg';
 import logoCursor from '@/assets/logo-cursor.svg';
 import logoOpencode from '@/assets/logo-opencode.svg';
 import { AgentComposerModeChip } from '@/components/agent/AgentComposerModeChip';
@@ -137,6 +138,7 @@ interface AskAiProviderMenuProps {
 const ASK_AI_PROVIDER_LOGOS: Record<Exclude<AiProviderId, 'nexus'>, string> = {
   cursor: logoCursor,
   claude: logoClaude,
+  codex: logoCodex,
   opencode: logoOpencode,
   antigravity: logoAntigravity,
 };
@@ -607,15 +609,28 @@ function HomeDashboardAskBarComponent({
   const { addAgentTabForProject, updateAgentTab } = useTabActions();
   const preferredAiProvider = useAppSettingsStore((state) => state.preferredAiProvider);
   const storeProjects = useProjectStore((state) => state.projects);
-  const activeWorkspaceId = useProjectStore((state) => state.activeWorkspaceId);
+  const workspaces = useProjectStore((state) => state.workspaces);
   const selectableProjects = useMemo(() => {
-    const source = projects.length > 0 ? projects : storeProjects;
-    if (!activeWorkspaceId) {
-      return source;
-    }
+    const source = storeProjects.length > 0 ? storeProjects : projects;
+    const workspaceOrderById = new Map(
+      workspaces.map((workspace, index) => [workspace.id, index]),
+    );
+    const projectOrderById = new Map(
+      storeProjects.map((project, index) => [project.id, index]),
+    );
 
-    return source.filter((project) => project.workspaceId === activeWorkspaceId);
-  }, [activeWorkspaceId, projects, storeProjects]);
+    return [...source].sort((left, right) => {
+      const leftWorkspaceOrder = workspaceOrderById.get(left.workspaceId) ?? Number.MAX_SAFE_INTEGER;
+      const rightWorkspaceOrder = workspaceOrderById.get(right.workspaceId) ?? Number.MAX_SAFE_INTEGER;
+      if (leftWorkspaceOrder !== rightWorkspaceOrder) {
+        return leftWorkspaceOrder - rightWorkspaceOrder;
+      }
+
+      const leftProjectOrder = projectOrderById.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+      const rightProjectOrder = projectOrderById.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+      return leftProjectOrder - rightProjectOrder;
+    });
+  }, [projects, storeProjects, workspaces]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const attachTriggerRef = useRef<HTMLButtonElement>(null);
   const mentionTriggerRef = useRef<HTMLButtonElement>(null);
@@ -713,17 +728,17 @@ function HomeDashboardAskBarComponent({
     [projectId, selectableProjects],
   );
 
-  const projectOptions = useMemo(
-    () =>
-      selectableProjects.map((project) => ({
-        value: project.id,
-        label: project.name,
-        icon: (
-          <AskProjectThumb logo={project.logo} icon={project.icon} color={project.color} />
-        ),
-      })),
-    [selectableProjects],
-  );
+  const projectOptions = useMemo(() => {
+    const showWorkspace = workspaces.length > 1;
+    const workspaceNameById = new Map(workspaces.map((workspace) => [workspace.id, workspace.name]));
+
+    return selectableProjects.map((project) => ({
+      value: project.id,
+      label: project.name,
+      subtitle: showWorkspace ? workspaceNameById.get(project.workspaceId) : undefined,
+      icon: <AskProjectThumb logo={project.logo} icon={project.icon} color={project.color} />,
+    }));
+  }, [selectableProjects, workspaces]);
 
   const triggerLeadingIcon = useMemo(() => {
     if (!selectedProject) {

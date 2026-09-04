@@ -219,7 +219,9 @@ function conditionMatches(edge: MissionEdge, node: MissionAgentNode): boolean {
 }
 
 function dependenciesSatisfied(mission: Mission, nodeId: string): boolean {
-  const incoming = incomingEdges(mission, nodeId);
+  const incoming = incomingEdges(mission, nodeId).filter(
+    (edge) => edge.type !== 'parallel' && edge.type !== 'live',
+  );
 
   if (incoming.length === 0) {
     return true;
@@ -695,6 +697,53 @@ export async function handleMissionNodeTurnFinished(input: {
     return;
   }
 
+  if ((node.runUntil ?? 'turn_end') === 'session' && !input.failed) {
+    const completedAt = new Date().toISOString();
+    const project = useProjectStore
+      .getState()
+      .projects.find((entry) => entry.id === node.projectId);
+    const pane = node.paneId && project ? findPaneTab(project.tabs, node.paneId) : null;
+    const live = node.paneId ? getAgentPaneLiveTranscript(node.paneId) : null;
+    const turns =
+      live?.turns ??
+      (pane?.type === 'agent' ? pane.turns : []) ??
+      [];
+    const followUps =
+      live?.followUps ??
+      (pane?.type === 'agent' ? pane.followUps : []) ??
+      [];
+
+    await store.upsertNode(mission.id, {
+      ...node,
+      status: 'running',
+      progress: Math.max(node.progress, 40),
+      lastError: undefined,
+      ...(turns.length > 0
+        ? {
+            transcriptTurns: turns,
+            transcriptFollowUps: followUps,
+            transcriptCapturedAt: completedAt,
+          }
+        : {}),
+      currentStep: {
+        id: crypto.randomUUID(),
+        label: 'Sessão ativa — aguardando próximo passo',
+        status: 'running',
+        startedAt: node.startedAt ?? completedAt,
+      },
+    });
+
+    const { pushMissionCompanionEvent } = await import('@/utils/missionCompanion');
+    pushMissionCompanionEvent({
+      missionId: mission.id,
+      nodeId: node.id,
+      title: `${node.name?.trim() || 'Agent'} concluiu um turno`,
+      summary: 'O agent continua em sessão ao vivo. Ele pode receber follow-ups e falar com peers.',
+      nextStep: 'Use arestas Live ou o companion para o próximo passo.',
+    });
+    return;
+  }
+
   const completedAt = new Date().toISOString();
   const nextStatus = input.failed ? 'failed' : 'completed';
 
@@ -796,6 +845,22 @@ export async function handleMissionNodeTurnFinished(input: {
 
   if (!missionAfterUpdate) {
     return;
+  }
+
+  if (!input.failed) {
+    const { pushMissionCompanionEvent, buildCompanionNextStep } = await import(
+      '@/utils/missionCompanion'
+    );
+    const template =
+      store.getTemplates().find((entry) => entry.id === node.agentTemplateId) ??
+      getBuiltinTemplateById(node.agentTemplateId);
+    pushMissionCompanionEvent({
+      missionId: missionAfterUpdate.id,
+      nodeId: node.id,
+      title: `${node.name?.trim() || template?.name || 'Agent'} concluiu`,
+      summary: input.errorMessage || 'Turno finalizado com sucesso.',
+      nextStep: buildCompanionNextStep(missionAfterUpdate.id, node.id),
+    });
   }
 
   if (input.failed && node.attempt < node.maxAttempts) {

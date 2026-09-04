@@ -49,7 +49,10 @@ import {
   sanitizeResponseText,
   isValidReadFileTarget,
 } from '@/utils/agentTranscriptParser';
-import { isInjectedDevServerHandoffReply, looksLikeTruncatedAgentResponse } from '@/utils/agentStreamJsonParser';
+import {
+  isInjectedDevServerHandoffReply,
+  looksLikeTruncatedAgentResponse,
+} from '@/utils/agentStreamJsonParser';
 import { parseAgentLiveFileStatus } from '@/utils/agentActivityLabel';
 import { copyHtmlImageToClipboard, findMarkdownPreviewImage } from '@/utils/downloadImageSrc';
 import { normalizeMarkdownSource } from '@/utils/markdownText';
@@ -99,10 +102,22 @@ function looksLikeWorkingComment(label: string): boolean {
 const INCOMPLETE_THOUGHT_CLOSING_MESSAGE =
   'O agente parou durante o raciocínio sem concluir a resposta. Envie novamente para continuar.';
 
+function findLastResponseActivityId(activities: AgentActivity[]): string | null {
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const entry = activities[index];
+
+    if (entry?.kind === 'response' && getSanitizedResponseLabel(entry.label).trim()) {
+      return entry.id;
+    }
+  }
+
+  return null;
+}
+
 function isRenderableActivity(
   activity: AgentActivity,
   running: boolean,
-  options?: { hideWorkingCommentResponses?: boolean },
+  options?: { hideWorkingCommentResponses?: boolean; preserveResponseId?: string | null },
 ): boolean {
   if (activity.kind === 'section') {
     return false;
@@ -149,7 +164,12 @@ function isRenderableActivity(
       return false;
     }
 
-    if (!running && options?.hideWorkingCommentResponses && looksLikeWorkingComment(label)) {
+    if (
+      !running &&
+      options?.hideWorkingCommentResponses &&
+      looksLikeWorkingComment(label) &&
+      activity.id !== options.preserveResponseId
+    ) {
       return false;
     }
 
@@ -437,12 +457,19 @@ function AgentActivityListComponent({
 }: AgentActivityListProps) {
   const showSummary = !running && isAgentTurnSummaryVisible(summary);
   const hideWorkingCommentResponses = Boolean(showSummary && summary);
+  const lastSettledResponseId = useMemo(
+    () => (running ? null : findLastResponseActivityId(activities)),
+    [activities, running],
+  );
   const visibleActivities = useMemo(
     () =>
       activities.filter((activity) =>
-        isRenderableActivity(activity, running, { hideWorkingCommentResponses }),
+        isRenderableActivity(activity, running, {
+          hideWorkingCommentResponses,
+          preserveResponseId: lastSettledResponseId,
+        }),
       ),
-    [activities, hideWorkingCommentResponses, running],
+    [activities, hideWorkingCommentResponses, lastSettledResponseId, running],
   );
 
   const lastResponseId = useMemo(() => {
@@ -588,11 +615,7 @@ function AgentActivityListComponent({
         return null;
       }
 
-      if (looksLikeWorkingComment(label) && (running || Boolean(summary))) {
-        if (!running) {
-          return null;
-        }
-
+      if (looksLikeWorkingComment(label) && running) {
         return (
           <div
             key={activity.id}
@@ -862,13 +885,13 @@ function AgentActivityListComponent({
           {incompleteClosingMessage}
         </div>
       ) : null}
+      {!running && !hasVisibleResponse && !showIncompleteClosing ? (
+        <div className='agent-view__response agent-view__response--settled app-button--enter'>
+          {emptyResponseFallback}
+        </div>
+      ) : null}
       {showSummary && summary && !hasVisibleResponse && !hasSettledActionSummaries ? (
-        <>
-          <div className='agent-view__response agent-view__response--settled app-button--enter'>
-            {emptyResponseFallback}
-          </div>
-          <AgentTurnSummaryLine summary={summary} projectPath={projectPath} />
-        </>
+        <AgentTurnSummaryLine summary={summary} projectPath={projectPath} />
       ) : null}
       {showWaitingStatus ? <AgentLiveStatus label={waitingLabel} /> : null}
       {showResponseActions ? (

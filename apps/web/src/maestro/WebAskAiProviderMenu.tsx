@@ -3,16 +3,15 @@ import { createPortal } from 'react-dom';
 import { Check } from 'lucide-react';
 import logoAntigravity from '../assets/logo-antigravity.svg';
 import logoClaude from '../assets/logo-claude.svg';
+import logoCodex from '../assets/logo-codex.svg';
 import logoCursor from '../assets/logo-cursor.svg';
 import logoOpencode from '../assets/logo-opencode.svg';
-import {
-  WEB_ASK_AI_PROVIDER_OPTIONS,
-  type WebAskAiProviderId,
-} from './webAiProviders';
+import { WEB_ASK_AI_PROVIDER_OPTIONS, type WebAskAiProviderId } from './webAiProviders';
 
-const WEB_ASK_AI_PROVIDER_LOGOS: Record<WebAskAiProviderId, string> = {
+export const WEB_ASK_AI_PROVIDER_LOGOS: Record<WebAskAiProviderId, string> = {
   cursor: logoCursor,
   claude: logoClaude,
+  codex: logoCodex,
   opencode: logoOpencode,
   antigravity: logoAntigravity,
 };

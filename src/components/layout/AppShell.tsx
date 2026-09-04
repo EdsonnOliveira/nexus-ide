@@ -29,6 +29,8 @@ import { CloudDevicesDrawer } from '@/components/cloud/CloudDevicesDrawer';
 import { CloudDeviceSelect } from '@/components/cloud/CloudDeviceSelect';
 import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
+import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
+import { stopAgentNotificationSoundLoop } from '@/utils/agentNotificationSound';
 import { useCloudAgentSessionsSync } from '@/hooks/useCloudAgentSessionsSync';
 import { useDesktopAgentViewedAck } from '@/hooks/useDesktopAgentViewedAck';
 import { useRemoteEmulatorTabSync } from '@/hooks/useRemoteEmulatorTabSync';
@@ -40,6 +42,7 @@ import { requestHomeAskFocus, getHomeDashboardViewMode } from '@/utils/homeDashb
 import { useToastStore } from '@/stores/useToastStore';
 import { useMissionHydration } from '@/hooks/useMissionHydration';
 import { useMissionOrchestration } from '@/hooks/useMissionOrchestration';
+import { useMissionLiveBridge } from '@/hooks/useMissionLiveBridge';
 
 const LazyHomeDashboard = lazy(() =>
   import('@/components/home/HomeDashboard').then((module) => ({
@@ -156,6 +159,7 @@ function AppShellComponent() {
   const nexusReady = useNexusReady();
   useMissionHydration();
   useMissionOrchestration();
+  useMissionLiveBridge();
   useTestRunnerEvents();
   useMarkdownPreviewCmdLinks();
   const initialize = useProjectStore((state) => state.initialize);
@@ -263,6 +267,14 @@ function AppShellComponent() {
   useCloudAgentSessionsSync(true);
   useDesktopAgentViewedAck();
   useRemoteEmulatorTabSync();
+
+  useEffect(() => {
+    if (
+      Object.keys(useProjectNotificationStore.getState().notifiedAgentPaneByProject).length === 0
+    ) {
+      stopAgentNotificationSoundLoop();
+    }
+  }, []);
 
   useEffect(() => {
     let timer: number | null = null;

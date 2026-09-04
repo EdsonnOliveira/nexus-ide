@@ -18,7 +18,7 @@ import type {
   TerminalAgent,
 } from '@/types';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
-import { preferredAiProviderToCli } from '@/constants/aiProviders';
+import { DEFAULT_OPENCODE_MODEL, preferredAiProviderToCli } from '@/constants/aiProviders';
 import { isAgentPaneTab, isLegacyAgentTerminalTab, resolveAgentPaneRootPath, resolveAgentTabCli, terminalAgentToCli } from '@/utils/agentTabHelpers';
 import { buildAgentPaneLaunchCommand } from '@/utils/agentCliSession';
 import { buildCursorAgentResumeCommand } from '@/utils/cursorAgentResume';
@@ -50,6 +50,19 @@ import { resolveAgentGitPromptForFile } from '@/utils/resolveAgentGitPromptForFi
 import { resolveFileViewMode } from '@/utils/fileViewMode';
 import { isTabPinned, reorderTabBarItems, toggleTabPinned } from '@/utils/tabOrder';
 import { rebalanceMonoChainsToGrid, updateSplitRatioAtPath } from '@/utils/splitLayout';
+
+function persistOpenCodePaneModel(tabId: string, cliAgent: string): void {
+  if (cliAgent !== 'opencode') {
+    return;
+  }
+
+  useTerminalSessionStore.setState((state) => ({
+    agentModelByPane: {
+      ...state.agentModelByPane,
+      [tabId]: DEFAULT_OPENCODE_MODEL,
+    },
+  }));
+}
 
 export interface AddTabOptions {
   launchCommand?: string;
@@ -393,6 +406,7 @@ export function useTabActions(): TabStoreActions {
       };
 
       useTerminalSessionStore.getState().setPendingLaunchCommand(tabId, trimmed || cliAgent);
+      persistOpenCodePaneModel(tabId, cliAgent);
 
       await updateProject(project.id, {
         tabs: [...project.tabs, nextTab],
@@ -428,6 +442,7 @@ export function useTabActions(): TabStoreActions {
       };
 
       useTerminalSessionStore.getState().setPendingLaunchCommand(tabId, trimmed || cliAgent);
+      persistOpenCodePaneModel(tabId, cliAgent);
 
       await updateProject(project.id, {
         tabs: [...project.tabs, nextTab],

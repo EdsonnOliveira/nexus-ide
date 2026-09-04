@@ -184,9 +184,16 @@ export function WebTaskDetailModal({
             ) : null}
 
             <div className='web-task-detail__info-row'>
-              <span className='web-task-detail__info-label'>Prazo</span>
-              <span className='web-task-detail__info-value'>{formatWebTaskDate(task.dueDate)}</span>
+              <span className='web-task-detail__info-label'>Criado</span>
+              <span className='web-task-detail__info-value'>{formatWebTaskDate(task.createdAt)}</span>
             </div>
+
+            {task.dueDate ? (
+              <div className='web-task-detail__info-row'>
+                <span className='web-task-detail__info-label'>Prazo</span>
+                <span className='web-task-detail__info-value'>{formatWebTaskDate(task.dueDate)}</span>
+              </div>
+            ) : null}
 
             <div className='web-task-detail__info-row'>
               <span className='web-task-detail__info-label'>Origem</span>

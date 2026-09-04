@@ -292,8 +292,13 @@ function looksLikeCodeLine(line: string): boolean {
   }
 
   const structural = stripInlineMarkdownCode(trimmed);
+  const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
 
   if (/[{}]/.test(structural)) {
+    if (wordCount >= 8) {
+      return false;
+    }
+
     return true;
   }
 

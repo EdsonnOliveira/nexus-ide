@@ -45,6 +45,10 @@ export function resolveDashboardAiProvider(value: unknown): DashboardAiProvider 
     return 'antigravity';
   }
 
+  if (value === 'codex') {
+    return 'codex';
+  }
+
   return 'cursor';
 }
 

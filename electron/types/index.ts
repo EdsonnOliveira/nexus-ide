@@ -29,6 +29,7 @@ export interface AgentUserMessage {
   createdAt: number;
   attachments?: AgentPromptAttachment[];
   mode?: 'agent' | 'plan' | 'debug' | 'multitask' | 'ask';
+  aiProvider?: 'cursor' | 'claude' | 'codex' | 'opencode' | 'antigravity';
   agentPrompt?: string;
   skillLabel?: string;
 }
@@ -189,10 +190,7 @@ export type EmulatorCaptureBackend = 'simulator-server' | 'idb' | 'simctl' | 'ad
 export type EmulatorVideoCodec = 'h264' | 'jpeg' | 'png';
 
 export type EmulatorDeviceOrientation =
-  | 'portrait'
-  | 'landscapeLeft'
-  | 'portraitUpsideDown'
-  | 'landscapeRight';
+  'portrait' | 'landscapeLeft' | 'portraitUpsideDown' | 'landscapeRight';
 
 export interface EmulatorStreamStats {
   captureBackend: EmulatorCaptureBackend;
@@ -290,7 +288,8 @@ export type Tab = TerminalTab | AgentTab | BrowserTab | FileTab | EmulatorTab | 
 
 export type SplitOrientation = 'horizontal' | 'vertical';
 
-export type SplitSide = 'left' | 'right' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+export type SplitSide =
+  'left' | 'right' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 
 export type SplitLayoutNode =
   | { type: 'tab'; tabId: string }
@@ -319,14 +318,7 @@ export type AutomationStepType = 'terminal' | 'agent' | 'browser' | 'emulator' |
 export type AutomationTrigger = 'manual' | 'interval';
 export type AutomationStepOpenMode = 'separate' | 'split-with-previous' | 'grid-with-previous';
 
-export type AutomationHttpMethod =
-  | 'GET'
-  | 'POST'
-  | 'PUT'
-  | 'PATCH'
-  | 'DELETE'
-  | 'HEAD'
-  | 'OPTIONS';
+export type AutomationHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
 
 export interface AutomationStep {
   id: string;
@@ -541,14 +533,10 @@ export interface CalendarEventsSnapshot {
 
 export type CalendarEventStatus = 'confirmed' | 'tentative' | 'canceled' | 'none';
 
-export type CalendarAttendeeStatus =
-  | 'accepted'
-  | 'declined'
-  | 'tentative'
-  | 'pending'
-  | 'unknown';
+export type CalendarAttendeeStatus = 'accepted' | 'declined' | 'tentative' | 'pending' | 'unknown';
 
-export type CalendarRecurrenceKind = 'none' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly' | 'custom';
+export type CalendarRecurrenceKind =
+  'none' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly' | 'custom';
 
 export type CalendarMutationSpan = 'thisEvent' | 'futureEvents';
 
@@ -704,13 +692,7 @@ export type MacParakeetTranslateConclusionResult =
   | { ok: true; conclusion: string }
   | { ok: false; reason: 'not_found' | 'empty' | 'unauthorized' | 'failed' };
 
-export type JarvisPhase =
-  | 'idle'
-  | 'listening'
-  | 'processing'
-  | 'speaking'
-  | 'executing'
-  | 'error';
+export type JarvisPhase = 'idle' | 'listening' | 'processing' | 'speaking' | 'executing' | 'error';
 
 export type JarvisIntentMode = 'action' | 'question' | 'ping';
 

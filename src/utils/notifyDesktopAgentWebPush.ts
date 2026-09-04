@@ -3,14 +3,21 @@ import { sendPushNotification } from '@nexus/supabase';
 import { cloudSupabase } from '@/lib/nexusCloud';
 import { useProjectStore } from '@/stores/useProjectStore';
 
-function findLastAgentTurnId(paneId: string): string | null {
+const sentDesktopPushKeys = new Set<string>();
+
+function findLastCompletedAgentTurnId(paneId: string): string | null {
   for (const project of useProjectStore.getState().projects) {
     for (const pane of collectProjectPanes(project.tabs)) {
       if (pane.id !== paneId || pane.type !== 'agent') {
         continue;
       }
-      const last = pane.turns[pane.turns.length - 1];
-      return last?.id ?? null;
+      for (let index = pane.turns.length - 1; index >= 0; index -= 1) {
+        const turn = pane.turns[index];
+        if (turn && !turn.running) {
+          return turn.id ?? null;
+        }
+      }
+      return null;
     }
   }
   return null;
@@ -33,14 +40,19 @@ export function notifyDesktopAgentWebPush(projectId: string, paneId: string): vo
 
       const project = useProjectStore.getState().projects.find((item) => item.id === projectId);
       const projectName = project?.name?.trim() || 'Projeto';
-      const turnId = findLastAgentTurnId(paneId);
+      const turnId = findLastCompletedAgentTurnId(paneId);
+      const dedupeKey = `agent:${turnId ?? paneId}:completed`;
+      if (sentDesktopPushKeys.has(dedupeKey)) {
+        return;
+      }
+      sentDesktopPushKeys.add(dedupeKey);
 
       await sendPushNotification(client, {
         userId: session.user.id,
         kind: 'agent',
         title: 'Agent concluiu',
         body: projectName,
-        dedupeKey: `agent:${turnId ?? paneId}:completed`,
+        dedupeKey,
         data: {
           kind: 'agent',
           projectId,

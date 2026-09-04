@@ -81,6 +81,7 @@ interface AgentComposerProps {
   paneId: string;
   projectPath: string;
   terminalAgent: TerminalAgent;
+  cliAgent?: string;
   isVisible: boolean;
   isFocused: boolean;
   isBusy: boolean;
@@ -383,6 +384,7 @@ function AgentComposerComponent({
   paneId,
   projectPath,
   terminalAgent,
+  cliAgent,
   isVisible,
   isFocused,
   isBusy,
@@ -423,7 +425,7 @@ function AgentComposerComponent({
     (state) => state.activeAgentModeByPane[paneId] ?? 'agent',
   );
   const activeModeOption = getAgentModeOption(activeMode);
-  const modelHints = useAgentModelHints(paneId, projectPath, isVisible);
+  const modelHints = useAgentModelHints(paneId, projectPath, isVisible, cliAgent);
   const { usage: cursorUsage, isLoading: cursorUsageLoading, refresh: refreshCursorUsage } =
     useCursorUsage(isVisible);
 
@@ -460,6 +462,7 @@ function AgentComposerComponent({
     projectPath,
     isVisible,
     skillHints,
+    paneId,
   });
 
   const getMentionAnchorRect = useCallback((): DOMRect | null => {
@@ -1376,6 +1379,7 @@ function AgentComposerComponent({
                 paneId={paneId}
                 cwd={projectPath}
                 isVisible={isVisible}
+                cliAgent={cliAgent}
                 onRunCommand={onRunCommand}
                 onSelectSkill={handleSelectSkill}
                 onAttachImage={() => void handleAttachImage()}
@@ -1393,6 +1397,7 @@ function AgentComposerComponent({
                 paneId={paneId}
                 cwd={projectPath}
                 isVisible={isVisible}
+                cliAgent={cliAgent}
                 onRunCommand={onRunCommand}
                 onRequestComposerFocus={() => inputRef.current?.focus({ preventScroll: true })}
               />

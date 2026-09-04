@@ -1,3 +1,5 @@
+import { isNotificationSoundEnabled } from '@/stores/useAppSettingsStore';
+
 let audioContext: AudioContext | null = null;
 let repeatTimer: ReturnType<typeof setInterval> | null = null;
 let escalateTimer: ReturnType<typeof setTimeout> | null = null;
@@ -69,6 +71,10 @@ function scheduleRepeatLoop(intervalMs: number): void {
 }
 
 export function playAgentNotificationSound(): void {
+  if (!isNotificationSoundEnabled()) {
+    return;
+  }
+
   const ctx = getAudioContext();
 
   if (!ctx) {
@@ -86,7 +92,7 @@ export function playAgentNotificationSound(): void {
 }
 
 export function startAgentNotificationSoundLoop(): void {
-  if (repeatTimer !== null) {
+  if (!isNotificationSoundEnabled() || repeatTimer !== null) {
     return;
   }
 

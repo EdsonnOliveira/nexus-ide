@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useRef, type MutableRefObject, type RefOb
 import type { AgentQuestionAnswers, AgentTurn } from '@/types';
 import { AgentTurnView } from '@/components/agent/AgentTurnView';
 import { resolveActiveAgentTurnId } from '@/utils/agentPromptRail';
+import type { AiProviderId } from '@/constants/aiProviders';
 
 export interface AgentTranscriptScrollControl {
   scrollToBottom: (options?: { smooth?: boolean }) => void;
@@ -17,12 +18,16 @@ interface AgentTranscriptProps {
   projectId: string;
   projectPath: string;
   paneId: string;
+  fallbackAiProvider?: Exclude<AiProviderId, 'nexus'>;
   disableStickyPrompt?: boolean;
   onAtBottomChange?: (atBottom: boolean) => void;
   onActiveTurnChange?: (turnId: string | null) => void;
   onEdit?: (turnId: string) => void;
   onRedo?: (turnId: string) => void;
-  onSubmitQuestion?: (activityId: string, answers: AgentQuestionAnswers) => boolean | Promise<boolean>;
+  onSubmitQuestion?: (
+    activityId: string,
+    answers: AgentQuestionAnswers,
+  ) => boolean | Promise<boolean>;
 }
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 48;
@@ -121,6 +126,7 @@ function AgentTranscriptComponent({
   projectId,
   projectPath,
   paneId,
+  fallbackAiProvider,
   disableStickyPrompt = false,
   onAtBottomChange,
   onActiveTurnChange,
@@ -309,8 +315,7 @@ function AgentTranscriptComponent({
       }
 
       if (isScrollContainerAtBottom(container)) {
-        const distance =
-          container.scrollHeight - container.scrollTop - container.clientHeight;
+        const distance = container.scrollHeight - container.scrollTop - container.clientHeight;
         if (distance <= SCROLL_BOTTOM_THRESHOLD_PX) {
           window.requestAnimationFrame(() => {
             if (!isScrollContainerAtBottom(container)) {
@@ -567,6 +572,7 @@ function AgentTranscriptComponent({
           projectId={projectId}
           projectPath={projectPath}
           paneId={paneId}
+          fallbackAiProvider={fallbackAiProvider}
           disableStickyPrompt={disableStickyPrompt}
           onTurnElementChange={handleTurnElementChange}
           onEdit={onEdit}

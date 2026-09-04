@@ -15,9 +15,14 @@ interface ProjectNotificationState {
   clearNotificationForPane: (paneId: string) => void;
 }
 
-export const useProjectNotificationStore = create<ProjectNotificationState>((set) => ({
+export const useProjectNotificationStore = create<ProjectNotificationState>((set, get) => ({
   notifiedAgentPaneByProject: {},
   markProjectReady: (projectId, paneId) => {
+    if (get().notifiedAgentPaneByProject[projectId] === paneId) {
+      startAgentNotificationSoundLoop();
+      return;
+    }
+
     playAgentNotificationSound();
     startAgentNotificationSoundLoop();
     notifyDesktopAgentWebPush(projectId, paneId);
@@ -37,7 +42,6 @@ export const useProjectNotificationStore = create<ProjectNotificationState>((set
         [projectId]: paneId,
       },
     }));
-    startAgentNotificationSoundLoop();
   },
   clearProjectNotification: (projectId) => {
     set((state) => {

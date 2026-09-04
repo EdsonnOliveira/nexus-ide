@@ -284,7 +284,7 @@ const nexusApi = {
   homeDashboard: {
     getStats: (
       projectPaths: string[],
-      provider?: 'cursor' | 'claude' | 'opencode' | 'antigravity',
+      provider?: 'cursor' | 'claude' | 'codex' | 'opencode' | 'antigravity',
     ) => ipcRenderer.invoke('homeDashboard:getStats', projectPaths, provider),
     recordActivity: (kind: 'prompts' | 'agentExecutions') =>
       ipcRenderer.invoke('homeDashboard:recordActivity', kind),
@@ -890,6 +890,57 @@ const nexusApi = {
       exitCode: number | null;
       error?: string;
     }> => ipcRenderer.invoke('missions:runShell', payload),
+    writeNoteFile: (
+      missionId: string,
+      nodeId: string,
+      content: string,
+    ): Promise<{ ok: boolean; path?: string; error?: string }> =>
+      ipcRenderer.invoke('missions:writeNoteFile', missionId, nodeId, content),
+    ensureLiveSkill: (projectPath: string): Promise<boolean> =>
+      ipcRenderer.invoke('missions:ensureLiveSkill', projectPath),
+    onLiveRequest: (
+      callback: (request: {
+        id: string;
+        type: string;
+        missionId?: string;
+        fromNodeId?: string;
+        to?: string;
+        message?: string;
+        note?: string;
+        content?: string;
+        append?: boolean;
+      }) => void,
+    ): (() => void) => {
+      const listener = (
+        _: Electron.IpcRendererEvent,
+        payload: {
+          id: string;
+          type: string;
+          missionId?: string;
+          fromNodeId?: string;
+          to?: string;
+          message?: string;
+          note?: string;
+          content?: string;
+          append?: boolean;
+        },
+      ) => {
+        callback(payload);
+      };
+      ipcRenderer.on('mission-live:request', listener);
+      return () => ipcRenderer.off('mission-live:request', listener);
+    },
+    respondLiveRequest: (payload: {
+      id: string;
+      ok: boolean;
+      result?: unknown;
+      error?: string;
+    }): Promise<boolean> => ipcRenderer.invoke('mission-live:respond', payload),
+    getLiveBridgeStatus: (): Promise<{
+      port: number;
+      url: string | null;
+      cliDir: string;
+    }> => ipcRenderer.invoke('mission-live:status'),
     onUpdated: (
       callback: (mission: import('../types/mission').Mission) => void,
     ): (() => void) => {

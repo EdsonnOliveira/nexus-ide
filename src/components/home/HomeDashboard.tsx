@@ -637,7 +637,7 @@ function HomeDashboardComponent() {
       }`}
     >
       <HomeDashboardAskBar
-        projects={visibleProjects}
+        projects={projects}
         viewMode={viewMode}
         compact={compactChrome}
         onAgentOpened={handleShowAgentMode}

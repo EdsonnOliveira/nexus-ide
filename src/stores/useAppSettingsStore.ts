@@ -7,51 +7,84 @@ import {
 
 interface AppSettingsState {
   preferredAiProvider: Exclude<AiProviderId, 'nexus'>;
+  notificationSoundEnabled: boolean;
   setPreferredAiProvider: (provider: AiProviderId) => void;
+  setNotificationSoundEnabled: (enabled: boolean) => void;
 }
 
 const STORAGE_KEY = 'nexus-app-settings';
 
 interface PersistedAppSettings {
   preferredAiProvider?: string;
+  notificationSoundEnabled?: boolean;
 }
 
-function readPreferredAiProvider(): Exclude<AiProviderId, 'nexus'> {
+interface LoadedAppSettings {
+  preferredAiProvider: Exclude<AiProviderId, 'nexus'>;
+  notificationSoundEnabled: boolean;
+}
+
+function readPersistedSettings(): LoadedAppSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
 
     if (!raw) {
-      return DEFAULT_AI_PROVIDER;
+      return {
+        preferredAiProvider: DEFAULT_AI_PROVIDER,
+        notificationSoundEnabled: true,
+      };
     }
 
     const parsed = JSON.parse(raw) as PersistedAppSettings;
 
-    if (parsed?.preferredAiProvider && isSelectableAiProviderId(parsed.preferredAiProvider)) {
-      return parsed.preferredAiProvider;
-    }
-
-    return DEFAULT_AI_PROVIDER;
+    return {
+      preferredAiProvider:
+        parsed?.preferredAiProvider && isSelectableAiProviderId(parsed.preferredAiProvider)
+          ? parsed.preferredAiProvider
+          : DEFAULT_AI_PROVIDER,
+      notificationSoundEnabled: parsed?.notificationSoundEnabled !== false,
+    };
   } catch {
-    return DEFAULT_AI_PROVIDER;
+    return {
+      preferredAiProvider: DEFAULT_AI_PROVIDER,
+      notificationSoundEnabled: true,
+    };
   }
 }
 
-function writePreferredAiProvider(provider: Exclude<AiProviderId, 'nexus'>): void {
+function writePersistedSettings(settings: LoadedAppSettings): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ preferredAiProvider: provider }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
   } catch {
     return;
   }
 }
 
-export const useAppSettingsStore = create<AppSettingsState>((set) => ({
-  preferredAiProvider: readPreferredAiProvider(),
+const initialSettings = readPersistedSettings();
+
+export const useAppSettingsStore = create<AppSettingsState>((set, get) => ({
+  preferredAiProvider: initialSettings.preferredAiProvider,
+  notificationSoundEnabled: initialSettings.notificationSoundEnabled,
   setPreferredAiProvider: (provider) => {
     if (!isSelectableAiProviderId(provider)) {
       return;
     }
 
-    writePreferredAiProvider(provider);
+    writePersistedSettings({
+      preferredAiProvider: provider,
+      notificationSoundEnabled: get().notificationSoundEnabled,
+    });
     set({ preferredAiProvider: provider });
   },
+  setNotificationSoundEnabled: (enabled) => {
+    writePersistedSettings({
+      preferredAiProvider: get().preferredAiProvider,
+      notificationSoundEnabled: enabled,
+    });
+    set({ notificationSoundEnabled: enabled });
+  },
 }));
+
+export function isNotificationSoundEnabled(): boolean {
+  return useAppSettingsStore.getState().notificationSoundEnabled;
+}

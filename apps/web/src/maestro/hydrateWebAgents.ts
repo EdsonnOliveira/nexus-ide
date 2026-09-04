@@ -4,7 +4,13 @@ import { collectWebShellTerminalsFromEvents } from './webShellTerminal';
 import { createWebStreamJsonState, feedWebStreamJson } from './webStreamJson';
 
 function mapSessionStatus(status: string, hasRunningExecution: boolean): WebAgentSession['status'] {
-  if (hasRunningExecution || status === 'running' || status === 'waiting_user') {
+  if (status === 'waiting_user') {
+    return 'running';
+  }
+  if (hasRunningExecution && status !== 'error') {
+    return 'running';
+  }
+  if (status === 'running') {
     return 'running';
   }
   if (status === 'error') {

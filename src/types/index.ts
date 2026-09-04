@@ -134,6 +134,7 @@ export interface AgentUserMessage {
   createdAt: number;
   attachments?: AgentPromptAttachment[];
   mode?: 'agent' | 'plan' | 'debug' | 'multitask' | 'ask';
+  aiProvider?: 'cursor' | 'claude' | 'codex' | 'opencode' | 'antigravity';
   agentPrompt?: string;
   skillLabel?: string;
 }
@@ -1371,9 +1372,9 @@ export interface NexusAPI {
     watch: (dirPath: string) => Promise<void>;
     unwatch: (dirPath: string) => Promise<void>;
     invalidateCache: (dirPath: string) => Promise<void>;
-    listWorktrees: (dirPath: string) => Promise<
-      Array<{ path: string; branch: string | null; bare: boolean }>
-    >;
+    listWorktrees: (
+      dirPath: string,
+    ) => Promise<Array<{ path: string; branch: string | null; bare: boolean }>>;
     addWorktree: (
       dirPath: string,
       worktreePath: string,
@@ -1389,7 +1390,7 @@ export interface NexusAPI {
   homeDashboard: {
     getStats: (
       projectPaths: string[],
-      provider?: 'cursor' | 'claude' | 'opencode' | 'antigravity',
+      provider?: 'cursor' | 'claude' | 'codex' | 'opencode' | 'antigravity',
     ) => Promise<HomeDashboardActivityComparison>;
     recordActivity: (kind: HomeDashboardActivityKind) => Promise<void>;
   };
@@ -1417,15 +1418,42 @@ export interface NexusAPI {
     saveCustomTemplate: (template: AgentTemplate) => Promise<AgentTemplate | null>;
     saveFlowTemplate: (template: MissionFlowTemplate) => Promise<MissionFlowTemplate | null>;
     removeFlowTemplate: (id: string) => Promise<boolean>;
-    runShell: (payload: {
-      command: string;
-      cwd: string;
-    }) => Promise<{
+    runShell: (payload: { command: string; cwd: string }) => Promise<{
       ok: boolean;
       stdout: string;
       stderr: string;
       exitCode: number | null;
       error?: string;
+    }>;
+    writeNoteFile: (
+      missionId: string,
+      nodeId: string,
+      content: string,
+    ) => Promise<{ ok: boolean; path?: string; error?: string }>;
+    ensureLiveSkill: (projectPath: string) => Promise<boolean>;
+    onLiveRequest: (
+      callback: (request: {
+        id: string;
+        type: string;
+        missionId?: string;
+        fromNodeId?: string;
+        to?: string;
+        message?: string;
+        note?: string;
+        content?: string;
+        append?: boolean;
+      }) => void,
+    ) => () => void;
+    respondLiveRequest: (payload: {
+      id: string;
+      ok: boolean;
+      result?: unknown;
+      error?: string;
+    }) => Promise<boolean>;
+    getLiveBridgeStatus: () => Promise<{
+      port: number;
+      url: string | null;
+      cliDir: string;
     }>;
     onUpdated: (callback: (mission: Mission) => void) => () => void;
     onInbox: (callback: (items: MissionInboxItem[]) => void) => () => void;

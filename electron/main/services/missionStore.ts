@@ -218,6 +218,9 @@ export function updateMission(id: string, patch: Partial<Mission>): Mission | nu
     attachments: patch.attachments ?? current.attachments,
     sourceTasks: patch.sourceTasks ?? current.sourceTasks,
     budget: patch.budget ?? current.budget,
+    drawings: patch.drawings ?? current.drawings,
+    floors: patch.floors ?? current.floors,
+    companionEvents: patch.companionEvents ?? current.companionEvents,
   };
 
   const missions = [...state.missions];

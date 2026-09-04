@@ -16,7 +16,7 @@ import {
   type Node,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Trash2, Workflow, X } from 'lucide-react';
+import { LayoutGrid, Trash2, Workflow, X } from 'lucide-react';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
 import { AppCheckbox } from '@/components/overlay/AppCheckbox';
@@ -56,6 +56,7 @@ import {
   createMissionEdge,
   createMissionNode,
   createMissionToolNode,
+  createMissionNoteNode,
   duplicateMissionNode,
   getMissionEdgeConditionDescription,
   getMissionEdgeTypeDescription,
@@ -96,6 +97,21 @@ function FlowTemplateEditorCanvas({
 
   const [name, setName] = useState(initialTemplate?.name || 'Novo fluxo');
   const [saving, setSaving] = useState(false);
+  const [libraryVisible, setLibraryVisible] = useState(() => {
+    try {
+      return localStorage.getItem('nexus.mission-graph.library-visible') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const setMissionLibraryVisible = useCallback((visible: boolean) => {
+    setLibraryVisible(visible);
+    try {
+      localStorage.setItem('nexus.mission-graph.library-visible', String(visible));
+    } catch {
+      // ignore
+    }
+  }, []);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [draftNodes, setDraftNodes] = useState<MissionAgentNode[]>(() =>
@@ -334,11 +350,23 @@ function FlowTemplateEditorCanvas({
 
   const handleAddTool = useCallback(
     (
-      kind: Exclude<MissionNodeKind, 'agent' | 'automation' | 'mission'>,
+      kind: Exclude<MissionNodeKind, 'agent' | 'automation' | 'mission' | 'drawing'>,
       position?: { x: number; y: number },
     ) => {
       const origin = position ?? getOrigin();
       const stagger = position ? 0 : draftNodes.length % 4;
+      if (kind === 'note') {
+        const next = createMissionNoteNode({
+          projectId: TEMPLATE_PROJECT_ID,
+          position: {
+            x: origin.x + stagger * 28,
+            y: origin.y + stagger * 22,
+          },
+        });
+        setDraftNodes((current) => [...current, next]);
+        setSelectedNodeId(next.id);
+        return;
+      }
       const next = createMissionToolNode({
         kind,
         projectId: TEMPLATE_PROJECT_ID,
@@ -431,9 +459,7 @@ function FlowTemplateEditorCanvas({
       const targetNode = draftNodes.find((entry) => entry.id === connection.target);
       if (
         !sourceNode ||
-        !targetNode ||
-        isMissionToolNode(sourceNode) ||
-        isMissionToolNode(targetNode)
+        !targetNode
       ) {
         return;
       }
@@ -441,6 +467,10 @@ function FlowTemplateEditorCanvas({
       const edge = createMissionEdge({
         sourceNodeId: connection.source,
         targetNodeId: connection.target,
+        type:
+          isMissionToolNode(sourceNode) || isMissionToolNode(targetNode)
+            ? 'live'
+            : 'handoff',
       });
       const accent = getMissionAgentVisual({
         kind: getMissionNodeKind(sourceNode),
@@ -657,16 +687,8 @@ function FlowTemplateEditorCanvas({
       id: initialTemplate?.id ?? crypto.randomUUID(),
       name: name.trim() || 'Novo fluxo',
       nodes: missionNodesToFlowTemplateNodes(draftNodes),
-      edges: missionEdgesToFlowTemplateEdges(
-        draftEdges.filter((edge) => {
-          const source = draftNodes.find((node) => node.id === edge.sourceNodeId);
-          const target = draftNodes.find((node) => node.id === edge.targetNodeId);
-          if (!source || !target) {
-            return false;
-          }
-          return !isMissionToolNode(source) && !isMissionToolNode(target);
-        }),
-      ),
+      edges: missionEdgesToFlowTemplateEdges(draftEdges),
+      drawings: initialTemplate?.drawings,
       createdAt: initialTemplate?.createdAt ?? now,
       updatedAt: now,
     };
@@ -943,6 +965,7 @@ function FlowTemplateEditorCanvas({
                       { value: 'validation', label: 'Validação' },
                       { value: 'trigger', label: 'Trigger' },
                       { value: 'shared_discovery', label: 'Descoberta compartilhada' },
+                      { value: 'live', label: 'Live' },
                     ]}
                     onChange={(value) => {
                       updateDraftEdge(selectedEdge.id, {
@@ -1003,12 +1026,26 @@ function FlowTemplateEditorCanvas({
               </div>
             </aside>
           ) : null}
-        <MissionNodeLibrary
-          templates={templates}
-          onAddAgent={handleAddAgent}
-          onAddTool={handleAddTool}
-          onAddAutomation={handleAddAutomation}
-        />
+        {libraryVisible ? (
+          <MissionNodeLibrary
+            templates={templates}
+            onHide={() => setMissionLibraryVisible(false)}
+            onAddAgent={handleAddAgent}
+            onAddTool={handleAddTool}
+            onAddAutomation={handleAddAutomation}
+          />
+        ) : (
+          <button
+            type='button'
+            className='mission-node-library-reopen app-button app-button--enter'
+            aria-label='Mostrar biblioteca'
+            title='Mostrar biblioteca'
+            onClick={() => setMissionLibraryVisible(true)}
+          >
+            <LayoutGrid size={14} strokeWidth={2.25} aria-hidden='true' />
+            <span>Biblioteca</span>
+          </button>
+        )}
       </div>
 
       {contextMenu && contextNode ? (

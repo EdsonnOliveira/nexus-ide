@@ -6,7 +6,7 @@ import type { TerminalCommandHint } from './terminalHints';
 const execFileAsync = promisify(execFile);
 const MAX_MODEL_HINTS = 8;
 
-export type AgentModelProvider = 'cursor' | 'claude' | 'opencode' | 'antigravity';
+export type AgentModelProvider = 'cursor' | 'claude' | 'codex' | 'opencode' | 'antigravity';
 
 type ModelBadgeIcon = NonNullable<TerminalCommandHint['badgeIcon']>;
 
@@ -50,8 +50,10 @@ const CLAUDE_FALLBACK_MODELS: AgentModelOption[] = [
   { id: 'haiku', label: 'Haiku' },
 ];
 
+export const DEFAULT_OPENCODE_MODEL_ID = 'opencode/big-pickle';
+
 const OPENCODE_FALLBACK_MODELS: AgentModelOption[] = [
-  { id: 'opencode/big-pickle', label: 'Big Pickle' },
+  { id: DEFAULT_OPENCODE_MODEL_ID, label: 'Big Pickle' },
   { id: 'opencode/mimo-v2.5-free', label: 'MiMo v2.5 Free' },
 ];
 
@@ -59,6 +61,13 @@ const ANTIGRAVITY_FALLBACK_MODELS: AgentModelOption[] = [
   { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
   { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
   { id: 'gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' },
+];
+
+const CODEX_FALLBACK_MODELS: AgentModelOption[] = [
+  { id: 'gpt-5.5', label: 'GPT-5.5' },
+  { id: 'gpt-5.4', label: 'GPT-5.4' },
+  { id: 'gpt-5-codex', label: 'GPT-5 Codex' },
+  { id: 'o3', label: 'o3' },
 ];
 
 const MODEL_PRIORITY_PATTERNS = [
@@ -93,6 +102,10 @@ let claudeRefreshInFlight: Promise<void> | null = null;
 let cachedAntigravityModels: AgentModelOption[] | null = null;
 let antigravityCacheTimestamp = 0;
 let antigravityRefreshInFlight: Promise<void> | null = null;
+
+let cachedCodexModels: AgentModelOption[] | null = null;
+let codexCacheTimestamp = 0;
+let codexRefreshInFlight: Promise<void> | null = null;
 
 const CACHE_TTL_MS = 60_000;
 
@@ -313,6 +326,7 @@ function isAgentModelProvider(value: string): value is AgentModelProvider {
   return (
     value === 'cursor' ||
     value === 'claude' ||
+    value === 'codex' ||
     value === 'opencode' ||
     value === 'antigravity'
   );
@@ -409,6 +423,31 @@ async function loadAntigravityModels(): Promise<AgentModelOption[]> {
   return cachedAntigravityModels ?? ANTIGRAVITY_FALLBACK_MODELS;
 }
 
+async function loadCodexModels(): Promise<AgentModelOption[]> {
+  const now = Date.now();
+
+  if (cachedCodexModels && now - codexCacheTimestamp < CACHE_TTL_MS) {
+    return cachedCodexModels;
+  }
+
+  if (!codexRefreshInFlight) {
+    codexRefreshInFlight = (async () => {
+      try {
+        const parsed = await fetchCliIdModels('codex', ['models']);
+        cachedCodexModels = parsed.length > 0 ? parsed : CODEX_FALLBACK_MODELS;
+      } catch {
+        cachedCodexModels = cachedCodexModels ?? CODEX_FALLBACK_MODELS;
+      } finally {
+        codexCacheTimestamp = Date.now();
+        codexRefreshInFlight = null;
+      }
+    })();
+  }
+
+  await codexRefreshInFlight;
+  return cachedCodexModels ?? CODEX_FALLBACK_MODELS;
+}
+
 async function loadCursorModelOptions(): Promise<AgentModelOption[]> {
   const now = Date.now();
 
@@ -443,6 +482,10 @@ export async function listAgentModelsForProvider(
 
   if (provider === 'antigravity') {
     return loadAntigravityModels();
+  }
+
+  if (provider === 'codex') {
+    return loadCodexModels();
   }
 
   return loadCursorModelOptions();

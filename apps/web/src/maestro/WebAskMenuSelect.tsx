@@ -12,6 +12,7 @@ import { ChevronDown } from 'lucide-react';
 export interface WebAskMenuOption {
   value: string;
   label: string;
+  subtitle?: string;
   leading?: ReactNode;
   disabled?: boolean;
 }
@@ -175,7 +176,12 @@ export function WebAskMenuSelect({
                 }}
               >
                 {option.leading}
-                <span className='web-ask-project-menu__label'>{option.label}</span>
+                <span className='web-ask-project-menu__text'>
+                  <span className='web-ask-project-menu__label'>{option.label}</span>
+                  {option.subtitle ? (
+                    <span className='web-ask-project-menu__subtitle'>{option.subtitle}</span>
+                  ) : null}
+                </span>
               </button>
             ))}
           </div>,

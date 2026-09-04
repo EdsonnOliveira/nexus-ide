@@ -344,6 +344,9 @@ export default defineConfig(({ command }) => {
       host: '127.0.0.1',
       port: 5260,
       strictPort: true,
+      watch: {
+        ignored: ['**/apps/web/**', '**/release/**'],
+      },
     },
     optimizeDeps: {
       include: [

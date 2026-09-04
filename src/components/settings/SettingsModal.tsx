@@ -1,20 +1,30 @@
-import { Sparkles } from 'lucide-react';
+import { Settings, Sparkles } from 'lucide-react';
 import { memo, useCallback, useMemo, useState } from 'react';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
+import { AppCheckbox } from '@/components/overlay/AppCheckbox';
 import { AI_PROVIDER_OPTIONS, type AiProviderId } from '@/constants/aiProviders';
 import { useAppSettingsStore } from '@/stores/useAppSettingsStore';
+import { stopAgentNotificationSoundLoop } from '@/utils/agentNotificationSound';
+import {
+  stopCalendarEventAlertSound,
+  stopCalendarEventUrgentSoundLoop,
+} from '@/utils/calendarEventNotificationSound';
 
-type SettingsTabId = 'ia';
+type SettingsTabId = 'geral' | 'ia';
 
 interface SettingsModalProps {
   onClose: () => void;
 }
 
 function SettingsModalComponent({ onClose }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<SettingsTabId>('ia');
+  const [activeTab, setActiveTab] = useState<SettingsTabId>('geral');
   const preferredAiProvider = useAppSettingsStore((state) => state.preferredAiProvider);
   const setPreferredAiProvider = useAppSettingsStore((state) => state.setPreferredAiProvider);
+  const notificationSoundEnabled = useAppSettingsStore((state) => state.notificationSoundEnabled);
+  const setNotificationSoundEnabled = useAppSettingsStore(
+    (state) => state.setNotificationSoundEnabled,
+  );
 
   const providerOptions = useMemo(
     () =>
@@ -34,6 +44,19 @@ function SettingsModalComponent({ onClose }: SettingsModalProps) {
     [setPreferredAiProvider],
   );
 
+  const handleNotificationSoundChange = useCallback(
+    (enabled: boolean) => {
+      setNotificationSoundEnabled(enabled);
+
+      if (!enabled) {
+        stopAgentNotificationSoundLoop();
+        stopCalendarEventAlertSound();
+        stopCalendarEventUrgentSoundLoop();
+      }
+    },
+    [setNotificationSoundEnabled],
+  );
+
   return (
     <AnimatedModal panelClassName='project-dialog settings-modal' onClose={onClose}>
       {(requestClose) => (
@@ -43,6 +66,16 @@ function SettingsModalComponent({ onClose }: SettingsModalProps) {
           </div>
 
           <div className='settings-modal__tabs' role='tablist' aria-label='Seções de configurações'>
+            <button
+              type='button'
+              role='tab'
+              aria-selected={activeTab === 'geral'}
+              className={`settings-modal__tab app-button app-button--enter${activeTab === 'geral' ? ' settings-modal__tab--active' : ''}`}
+              onClick={() => setActiveTab('geral')}
+            >
+              <Settings size={13} />
+              <span>Geral</span>
+            </button>
             <button
               type='button'
               role='tab'
@@ -56,6 +89,30 @@ function SettingsModalComponent({ onClose }: SettingsModalProps) {
           </div>
 
           <div className='settings-modal__body' role='tabpanel'>
+            {activeTab === 'geral' ? (
+              <div className='settings-modal__section'>
+                <span className='settings-modal__section-label'>Ping</span>
+                <p className='settings-modal__section-hint'>
+                  Quando desativado, as notificações do Agent, Vercel, Render e similares ficam sem
+                  som.
+                </p>
+                <div className='settings-modal__check'>
+                  <AppCheckbox
+                    checked={notificationSoundEnabled}
+                    onChange={handleNotificationSoundChange}
+                    aria-label='Emitir som de notificação'
+                  />
+                  <button
+                    type='button'
+                    className='settings-modal__check-label app-button'
+                    onClick={() => handleNotificationSoundChange(!notificationSoundEnabled)}
+                  >
+                    Emitir som de notificação
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
             {activeTab === 'ia' ? (
               <div className='settings-modal__section'>
                 <span className='settings-modal__section-label'>Provedor do Agent</span>

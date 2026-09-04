@@ -406,7 +406,7 @@ export function WebMaestroHome() {
       }
 
       try {
-        const projectList = await bridge.listProjects(activeWorkspaceId);
+        const projectList = await bridge.listProjects();
         if (!cancelled) {
           setProjects(projectList);
         }
@@ -418,7 +418,7 @@ export function WebMaestroHome() {
     return () => {
       cancelled = true;
     };
-  }, [activeWorkspaceId, agentFilterProjectId, devices, resolveDeviceId, setProjects]);
+  }, [agentFilterProjectId, devices, resolveDeviceId, setProjects]);
 
   const syncHeroChromeHeight = useCallback(() => {
     const hero = heroRef.current;
@@ -716,6 +716,10 @@ export function WebMaestroHome() {
       const now = Date.now();
 
       for (const agent of runningAgents) {
+        if (agent.source === 'desktop_pane') {
+          continue;
+        }
+
         const lastActivity = agentActivityRef.current.get(agent.id) ?? agent.createdAt ?? now;
         const idleMs = now - lastActivity;
 
@@ -762,6 +766,19 @@ export function WebMaestroHome() {
 
         agentActivityRef.current.set(agent.id, Date.now());
         patchAgentTurn(agent.id, { response: WEB_AGENT_STALL_MESSAGE });
+        if (lastTurn?.id) {
+          try {
+            await supabase
+              .from('agent_executions')
+              .update({
+                status: 'failed',
+                completed_at: new Date().toISOString(),
+                result: { stalled: true },
+              })
+              .eq('id', lastTurn.id)
+              .in('status', ['running', 'pending']);
+          } catch {}
+        }
         await finishAgentWithHydration(agent.id, 'error');
 
         const deviceId = resolveDeviceId();
@@ -1074,7 +1091,6 @@ export function WebMaestroHome() {
 
     incompleteContinueInFlightRef.current.add(agentId);
     incompleteContinueCountRef.current.set(agentId, count + 1);
-    setAgentStatus(agentId, 'done');
     try {
       const continued = await handleFollowUp(agentId, WEB_AGENT_INCOMPLETE_CONTINUE_PROMPT);
       if (!continued) {

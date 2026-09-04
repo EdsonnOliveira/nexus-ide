@@ -13,11 +13,17 @@ import {
   type ReactNode,
 } from 'react';
 import { ArrowUp, FileText, Paperclip, Square, X } from 'lucide-react';
-import { useWebStore, type WebAgentSession, type WebAgentTurn, type WebAgentActivity } from '../store';
-import { WebAskAiProviderMenu } from './WebAskAiProviderMenu';
+import {
+  useWebStore,
+  type WebAgentSession,
+  type WebAgentTurn,
+  type WebAgentActivity,
+} from '../store';
+import { WebAskAiProviderMenu, WEB_ASK_AI_PROVIDER_LOGOS } from './WebAskAiProviderMenu';
 import {
   agentCommandToWebAiProvider,
   webAiProviderToAgentCommand,
+  WEB_ASK_AI_PROVIDER_OPTIONS,
 } from './webAiProviders';
 import {
   buildWebActionBlockSummary,
@@ -50,10 +56,7 @@ import {
 import { useWebAgentSkills, type WebAgentSkillHint } from './useWebAgentSkills';
 import { useWebAgentSkillSlash } from './useWebAgentSkillSlash';
 import { WebAgentSkillSlashMenu } from './WebAgentSkillSlashMenu';
-import {
-  applyWebSkillSlashMention,
-  type WebSkillSlashMatch,
-} from './webAgentSkillSlash';
+import { applyWebSkillSlashMention, type WebSkillSlashMatch } from './webAgentSkillSlash';
 
 interface WebAgentChatProps {
   agent: WebAgentSession;
@@ -390,12 +393,17 @@ function TurnView({
   turn,
   deviceId,
   projectId,
+  agentCommand,
 }: {
   turn: WebAgentTurn;
   deviceId: string | null;
   projectId: string | null;
+  agentCommand: string;
 }) {
   const multiline = turn.prompt.includes('\n') || turn.prompt.length > 72;
+  const provider = agentCommandToWebAiProvider(agentCommand);
+  const providerLabel =
+    WEB_ASK_AI_PROVIDER_OPTIONS.find((option) => option.id === provider)?.label ?? 'Cursor';
   const running = turn.status === 'running';
   const activities = turn.activities ?? [];
   const hasActivities = activities.length > 0;
@@ -528,13 +536,26 @@ function TurnView({
 
   return (
     <div className='agent-view__turn app-button--enter'>
-      <div className='agent-view__user-prompt'>
-        <div
-          className={`agent-view__user-bubble${
-            multiline ? ' agent-view__user-bubble--multiline' : ''
-          }`}
-        >
-          {turn.prompt}
+      <div className='agent-view__user-prompt-wrap'>
+        <div className='agent-view__user-chips'>
+          <div className='agent-view__user-provider' title={providerLabel}>
+            <img
+              src={WEB_ASK_AI_PROVIDER_LOGOS[provider]}
+              alt=''
+              className='agent-view__user-provider-logo'
+              draggable={false}
+            />
+            <span className='agent-view__user-provider-label'>{providerLabel}</span>
+          </div>
+        </div>
+        <div className='agent-view__user-prompt'>
+          <div
+            className={`agent-view__user-bubble${
+              multiline ? ' agent-view__user-bubble--multiline' : ''
+            }`}
+          >
+            {turn.prompt}
+          </div>
         </div>
       </div>
       {hasActivities
@@ -821,8 +842,12 @@ export function WebAgentChat({
       devices.find((device) => device.id === agent.deviceId)?.workspace_id ?? activeWorkspaceId
     );
   }, [activeWorkspaceId, agent.deviceId, devices]);
-  const { skills, loading: skillsLoading, error: skillsError, refresh: refreshSkills } =
-    useWebAgentSkills({
+  const {
+    skills,
+    loading: skillsLoading,
+    error: skillsError,
+    refresh: refreshSkills,
+  } = useWebAgentSkills({
     workspaceId: skillWorkspaceId,
     deviceId: agent.deviceId,
     projectId: agent.projectId,
@@ -900,7 +925,8 @@ export function WebAgentChat({
       setSkillMenuRect(null);
       return;
     }
-    const rect = askFormRef.current?.getBoundingClientRect() ?? inputRef.current?.getBoundingClientRect();
+    const rect =
+      askFormRef.current?.getBoundingClientRect() ?? inputRef.current?.getBoundingClientRect();
     if (!rect) {
       return;
     }
@@ -1020,8 +1046,7 @@ export function WebAgentChat({
 
   const ingestFiles = useCallback(
     async (fileList: Iterable<File>) => {
-      const { imageDataUrls, fileAttachments, rejectedNames } =
-        await readAttachmentFiles(fileList);
+      const { imageDataUrls, fileAttachments, rejectedNames } = await readAttachmentFiles(fileList);
       notifyRejectedAttachments(rejectedNames);
       attachImagesWithMentions(imageDataUrls);
       attachFilesWithMentions(fileAttachments);
@@ -1134,8 +1159,7 @@ export function WebAgentChat({
       return;
     }
 
-    const atBottom = () =>
-      node.scrollHeight - node.scrollTop - node.clientHeight <= 48;
+    const atBottom = () => node.scrollHeight - node.scrollTop - node.clientHeight <= 48;
 
     const handleScroll = () => {
       stickToBottomRef.current = atBottom();
@@ -1439,6 +1463,7 @@ export function WebAgentChat({
               turn={turn}
               deviceId={agent.deviceId}
               projectId={agent.projectId}
+              agentCommand={agent.agentCommand}
             />
           ))}
         </div>
@@ -1462,18 +1487,9 @@ export function WebAgentChat({
             hidden
             onChange={handleImageInputChange}
           />
-          <input
-            ref={fileInputRef}
-            type='file'
-            multiple
-            hidden
-            onChange={handleFileInputChange}
-          />
+          <input ref={fileInputRef} type='file' multiple hidden onChange={handleFileInputChange} />
           {pendingImages.length > 0 || pendingFiles.length > 0 ? (
-            <div
-              className='home-dashboard__ask-attachments app-button--enter'
-              aria-label='Anexos'
-            >
+            <div className='home-dashboard__ask-attachments app-button--enter' aria-label='Anexos'>
               {pendingImages.map((image, index) => {
                 const imageNumber = index + 1;
                 const badgeColor = getWebAgentPromptImageBadgeColor(imageNumber);

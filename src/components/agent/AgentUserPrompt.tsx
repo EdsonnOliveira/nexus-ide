@@ -10,11 +10,24 @@ import {
   AgentPromptImageIndexBadge,
   AgentPromptImageMentionText,
 } from '@/components/agent/AgentPromptImageBadges';
+import {
+  aiProviderLabel,
+  isSelectableAiProviderId,
+  type AiProviderId,
+} from '@/constants/aiProviders';
 import { getAgentModeOption, type AgentModeBadgeIcon } from '@/constants/agentModes';
 import { useFlipMotion } from '@/hooks/useFlipMotion';
 import type { AgentTurn } from '@/types';
-import { hydrateAgentUserMessage, resolvePromptDisplayContent } from '@/utils/agentPromptAttachments';
-import { resolveAgentSkillDisplayState, isSkillOnlyPrompt, shouldShowSkillChipAbovePrompt } from '@/utils/agentSkillDisplay';
+import {
+  hydrateAgentUserMessage,
+  resolvePromptDisplayContent,
+} from '@/utils/agentPromptAttachments';
+import {
+  resolveAgentSkillDisplayState,
+  isSkillOnlyPrompt,
+  shouldShowSkillChipAbovePrompt,
+} from '@/utils/agentSkillDisplay';
+import { AGENT_HINT_BADGE_COLORS, AGENT_HINT_BADGE_ICON_SRC } from '@/utils/agentHintBadges';
 
 const MODE_ICON_SRC: Record<AgentModeBadgeIcon, string> = {
   'mode-agent': iconModeAgent,
@@ -29,6 +42,7 @@ interface AgentUserPromptProps {
   projectPath: string;
   isEditing?: boolean;
   isStickyLayout?: boolean;
+  fallbackAiProvider?: Exclude<AiProviderId, 'nexus'>;
   onEdit?: (turnId: string) => void;
   onRedo?: (turnId: string) => void;
 }
@@ -38,13 +52,16 @@ function AgentUserPromptComponent({
   projectPath,
   isEditing = false,
   isStickyLayout = false,
+  fallbackAiProvider,
   onEdit,
   onRedo,
 }: AgentUserPromptProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const [attachments, setAttachments] = useState(turn.user.attachments ?? []);
-  const [hydratedContent, setHydratedContent] = useState(resolvePromptDisplayContent(turn.user.content));
+  const [hydratedContent, setHydratedContent] = useState(
+    resolvePromptDisplayContent(turn.user.content),
+  );
   const modeOption = useMemo(() => {
     const mode = turn.user.mode;
 
@@ -54,6 +71,18 @@ function AgentUserPromptComponent({
 
     return getAgentModeOption(mode) ?? null;
   }, [turn.user.mode]);
+  const aiProvider = useMemo(() => {
+    const stored = turn.user.aiProvider;
+
+    if (stored && isSelectableAiProviderId(stored)) {
+      return stored;
+    }
+
+    return fallbackAiProvider ?? 'cursor';
+  }, [fallbackAiProvider, turn.user.aiProvider]);
+  const providerLabel = aiProviderLabel(aiProvider);
+  const providerLogo = AGENT_HINT_BADGE_ICON_SRC[aiProvider];
+  const providerColor = AGENT_HINT_BADGE_COLORS[aiProvider];
   const skillUser = useMemo(
     () => ({
       content: hydratedContent,
@@ -100,8 +129,7 @@ function AgentUserPromptComponent({
     onRedo?.(turn.id);
   }, [onRedo, turn.id]);
 
-  const showActions =
-    !turn.running && !turn.pendingFollowUp && Boolean(onEdit || onRedo);
+  const showActions = !turn.running && !turn.pendingFollowUp && Boolean(onEdit || onRedo);
 
   useFlipMotion(isStickyLayout, actionsRef, showActions);
 
@@ -121,23 +149,38 @@ function AgentUserPromptComponent({
             <span className='agent-view__user-skill-label'>{skillChipLabel}</span>
           </div>
         ) : null}
-        {modeOption ? (
+        <div className='agent-view__user-chips'>
           <div
-            className={`agent-view__user-mode agent-view__user-mode--${modeOption.id}`}
-            style={{ '--mode-chip-accent': modeOption.badgeColor } as CSSProperties}
+            className='agent-view__user-provider'
+            style={{ '--provider-chip-accent': providerColor } as CSSProperties}
+            title={providerLabel}
           >
-            <span
-              className='agent-view__user-mode-icon'
-              style={{
-                backgroundColor: modeOption.badgeColor,
-                WebkitMaskImage: `url("${MODE_ICON_SRC[modeOption.badgeIcon]}")`,
-                maskImage: `url("${MODE_ICON_SRC[modeOption.badgeIcon]}")`,
-              }}
-              aria-hidden='true'
+            <img
+              src={providerLogo}
+              alt=''
+              className='agent-view__user-provider-logo'
+              draggable={false}
             />
-            <span className='agent-view__user-mode-label'>{modeOption.label}</span>
+            <span className='agent-view__user-provider-label'>{providerLabel}</span>
           </div>
-        ) : null}
+          {modeOption ? (
+            <div
+              className={`agent-view__user-mode agent-view__user-mode--${modeOption.id}`}
+              style={{ '--mode-chip-accent': modeOption.badgeColor } as CSSProperties}
+            >
+              <span
+                className='agent-view__user-mode-icon'
+                style={{
+                  backgroundColor: modeOption.badgeColor,
+                  WebkitMaskImage: `url("${MODE_ICON_SRC[modeOption.badgeIcon]}")`,
+                  maskImage: `url("${MODE_ICON_SRC[modeOption.badgeIcon]}")`,
+                }}
+                aria-hidden='true'
+              />
+              <span className='agent-view__user-mode-label'>{modeOption.label}</span>
+            </div>
+          ) : null}
+        </div>
         <div
           className={`agent-view__user-prompt${turn.running ? ' agent-view__user-prompt--active' : ''}${turn.pendingFollowUp ? ' agent-view__user-prompt--pending' : ''}${isEditing ? ' agent-view__user-prompt--editing' : ''}${isMultilineBubble ? ' agent-view__user-prompt--multiline' : ''}${isSkillOnly ? ' agent-view__user-prompt--skill-only' : ''}`}
         >
@@ -197,7 +240,10 @@ function AgentUserPromptComponent({
         </div>
       </div>
       {previewUrl ? (
-        <AnimatedModal panelClassName='terminal-paste-image-lightbox' onClose={() => setPreviewUrl(null)}>
+        <AnimatedModal
+          panelClassName='terminal-paste-image-lightbox'
+          onClose={() => setPreviewUrl(null)}
+        >
           {(requestClose) => (
             <button
               type='button'

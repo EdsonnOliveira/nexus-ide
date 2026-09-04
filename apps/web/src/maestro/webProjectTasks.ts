@@ -17,6 +17,7 @@ export interface WebProjectTask {
   parentSummary?: string;
   issueType?: string;
   dueDate?: string;
+  createdAt?: string;
   updatedAt: number;
 }
 
@@ -252,6 +253,8 @@ export function resolveCloudProjectTasks(project: CloudProject | null | undefine
       parentSummary: asString(jira?.parentSummary),
       issueType: asString(jira?.issueType),
       dueDate: asString(local?.dueDate) ?? asString(jira?.dueDate) ?? asString(deepcrm?.dueDate),
+      createdAt:
+        asString(jira?.createdAt) ?? asString(local?.createdAt) ?? asString(deepcrm?.createdAt),
       updatedAt: typeof record.updatedAt === 'number' ? record.updatedAt : 0,
     });
   }
@@ -310,5 +313,19 @@ export function formatWebTaskDate(value?: string): string {
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+  });
+}
+
+export function formatWebTaskCardDate(value?: string): string {
+  if (!value?.trim()) {
+    return '';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: 'short',
   });
 }

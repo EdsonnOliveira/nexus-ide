@@ -150,6 +150,7 @@ export function WebMaestroAskBar({
   pendingImagesRef.current = pendingImages;
   pendingFilesRef.current = pendingFiles;
 
+  const workspaces = useWebStore((state) => state.workspaces);
   const selectedProject = projects.find((project) => project.id === projectId) ?? null;
   const canSubmit =
     (prompt.trim().length > 0 || pendingImages.length > 0 || pendingFiles.length > 0) &&
@@ -509,21 +510,37 @@ export function WebMaestroAskBar({
     );
   }, []);
 
-  const projectOptions = useMemo(
-    () =>
-      projects.map((project) => ({
-        value: project.id,
-        label: project.name,
-        leading: (
-          <ProjectLeading
-            logoUrl={project.logo_url}
-            color={project.color}
-            icon={project.icon}
-          />
-        ),
-      })),
-    [projects],
-  );
+  const projectOptions = useMemo(() => {
+    const showWorkspace = workspaces.length > 1;
+    const workspaceNameById = new Map(
+      workspaces.map((workspace) => [workspace.id, workspace.name]),
+    );
+    const workspaceOrderById = new Map(
+      workspaces.map((workspace, index) => [workspace.id, index]),
+    );
+    const sorted = [...projects].sort((left, right) => {
+      const leftWorkspaceOrder = workspaceOrderById.get(left.workspace_id) ?? Number.MAX_SAFE_INTEGER;
+      const rightWorkspaceOrder = workspaceOrderById.get(right.workspace_id) ?? Number.MAX_SAFE_INTEGER;
+      if (leftWorkspaceOrder !== rightWorkspaceOrder) {
+        return leftWorkspaceOrder - rightWorkspaceOrder;
+      }
+
+      return (left.sort_order ?? 0) - (right.sort_order ?? 0);
+    });
+
+    return sorted.map((project) => ({
+      value: project.id,
+      label: project.name,
+      subtitle: showWorkspace ? workspaceNameById.get(project.workspace_id) : undefined,
+      leading: (
+        <ProjectLeading
+          logoUrl={project.logo_url}
+          color={project.color}
+          icon={project.icon}
+        />
+      ),
+    }));
+  }, [projects, workspaces]);
 
   const desktopAgentsForProject = useMemo(
     () =>

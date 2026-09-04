@@ -17,8 +17,24 @@ import {
   type NodeChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Pause, Play, Plus, Scan, Square, Workflow, X, ZoomIn, ZoomOut } from 'lucide-react';
+import {
+  MousePointer2,
+  LayoutGrid,
+  MoveRight,
+  Pause,
+  Pencil,
+  Play,
+  Plus,
+  Scan,
+  Square,
+  Trash2,
+  Workflow,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react';
 import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
+import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { MissionGraphNode, type MissionGraphNodeData } from '@/components/mission/MissionGraphNode';
 import { MissionInspector } from '@/components/mission/MissionInspector';
 import {
@@ -56,6 +72,7 @@ import {
   createMissionEdge,
   createMissionNode,
   createMissionToolNode,
+  createMissionNoteNode,
   createSequentialMissionNodes,
   duplicateMissionNode,
   canDeleteMissionNodeWithoutConfirm,
@@ -68,17 +85,28 @@ import {
   instantiateFlowTemplate,
   isMissionRootNode,
   isMissionToolNode,
+  isMissionNoteNode,
   isMissionAgentNode,
   markMissionNodeJustPlaced,
   MISSION_ROOT_NODE_SIZE,
+  MISSION_NOTE_NODE_DEFAULT_WIDTH,
+  MISSION_NOTE_NODE_DEFAULT_HEIGHT,
   resolveMissionDeleteNodeTarget,
   countMissionAgentNodes,
 } from '@/utils/missionHelpers';
-import type { MissionAgentNode, MissionFlowTemplate, MissionNodeKind } from '@/types/mission';
+import type {
+  MissionAgentNode,
+  MissionDrawingKind,
+  MissionFlowTemplate,
+  MissionNodeKind,
+} from '@/types/mission';
 import { cancelMission, pauseMission, startMission } from '@/utils/missionOrchestrator';
 import { resolveAgentLaunchCommand } from '@/utils/resolveAgentLaunchCommand';
 import { resolveAgentTabCli } from '@/utils/agentTabHelpers';
 import { findPaneTab } from '@/utils/tabGroups';
+import { MissionDrawingLayer } from '@/components/mission/MissionDrawingLayer';
+import { MissionMarqueeLayer, type MissionMarqueeLayerHandle } from '@/components/mission/MissionMarqueeLayer';
+import { MissionCompanionOverlay } from '@/components/mission/MissionCompanionOverlay';
 
 const LazyAgentView = lazy(() =>
   import('@/components/agent/AgentView').then((module) => ({
@@ -103,6 +131,13 @@ interface MissionGraphViewProps {
 
 type MissionPendingDelete =
   | { type: 'node'; nodeId: string; kind: 'agent' | 'node'; name: string }
+  | { type: 'nodes'; nodeIds: string[]; count: number }
+  | {
+      type: 'selection';
+      nodeIds: string[];
+      drawingIds: string[];
+      count: number;
+    }
   | { type: 'flow'; flowInstanceId: string; name: string }
   | { type: 'flowTemplate'; templateId: string; name: string };
 
@@ -188,8 +223,11 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
     state.missions.find((entry) => entry.id === missionId),
   );
   const selectedNodeId = useMissionStore((state) => state.selectedNodeId);
+  const selectedNodeIds = useMissionStore((state) => state.selectedNodeIds);
   const selectedEdgeId = useMissionStore((state) => state.selectedEdgeId);
   const setSelectedNodeId = useMissionStore((state) => state.setSelectedNodeId);
+  const setSelectedNodeIds = useMissionStore((state) => state.setSelectedNodeIds);
+  const clearSelectedNodeIds = useMissionStore((state) => state.clearSelectedNodeIds);
   const setSelectedEdgeId = useMissionStore((state) => state.setSelectedEdgeId);
   const upsertNode = useMissionStore((state) => state.upsertNode);
   const removeNode = useMissionStore((state) => state.removeNode);
@@ -224,13 +262,74 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
   const [helperHorizontal, setHelperHorizontal] = useState<MissionGraphHelperLine | null>(null);
   const [helperVertical, setHelperVertical] = useState<MissionGraphHelperLine | null>(null);
   const [helperSpacings, setHelperSpacings] = useState<MissionGraphSpacingGuide[]>([]);
+  const [libraryVisible, setLibraryVisible] = useState(() => {
+    try {
+      return localStorage.getItem('nexus.mission-graph.library-visible') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const setMissionLibraryVisible = useCallback((visible: boolean) => {
+    setLibraryVisible(visible);
+    try {
+      localStorage.setItem('nexus.mission-graph.library-visible', String(visible));
+    } catch {
+      // ignore
+    }
+  }, []);
+  const [drawingTool, setDrawingTool] = useState<MissionDrawingKind | null>(null);
+  const [selectedDrawingIds, setSelectedDrawingIds] = useState<string[]>([]);
+  const [metaKeyDown, setMetaKeyDown] = useState(false);
   const draggingRef = useRef(false);
   const didFitRef = useRef<string | null>(null);
+  const justMarqueedRef = useRef(false);
+  const marqueeRef = useRef<MissionMarqueeLayerHandle | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const viewportZoom = useStore((state) => state.transform[2] || 1);
 
   const roles = useMemo(() => getRoles(), [getRoles]);
   const templates = useMemo(() => getTemplates(), [getTemplates]);
+  const selectedNodeIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
+  const deletableSelectedNodeIds = useMemo(() => {
+    if (!mission) {
+      return [];
+    }
+    return selectedNodeIds.filter((id) => {
+      const node = mission.nodes.find((entry) => entry.id === id);
+      return node && !isMissionRootNode(node);
+    });
+  }, [mission, selectedNodeIds]);
+  const selectionCount = deletableSelectedNodeIds.length + selectedDrawingIds.length;
+
+  const clearCanvasSelection = useCallback(() => {
+    clearSelectedNodeIds();
+    setSelectedDrawingIds([]);
+  }, [clearSelectedNodeIds]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.metaKey) {
+        setMetaKeyDown(true);
+      }
+    };
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (!event.metaKey) {
+        setMetaKeyDown(false);
+      }
+    };
+    const handleBlur = () => {
+      setMetaKeyDown(false);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, []);
 
   const launchForProject = useCallback(
     async (projectId: string, command?: string) => {
@@ -331,7 +430,7 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
                     : 'pending'
             : node.status,
           progress: isRoot ? mission.progress : node.progress,
-          selected: node.id === selectedNodeId,
+          selected: selectedNodeIdSet.has(node.id),
           agentIndex: agentIndex || index + 1,
           agentTemplateId: node.agentTemplateId,
           roleId: node.roleId,
@@ -343,21 +442,39 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
               ? 'Agent'
               : kind === 'automation'
                 ? 'Nó'
-                : getMissionToolNodeLabel(kind),
+                : kind === 'note'
+                  ? 'Nota'
+                  : getMissionToolNodeLabel(kind),
           nodeId: node.id,
           showLivePreview: isMissionToolNode(node),
+          showAgentLive:
+            kind === 'agent' && (Boolean(node.liveExpanded) || viewportZoom >= 0.85),
+          livePeerCount: mission.edges.filter(
+            (edge) =>
+              edge.type === 'live' &&
+              (edge.sourceNodeId === node.id || edge.targetNodeId === node.id),
+          ).length,
           automationCategory: node.automation?.category,
           isMissionRoot: isRoot,
         };
 
-        const toolSize = isMissionToolNode(node) ? getMissionToolNodeSize(node) : null;
+        const toolSize = isMissionToolNode(node)
+          ? getMissionToolNodeSize(node)
+          : isMissionNoteNode(node)
+            ? {
+                width: node.size?.width ?? MISSION_NOTE_NODE_DEFAULT_WIDTH,
+                height: node.size?.height ?? MISSION_NOTE_NODE_DEFAULT_HEIGHT,
+              }
+            : kind === 'agent' && (Boolean(node.liveExpanded) || viewportZoom >= 0.85)
+              ? getMissionToolNodeSize(node)
+              : null;
 
         return {
           id: node.id,
           type: 'missionAgent',
           position: { ...node.position },
           data,
-          selected: node.id === selectedNodeId,
+          selected: selectedNodeIdSet.has(node.id),
           draggable: true,
           selectable: true,
           deletable: !isRoot,
@@ -375,7 +492,7 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
         };
       }),
     );
-  }, [mission, nodesSignature, roles, selectedNodeId, setNodes, templates]);
+  }, [mission, nodesSignature, roles, selectedNodeIdSet, setNodes, templates, viewportZoom]);
 
   useEffect(() => {
     if (!mission) {
@@ -394,39 +511,38 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
       ]),
     );
 
-    const toolNodeIds = new Set(
-      mission.nodes.filter((node) => isMissionToolNode(node)).map((node) => node.id),
-    );
-
     setEdges(
-      mission.edges
-        .filter(
-          (edge) => !toolNodeIds.has(edge.sourceNodeId) && !toolNodeIds.has(edge.targetNodeId),
-        )
-        .map((edge) => {
-          const accent = accentByNodeId.get(edge.sourceNodeId) ?? '#60a5fa';
-          const dashed = edge.type === 'validation' || edge.type === 'dependency';
+      mission.edges.map((edge) => {
+        const accent =
+          edge.type === 'live'
+            ? '#34d399'
+            : (accentByNodeId.get(edge.sourceNodeId) ?? '#60a5fa');
+        const dashed = edge.type === 'validation' || edge.type === 'dependency';
+        const live = edge.type === 'live';
 
-          return {
-            id: edge.id,
-            source: edge.sourceNodeId,
-            target: edge.targetNodeId,
-            type: 'smoothstep',
-            animated: mission.status === 'running' || edge.type === 'handoff',
-            selected: edge.id === selectedEdgeId,
-            label: edge.type,
-            selectable: true,
-            style: {
-              stroke: accent,
-              strokeWidth: 2.25,
-              strokeDasharray: dashed ? '7 5' : undefined,
-            },
-            labelStyle: {
-              fill: accent,
-              fontSize: 10,
-              fontWeight: 600,
-            },
-            labelBgStyle: {
+        return {
+          id: edge.id,
+          source: edge.sourceNodeId,
+          target: edge.targetNodeId,
+          type: 'smoothstep',
+          animated:
+            mission.status === 'running' ||
+            edge.type === 'handoff' ||
+            edge.type === 'live',
+          selected: edge.id === selectedEdgeId,
+          label: edge.type,
+          selectable: true,
+          style: {
+            stroke: accent,
+            strokeWidth: live ? 2.75 : 2.25,
+            strokeDasharray: dashed ? '7 5' : live ? '2 6' : undefined,
+          },
+          labelStyle: {
+            fill: accent,
+            fontSize: 10,
+            fontWeight: 600,
+          },
+          labelBgStyle: {
               fill: 'rgba(7, 18, 36, 0.92)',
             },
             labelBgPadding: [6, 4] as [number, number],
@@ -434,13 +550,13 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
           };
         }),
     );
-  }, [edgesSignature, mission, setEdges]);
+  }, [edgesSignature, mission, selectedEdgeId, setEdges]);
 
   useEffect(() => {
     setNodes((current) => {
       let changed = false;
       const next = current.map((node) => {
-        const selected = node.id === selectedNodeId;
+        const selected = selectedNodeIdSet.has(node.id);
         if (node.selected === selected && Boolean(node.data?.selected) === selected) {
           return node;
         }
@@ -456,7 +572,7 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
       });
       return changed ? next : current;
     });
-  }, [selectedNodeId, setNodes]);
+  }, [selectedNodeIdSet, setNodes]);
 
   useEffect(() => {
     setEdges((current) => {
@@ -544,6 +660,10 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
   const handleNodeClick = useCallback(
     (_event: ReactMouseEvent, node: Node) => {
       setNodeContextMenu(null);
+      if (_event.metaKey) {
+        return;
+      }
+      setSelectedDrawingIds([]);
       setSelectedNodeId(node.id);
     },
     [setSelectedNodeId],
@@ -578,7 +698,7 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
       const nextNode = duplicateMissionNode(source);
       const kind = getMissionNodeKind(nextNode);
 
-      if (kind !== 'agent' && kind !== 'automation' && kind !== 'mission') {
+      if (kind !== 'agent' && kind !== 'automation' && kind !== 'mission' && kind !== 'note' && kind !== 'drawing') {
         const paneId = await addTabForProject(nextNode.projectId, kind);
         if (!paneId) {
           return;
@@ -606,12 +726,87 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
 
       await removeNode(mission.id, nodeId);
       clearMissionNodePlacementGrace(nodeId);
-      if (selectedNodeId === nodeId) {
-        setSelectedNodeId(null);
+      const nextIds = selectedNodeIds.filter((id) => id !== nodeId);
+      if (nextIds.length === 0) {
+        clearSelectedNodeIds();
+      } else {
+        setSelectedNodeIds(nextIds);
       }
       setNodeContextMenu(null);
     },
-    [mission, removeNode, selectedNodeId, setSelectedNodeId],
+    [clearSelectedNodeIds, mission, removeNode, selectedNodeIds, setSelectedNodeIds],
+  );
+
+  const handleDeleteSelection = useCallback(
+    async (nodeIds: string[], drawingIds: string[]) => {
+      if (!mission) {
+        return;
+      }
+
+      const deletable = nodeIds.filter((id) => {
+        const target = mission.nodes.find((entry) => entry.id === id);
+        return target && !isMissionRootNode(target);
+      });
+
+      if (drawingIds.length > 0) {
+        const removeDrawingIds = new Set(drawingIds);
+        await updateMission(mission.id, {
+          drawings: (mission.drawings ?? []).filter(
+            (drawing) => !removeDrawingIds.has(drawing.id),
+          ),
+        });
+      }
+
+      for (const nodeId of deletable) {
+        await removeNode(mission.id, nodeId);
+        clearMissionNodePlacementGrace(nodeId);
+      }
+
+      clearCanvasSelection();
+      setNodeContextMenu(null);
+    },
+    [clearCanvasSelection, mission, removeNode, updateMission],
+  );
+
+  const requestDeleteSelection = useCallback(
+    (nodeIds: string[], drawingIds: string[]) => {
+      const deletable = nodeIds.filter((id) => {
+        const target = mission?.nodes.find((entry) => entry.id === id);
+        return target && !isMissionRootNode(target);
+      });
+
+      if (deletable.length === 0 && drawingIds.length === 0) {
+        return;
+      }
+
+      const needsConfirm = deletable.some((id) => !canDeleteMissionNodeWithoutConfirm(id));
+      if (needsConfirm) {
+        setPendingDelete({
+          type: 'selection',
+          nodeIds: deletable,
+          drawingIds,
+          count: deletable.length + drawingIds.length,
+        });
+        return;
+      }
+
+      void handleDeleteSelection(deletable, drawingIds);
+    },
+    [handleDeleteSelection, mission?.nodes],
+  );
+
+  const handleDeleteSelectedNodes = useCallback(
+    async (nodeIds: string[]) => {
+      await handleDeleteSelection(nodeIds, []);
+    },
+    [handleDeleteSelection],
+  );
+
+  const requestDeleteSelectedNodes = useCallback(
+    (nodeIds: string[]) => {
+      requestDeleteSelection(nodeIds, []);
+    },
+    [requestDeleteSelection],
   );
 
   const requestDeleteNode = useCallback(
@@ -668,6 +863,17 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
         return;
       }
 
+      const multiSelected = selectedNodeIds.filter((id) => {
+        const node = mission.nodes.find((entry) => entry.id === id);
+        return node && !isMissionRootNode(node);
+      });
+
+      if (multiSelected.length > 0 || selectedDrawingIds.length > 0) {
+        event.preventDefault();
+        requestDeleteSelection(multiSelected, selectedDrawingIds);
+        return;
+      }
+
       if (!selectedNodeId) {
         return;
       }
@@ -688,8 +894,11 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
     pendingDelete,
     removeEdge,
     requestDeleteNode,
+    requestDeleteSelection,
+    selectedDrawingIds,
     selectedEdgeId,
     selectedNodeId,
+    selectedNodeIds,
     setSelectedEdgeId,
   ]);
 
@@ -715,12 +924,12 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
         ),
       });
 
-      if (selectedNodeId && removeIds.has(selectedNodeId)) {
-        setSelectedNodeId(null);
+      if (selectedNodeIds.some((id) => removeIds.has(id))) {
+        clearSelectedNodeIds();
       }
       setNodeContextMenu(null);
     },
-    [mission, selectedNodeId, setSelectedNodeId, updateMission],
+    [clearSelectedNodeIds, mission, selectedNodeIds, updateMission],
   );
 
   const handleEdgeClick = useCallback(
@@ -732,10 +941,14 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
   );
 
   const handlePaneClick = useCallback(() => {
+    if (justMarqueedRef.current) {
+      justMarqueedRef.current = false;
+      return;
+    }
     setNodeContextMenu(null);
-    setSelectedNodeId(null);
+    clearCanvasSelection();
     setSelectedEdgeId(null);
-  }, [setSelectedEdgeId, setSelectedNodeId]);
+  }, [clearCanvasSelection, setSelectedEdgeId]);
 
   const handleConnect = useCallback(
     (connection: Connection) => {
@@ -747,8 +960,6 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
       if (
         !sourceNode ||
         !targetNode ||
-        isMissionToolNode(sourceNode) ||
-        isMissionToolNode(targetNode) ||
         isMissionRootNode(targetNode)
       ) {
         return;
@@ -756,6 +967,13 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
       const edge = createMissionEdge({
         sourceNodeId: connection.source,
         targetNodeId: connection.target,
+        type:
+          isMissionToolNode(sourceNode) ||
+          isMissionToolNode(targetNode) ||
+          isMissionNoteNode(sourceNode) ||
+          isMissionNoteNode(targetNode)
+            ? 'live'
+            : 'handoff',
       });
       const accent = getMissionAgentVisual({
         agentTemplateId: sourceNode.agentTemplateId,
@@ -827,10 +1045,14 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
       return [];
     }
 
-    return mission.nodes.filter(
-      (node) => isMissionAgentNode(node) && Boolean(node.paneId) && Boolean(node.projectId),
-    );
-  }, [mission]);
+    return mission.nodes.filter((node) => {
+      if (!isMissionAgentNode(node) || !node.paneId || !node.projectId) {
+        return false;
+      }
+      const showOnCanvas = Boolean(node.liveExpanded) || viewportZoom >= 0.85;
+      return !showOnCanvas;
+    });
+  }, [mission, viewportZoom]);
 
   const handleOpenAgent = useCallback(
     async (nodeId: string) => {
@@ -1007,7 +1229,13 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
       const nodesWithPanes = [];
       for (const node of instantiated.nodes) {
         const kind = getMissionNodeKind(node);
-        if (kind === 'agent' || kind === 'automation' || kind === 'mission') {
+        if (
+          kind === 'agent' ||
+          kind === 'automation' ||
+          kind === 'mission' ||
+          kind === 'note' ||
+          kind === 'drawing'
+        ) {
           nodesWithPanes.push(node);
           continue;
         }
@@ -1022,6 +1250,10 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
       await updateMission(mission.id, {
         nodes: [...mission.nodes, ...nodesWithPanes],
         edges: [...mission.edges, ...instantiated.edges],
+        drawings: [...(mission.drawings ?? []), ...((template.drawings ?? []).map((drawing) => ({
+          ...drawing,
+          id: crypto.randomUUID(),
+        })))],
       });
       setAutoProposeBusy(false);
     },
@@ -1206,7 +1438,7 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
 
   const handleAddToolNode = useCallback(
     async (
-      kind: Exclude<MissionNodeKind, 'agent' | 'automation' | 'mission'>,
+      kind: Exclude<MissionNodeKind, 'agent' | 'automation' | 'mission' | 'note' | 'drawing'>,
       position?: { x: number; y: number },
     ) => {
       if (!mission) {
@@ -1249,6 +1481,67 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
     ],
   );
 
+  const handleAddNoteNode = useCallback(
+    async (position?: { x: number; y: number }) => {
+      if (!mission) {
+        return;
+      }
+
+      setDrawingTool(null);
+      const projectId = resolveDefaultProjectId() ?? mission.defaultProjectId ?? '';
+      const origin = position ?? getViewportFlowOrigin(220);
+      const nextNode = createMissionNoteNode({
+        projectId,
+        position: origin,
+      });
+
+      useMissionStore.setState((state) => ({
+        missions: state.missions.map((entry) =>
+          entry.id === mission.id
+            ? { ...entry, nodes: [...entry.nodes, nextNode] }
+            : entry,
+        ),
+        selectedNodeId: nextNode.id,
+        selectedNodeIds: [nextNode.id],
+        selectedEdgeId: null,
+      }));
+      markMissionNodeJustPlaced(nextNode.id);
+      setSelectedNodeId(nextNode.id);
+
+      const saved = await upsertNode(mission.id, nextNode);
+      if (!saved) {
+        useMissionStore.setState((state) => ({
+          missions: state.missions.map((entry) =>
+            entry.id === mission.id
+              ? {
+                  ...entry,
+                  nodes: entry.nodes.filter((node) => node.id !== nextNode.id),
+                }
+              : entry,
+          ),
+        }));
+        return;
+      }
+
+      window.requestAnimationFrame(() => {
+        fitView({
+          nodes: [{ id: nextNode.id }],
+          padding: 0.35,
+          duration: 280,
+          maxZoom: 1.1,
+        });
+      });
+    },
+    [
+      fitView,
+      getViewportFlowOrigin,
+      mission,
+      resolveDefaultProjectId,
+      setSelectedNodeId,
+      upsertNode,
+    ],
+  );
+
   const handleLibraryDragOver = useCallback((event: ReactDragEvent) => {
     if (![...event.dataTransfer.types].includes(MISSION_LIBRARY_DRAG_MIME)) {
       return;
@@ -1276,6 +1569,10 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
       }
 
       if (payload.source === 'tool') {
+        if (payload.toolKind === 'note') {
+          void handleAddNoteNode(position);
+          return;
+        }
         void handleAddToolNode(payload.toolKind, position);
         return;
       }
@@ -1285,7 +1582,7 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
         void handleAddAutomationNode(entry, position);
       }
     },
-    [handleAddAutomationNode, handleAddNode, handleAddToolNode, screenToFlowPosition],
+    [handleAddAutomationNode, handleAddNode, handleAddNoteNode, handleAddToolNode, screenToFlowPosition],
   );
 
   if (!mission) {
@@ -1349,6 +1646,56 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
         </div>
 
         <div className='mission-graph-view__top-tools'>
+          <button
+            type='button'
+            className={`mission-graph-view__tool app-button app-button--enter${
+              drawingTool === null ? ' mission-graph-view__tool--active' : ''
+            }`}
+            aria-label='Selecionar com o mouse'
+            onClick={() => setDrawingTool(null)}
+          >
+            <MousePointer2 size={14} strokeWidth={2.25} aria-hidden='true' />
+          </button>
+          <button
+            type='button'
+            className={`mission-graph-view__tool app-button app-button--enter${
+              drawingTool === 'path' ? ' mission-graph-view__tool--active' : ''
+            }`}
+            aria-label='Desenhar à mão livre'
+            onClick={() => setDrawingTool((current) => (current === 'path' ? null : 'path'))}
+          >
+            <Pencil size={14} strokeWidth={2.25} aria-hidden='true' />
+          </button>
+          <button
+            type='button'
+            className={`mission-graph-view__tool app-button app-button--enter${
+              drawingTool === 'arrow' ? ' mission-graph-view__tool--active' : ''
+            }`}
+            aria-label='Desenhar seta'
+            onClick={() => setDrawingTool((current) => (current === 'arrow' ? null : 'arrow'))}
+          >
+            <MoveRight size={14} strokeWidth={2.25} aria-hidden='true' />
+          </button>
+          <button
+            type='button'
+            className={`mission-graph-view__tool app-button app-button--enter${
+              drawingTool === 'rect' ? ' mission-graph-view__tool--active' : ''
+            }`}
+            aria-label='Desenhar retângulo'
+            onClick={() => setDrawingTool((current) => (current === 'rect' ? null : 'rect'))}
+          >
+            <Square size={14} strokeWidth={2.25} aria-hidden='true' />
+          </button>
+          <button
+            type='button'
+            className='mission-graph-view__tool app-button app-button--enter'
+            onClick={() => {
+              void handleAddNoteNode();
+            }}
+          >
+            <Plus size={14} strokeWidth={2.25} aria-hidden='true' />
+            <span>Nota</span>
+          </button>
           <AnchoredSelect
             value=''
             options={autoFlowOptions}
@@ -1424,6 +1771,32 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
             onNodeClick={handleNodeClick}
             onNodeContextMenu={handleNodeContextMenu}
             onEdgeClick={handleEdgeClick}
+            onMouseDown={(event: ReactMouseEvent) => {
+              if (drawingTool || !event.metaKey) {
+                return;
+              }
+              const target = event.target;
+              if (!(target instanceof HTMLElement)) {
+                return;
+              }
+              if (
+                target.closest('.react-flow__node') ||
+                target.closest('.mission-graph-view__map-dock') ||
+                target.closest('.mission-drawing-layer-host')
+              ) {
+                return;
+              }
+              event.preventDefault();
+              event.stopPropagation();
+              marqueeRef.current?.begin({
+                clientX: event.clientX,
+                clientY: event.clientY,
+                pointerId:
+                  'pointerId' in event.nativeEvent
+                    ? Number(event.nativeEvent.pointerId)
+                    : 1,
+              });
+            }}
             onPaneClick={handlePaneClick}
             onNodeDrag={(event, node) => {
               if (!(event.metaKey || event.ctrlKey)) {
@@ -1464,12 +1837,12 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
               void handleOpenAgent(node.id);
             }}
             onMoveEnd={persistViewport}
-            nodesDraggable
-            nodesConnectable
-            elementsSelectable
+            nodesDraggable={!drawingTool}
+            nodesConnectable={!drawingTool}
+            elementsSelectable={!drawingTool}
             selectNodesOnDrag={false}
-            panOnDrag
-            panOnScroll
+            panOnDrag={!drawingTool && !metaKeyDown}
+            panOnScroll={!drawingTool}
             minZoom={0.2}
             maxZoom={1.8}
             defaultEdgeOptions={{ type: 'smoothstep' }}
@@ -1529,7 +1902,58 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
                 bgColor='transparent'
               />
             </div>
+            <div
+              className={`mission-drawing-layer-host${
+                drawingTool ? ' mission-drawing-layer-host--active' : ''
+              }`}
+            >
+              <MissionDrawingLayer
+                missionId={mission.id}
+                tool={drawingTool}
+                selectedDrawingIds={selectedDrawingIds}
+              />
+            </div>
+            <MissionMarqueeLayer
+              ref={marqueeRef}
+              enabled={!drawingTool}
+              flowNodes={nodes}
+              drawings={mission.drawings ?? []}
+              onSelect={({ nodeIds, drawingIds }) => {
+                setSelectedNodeIds(nodeIds);
+                setSelectedDrawingIds(drawingIds);
+              }}
+              onMarqueeComplete={() => {
+                justMarqueedRef.current = true;
+              }}
+            />
           </ReactFlow>
+          {selectionCount > 0 ? (
+            <div className='mission-graph-multiselect-bar overlay-popup--in'>
+              <span>
+                {selectionCount}{' '}
+                {selectionCount === 1 ? 'item selecionado' : 'itens selecionados'}
+              </span>
+              <button
+                type='button'
+                className='app-button app-button--enter mission-graph-multiselect-bar__action'
+                onClick={() => {
+                  requestDeleteSelection(deletableSelectedNodeIds, selectedDrawingIds);
+                }}
+              >
+                <Trash2 size={14} strokeWidth={2.25} aria-hidden='true' />
+                Apagar
+              </button>
+              <button
+                type='button'
+                className='app-button app-button--enter mission-graph-multiselect-bar__action'
+                onClick={clearCanvasSelection}
+              >
+                <X size={14} strokeWidth={2.25} aria-hidden='true' />
+                Limpar
+              </button>
+            </div>
+          ) : null}
+          <MissionCompanionOverlay missionId={mission.id} />
         </div>
         <div className='mission-graph-view__agent-host' aria-hidden='true'>
           {runtimeAgentNodes.map((node) => {
@@ -1560,18 +1984,36 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
           onOpenAgent={handleOpenAgent}
           agentRuntimeHosted
         />
-        <MissionNodeLibrary
-          templates={templates}
-          onAddAgent={(templateId) => {
-            void handleAddNode(templateId);
-          }}
-          onAddTool={(kind) => {
-            void handleAddToolNode(kind);
-          }}
-          onAddAutomation={(entry) => {
-            void handleAddAutomationNode(entry);
-          }}
-        />
+        {libraryVisible ? (
+          <MissionNodeLibrary
+            templates={templates}
+            onHide={() => setMissionLibraryVisible(false)}
+            onAddAgent={(templateId) => {
+              void handleAddNode(templateId);
+            }}
+            onAddTool={(kind) => {
+              if (kind === 'note') {
+                void handleAddNoteNode();
+                return;
+              }
+              void handleAddToolNode(kind);
+            }}
+            onAddAutomation={(entry) => {
+              void handleAddAutomationNode(entry);
+            }}
+          />
+        ) : (
+          <button
+            type='button'
+            className='mission-node-library-reopen app-button app-button--enter'
+            aria-label='Mostrar biblioteca'
+            title='Mostrar biblioteca'
+            onClick={() => setMissionLibraryVisible(true)}
+          >
+            <LayoutGrid size={14} strokeWidth={2.25} aria-hidden='true' />
+            <span>Biblioteca</span>
+          </button>
+        )}
       </div>
       {nodeContextMenu && contextNode ? (
         <MissionNodeContextMenu
@@ -1639,25 +2081,70 @@ function MissionGraphCanvas({ missionId, onClose }: MissionGraphViewProps) {
         />
       ) : null}
       {pendingDelete ? (
-        <MissionDeleteConfirmDialog
-          kind={
-            pendingDelete.type === 'flow' || pendingDelete.type === 'flowTemplate'
-              ? 'flow'
-              : pendingDelete.kind
-          }
-          name={pendingDelete.name}
-          onConfirm={() => {
-            if (pendingDelete.type === 'flow') {
-              void handleDeleteFlowInstance(pendingDelete.flowInstanceId);
-            } else if (pendingDelete.type === 'flowTemplate') {
-              void removeFlowTemplate(pendingDelete.templateId);
-            } else {
-              void handleDeleteNode(pendingDelete.nodeId);
+        pendingDelete.type === 'nodes' || pendingDelete.type === 'selection' ? (
+          <AnimatedModal onClose={() => setPendingDelete(null)} panelClassName='project-dialog'>
+            {(requestClose) => (
+              <>
+                <span className='project-dialog__title'>
+                  {pendingDelete.type === 'selection'
+                    ? 'Apagar seleção'
+                    : 'Apagar nós selecionados'}
+                </span>
+                <p className='project-dialog__message'>
+                  Tem certeza que deseja apagar <strong>{pendingDelete.count} itens</strong>?
+                  Esta ação não pode ser desfeita.
+                </p>
+                <div className='project-dialog__actions'>
+                  <button
+                    type='button'
+                    className='project-dialog__btn project-dialog__btn--ghost app-button'
+                    onClick={requestClose}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type='button'
+                    className='project-dialog__btn project-dialog__btn--danger app-button app-button--enter'
+                    onClick={() => {
+                      if (pendingDelete.type === 'selection') {
+                        void handleDeleteSelection(
+                          pendingDelete.nodeIds,
+                          pendingDelete.drawingIds,
+                        );
+                      } else {
+                        void handleDeleteSelectedNodes(pendingDelete.nodeIds);
+                      }
+                      setPendingDelete(null);
+                      requestClose();
+                    }}
+                  >
+                    Apagar
+                  </button>
+                </div>
+              </>
+            )}
+          </AnimatedModal>
+        ) : (
+          <MissionDeleteConfirmDialog
+            kind={
+              pendingDelete.type === 'flow' || pendingDelete.type === 'flowTemplate'
+                ? 'flow'
+                : pendingDelete.kind
             }
-            setPendingDelete(null);
-          }}
-          onClose={() => setPendingDelete(null)}
-        />
+            name={pendingDelete.name}
+            onConfirm={() => {
+              if (pendingDelete.type === 'flow') {
+                void handleDeleteFlowInstance(pendingDelete.flowInstanceId);
+              } else if (pendingDelete.type === 'flowTemplate') {
+                void removeFlowTemplate(pendingDelete.templateId);
+              } else {
+                void handleDeleteNode(pendingDelete.nodeId);
+              }
+              setPendingDelete(null);
+            }}
+            onClose={() => setPendingDelete(null)}
+          />
+        )
       ) : null}
       {flowEditorOpen ? (
         <FlowTemplateEditorDialog

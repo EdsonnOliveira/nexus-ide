@@ -53,6 +53,8 @@ interface JiraIssue {
     subtasks?: JiraSubtaskIssue[];
     labels?: string[];
     priority?: { name?: string };
+    created?: string;
+    duedate?: string;
   };
 }
 
@@ -1180,6 +1182,8 @@ export async function syncJiraTasks(
           'subtasks',
           'labels',
           'priority',
+          'created',
+          'duedate',
         ],
       },
     },
@@ -1217,6 +1221,8 @@ export async function syncJiraTasks(
         subtasks: mappedSubtasks.length > 0 ? mappedSubtasks : undefined,
         labels: issue.fields?.labels ?? [],
         priority: issue.fields?.priority?.name,
+        createdAt: issue.fields?.created,
+        dueDate: issue.fields?.duedate,
       },
       updatedAt: Date.now(),
     });

@@ -7,6 +7,7 @@ import type { BrowserWindow } from 'electron';
 import { buildCliPathEnv } from '../utils/cliPathEnv';
 import { writeDebugSessionLog } from '../utils/debugSessionLog';
 import { killProcessTree } from '../utils/killProcessTree';
+import { DEFAULT_OPENCODE_MODEL_ID } from './agentModels';
 import { setIdleWakeLockEnabled } from './idleWakeLock';
 
 export interface AgentPrintStopOptions {
@@ -143,6 +144,10 @@ function resolveAntigravityExecutable(): string {
   return resolveExecutable('agy');
 }
 
+function resolveCodexExecutable(): string {
+  return resolveExecutable('codex');
+}
+
 function resolveCliAgentExecutable(cliAgent: string): string {
   const base = cliAgent.trim().split(/\s+/)[0] ?? 'cursor-agent';
 
@@ -152,6 +157,10 @@ function resolveCliAgentExecutable(cliAgent: string): string {
 
   if (base === 'agy') {
     return resolveAntigravityExecutable();
+  }
+
+  if (base === 'codex') {
+    return resolveCodexExecutable();
   }
 
   return resolveCursorAgentExecutable();
@@ -194,6 +203,16 @@ function buildCursorAgentArgs(options: AgentPrintRunOptions, resolvedCwd: string
   return args;
 }
 
+function resolveOpenCodeModel(model: string | null | undefined): string {
+  const trimmed = model?.trim();
+
+  if (trimmed && trimmed !== 'auto') {
+    return trimmed;
+  }
+
+  return DEFAULT_OPENCODE_MODEL_ID;
+}
+
 function buildOpenCodeArgs(options: AgentPrintRunOptions, resolvedCwd: string): string[] {
   const args = ['run', '--format', 'json', '--auto', '--thinking', '--dir', resolvedCwd];
   const resumeChatId = options.resumeChatId?.trim();
@@ -204,11 +223,7 @@ function buildOpenCodeArgs(options: AgentPrintRunOptions, resolvedCwd: string): 
     args.push('--continue');
   }
 
-  const model = options.model?.trim();
-
-  if (model && model !== 'auto') {
-    args.push('--model', model);
-  }
+  args.push('--model', resolveOpenCodeModel(options.model));
 
   for (const attachmentPath of options.attachmentPaths ?? []) {
     const trimmed = attachmentPath.trim();
@@ -254,6 +269,44 @@ function buildAntigravityArgs(options: AgentPrintRunOptions): string[] {
   return args;
 }
 
+function buildCodexArgs(options: AgentPrintRunOptions, resolvedCwd: string): string[] {
+  const args = [
+    'exec',
+    '--json',
+    '--skip-git-repo-check',
+    '--full-auto',
+    '-C',
+    resolvedCwd,
+  ];
+  const model = options.model?.trim();
+
+  if (model && model !== 'auto') {
+    args.push('--model', model);
+  }
+
+  for (const attachmentPath of options.attachmentPaths ?? []) {
+    const trimmed = attachmentPath.trim();
+
+    if (trimmed) {
+      args.push('--image', trimmed);
+    }
+  }
+
+  const resumeChatId = options.resumeChatId?.trim();
+
+  if (resumeChatId) {
+    args.push('resume', resumeChatId);
+  } else if (options.continueSession) {
+    args.push('resume', '--last');
+  }
+
+  if (options.prompt.trim()) {
+    args.push(options.prompt);
+  }
+
+  return args;
+}
+
 function buildAgentPrintArgs(options: AgentPrintRunOptions, resolvedCwd: string): string[] {
   const base = (options.cliAgent ?? 'cursor-agent').trim().split(/\s+/)[0] ?? 'cursor-agent';
 
@@ -263,6 +316,10 @@ function buildAgentPrintArgs(options: AgentPrintRunOptions, resolvedCwd: string)
 
   if (base === 'agy') {
     return buildAntigravityArgs(options);
+  }
+
+  if (base === 'codex') {
+    return buildCodexArgs(options, resolvedCwd);
   }
 
   return buildCursorAgentArgs(options, resolvedCwd);

@@ -29,6 +29,7 @@ import type { WebFileAttachmentPayload } from './webAgentPromptImages';
 import { WebTaskDetailModal } from './WebTaskDetailModal';
 import {
   buildWebTaskPrompt,
+  formatWebTaskCardDate,
   formatWebTaskSource,
   getWebTaskTagBorderColor,
   resolveCloudProjectTasks,
@@ -284,6 +285,7 @@ function ProjectTaskItem({
 
   const visibleLabels = task.labels.slice(0, 6);
   const sourceLabel = formatWebTaskSource(task.source);
+  const taskDateLabel = formatWebTaskCardDate(task.createdAt ?? task.dueDate);
 
   return (
     <article
@@ -334,6 +336,9 @@ function ProjectTaskItem({
             <span className='home-dashboard__project-task-key'>
               {task.externalId ?? sourceLabel}
             </span>
+            {taskDateLabel ? (
+              <span className='home-dashboard__project-task-date'>{taskDateLabel}</span>
+            ) : null}
             {task.priority ? (
               <span
                 className='home-dashboard__project-task-priority'

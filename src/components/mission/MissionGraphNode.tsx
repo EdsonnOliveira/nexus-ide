@@ -5,14 +5,23 @@ import {
   formatMissionNodeObjectivePreview,
   getMissionNodeStatusLabel,
   getMissionToolNodeSize,
+  isMissionNoteNode,
   isMissionToolNode,
+  MISSION_NOTE_NODE_DEFAULT_HEIGHT,
+  MISSION_NOTE_NODE_DEFAULT_WIDTH,
   MISSION_ROOT_NODE_SIZE,
   MISSION_TOOL_NODE_MIN_HEIGHT,
   MISSION_TOOL_NODE_MIN_WIDTH,
 } from '@/utils/missionHelpers';
 import { getMissionAgentVisual } from '@/utils/missionAgentVisuals';
 import { useMissionStore } from '@/stores/useMissionStore';
+import { useProjectStore } from '@/stores/useProjectStore';
+import { useTabActions } from '@/stores/useTabStore';
 import { MissionToolEmbed } from '@/components/mission/MissionToolEmbed';
+import { MissionNoteEmbed } from '@/components/mission/MissionNoteEmbed';
+import { MissionAgentEmbed } from '@/components/mission/MissionAgentEmbed';
+import { findPaneTab } from '@/utils/tabGroups';
+import { listLivePeers } from '@/utils/missionLiveBus';
 
 export interface MissionGraphNodeData {
   agentName: string;
@@ -29,8 +38,10 @@ export interface MissionGraphNodeData {
   kindLabel?: string;
   nodeId?: string;
   showLivePreview?: boolean;
+  showAgentLive?: boolean;
   automationCategory?: string;
   isMissionRoot?: boolean;
+  livePeerCount?: number;
   onResizeEnd?: (size: { width: number; height: number }) => void;
   [key: string]: unknown;
 }
@@ -46,17 +57,23 @@ function MissionGraphNodeComponent({ data, selected }: NodeProps) {
   const Icon = visual.icon;
   const accent = nodeData.accentColor || visual.accent;
   const isTool = isMissionToolNode({ kind: nodeData.kind });
+  const isNote = isMissionNoteNode({ kind: nodeData.kind });
   const isAutomation = nodeData.kind === 'automation';
   const isRoot = nodeData.kind === 'mission' || Boolean(nodeData.isMissionRoot);
-  const showLivePreview = Boolean(nodeData.showLivePreview && isTool && nodeData.nodeId);
-  const showHandles = !isTool;
+  const isAgent = nodeData.kind === 'agent' || (!nodeData.kind && !isRoot && !isTool && !isNote && !isAutomation);
+  const showToolPreview = Boolean(nodeData.showLivePreview && isTool && nodeData.nodeId);
+  const showNotePreview = Boolean(isNote && nodeData.nodeId);
+  const showAgentLive = Boolean(nodeData.showAgentLive && isAgent && nodeData.nodeId);
+  const showHandles = !isRoot;
   const showTargetHandle = showHandles && !isRoot;
   const showSourceHandle = showHandles;
   const upsertNode = useMissionStore((state) => state.upsertNode);
   const activeMissionId = useMissionStore((state) => state.activeMissionId);
+  const setTabPtyId = useProjectStore((state) => state.setTabPtyId);
+  const { updateAgentTab } = useTabActions();
 
   const missionNode = useMissionStore((state) => {
-    if (!showLivePreview || !nodeData.nodeId) {
+    if (!nodeData.nodeId) {
       return null;
     }
 
@@ -71,21 +88,54 @@ function MissionGraphNodeComponent({ data, selected }: NodeProps) {
     return active?.nodes.find((node) => node.id === nodeData.nodeId) ?? null;
   });
 
-  const previewNode = useMemo(() => {
-    if (!missionNode || !isMissionToolNode(missionNode)) {
+  const missionIdForNode = useMissionStore((state) => {
+    if (!nodeData.nodeId) {
       return null;
     }
-    return missionNode;
-  }, [missionNode]);
+    return (
+      state.activeMissionId ??
+      state.missions.find((mission) =>
+        mission.nodes.some((node) => node.id === nodeData.nodeId),
+      )?.id ??
+      null
+    );
+  });
+
+  const project = useProjectStore((state) => {
+    if (!missionNode?.projectId) {
+      return null;
+    }
+    return state.projects.find((entry) => entry.id === missionNode.projectId) ?? null;
+  });
+
+  const pane = useMemo(() => {
+    if (!project || !missionNode?.paneId) {
+      return null;
+    }
+    const tab = findPaneTab(project.tabs, missionNode.paneId);
+    return tab?.type === 'agent' ? tab : null;
+  }, [missionNode?.paneId, project]);
+
+  const livePeers = useMemo(() => {
+    if (!missionIdForNode || !nodeData.nodeId) {
+      return [];
+    }
+    return listLivePeers(missionIdForNode, nodeData.nodeId);
+  }, [missionIdForNode, nodeData.nodeId]);
 
   const handleResizeEnd = useCallback(
     (_event: unknown, params: { width: number; height: number }) => {
-      const nextSize = getMissionToolNodeSize({
-        size: {
-          width: params.width,
-          height: params.height,
-        },
-      });
+      const nextSize = isNote
+        ? {
+            width: Math.max(200, Math.round(params.width)),
+            height: Math.max(160, Math.round(params.height)),
+          }
+        : getMissionToolNodeSize({
+            size: {
+              width: params.width,
+              height: params.height,
+            },
+          });
 
       if (typeof nodeData.onResizeEnd === 'function') {
         nodeData.onResizeEnd(nextSize);
@@ -96,17 +146,12 @@ function MissionGraphNodeComponent({ data, selected }: NodeProps) {
         return;
       }
 
-      const current = getMissionToolNodeSize(missionNode);
-      if (current.width === nextSize.width && current.height === nextSize.height) {
-        return;
-      }
-
       void upsertNode(activeMissionId, {
         ...missionNode,
         size: nextSize,
       });
     },
-    [activeMissionId, missionNode, nodeData, upsertNode],
+    [activeMissionId, isNote, missionNode, nodeData, upsertNode],
   );
 
   const objectivePreview = useMemo(() => {
@@ -116,15 +161,17 @@ function MissionGraphNodeComponent({ data, selected }: NodeProps) {
     return formatMissionNodeObjectivePreview(nodeData.objective, nodeData.agentName);
   }, [isAutomation, nodeData.agentName, nodeData.objective, nodeData.roleName]);
 
+  const showLiveBody = showToolPreview || showNotePreview || showAgentLive;
+
   return (
     <div
-      className={`mission-graph-node${isTool ? ' mission-graph-node--tool' : ''}${
+      className={`mission-graph-node${isTool || isNote || showAgentLive ? ' mission-graph-node--tool' : ''}${
         isAutomation ? ' mission-graph-node--automation' : ''
       }${isRoot ? ' mission-graph-node--root' : ''}${
-        showLivePreview ? ' mission-graph-node--preview' : ''
+        showLiveBody ? ' mission-graph-node--preview' : ''
       }${nodeData.selected ? ' mission-graph-node--selected' : ''}${
         nodeData.status === 'running' ? ' mission-graph-node--running' : ''
-      }`}
+      }${isNote ? ' mission-graph-node--note' : ''}`}
       style={
         {
           width: isRoot ? MISSION_ROOT_NODE_SIZE : undefined,
@@ -135,11 +182,11 @@ function MissionGraphNodeComponent({ data, selected }: NodeProps) {
         } as CSSProperties
       }
     >
-      {isTool ? (
+      {isTool || isNote || showAgentLive ? (
         <NodeResizer
           isVisible={selected || nodeData.selected}
-          minWidth={MISSION_TOOL_NODE_MIN_WIDTH}
-          minHeight={MISSION_TOOL_NODE_MIN_HEIGHT}
+          minWidth={isNote ? 200 : MISSION_TOOL_NODE_MIN_WIDTH}
+          minHeight={isNote ? 160 : MISSION_TOOL_NODE_MIN_HEIGHT}
           color={accent}
           lineStyle={{ borderWidth: 1 }}
           handleStyle={{
@@ -165,31 +212,66 @@ function MissionGraphNodeComponent({ data, selected }: NodeProps) {
         </span>
         <div className='mission-graph-node__copy'>
           <span className='mission-graph-node__name'>{nodeData.agentName}</span>
-          {showLivePreview ? null : (
-            <p className='mission-graph-node__objective'>
-              {objectivePreview}
-            </p>
+          {showLiveBody ? null : (
+            <p className='mission-graph-node__objective'>{objectivePreview}</p>
           )}
           {nodeData.kind === 'agent' || isAutomation ? (
             <span className='mission-graph-node__role-pill'>{nodeData.roleName}</span>
           ) : null}
+          {livePeers.length > 0 ? (
+            <span className='mission-graph-node__live-badge'>
+              Live · {livePeers.length}
+            </span>
+          ) : null}
         </div>
       </div>
-      {showLivePreview && previewNode ? (
+      {showToolPreview && missionNode && isMissionToolNode(missionNode) ? (
         <div
           className='mission-graph-node__preview nodrag nopan nowheel'
           onClick={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
         >
           <MissionToolEmbed
-            node={previewNode}
+            node={missionNode}
             live
             variant='node'
             focused={nodeData.selected}
           />
         </div>
       ) : null}
-      {showLivePreview ? null : (
+      {showNotePreview && missionNode && missionIdForNode ? (
+        <div
+          className='mission-graph-node__preview nodrag nopan nowheel'
+          style={{
+            width: missionNode.size?.width ?? MISSION_NOTE_NODE_DEFAULT_WIDTH,
+            height: missionNode.size?.height ?? MISSION_NOTE_NODE_DEFAULT_HEIGHT,
+          }}
+        >
+          <MissionNoteEmbed
+            node={missionNode}
+            missionId={missionIdForNode}
+            focused={nodeData.selected}
+          />
+        </div>
+      ) : null}
+      {showAgentLive && missionNode && project && pane ? (
+        <div
+          className='mission-graph-node__preview nodrag nopan nowheel'
+          onClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <MissionAgentEmbed
+            node={missionNode}
+            projectId={project.id}
+            projectPath={project.path}
+            pane={pane}
+            focused={nodeData.selected}
+            setTabPtyId={setTabPtyId}
+            updateAgentTab={updateAgentTab}
+          />
+        </div>
+      ) : null}
+      {showLiveBody ? null : (
         <>
           <div className='mission-graph-node__footer'>
             <span className='mission-graph-node__status'>

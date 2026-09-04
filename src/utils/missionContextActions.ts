@@ -1,5 +1,6 @@
 import { useMissionStore } from '@/stores/useMissionStore';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { askLiveAgentAsHuman } from '@/utils/missionLiveBus';
 import { submitAgentPanePrompt } from '@/utils/agentPaneRegistry';
 import { countMissionAgentNodes } from '@/utils/missionHelpers';
 import { findPaneTab } from '@/utils/tabGroups';
@@ -17,16 +18,70 @@ export async function askSelectedMaestroAgents(prompt: string): Promise<Array<{
   const selectedPaneIds = useMissionStore.getState().selectedPaneIds;
   const projects = useProjectStore.getState().projects;
   const targets: Array<{ paneId: string; projectId: string; projectName: string }> = [];
+  const liveByMission = new Map<string, string[]>();
+  const classicPaneIds: string[] = [];
+  const missions = useMissionStore.getState().missions;
 
   for (const paneId of selectedPaneIds) {
+    let handledAsLive = false;
+
+    for (const mission of missions) {
+      const node = mission.nodes.find((entry) => entry.paneId === paneId);
+      if (!node) {
+        continue;
+      }
+
+      const hasLive = mission.edges.some(
+        (edge) =>
+          edge.type === 'live' &&
+          (edge.sourceNodeId === node.id || edge.targetNodeId === node.id),
+      );
+
+      if (hasLive || (node.runUntil ?? 'turn_end') === 'session') {
+        const list = liveByMission.get(mission.id) ?? [];
+        list.push(node.id);
+        liveByMission.set(mission.id, list);
+        handledAsLive = true;
+      }
+
+      for (const project of projects) {
+        const pane = findPaneTab(project.tabs, paneId);
+        if (pane?.type === 'agent') {
+          targets.push({
+            paneId,
+            projectId: project.id,
+            projectName: project.name,
+          });
+          break;
+        }
+      }
+      break;
+    }
+
+    if (!handledAsLive) {
+      classicPaneIds.push(paneId);
+    }
+  }
+
+  for (const [missionId, nodeIds] of liveByMission) {
+    await askLiveAgentAsHuman({
+      missionId,
+      targetNodeIds: nodeIds,
+      message: trimmed,
+    });
+  }
+
+  for (const paneId of classicPaneIds) {
     for (const project of projects) {
       const pane = findPaneTab(project.tabs, paneId);
       if (pane?.type === 'agent') {
-        targets.push({
-          paneId,
-          projectId: project.id,
-          projectName: project.name,
-        });
+        if (!targets.some((entry) => entry.paneId === paneId)) {
+          targets.push({
+            paneId,
+            projectId: project.id,
+            projectName: project.name,
+          });
+        }
         submitAgentPanePrompt(paneId, trimmed, {
           displayContent: trimmed,
           forceNewTurn: true,

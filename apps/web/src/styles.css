@@ -1531,6 +1531,13 @@ html.nexus-standalone .home-dashboard__ask-bar {
   color: rgba(226, 232, 240, 0.86);
 }
 
+.home-dashboard__project-task-date {
+  font-size: 10px;
+  font-weight: 500;
+  color: rgba(148, 163, 184, 0.88);
+  white-space: nowrap;
+}
+
 .home-dashboard__project-task-priority {
   width: 18px;
   height: 2px;
@@ -3232,6 +3239,22 @@ html.nexus-standalone .home-dashboard__ask-bar {
 
 .web-ask-project-menu__label {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-ask-project-menu__text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.web-ask-project-menu__subtitle {
+  font-size: 11px;
+  color: rgba(226, 232, 240, 0.55);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

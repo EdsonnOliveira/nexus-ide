@@ -38,12 +38,13 @@ interface DesktopAgentPane {
   turns: DesktopAgentTurn[];
 }
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_MESSAGE_CHARS = 50_000;
 
 let publishInFlight: Promise<{ published: number; closed: number }> | null = null;
 let lastPublishToken: string | null = null;
+const observedRunningTurns = new Set<string>();
+const notifiedCompletedTurns = new Set<string>();
 
 function projectsStatePath(): string {
   return path.join(userDataDir(), 'projects.json');
@@ -194,13 +195,9 @@ function collectAgentPanesFromTabs(tabs: unknown[]): Array<{
 
     seen.add(id);
     const title =
-      typeof record.title === 'string' && record.title.trim()
-        ? record.title.trim()
-        : 'Agent';
+      typeof record.title === 'string' && record.title.trim() ? record.title.trim() : 'Agent';
     const turns = Array.isArray(record.turns)
-      ? record.turns
-          .map(parseDesktopTurn)
-          .filter((turn): turn is DesktopAgentTurn => Boolean(turn))
+      ? record.turns.map(parseDesktopTurn).filter((turn): turn is DesktopAgentTurn => Boolean(turn))
       : [];
     panes.push({ id, title, turns });
   };
@@ -269,6 +266,11 @@ async function syncDesktopPaneTurns(
   }
 
   for (const turn of turns) {
+    if (turn.running) {
+      observedRunningTurns.add(turn.id);
+      notifiedCompletedTurns.delete(turn.id);
+    }
+
     const fingerprint = turnFingerprint(turn);
     const existingResult = existingById.get(turn.id);
     if (
@@ -346,9 +348,10 @@ async function syncDesktopPaneTurns(
       await client.from('agent_messages').insert(messages);
     }
 
-    const wasRunning =
-      typeof existingResult?.fingerprint === 'string' && existingResult.fingerprint.startsWith('1');
-    if (notify && wasRunning && !turn.running) {
+    const wasRunningHere = observedRunningTurns.has(turn.id);
+    if (notify && wasRunningHere && !turn.running && !notifiedCompletedTurns.has(turn.id)) {
+      notifiedCompletedTurns.add(turn.id);
+      observedRunningTurns.delete(turn.id);
       await notifyPush({
         userId: notify.userId,
         kind: 'agent',

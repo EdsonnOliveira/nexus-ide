@@ -13,7 +13,11 @@ import {
   Trash2,
 } from 'lucide-react';
 import { AgentHintLeading } from '@/components/agent/AgentHintLeading';
-import { cliAgentToAiProvider } from '@/constants/aiProviders';
+import {
+  ASK_AI_PROVIDER_OPTIONS,
+  cliAgentToAiProvider,
+  type AiProviderId,
+} from '@/constants/aiProviders';
 import {
   positionContextSubmenuWithinViewport,
   positionDropdownAboveAnchor,
@@ -71,10 +75,34 @@ function providerBadgeIcon(
     return 'opencode';
   }
 
+  if (provider === 'codex') {
+    return 'codex';
+  }
+
   return 'cursor';
 }
 
-function usePaneCliAgent(paneId: string): string {
+function providerBadgeLetter(badgeIcon: AgentHintBadgeIcon): string {
+  if (badgeIcon === 'claude') {
+    return 'A';
+  }
+
+  if (badgeIcon === 'opencode') {
+    return 'O';
+  }
+
+  if (badgeIcon === 'antigravity') {
+    return 'G';
+  }
+
+  if (badgeIcon === 'codex') {
+    return 'X';
+  }
+
+  return 'C';
+}
+
+function usePaneCliAgent(paneId: string, fallbackCli?: string): string {
   const activeAgent = useTerminalSessionStore((state) => state.activeAgentByPane[paneId]);
   const tabCli = useProjectStore((state) => {
     for (const project of state.projects) {
@@ -86,16 +114,32 @@ function usePaneCliAgent(paneId: string): string {
     return null;
   });
 
-  return activeAgent?.trim() || tabCli || 'cursor-agent';
+  return activeAgent?.trim() || tabCli || fallbackCli?.trim() || 'cursor-agent';
 }
 
-function useAgentHints(paneId: string, cwd: string, isVisible: boolean) {
+function buildAiProviderHints(): TerminalCommandHint[] {
+  return ASK_AI_PROVIDER_OPTIONS.map((option) => {
+    const badgeIcon = providerBadgeIcon(option.id);
+
+    return {
+      id: `ai-${option.id}`,
+      badge: providerBadgeLetter(badgeIcon),
+      badgeIcon,
+      badgeColor: resolveModelBadgeColor(badgeIcon),
+      label: option.label,
+      command: `/ai ${option.id}\n`,
+      hintKind: 'model' as const,
+    };
+  });
+}
+
+function useAgentHints(paneId: string, cwd: string, isVisible: boolean, fallbackCli?: string) {
   const [hints, setHints] = useState<TerminalCommandHint[]>([]);
   const activeAgentMode = useTerminalSessionStore(
     (state) => state.activeAgentModeByPane[paneId] ?? 'agent',
   );
   const showSkillHints = shouldShowAgentSkillHints(activeAgentMode);
-  const paneCliAgent = usePaneCliAgent(paneId);
+  const paneCliAgent = usePaneCliAgent(paneId, fallbackCli);
   const aiProvider = cliAgentToAiProvider(paneCliAgent);
 
   useEffect(() => {
@@ -126,7 +170,7 @@ function useAgentHints(paneId: string, cwd: string, isVisible: boolean) {
         const badgeIcon = providerBadgeIcon(aiProvider);
         modelHints = models.map((model) => ({
           id: `model-${model.id}`,
-          badge: badgeIcon === 'claude' ? 'A' : badgeIcon === 'opencode' ? 'O' : 'G',
+          badge: providerBadgeLetter(badgeIcon),
           badgeIcon,
           badgeColor: resolveModelBadgeColor(badgeIcon),
           label: model.label,
@@ -170,6 +214,7 @@ interface AgentComposerPlusMenuProps {
   paneId: string;
   cwd: string;
   isVisible: boolean;
+  cliAgent?: string;
   onRunCommand: (command: string) => void;
   onSelectSkill?: (hint: TerminalCommandHint) => void;
   onAttachImage: () => void;
@@ -188,6 +233,7 @@ function AgentComposerPlusMenuComponent({
   paneId,
   cwd,
   isVisible,
+  cliAgent,
   onRunCommand,
   onSelectSkill,
   onAttachImage,
@@ -210,6 +256,7 @@ function AgentComposerPlusMenuComponent({
     paneId,
     cwd,
     isVisible,
+    cliAgent,
   );
 
   const normalizedQuery = query.trim().toLowerCase();
@@ -619,14 +666,18 @@ interface AgentComposerModelSelectProps {
   paneId: string;
   cwd: string;
   isVisible: boolean;
+  cliAgent?: string;
   onRunCommand: (command: string) => void;
   onRequestComposerFocus?: () => void;
 }
+
+const AI_PROVIDER_HINTS = buildAiProviderHints();
 
 function AgentComposerModelSelectComponent({
   paneId,
   cwd,
   isVisible,
+  cliAgent,
   onRunCommand,
   onRequestComposerFocus,
 }: AgentComposerModelSelectProps) {
@@ -635,11 +686,33 @@ function AgentComposerModelSelectComponent({
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const [selectedLabel, setSelectedLabel] = useState('Auto');
   const [selectedHintId, setSelectedHintId] = useState<string | null>(null);
-  const { modelHints } = useAgentHints(paneId, cwd, isVisible);
+  const { modelHints } = useAgentHints(paneId, cwd, isVisible, cliAgent);
+  const paneCliAgent = usePaneCliAgent(paneId, cliAgent);
+  const storedModelId = useTerminalSessionStore((state) => state.agentModelByPane[paneId] ?? null);
+  const currentProvider = cliAgentToAiProvider(paneCliAgent);
+  const currentProviderHint =
+    AI_PROVIDER_HINTS.find((hint) => hint.id === `ai-${currentProvider}`) ?? AI_PROVIDER_HINTS[0]!;
+  const currentProviderLabel =
+    ASK_AI_PROVIDER_OPTIONS.find((option) => option.id === currentProvider)?.label ?? 'Cursor';
 
   useEffect(() => {
     if (modelHints.length === 0) {
       return;
+    }
+
+    if (storedModelId) {
+      const match = modelHints.find((hint) => hint.id.replace(/^model-/, '') === storedModelId);
+
+      if (match) {
+        const label = shortenMenuLabel(match.label);
+
+        if (selectedHintId !== match.id || selectedLabel !== label) {
+          setSelectedLabel(label);
+          setSelectedHintId(match.id);
+        }
+
+        return;
+      }
     }
 
     const stillValid = modelHints.some(
@@ -658,7 +731,7 @@ function AgentComposerModelSelectComponent({
 
     setSelectedLabel(shortenMenuLabel(next.label));
     setSelectedHintId(next.id);
-  }, [modelHints, selectedHintId, selectedLabel]);
+  }, [modelHints, selectedHintId, selectedLabel, storedModelId]);
 
   const selectedHint = useMemo(() => {
     if (selectedHintId) {
@@ -697,17 +770,33 @@ function AgentComposerModelSelectComponent({
 
   const handleSelect = useCallback(
     (hint: TerminalCommandHint) => {
+      if (hint.id.startsWith('ai-')) {
+        const providerId = hint.id.slice(3) as Exclude<AiProviderId, 'nexus'>;
+
+        if (providerId !== currentProvider) {
+          setSelectedHintId(null);
+          setSelectedLabel('Auto');
+          onRunCommand(hint.command);
+        }
+
+        handleClose();
+        return;
+      }
+
       setSelectedLabel(shortenMenuLabel(hint.label));
       setSelectedHintId(hint.id);
       onRunCommand(hint.command);
       handleClose();
     },
-    [handleClose, onRunCommand],
+    [currentProvider, handleClose, onRunCommand],
   );
 
-  if (!isVisible || modelHints.length === 0) {
+  if (!isVisible) {
     return null;
   }
+
+  const triggerHint = selectedHint ?? currentProviderHint;
+  const triggerLabel = selectedHint ? selectedLabel : currentProviderLabel;
 
   return (
     <>
@@ -717,11 +806,12 @@ function AgentComposerModelSelectComponent({
         className='agent-view__composer-select app-button app-button--enter'
         aria-haspopup='menu'
         aria-expanded={open}
+        aria-label={`IA ${currentProviderLabel}, modelo ${triggerLabel}`}
         onMouseDown={(event) => event.preventDefault()}
         onClick={handleOpen}
       >
-        {selectedHint ? <AgentHintLeading hint={selectedHint} /> : null}
-        <span className='agent-view__composer-select-label'>{selectedLabel}</span>
+        {triggerHint ? <AgentHintLeading hint={triggerHint} /> : null}
+        <span className='agent-view__composer-select-label'>{triggerLabel}</span>
         <ChevronDown size={14} className='agent-view__composer-select-chevron' aria-hidden='true' />
       </button>
       {open && anchorRect
@@ -729,6 +819,8 @@ function AgentComposerModelSelectComponent({
             <AgentComposerModelMenuPanel
               anchorRect={anchorRect}
               triggerRef={triggerRef}
+              providerHints={AI_PROVIDER_HINTS}
+              currentProvider={currentProvider}
               modelHints={modelHints}
               selectedLabel={selectedLabel}
               onClose={handleClose}
@@ -744,6 +836,8 @@ function AgentComposerModelSelectComponent({
 interface AgentComposerModelMenuPanelProps {
   anchorRect: DOMRect;
   triggerRef: React.RefObject<HTMLButtonElement | null>;
+  providerHints: TerminalCommandHint[];
+  currentProvider: Exclude<AiProviderId, 'nexus'>;
   modelHints: TerminalCommandHint[];
   selectedLabel: string;
   onClose: () => void;
@@ -753,6 +847,8 @@ interface AgentComposerModelMenuPanelProps {
 function AgentComposerModelMenuPanelComponent({
   anchorRect,
   triggerRef,
+  providerHints,
+  currentProvider,
   modelHints,
   selectedLabel,
   onClose,
@@ -790,24 +886,48 @@ function AgentComposerModelMenuPanelComponent({
       ref={menuRef}
       className={`context-menu agent-view__composer-menu overlay-popup ${animationClass}`}
       role='menu'
+      aria-label='IA e modelo'
     >
-      {modelHints.map((hint) => {
-        const label = shortenMenuLabel(hint.label);
-        const isActive = label === selectedLabel;
+      <div className='agent-view__composer-menu-heading'>IA</div>
+      {providerHints.map((hint) => {
+        const isActive = hint.id === `ai-${currentProvider}`;
 
         return (
           <button
             key={hint.id}
             type='button'
-            className={`context-menu__item app-button${isActive ? ' context-menu__item--active' : ''}`}
+            className={`context-menu__item app-button app-button--enter${isActive ? ' context-menu__item--active' : ''}`}
             onClick={() => onSelect(hint)}
           >
             <AgentHintLeading hint={hint} />
-            <span className='agent-view__composer-plus-item-label'>{label}</span>
+            <span className='agent-view__composer-plus-item-label'>{hint.label}</span>
             {isActive ? <Check size={14} aria-hidden='true' /> : null}
           </button>
         );
       })}
+      {modelHints.length > 0 ? (
+        <>
+          <div className='context-menu__separator' />
+          <div className='agent-view__composer-menu-heading'>Modelo</div>
+          {modelHints.map((hint) => {
+            const label = shortenMenuLabel(hint.label);
+            const isActive = label === selectedLabel;
+
+            return (
+              <button
+                key={hint.id}
+                type='button'
+                className={`context-menu__item app-button app-button--enter${isActive ? ' context-menu__item--active' : ''}`}
+                onClick={() => onSelect(hint)}
+              >
+                <AgentHintLeading hint={hint} />
+                <span className='agent-view__composer-plus-item-label'>{label}</span>
+                {isActive ? <Check size={14} aria-hidden='true' /> : null}
+              </button>
+            );
+          })}
+        </>
+      ) : null}
     </div>
   );
 }
@@ -816,8 +936,13 @@ const AgentComposerModelMenuPanel = memo(AgentComposerModelMenuPanelComponent);
 
 export const AgentComposerModelSelect = memo(AgentComposerModelSelectComponent);
 
-export function useAgentModelHints(paneId: string, cwd: string, isVisible: boolean) {
-  const { modelHints } = useAgentHints(paneId, cwd, isVisible);
+export function useAgentModelHints(
+  paneId: string,
+  cwd: string,
+  isVisible: boolean,
+  fallbackCli?: string,
+) {
+  const { modelHints } = useAgentHints(paneId, cwd, isVisible, fallbackCli);
 
   return modelHints;
 }

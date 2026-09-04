@@ -1,12 +1,4 @@
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-} from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { ArrowDown, Bot } from 'lucide-react';
 import { AgentComposer } from '@/components/agent/AgentComposer';
 import { AgentFollowUpQueue } from '@/components/agent/AgentFollowUpQueue';
@@ -25,13 +17,16 @@ import { useProjectNotificationStore } from '@/stores/useProjectNotificationStor
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { TERMINAL_AGENTS } from '@/constants/terminalAgents';
 import type { AgentTurn, AgentFollowUp } from '@/types';
-import { cliAgentToTerminalAgent } from '@/utils/agentTabHelpers';
+import { cliAgentToTerminalAgent, resolveAgentTabCli } from '@/utils/agentTabHelpers';
+import { cliAgentToAiProvider } from '@/constants/aiProviders';
 import { buildAgentPromptHistory } from '@/utils/agentPromptAttachments';
 import { isHomeBoundAgentPane } from '@/utils/homeDashboardAgents';
-import { isPaneAgentSessionLive, readPaneAgentSessionSnapshot, shouldPreferLocalAgentTurnHistory } from '@/utils/paneAgentSession';
 import {
-  resolveSanitizedAgentTab,
-} from '@/utils/trimAgentTurnHistory';
+  isPaneAgentSessionLive,
+  readPaneAgentSessionSnapshot,
+  shouldPreferLocalAgentTurnHistory,
+} from '@/utils/paneAgentSession';
+import { resolveSanitizedAgentTab } from '@/utils/trimAgentTurnHistory';
 import type { AgentViewProps } from '@/components/agent/AgentView';
 function AgentViewSessionComponent({
   tab,
@@ -50,9 +45,7 @@ function AgentViewSessionComponent({
 
   const setPaneDraft = useAgentComposerDraftStore((state) => state.setDraft);
   const clearPaneDraft = useAgentComposerDraftStore((state) => state.clearDraft);
-  const [draft, setDraft] = useState(
-    () => useAgentComposerDraftStore.getState().getDraft(tab.id),
-  );
+  const [draft, setDraft] = useState(() => useAgentComposerDraftStore.getState().getDraft(tab.id));
   const [turns, setTurns] = useState<AgentTurn[]>(() => sessionTab.turns ?? []);
   const [isTranscriptAtBottom, setIsTranscriptAtBottom] = useState(true);
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
@@ -63,6 +56,11 @@ function AgentViewSessionComponent({
   const previousTurnCountRef = useRef(sessionTab.turns?.length ?? 0);
   const terminalAgent = cliAgentToTerminalAgent(tab.cliAgent);
   const agentConfig = TERMINAL_AGENTS[terminalAgent];
+  const liveCliAgent = useTerminalSessionStore((state) => state.activeAgentByPane[tab.id]);
+  const fallbackAiProvider = useMemo(
+    () => cliAgentToAiProvider(liveCliAgent?.trim() || resolveAgentTabCli(tab)),
+    [liveCliAgent, tab],
+  );
   const promptHistory = useMemo(() => buildAgentPromptHistory(turns), [turns]);
   const resumeChatId = useTerminalSessionStore((state) => state.resumeChatIdByPane[tab.id]);
 
@@ -118,14 +116,7 @@ function AgentViewSessionComponent({
     }
 
     setTurns(incomingTurns);
-  }, [
-    clearPaneDraft,
-    isRuntimeActive,
-    resumeChatId,
-    sessionTab.turns,
-    tab.id,
-    turns,
-  ]);
+  }, [clearPaneDraft, isRuntimeActive, resumeChatId, sessionTab.turns, tab.id, turns]);
 
   useEffect(() => {
     if (!isVisible || turns.length === 0) {
@@ -317,12 +308,7 @@ function AgentViewSessionComponent({
   ]);
 
   const focusComposer = useCallback(() => {
-    if (
-      !isFocused ||
-      !isVisible ||
-      hasPendingQuestion ||
-      skipComposerFocusRef.current
-    ) {
+    if (!isFocused || !isVisible || hasPendingQuestion || skipComposerFocusRef.current) {
       return;
     }
 
@@ -460,6 +446,7 @@ function AgentViewSessionComponent({
               projectId={projectId}
               projectPath={projectPath}
               paneId={tab.id}
+              fallbackAiProvider={fallbackAiProvider}
               disableStickyPrompt={disableStickyPrompt}
               onAtBottomChange={handleTranscriptAtBottomChange}
               onActiveTurnChange={handleActiveTurnChange}
@@ -522,6 +509,7 @@ function AgentViewSessionComponent({
           paneId={tab.id}
           projectPath={projectPath}
           terminalAgent={terminalAgent}
+          cliAgent={resolveAgentTabCli(sessionTab)}
           isVisible={isVisible}
           isFocused={isFocused}
           isBusy={isBusy}

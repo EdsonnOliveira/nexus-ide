@@ -187,3 +187,29 @@ export async function removeMissionAttachmentsDir(missionId: string): Promise<vo
 
   await rm(targetDir, { recursive: true, force: true });
 }
+
+export async function writeMissionNoteFile(
+  missionId: string,
+  nodeId: string,
+  content: string,
+): Promise<{ ok: boolean; path?: string; error?: string }> {
+  try {
+    const safeMissionId = sanitizeMissionId(missionId);
+    const safeNodeId = sanitizeMissionId(nodeId);
+    const notesDir = path.join(
+      app.getPath('userData'),
+      'missions',
+      safeMissionId,
+      'notes',
+    );
+    await mkdir(notesDir, { recursive: true });
+    const targetPath = path.join(notesDir, `${safeNodeId}.md`);
+    await writeFile(targetPath, content, 'utf8');
+    return { ok: true, path: targetPath };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'write_failed',
+    };
+  }
+}

@@ -9,7 +9,7 @@ export type ComposerMentionTrigger = '@' | '/';
 
 export interface ComposerMentionMatch {
   id: string;
-  kind: 'file' | 'directory' | 'skill';
+  kind: 'file' | 'directory' | 'skill' | 'mission_node';
   name: string;
   absolutePath?: string;
   label: string;
@@ -312,10 +312,23 @@ export async function searchComposerMentionMatches(
   query: string,
   skillHints: TerminalCommandHint[],
   trigger: ComposerMentionTrigger = '@',
+  missionNodeMatches: ComposerMentionMatch[] = [],
 ): Promise<ComposerMentionMatch[]> {
   if (trigger === '/') {
     return filterSkillHints(skillHints, query).map(toSkillMentionMatch);
   }
 
-  return await searchComposerPathMentionMatches(projectPath, query);
+  const needle = query.trim().toLowerCase();
+  const missionMatches = missionNodeMatches.filter((match) => {
+    if (!needle) {
+      return true;
+    }
+    return (
+      match.name.toLowerCase().includes(needle) ||
+      match.label.toLowerCase().includes(needle)
+    );
+  });
+
+  const pathMatches = await searchComposerPathMentionMatches(projectPath, query);
+  return [...missionMatches, ...pathMatches].slice(0, MENTION_SEARCH_LIMIT);
 }

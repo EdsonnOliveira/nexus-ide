@@ -42,6 +42,10 @@ import { flushProjectStoreWrites } from './services/projectStore';
 import { registerGitHandlers } from './ipc/git';
 import { registerHomeDashboardHandlers } from './ipc/homeDashboard';
 import { registerMissionHandlers } from './ipc/missions';
+import {
+  startMissionAgentBridge,
+  stopMissionAgentBridge,
+} from './services/missionAgentBridge';
 import { registerMusicHandlers } from './ipc/music';
 import { registerMailHandlers } from './ipc/mail';
 import { registerCalendarHandlers } from './ipc/calendar';
@@ -1249,6 +1253,7 @@ app.whenReady().then(() => {
   registerGitHandlers(() => win);
   registerHomeDashboardHandlers();
   registerMissionHandlers();
+  startMissionAgentBridge();
   registerMusicHandlers();
   registerSystemStatusHandlers();
   registerSystemNotificationsHandlers();
@@ -1462,6 +1467,7 @@ app.on('will-quit', () => {
   testRunnerSession.stopAll();
   stopManagedRuntime();
   stopDesktopControlServer();
+  stopMissionAgentBridge();
   stopIdleWakeLock();
   void cleanupEmulatorSessions();
   destroyAgentPipWindow();

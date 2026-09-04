@@ -1,3 +1,5 @@
+import { isNotificationSoundEnabled } from '@/stores/useAppSettingsStore';
+
 let audioContext: AudioContext | null = null;
 let alertRepeatTimer: ReturnType<typeof setInterval> | null = null;
 let alertStopTimer: ReturnType<typeof setTimeout> | null = null;
@@ -51,6 +53,10 @@ function playTone(
 }
 
 function playCalendarChime(): void {
+  if (!isNotificationSoundEnabled()) {
+    return;
+  }
+
   const ctx = getAudioContext();
 
   if (!ctx) {
@@ -92,7 +98,7 @@ export function stopCalendarEventAlertSound(): void {
 }
 
 export function playCalendarEventAlertSound(durationMs: number): void {
-  if (isReducedMotionPreferred()) {
+  if (!isNotificationSoundEnabled() || isReducedMotionPreferred()) {
     return;
   }
 
@@ -111,7 +117,7 @@ export function playCalendarEventAlertSound(durationMs: number): void {
 }
 
 export function startCalendarEventUrgentSoundLoop(): void {
-  if (isReducedMotionPreferred()) {
+  if (!isNotificationSoundEnabled() || isReducedMotionPreferred()) {
     return;
   }
 

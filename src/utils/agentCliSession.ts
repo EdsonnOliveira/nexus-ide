@@ -187,7 +187,7 @@ function isAgentChromeLine(trimmed: string): boolean {
 export function isStreamJsonAgentCli(cliAgent: string): boolean {
   const base = extractCliAgentCommand(cliAgent.trim() || 'cursor-agent');
 
-  return base === 'cursor-agent' || base === 'opencode' || base === 'agy';
+  return base === 'cursor-agent' || base === 'opencode' || base === 'agy' || base === 'codex';
 }
 
 export function isCursorAgentStreamJsonCli(cliAgent: string): boolean {
@@ -275,7 +275,7 @@ export function resolveStreamJsonPromptPayload(
   const base = extractCliAgentCommand(cliAgent.trim() || 'cursor-agent');
   const root = rootPath.replace(/\/+$/, '');
 
-  if (base === 'opencode') {
+  if (base === 'opencode' || base === 'codex') {
     const attachmentPaths = imageRefs
       .map((ref) => {
         const relPath = ref.startsWith('@') ? ref.slice(1) : ref;
@@ -309,7 +309,7 @@ export function buildAgentPaneLaunchCommand(command: string): string {
   const trimmed = command.trim();
   const base = extractCliAgentCommand(trimmed || 'cursor-agent');
 
-  if (base === 'cursor-agent' || base === 'opencode' || base === 'agy') {
+  if (base === 'cursor-agent' || base === 'opencode' || base === 'agy' || base === 'codex') {
     return '';
   }
 

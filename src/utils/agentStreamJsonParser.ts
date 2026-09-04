@@ -398,6 +398,10 @@ function extractThinkingDelta(event: Record<string, unknown>): string {
 }
 
 function extractSessionId(event: Record<string, unknown>): string | null {
+  if (typeof event.thread_id === 'string' && event.thread_id.trim()) {
+    return event.thread_id;
+  }
+
   if (typeof event.conversation_id === 'string' && event.conversation_id.trim()) {
     return event.conversation_id;
   }
@@ -756,6 +760,27 @@ function isShortWorkingComment(text: string): boolean {
   return true;
 }
 
+function hasAgentCompletionClose(text: string): boolean {
+  return /\b(pronto|conclu[ií]do|finalizado|feito|tudo certo|all set|that's all|completed|finished|done)\b[.!…]?\s*$/i.test(
+    text,
+  );
+}
+
+function looksLikeInProgressAnnouncement(text: string): boolean {
+  const trimmed = text.trim();
+
+  if (!isShortWorkingComment(trimmed) || hasAgentCompletionClose(trimmed)) {
+    return false;
+  }
+
+  const withoutGreeting = trimmed.replace(/^sim\s+capit[aã]o!?[:.\s]*/i, '').trim();
+  const probe = withoutGreeting || trimmed;
+
+  return /^(?:continuando|implementando|corrigindo|aplicando|fazendo|ajustando|atualizando|criando|editando|começando|iniciando|vou\s|vamos\s|i'll\s|let me\s|i am going to\s|i'm going to\s)/i.test(
+    probe,
+  );
+}
+
 function isWorkingCommentStatus(entry: AgentActivity): boolean {
   return entry.kind === 'status' && Boolean(entry.label.trim()) && !/^Ran\b/i.test(entry.label);
 }
@@ -905,6 +930,14 @@ export function hasPostToolFinalResponse(
   }
 
   if (isWorkingCommentReplayText(state, lastResponse.label)) {
+    return false;
+  }
+
+  if (looksLikeInProgressAnnouncement(lastResponse.label)) {
+    return false;
+  }
+
+  if (looksLikeMidProgressAgentResponse(lastResponse.label)) {
     return false;
   }
 
@@ -2621,6 +2654,310 @@ function handleAntigravityStreamEvent(
   }
 }
 
+function isCodexStreamEventType(type: string): boolean {
+  return (
+    type === 'thread.started' ||
+    type === 'turn.started' ||
+    type === 'turn.completed' ||
+    type === 'turn.failed' ||
+    type.startsWith('item.')
+  );
+}
+
+function readCodexItem(event: Record<string, unknown>): Record<string, unknown> | null {
+  const item = event.item;
+
+  if (!item || typeof item !== 'object') {
+    return null;
+  }
+
+  return item as Record<string, unknown>;
+}
+
+function readCodexItemText(item: Record<string, unknown>): string {
+  if (typeof item.text === 'string' && item.text.trim()) {
+    return item.text;
+  }
+
+  if (typeof item.message === 'string' && item.message.trim()) {
+    return item.message;
+  }
+
+  if (typeof item.content === 'string' && item.content.trim()) {
+    return item.content;
+  }
+
+  return '';
+}
+
+function handleCodexCommandItem(
+  state: AgentStreamJsonParserState,
+  item: Record<string, unknown>,
+  eventType: string,
+): void {
+  const command = typeof item.command === 'string' ? item.command.trim() : '';
+  const output =
+    typeof item.aggregated_output === 'string'
+      ? item.aggregated_output
+      : typeof item.output === 'string'
+        ? item.output
+        : '';
+  const exitCode =
+    typeof item.exit_code === 'number'
+      ? item.exit_code
+      : typeof item.exitCode === 'number'
+        ? item.exitCode
+        : null;
+
+  if (eventType === 'item.started' && command) {
+    captureResponseLeadBeforeTools(state);
+    sealActiveResponseSegment(state);
+    settleThought(state);
+    trackShellCommand(state, command);
+    state.shellToolEvents.push({
+      type: 'started',
+      command,
+      output: '',
+      exitCode: null,
+    });
+    startToolRun(state, 'Running', { toolCommand: command });
+    return;
+  }
+
+  if (eventType !== 'item.completed') {
+    return;
+  }
+
+  if (command && state.runningToolRunStack.length === 0) {
+    captureResponseLeadBeforeTools(state);
+    sealActiveResponseSegment(state);
+    settleThought(state);
+    trackShellCommand(state, command);
+    startToolRun(state, 'Running', { toolCommand: command });
+  }
+
+  if (command) {
+    state.shellToolEvents.push({
+      type: 'completed',
+      command,
+      output,
+      exitCode,
+    });
+  }
+
+  completeToolRun(state);
+}
+
+function handleCodexFileChangeItem(
+  state: AgentStreamJsonParserState,
+  item: Record<string, unknown>,
+  eventType: string,
+): void {
+  const rawChanges = Array.isArray(item.changes) ? item.changes : [];
+  const paths: string[] = [];
+
+  for (const change of rawChanges) {
+    if (!change || typeof change !== 'object') {
+      continue;
+    }
+
+    const record = change as Record<string, unknown>;
+    const filePath =
+      typeof record.path === 'string'
+        ? record.path.trim()
+        : typeof record.filename === 'string'
+          ? record.filename.trim()
+          : '';
+
+    if (filePath) {
+      paths.push(filePath);
+    }
+  }
+
+  if (paths.length === 0 && typeof item.path === 'string' && item.path.trim()) {
+    paths.push(item.path.trim());
+  }
+
+  if (eventType === 'item.started') {
+    captureResponseLeadBeforeTools(state);
+    sealActiveResponseSegment(state);
+    settleThought(state);
+    const firstPath = paths[0];
+    startToolRun(
+      state,
+      firstPath ? `Editing ${basenamePath(firstPath)}` : 'Editing files',
+      firstPath ? { filePath: firstPath } : {},
+    );
+    return;
+  }
+
+  if (eventType !== 'item.completed') {
+    return;
+  }
+
+  if (state.runningToolRunStack.length === 0) {
+    captureResponseLeadBeforeTools(state);
+    sealActiveResponseSegment(state);
+    settleThought(state);
+    const firstPath = paths[0];
+    startToolRun(
+      state,
+      firstPath ? `Editing ${basenamePath(firstPath)}` : 'Editing files',
+      firstPath ? { filePath: firstPath } : {},
+    );
+  }
+
+  for (const filePath of paths) {
+    upsertFileEdit(state, filePath);
+  }
+
+  completeToolRun(state);
+}
+
+function handleCodexGenericToolItem(
+  state: AgentStreamJsonParserState,
+  eventType: string,
+  label: string,
+): void {
+  if (eventType === 'item.started') {
+    captureResponseLeadBeforeTools(state);
+    sealActiveResponseSegment(state);
+    settleThought(state);
+    startToolRun(state, label);
+    return;
+  }
+
+  if (eventType === 'item.completed') {
+    if (state.runningToolRunStack.length === 0) {
+      captureResponseLeadBeforeTools(state);
+      sealActiveResponseSegment(state);
+      settleThought(state);
+      startToolRun(state, label);
+    }
+
+    completeToolRun(state);
+  }
+}
+
+function handleCodexItem(
+  state: AgentStreamJsonParserState,
+  item: Record<string, unknown>,
+  eventType: string,
+): void {
+  const itemType =
+    typeof item.type === 'string'
+      ? item.type
+      : typeof item.item_type === 'string'
+        ? item.item_type
+        : '';
+
+  if (itemType === 'agent_message' || itemType === 'message') {
+    const text = readCodexItemText(item);
+
+    if (text) {
+      upsertResponse(state, text, eventType === 'item.completed' ? 'final' : 'snapshot');
+    }
+
+    return;
+  }
+
+  if (itemType === 'reasoning') {
+    const text = readCodexItemText(item);
+
+    if (text) {
+      upsertThought(state, text);
+    }
+
+    if (eventType === 'item.completed') {
+      settleThought(state);
+    }
+
+    return;
+  }
+
+  if (itemType === 'command_execution') {
+    handleCodexCommandItem(state, item, eventType);
+    return;
+  }
+
+  if (itemType === 'file_change') {
+    handleCodexFileChangeItem(state, item, eventType);
+    return;
+  }
+
+  if (itemType === 'web_search') {
+    handleCodexGenericToolItem(state, eventType, 'Searching');
+    return;
+  }
+
+  if (itemType === 'mcp_tool_call') {
+    handleCodexGenericToolItem(state, eventType, 'Running tool');
+    return;
+  }
+
+  if (itemType === 'todo_list') {
+    handleCodexGenericToolItem(state, eventType, 'Planning');
+    return;
+  }
+
+  if (itemType === 'error') {
+    const message = readCodexItemText(item) || 'Erro no Codex.';
+    upsertResponse(state, message, 'final');
+  }
+}
+
+function handleCodexStreamEvent(
+  state: AgentStreamJsonParserState,
+  event: Record<string, unknown>,
+  type: string,
+): void {
+  const sessionId = extractSessionId(event);
+
+  if (sessionId) {
+    state.sessionId = sessionId;
+  }
+
+  if (type === 'thread.started' || type === 'turn.started') {
+    return;
+  }
+
+  if (type === 'turn.completed') {
+    const usage = parseUsage(event.usage);
+
+    if (usage) {
+      state.pendingUsage = usage;
+    }
+
+    markStreamJsonTerminalResult(state, state.pendingResponseText.trim());
+    return;
+  }
+
+  if (type === 'turn.failed') {
+    const errorPayload = event.error as Record<string, unknown> | undefined;
+    const message =
+      typeof event.message === 'string' && event.message.trim()
+        ? event.message.trim()
+        : typeof errorPayload?.message === 'string' && errorPayload.message.trim()
+          ? errorPayload.message.trim()
+          : 'Erro no Codex.';
+    upsertResponse(state, message, 'final');
+    markStreamJsonTerminalResult(state, message);
+    return;
+  }
+
+  if (!type.startsWith('item.')) {
+    return;
+  }
+
+  const item = readCodexItem(event);
+
+  if (!item) {
+    return;
+  }
+
+  handleCodexItem(state, item, type);
+}
+
 function handleStreamJsonEvent(
   state: AgentStreamJsonParserState,
   event: Record<string, unknown>,
@@ -2633,6 +2970,11 @@ function handleStreamJsonEvent(
   }
 
   const type = typeof event.type === 'string' ? event.type : '';
+
+  if (isCodexStreamEventType(type)) {
+    handleCodexStreamEvent(state, event, type);
+    return;
+  }
 
   if (type === 'system' && event.subtype === 'init') {
     const sessionId = extractSessionId(event);
@@ -3294,6 +3636,10 @@ export function looksLikeMidProgressAgentResponse(text: string): boolean {
     return false;
   }
 
+  if (looksLikeInProgressAnnouncement(trimmed)) {
+    return true;
+  }
+
   if (/[.!?;]"?$/u.test(trimmed) && !/\.\.\.\s*$/u.test(trimmed)) {
     return false;
   }
@@ -3323,12 +3669,7 @@ export function looksLikeMidProgressAgentResponse(text: string): boolean {
     return false;
   }
 
-  const hasCompletionClose =
-    /\b(pronto|conclu[ií]do|finalizado|feito|tudo certo|all set|that's all|completed|finished|done)\b[.!…]?\s*$/i.test(
-      trimmed,
-    );
-
-  return !hasCompletionClose;
+  return !hasAgentCompletionClose(trimmed);
 }
 
 function findLastResponseLabel(activities: AgentActivity[], fallback = ''): string {

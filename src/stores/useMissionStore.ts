@@ -20,12 +20,15 @@ interface MissionStoreState {
   flowTemplates: MissionFlowTemplate[];
   activeMissionId: string | null;
   selectedNodeId: string | null;
+  selectedNodeIds: string[];
   selectedEdgeId: string | null;
   selectedPaneIds: string[];
   hydrated: boolean;
   hydrate: () => Promise<void>;
   setActiveMissionId: (id: string | null) => void;
   setSelectedNodeId: (id: string | null) => void;
+  setSelectedNodeIds: (ids: string[]) => void;
+  clearSelectedNodeIds: () => void;
   setSelectedEdgeId: (id: string | null) => void;
   toggleSelectedPaneId: (paneId: string, additive: boolean) => void;
   clearSelectedPaneIds: () => void;
@@ -83,6 +86,7 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
   flowTemplates: [],
   activeMissionId: null,
   selectedNodeId: null,
+  selectedNodeIds: [],
   selectedEdgeId: null,
   selectedPaneIds: [],
   hydrated: false,
@@ -131,8 +135,21 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
   },
 
   setActiveMissionId: (id) => set({ activeMissionId: id }),
-  setSelectedNodeId: (id) => set({ selectedNodeId: id, selectedEdgeId: null }),
-  setSelectedEdgeId: (id) => set({ selectedEdgeId: id, selectedNodeId: null }),
+  setSelectedNodeId: (id) =>
+    set({
+      selectedNodeId: id,
+      selectedNodeIds: id ? [id] : [],
+      selectedEdgeId: null,
+    }),
+  setSelectedNodeIds: (ids) =>
+    set({
+      selectedNodeIds: ids,
+      selectedNodeId: ids[0] ?? null,
+      selectedEdgeId: null,
+    }),
+  clearSelectedNodeIds: () => set({ selectedNodeIds: [], selectedNodeId: null }),
+  setSelectedEdgeId: (id) =>
+    set({ selectedEdgeId: id, selectedNodeId: null, selectedNodeIds: [] }),
 
   toggleSelectedPaneId: (paneId, additive) => {
     set((state) => {

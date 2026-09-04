@@ -5,7 +5,7 @@ import readline from 'node:readline';
 import { getGitDailyStatsForRepo, type GitDailyStats } from './git';
 import { formatLocalDateKeyFromMs } from './homeActivityStore';
 
-export type DashboardAiProvider = 'cursor' | 'claude' | 'opencode' | 'antigravity';
+export type DashboardAiProvider = 'cursor' | 'claude' | 'codex' | 'opencode' | 'antigravity';
 
 export interface ProviderDayActivity {
   agentExecutions: number;
@@ -428,7 +428,7 @@ export async function scanAiProviderActivity(
   rangeStartMs: number,
   rangeEndMs: number,
 ): Promise<ProviderActivityScan> {
-  if (provider === 'opencode' || provider === 'antigravity') {
+  if (provider === 'opencode' || provider === 'antigravity' || provider === 'codex') {
     return {
       gitPaths: [],
       activityByDay: {},

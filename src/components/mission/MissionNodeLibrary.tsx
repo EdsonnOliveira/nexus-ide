@@ -1,4 +1,4 @@
-import { Bot, ChevronDown, LayoutGrid, MonitorPlay, Search } from 'lucide-react';
+import { Bot, ChevronDown, ChevronLeft, LayoutGrid, MonitorPlay, Search } from 'lucide-react';
 import {
   memo,
   useCallback,
@@ -27,7 +27,10 @@ export const MISSION_LIBRARY_DRAG_MIME = 'application/nexus-mission-library';
 
 export type MissionLibraryDragPayload =
   | { source: 'agent'; templateId: string }
-  | { source: 'tool'; toolKind: Exclude<MissionNodeKind, 'agent' | 'automation' | 'mission'> }
+  | {
+      source: 'tool';
+      toolKind: Exclude<MissionNodeKind, 'agent' | 'automation' | 'mission' | 'drawing'>;
+    }
   | { source: 'automation'; catalogId: string };
 
 type LibraryTabId = 'agents' | 'display' | 'nodes';
@@ -44,13 +47,14 @@ const LEADERSHIP_AGENT_TEMPLATE_IDS = new Set([
 ]);
 
 const DISPLAY_NODE_DESCRIPTIONS: Record<
-  Exclude<MissionNodeKind, 'agent' | 'automation' | 'mission'>,
+  Exclude<MissionNodeKind, 'agent' | 'automation' | 'mission' | 'drawing'>,
   string
 > = {
   browser: 'Preview ao vivo de páginas web no grafo.',
   emulator: 'Preview ao vivo do emulador mobile no grafo.',
   terminal: 'Terminal embutido para ver comandos e logs.',
   api: 'Painel de API para testar requests no grafo.',
+  note: 'Nota markdown que agents Live podem ler e escrever.',
 };
 
 function isLeadershipAgentTemplate(templateId: string): boolean {
@@ -171,8 +175,11 @@ function getAutomationDescription(entry: MissionAutomationCatalogEntry): string 
 interface MissionNodeLibraryProps {
   templates: AgentTemplate[];
   onAddAgent: (templateId: string) => void;
-  onAddTool: (kind: Exclude<MissionNodeKind, 'agent' | 'automation' | 'mission'>) => void;
+  onAddTool: (
+    kind: Exclude<MissionNodeKind, 'agent' | 'automation' | 'mission' | 'drawing'>,
+  ) => void;
   onAddAutomation: (entry: MissionAutomationCatalogEntry) => void;
+  onHide?: () => void;
 }
 
 function parseLibraryDragPayload(raw: string): MissionLibraryDragPayload | null {
@@ -189,7 +196,8 @@ function parseLibraryDragPayload(raw: string): MissionLibraryDragPayload | null 
       (parsed.toolKind === 'browser' ||
         parsed.toolKind === 'emulator' ||
         parsed.toolKind === 'terminal' ||
-        parsed.toolKind === 'api')
+        parsed.toolKind === 'api' ||
+        parsed.toolKind === 'note')
     ) {
       return parsed;
     }
@@ -387,6 +395,7 @@ function MissionNodeLibraryComponent({
   onAddAgent,
   onAddTool,
   onAddAutomation,
+  onHide,
 }: MissionNodeLibraryProps) {
   const [tab, setTab] = useState<LibraryTabId>('agents');
   const [query, setQuery] = useState('');
@@ -432,12 +441,9 @@ function MissionNodeLibraryComponent({
   );
 
   const displayItems = useMemo(() => {
-    const kinds: Array<Exclude<MissionNodeKind, 'agent' | 'automation' | 'mission'>> = [
-      'browser',
-      'emulator',
-      'terminal',
-      'api',
-    ];
+    const kinds: Array<
+      Exclude<MissionNodeKind, 'agent' | 'automation' | 'mission' | 'drawing'>
+    > = ['browser', 'emulator', 'terminal', 'api', 'note'];
     return kinds
       .map((kind) => {
         const visual = getMissionAgentVisual({ kind });
@@ -582,35 +588,48 @@ function MissionNodeLibraryComponent({
 
   return (
     <aside className='mission-node-library overlay-popup--in app-button--enter' aria-label='Biblioteca de nós'>
-      <div className='mission-node-library__segment' role='tablist' aria-label='Tipo de componente'>
-        {tabs.map((entry) => {
-          const Icon = entry.icon;
-          const active = !isSearching && tab === entry.id;
-          const matchCount =
-            entry.id === 'agents'
-              ? agentItems.length
-              : entry.id === 'display'
-                ? displayItems.length
-                : automationGroups.reduce((sum, group) => sum + group.entries.length, 0);
-          return (
-            <button
-              key={entry.id}
-              type='button'
-              role='tab'
-              aria-selected={active}
-              className={`mission-node-library__segment-btn app-button${
-                active ? ' mission-node-library__segment-btn--active app-button--enter' : ''
-              }${isSearching && matchCount > 0 ? ' mission-node-library__segment-btn--match' : ''}`}
-              onClick={() => setTab(entry.id)}
-            >
-              <Icon size={14} strokeWidth={2.25} aria-hidden='true' />
-              <span>{entry.label}</span>
-              {isSearching ? (
-                <span className='mission-node-library__segment-count'>{matchCount}</span>
-              ) : null}
-            </button>
-          );
-        })}
+      <div className='mission-node-library__header'>
+        <div className='mission-node-library__segment' role='tablist' aria-label='Tipo de componente'>
+          {tabs.map((entry) => {
+            const Icon = entry.icon;
+            const active = !isSearching && tab === entry.id;
+            const matchCount =
+              entry.id === 'agents'
+                ? agentItems.length
+                : entry.id === 'display'
+                  ? displayItems.length
+                  : automationGroups.reduce((sum, group) => sum + group.entries.length, 0);
+            return (
+              <button
+                key={entry.id}
+                type='button'
+                role='tab'
+                aria-selected={active}
+                className={`mission-node-library__segment-btn app-button${
+                  active ? ' mission-node-library__segment-btn--active app-button--enter' : ''
+                }${isSearching && matchCount > 0 ? ' mission-node-library__segment-btn--match' : ''}`}
+                onClick={() => setTab(entry.id)}
+              >
+                <Icon size={14} strokeWidth={2.25} aria-hidden='true' />
+                <span>{entry.label}</span>
+                {isSearching ? (
+                  <span className='mission-node-library__segment-count'>{matchCount}</span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+        {onHide ? (
+          <button
+            type='button'
+            className='mission-node-library__hide app-button app-button--enter'
+            aria-label='Ocultar biblioteca'
+            title='Ocultar biblioteca'
+            onClick={onHide}
+          >
+            <ChevronLeft size={14} strokeWidth={2.25} aria-hidden='true' />
+          </button>
+        ) : null}
       </div>
 
       <div className='mission-node-library__search'>

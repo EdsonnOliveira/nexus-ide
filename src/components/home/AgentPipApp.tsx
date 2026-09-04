@@ -29,6 +29,7 @@ import { findPendingAgentPlanActivity } from '@/utils/agentPlanPrompt';
 import { hasPendingAgentQuestion } from '@/utils/agentQuestionPrompt';
 import { buildAgentPromptHistory } from '@/utils/agentPromptAttachments';
 import { resolveFollowUpAgentPrompt } from '@/utils/agentSkillDisplay';
+import { cliAgentToAiProvider } from '@/constants/aiProviders';
 import { cliAgentToTerminalAgent } from '@/utils/agentTabHelpers';
 import { createInitialTurnActivities } from '@/utils/agentTranscriptParser';
 
@@ -55,7 +56,11 @@ function mergePipFollowUps(
   return [...snapshotItems, ...optimisticItems.filter((item) => !keys.has(followUpMatchKey(item)))];
 }
 
-function createOptimisticPipTurn(content: string, attachments: AgentPromptAttachment[]): AgentTurn {
+function createOptimisticPipTurn(
+  content: string,
+  attachments: AgentPromptAttachment[],
+  aiProvider: ReturnType<typeof cliAgentToAiProvider>,
+): AgentTurn {
   return {
     id: `pip-${crypto.randomUUID()}`,
     user: {
@@ -63,6 +68,7 @@ function createOptimisticPipTurn(content: string, attachments: AgentPromptAttach
       role: 'user',
       content,
       createdAt: Date.now(),
+      aiProvider,
       ...(attachments.length > 0 ? { attachments } : {}),
     },
     activities: createInitialTurnActivities(),
@@ -356,7 +362,9 @@ function AgentPipAppComponent() {
         setOptimisticFollowUps((current) => [...current, optimistic]);
         useTerminalPasteImageStore.getState().clearPaneImages(tab.id);
       } else {
-        setOptimisticTurn(createOptimisticPipTurn(value, attachments));
+        setOptimisticTurn(
+          createOptimisticPipTurn(value, attachments, cliAgentToAiProvider(tab.cliAgent)),
+        );
         useTerminalPasteImageStore.getState().clearPaneImages(tab.id);
       }
 
@@ -549,6 +557,7 @@ function AgentPipAppComponent() {
                     projectId={projectId}
                     projectPath={projectPath}
                     paneId={tab.id}
+                    fallbackAiProvider={cliAgentToAiProvider(tab.cliAgent)}
                     disableStickyPrompt
                     onAtBottomChange={handleTranscriptAtBottomChange}
                     onActiveTurnChange={handleActiveTurnChange}
@@ -622,6 +631,7 @@ function AgentPipAppComponent() {
                 paneId={tab.id}
                 projectPath={projectPath}
                 terminalAgent={terminalAgent}
+                cliAgent={tab.cliAgent}
                 isVisible
                 isFocused
                 isBusy={isBusy}

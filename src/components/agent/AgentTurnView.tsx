@@ -4,6 +4,7 @@ import { AgentActivityList } from '@/components/agent/AgentActivityList';
 import { AgentUserPrompt } from '@/components/agent/AgentUserPrompt';
 import { useStickyPromptState } from '@/hooks/useStickyPromptState';
 import { isAgentTurnSummaryVisible } from '@/utils/agentTurnSummary';
+import type { AiProviderId } from '@/constants/aiProviders';
 
 interface AgentTurnViewProps {
   turn: AgentTurn;
@@ -14,11 +15,15 @@ interface AgentTurnViewProps {
   projectId: string;
   projectPath: string;
   paneId: string;
+  fallbackAiProvider?: Exclude<AiProviderId, 'nexus'>;
   disableStickyPrompt?: boolean;
   onTurnElementChange?: (turnId: string, element: HTMLElement | null) => void;
   onEdit?: (turnId: string) => void;
   onRedo?: (turnId: string) => void;
-  onSubmitQuestion?: (activityId: string, answers: AgentQuestionAnswers) => boolean | Promise<boolean>;
+  onSubmitQuestion?: (
+    activityId: string,
+    answers: AgentQuestionAnswers,
+  ) => boolean | Promise<boolean>;
 }
 
 function AgentTurnViewComponent({
@@ -30,6 +35,7 @@ function AgentTurnViewComponent({
   projectId,
   projectPath,
   paneId,
+  fallbackAiProvider,
   disableStickyPrompt = false,
   onTurnElementChange,
   onEdit,
@@ -37,9 +43,7 @@ function AgentTurnViewComponent({
   onSubmitQuestion,
 }: AgentTurnViewProps) {
   const hasActivities =
-    turn.activities.length > 0 ||
-    turn.running ||
-    isAgentTurnSummaryVisible(turn.summary);
+    turn.activities.length > 0 || turn.running || isAgentTurnSummaryVisible(turn.summary);
   const stickySentinelRef = useRef<HTMLDivElement>(null);
   const hasPendingInteractive = useMemo(
     () =>
@@ -68,7 +72,11 @@ function AgentTurnViewComponent({
         onTurnElementChange?.(turn.id, node);
       }}
     >
-      <div ref={stickySentinelRef} className='agent-view__user-prompt-sticky-sentinel' aria-hidden='true' />
+      <div
+        ref={stickySentinelRef}
+        className='agent-view__user-prompt-sticky-sentinel'
+        aria-hidden='true'
+      />
       <div
         className={`agent-view__user-prompt-sticky${stickyPromptActive ? ' agent-view__user-prompt-sticky--enabled' : ''}${isPromptStuck ? ' agent-view__user-prompt-sticky--stuck' : ''}${stickyPhase === 'in' ? ' agent-view__user-prompt-sticky--enter' : ''}${stickyPhase === 'out' ? ' agent-view__user-prompt-sticky--exit' : ''}`}
         style={isPromptStuck ? { zIndex: turnIndex + 1 } : undefined}
@@ -78,23 +86,24 @@ function AgentTurnViewComponent({
           projectPath={projectPath}
           isEditing={isEditing}
           isStickyLayout={isPromptStuck && stickyPhase !== 'out'}
+          fallbackAiProvider={fallbackAiProvider}
           onEdit={onEdit}
           onRedo={onRedo}
         />
       </div>
       {hasActivities ? (
         <AgentActivityList
-            activities={turn.activities}
-            running={turn.running}
-            summary={turn.summary}
-            startedAt={turn.startedAt}
-            completedAt={turn.completedAt}
-            usage={turn.usage}
-            projectId={projectId}
-            projectPath={projectPath}
-            paneId={paneId}
-            isLatestTurn={isLatestTurn}
-            onSubmitQuestion={onSubmitQuestion}
+          activities={turn.activities}
+          running={turn.running}
+          summary={turn.summary}
+          startedAt={turn.startedAt}
+          completedAt={turn.completedAt}
+          usage={turn.usage}
+          projectId={projectId}
+          projectPath={projectPath}
+          paneId={paneId}
+          isLatestTurn={isLatestTurn}
+          onSubmitQuestion={onSubmitQuestion}
         />
       ) : null}
     </div>

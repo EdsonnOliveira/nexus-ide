@@ -2,6 +2,7 @@ import { getBuiltinRoleById } from '@/constants/agentRoles';
 import { getBuiltinTemplateById } from '@/constants/agentTemplates';
 import type { Mission, MissionAgentNode, MissionDiscovery, ContextCapsule } from '@/types/mission';
 import type { AgentRole, AgentTemplate } from '@/types/mission';
+import { buildLivePeersPromptSection } from '@/utils/missionLiveBus';
 
 const NEXUS_BASE_INSTRUCTIONS = `Você está operando dentro do Nexus IDE como parte de uma Missão orquestrada.
 Siga estritamente o papel e o objetivo atribuídos.
@@ -89,6 +90,17 @@ export function buildMissionAgentPrompt(input: {
       `# Evidências do objetivo\nArquivos anexados à missão — use como evidência para o diagnóstico:\n${attachments
         .map((attachment) => `- ${attachment.name} (${attachment.path})`)
         .join('\n')}`,
+    );
+  }
+
+  const liveSection = buildLivePeersPromptSection(input.mission, input.node);
+  if (liveSection) {
+    sections.push(liveSection);
+  }
+
+  if ((input.node.runUntil ?? 'turn_end') === 'session') {
+    sections.push(
+      `# Modo sessão\nEste nó permanece ativo após cada turno. Continue disponível para follow-ups e peers Live até a missão pausar/cancelar ou você receber ordem explícita de encerrar.`,
     );
   }
 

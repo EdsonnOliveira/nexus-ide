@@ -1,5 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
+import { app } from 'electron';
 
 function getCliPathSegments(home: string): string[] {
   if (process.platform === 'win32') {
@@ -39,6 +40,11 @@ export function buildCliPathEnv(basePath?: string): string {
     if (segment) {
       segments.add(segment);
     }
+  }
+
+  try {
+    segments.add(path.join(app.getPath('userData'), 'mission-bridge'));
+  } catch {
   }
 
   for (const segment of getCliPathSegments(home)) {

@@ -22,7 +22,41 @@ export type MissionEdgeType =
   | 'parallel'
   | 'validation'
   | 'trigger'
-  | 'shared_discovery';
+  | 'shared_discovery'
+  | 'live';
+
+export type MissionNodeRunUntil = 'turn_end' | 'session';
+
+export type MissionDrawingKind = 'path' | 'arrow' | 'rect';
+
+export interface MissionDrawing {
+  id: string;
+  kind: MissionDrawingKind;
+  points: Array<{ x: number; y: number }>;
+  color?: string;
+  strokeWidth?: number;
+}
+
+export interface MissionFloor {
+  id: string;
+  name: string;
+  parentMissionId: string;
+  missionId: string;
+  worktreePath?: string | null;
+  worktreeBranch?: string | null;
+  createdAt: string;
+}
+
+export interface MissionCompanionEvent {
+  id: string;
+  missionId: string;
+  nodeId: string;
+  title: string;
+  summary: string;
+  nextStep?: string;
+  createdAt: string;
+  dismissedAt?: string;
+}
 
 export type MissionEdgeCondition =
   | 'on_success'
@@ -125,7 +159,9 @@ export type MissionNodeKind =
   | 'emulator'
   | 'terminal'
   | 'api'
-  | 'automation';
+  | 'automation'
+  | 'note'
+  | 'drawing';
 
 export type MissionAutomationConfigValue = string | number | boolean | null;
 
@@ -150,7 +186,7 @@ export interface MissionAgentNode {
   identity?: string;
   status: MissionNodeStatus;
   progress: number;
-  aiProvider?: 'cursor' | 'claude' | 'opencode' | 'antigravity';
+  aiProvider?: 'cursor' | 'claude' | 'codex' | 'opencode' | 'antigravity';
   model?: string;
   iteration: number;
   maxIterations: number;
@@ -173,6 +209,10 @@ export interface MissionAgentNode {
   transcriptTurns?: unknown[];
   transcriptFollowUps?: unknown[];
   transcriptCapturedAt?: string;
+  runUntil?: MissionNodeRunUntil;
+  noteContent?: string;
+  notePath?: string | null;
+  liveExpanded?: boolean;
 }
 
 export interface MissionEdge {
@@ -249,6 +289,11 @@ export interface Mission {
   startedAt?: string;
   completedAt?: string;
   viewport?: { x: number; y: number; zoom: number };
+  drawings?: MissionDrawing[];
+  floors?: MissionFloor[];
+  companionEnabled?: boolean;
+  companionEvents?: MissionCompanionEvent[];
+  activeFloorId?: string | null;
 }
 
 export interface AgentRole {
@@ -287,6 +332,8 @@ export interface MissionFlowTemplateNode {
   position: { x: number; y: number };
   size?: { width: number; height: number };
   automation?: MissionAutomationConfig;
+  runUntil?: MissionNodeRunUntil;
+  noteContent?: string;
 }
 
 export interface MissionFlowTemplateEdge {
@@ -305,6 +352,7 @@ export interface MissionFlowTemplate {
   description?: string;
   nodes: MissionFlowTemplateNode[];
   edges: MissionFlowTemplateEdge[];
+  drawings?: MissionDrawing[];
   createdAt: string;
   updatedAt: string;
 }

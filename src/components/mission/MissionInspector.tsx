@@ -1439,6 +1439,7 @@ function MissionInspectorComponent({
                 { value: 'validation', label: 'Validação' },
                 { value: 'trigger', label: 'Trigger' },
                 { value: 'shared_discovery', label: 'Descoberta compartilhada' },
+                { value: 'live', label: 'Live' },
               ]}
               onChange={(value) => {
                 void upsertEdge(mission.id, {
@@ -1590,6 +1591,23 @@ function MissionInspectorComponent({
               onPaste={handlePasteMissionImages}
               placeholder='O que a missão precisa entregar...'
             />
+          </div>
+          <div className='mission-inspector__section'>
+            <span className='mission-inspector__label'>Ombro</span>
+            <label className='mission-inspector__check-row'>
+              <AppCheckbox
+                checked={mission.companionEnabled !== false}
+                aria-label='Ombro ativo'
+                onChange={(checked) => {
+                  void updateMission(mission.id, { companionEnabled: checked });
+                }}
+              />
+              <span>Ombro ativo</span>
+            </label>
+            <p className='mission-inspector__hint'>
+              Mostra cards no canto com resumo do turno e próximo passo quando um agent termina. Não
+              substitui a inbox da missão.
+            </p>
           </div>
           <div className='mission-inspector__section'>
             <div className='mission-inspector__attachments-header'>
@@ -2053,6 +2071,26 @@ function MissionInspectorComponent({
                   }}
                   triggerClassName='mission-inspector__select'
                 />
+              </div>
+              <div className='mission-inspector__section'>
+                <label className='mission-inspector__label'>Execução</label>
+                <AnchoredSelect
+                  value={selectedNode.runUntil ?? 'turn_end'}
+                  options={[
+                    { value: 'turn_end', label: 'Até o fim do turno (DAG)' },
+                    { value: 'session', label: 'Sessão ao vivo (Maestri)' },
+                  ]}
+                  onChange={(value) => {
+                    void upsertNode(mission.id, {
+                      ...selectedNode,
+                      runUntil: value === 'session' ? 'session' : 'turn_end',
+                    });
+                  }}
+                  triggerClassName='mission-inspector__select'
+                />
+                <p className='mission-inspector__hint'>
+                  Sessão mantém o agent ativo após cada turno para conversar via arestas Live.
+                </p>
               </div>
               <div className='mission-inspector__section'>
                 <label className='mission-inspector__label'>Iteração</label>

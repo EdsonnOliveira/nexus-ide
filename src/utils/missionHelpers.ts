@@ -5,6 +5,7 @@ import { DEFAULT_HANDOFF_PAYLOAD } from '@/types/mission';
 import type {
   Mission,
   MissionAgentNode,
+  MissionDrawing,
   MissionEdge,
   MissionHandoffPayload,
   MissionNodeKind,
@@ -107,12 +108,20 @@ export function isMissionToolNode(node: Pick<MissionAgentNode, 'kind'>): boolean
   return kind === 'browser' || kind === 'emulator' || kind === 'terminal' || kind === 'api';
 }
 
+export function isMissionNoteNode(node: Pick<MissionAgentNode, 'kind'>): boolean {
+  return getMissionNodeKind(node) === 'note';
+}
+
+export function isMissionCanvasNode(node: Pick<MissionAgentNode, 'kind'>): boolean {
+  return isMissionToolNode(node) || isMissionNoteNode(node);
+}
+
 export function isMissionAutomationNode(node: Pick<MissionAgentNode, 'kind'>): boolean {
   return getMissionNodeKind(node) === 'automation';
 }
 
 export function isMissionDisplayNode(node: Pick<MissionAgentNode, 'kind'>): boolean {
-  return isMissionToolNode(node);
+  return isMissionToolNode(node) || isMissionNoteNode(node);
 }
 
 export function getMissionToolNodeLabel(
@@ -129,9 +138,17 @@ export function getMissionToolNodeLabel(
       return 'API Client';
     case 'automation':
       return 'Nó';
+    case 'note':
+      return 'Nota';
+    case 'drawing':
+      return 'Desenho';
     default:
       return 'Display Node';
   }
+}
+
+export function isNonBlockingMissionEdge(type: MissionEdge['type']): boolean {
+  return type === 'parallel' || type === 'live';
 }
 
 export function isMissionRootNode(node: Pick<MissionAgentNode, 'kind'>): boolean {
@@ -197,7 +214,7 @@ export function resolveMissionRootPosition(nodes: MissionAgentNode[]): { x: numb
 }
 
 export function createMissionToolNode(input: {
-  kind: Exclude<MissionNodeKind, 'agent' | 'automation' | 'mission'>;
+  kind: Exclude<MissionNodeKind, 'agent' | 'automation' | 'mission' | 'note' | 'drawing'>;
   projectId: string;
   paneId?: string | null;
   position?: { x: number; y: number };
@@ -218,6 +235,34 @@ export function createMissionToolNode(input: {
     size: input.size ?? {
       width: MISSION_TOOL_NODE_DEFAULT_WIDTH,
       height: MISSION_TOOL_NODE_DEFAULT_HEIGHT,
+    },
+  };
+}
+
+export const MISSION_NOTE_NODE_DEFAULT_WIDTH = 280;
+export const MISSION_NOTE_NODE_DEFAULT_HEIGHT = 220;
+
+export function createMissionNoteNode(input: {
+  projectId: string;
+  name?: string;
+  content?: string;
+  position?: { x: number; y: number };
+  size?: { width: number; height: number };
+}): MissionAgentNode {
+  return {
+    ...createMissionNode({
+      kind: 'note',
+      agentTemplateId: 'tpl-tool-note',
+      projectId: input.projectId,
+      roleId: 'role-custom',
+      name: input.name?.trim() || 'Nota',
+      objective: 'Nota compartilhada no canvas da missão.',
+      position: input.position,
+    }),
+    noteContent: input.content ?? '',
+    size: input.size ?? {
+      width: MISSION_NOTE_NODE_DEFAULT_WIDTH,
+      height: MISSION_NOTE_NODE_DEFAULT_HEIGHT,
     },
   };
 }
@@ -421,6 +466,8 @@ export function missionNodesToFlowTemplateNodes(
     identity: node.identity,
     position: { ...node.position },
     size: node.size ? { ...node.size } : undefined,
+    runUntil: node.runUntil,
+    noteContent: node.noteContent,
     automation: node.automation
       ? {
           ...node.automation,
@@ -498,6 +545,8 @@ export function instantiateFlowTemplate(input: {
       id: nextId,
       identity: node.identity,
       flowInstanceId,
+      runUntil: node.runUntil,
+      noteContent: node.noteContent,
       automation: node.automation
         ? {
             ...node.automation,
@@ -506,9 +555,14 @@ export function instantiateFlowTemplate(input: {
           }
         : undefined,
       size:
-        node.kind && node.kind !== 'agent' && node.kind !== 'automation'
-          ? getMissionToolNodeSize(node)
-          : node.size,
+        node.kind === 'note'
+          ? node.size ?? {
+              width: MISSION_NOTE_NODE_DEFAULT_WIDTH,
+              height: MISSION_NOTE_NODE_DEFAULT_HEIGHT,
+            }
+          : node.kind && node.kind !== 'agent' && node.kind !== 'automation'
+            ? getMissionToolNodeSize(node)
+            : node.size,
     };
   });
 
@@ -550,6 +604,8 @@ export function getMissionEdgeTypeLabel(type: MissionEdge['type']): string {
       return 'Trigger';
     case 'shared_discovery':
       return 'Descoberta compartilhada';
+    case 'live':
+      return 'Live';
     default:
       return type;
   }
@@ -569,6 +625,8 @@ export function getMissionEdgeTypeDescription(type: MissionEdge['type']): string
       return 'A origem dispara o destino como evento, sem necessariamente esperar sucesso.';
     case 'shared_discovery':
       return 'Compartilha descobertas/contexto encontrado pela origem com o destino.';
+    case 'live':
+      return 'Canal ao vivo: agents conversam no meio do turno sem esperar o fim do DAG.';
     default:
       return 'Define como os agents se relacionam nesta ligação.';
   }
@@ -678,4 +736,105 @@ export function canDeleteMissionNodeWithoutConfirm(nodeId: string): boolean {
   }
 
   return true;
+}
+
+export interface MissionFlowRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export function missionFlowRectsIntersect(a: MissionFlowRect, b: MissionFlowRect): boolean {
+  return (
+    a.x < b.x + b.width &&
+    a.x + a.width > b.x &&
+    a.y < b.y + b.height &&
+    a.y + a.height > b.y
+  );
+}
+
+export function getMissionFlowNodeRect(node: {
+  position: { x: number; y: number };
+  measured?: { width?: number; height?: number };
+  width?: number;
+  height?: number;
+  style?: { width?: number | string; height?: number | string };
+  data?: { isMissionRoot?: boolean };
+}): MissionFlowRect {
+  const parseSize = (value: number | string | undefined, fallback: number) => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const parsed = Number.parseFloat(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+    return fallback;
+  };
+
+  const isRoot = Boolean(node.data?.isMissionRoot);
+  const defaultWidth = isRoot ? MISSION_ROOT_NODE_SIZE : 248;
+  const defaultHeight = isRoot ? MISSION_ROOT_NODE_SIZE : 132;
+
+  const width = parseSize(
+    node.measured?.width ?? node.width ?? parseSize(node.style?.width, defaultWidth),
+    defaultWidth,
+  );
+  const height = parseSize(
+    node.measured?.height ?? node.height ?? parseSize(node.style?.height, defaultHeight),
+    defaultHeight,
+  );
+
+  return {
+    x: node.position.x,
+    y: node.position.y,
+    width,
+    height,
+  };
+}
+
+export function getMissionDrawingRect(drawing: MissionDrawing): MissionFlowRect {
+  if (drawing.points.length === 0) {
+    return { x: 0, y: 0, width: 0, height: 0 };
+  }
+
+  if (drawing.kind === 'rect' && drawing.points.length >= 2) {
+    const a = drawing.points[0];
+    const b = drawing.points[1];
+    return {
+      x: Math.min(a.x, b.x),
+      y: Math.min(a.y, b.y),
+      width: Math.abs(b.x - a.x),
+      height: Math.abs(b.y - a.y),
+    };
+  }
+
+  if (drawing.kind === 'arrow' && drawing.points.length >= 2) {
+    const a = drawing.points[0];
+    const b = drawing.points[1];
+    const padding = Math.max(drawing.strokeWidth ?? 2, 4);
+    return {
+      x: Math.min(a.x, b.x) - padding,
+      y: Math.min(a.y, b.y) - padding,
+      width: Math.abs(b.x - a.x) + padding * 2,
+      height: Math.abs(b.y - a.y) + padding * 2,
+    };
+  }
+
+  const xs = drawing.points.map((point) => point.x);
+  const ys = drawing.points.map((point) => point.y);
+  const padding = Math.max(drawing.strokeWidth ?? 2, 4);
+  const minX = Math.min(...xs) - padding;
+  const minY = Math.min(...ys) - padding;
+  const maxX = Math.max(...xs) + padding;
+  const maxY = Math.max(...ys) + padding;
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX,
+    height: maxY - minY,
+  };
 }

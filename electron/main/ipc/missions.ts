@@ -34,7 +34,8 @@ import {
   upsertMissionEdge,
   upsertMissionNode,
 } from '../services/missionStore';
-import { saveMissionPendingAttachmentFromDataUrl } from '../services/missionAttachments';
+import { saveMissionPendingAttachmentFromDataUrl, writeMissionNoteFile } from '../services/missionAttachments';
+import { ensureMissionLiveSkillInProject } from '../services/missionAgentBridge';
 
 const execAsync = promisify(exec);
 
@@ -295,4 +296,26 @@ export function registerMissionHandlers(): void {
       }
     },
   );
+
+  ipcMain.handle(
+    'missions:writeNoteFile',
+    async (_, missionId: unknown, nodeId: unknown, content: unknown) => {
+      if (
+        typeof missionId !== 'string' ||
+        typeof nodeId !== 'string' ||
+        typeof content !== 'string'
+      ) {
+        return { ok: false, error: 'invalid_args' };
+      }
+      return writeMissionNoteFile(missionId, nodeId, content);
+    },
+  );
+
+  ipcMain.handle('missions:ensureLiveSkill', (_, projectPath: unknown) => {
+    if (typeof projectPath !== 'string' || !projectPath.trim()) {
+      return false;
+    }
+    ensureMissionLiveSkillInProject(projectPath);
+    return true;
+  });
 }
