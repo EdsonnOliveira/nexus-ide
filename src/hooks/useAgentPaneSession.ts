@@ -6,6 +6,7 @@ import {
   isAgentSkillSlashCommand,
   resolveFollowUpAgentPrompt,
   resolveFollowUpEnqueueFields,
+  resolvePromptSkillAiProvider,
 } from '@/utils/agentSkillDisplay';
 import type { AutomationAgentMode } from '@/constants/agentModes';
 import type {
@@ -17,6 +18,7 @@ import type {
   AgentTab,
   AgentTurn,
   AgentUserMessage,
+  TerminalCommandHint,
 } from '@/types';
 import { registerAgentPaneHandlers, setAgentPaneLiveTranscript } from '@/utils/agentPaneRegistry';
 import { useTabActions } from '@/stores/useTabStore';
@@ -53,6 +55,7 @@ import {
   type AiProviderId,
 } from '@/constants/aiProviders';
 import {
+  formatAgentAiProviderCommand,
   isAgentSetupCommand,
   parseAgentAiProviderCommand,
   parseAgentModeCommand,
@@ -81,9 +84,11 @@ import {
   buildAgentPaneLaunchCommand,
   detectAgentLaunchErrorInTail,
   detectSmartModeApprovalInTail,
+  isStaleAgentSessionError,
   isStreamJsonAgentCli,
   resolveStreamJsonPromptPayload,
   resolveCursorAgentPrintMode,
+  sanitizeAgentCliError,
   sendAgentInterruptSequence,
 } from '@/utils/agentCliSession';
 import {
@@ -284,6 +289,19 @@ function sameCliAgent(left: string, right: string): boolean {
   return (extractCliAgentCommand(left) ?? left) === (extractCliAgentCommand(right) ?? right);
 }
 
+async function loadAgentSkillHints(cwd: string): Promise<TerminalCommandHint[]> {
+  try {
+    if (!window.nexus?.files?.getAgentSkillHints) {
+      return [];
+    }
+
+    const entries = await window.nexus.files.getAgentSkillHints(cwd);
+    return entries.filter((entry) => entry.hintKind === 'skill');
+  } catch {
+    return [];
+  }
+}
+
 function persistPaneAgentModel(paneId: string, modelId: string): void {
   const current = useTerminalSessionStore.getState().agentModelByPane[paneId];
 
@@ -312,10 +330,14 @@ function resolveStreamJsonModel(paneId: string, cliAgent: string): string | null
 }
 
 function createFailedPromptActivity(message?: string): AgentActivity {
+  const label = message
+    ? sanitizeAgentCliError(message) || 'Não foi possível enviar o prompt — tente novamente'
+    : 'Não foi possível enviar o prompt — tente novamente';
+
   return {
     id: crypto.randomUUID(),
     kind: 'status',
-    label: message ?? 'Não foi possível enviar o prompt — tente novamente',
+    label,
     createdAt: Date.now(),
   };
 }
@@ -407,9 +429,9 @@ export function useAgentPaneSession({
   const streamJsonIncompleteContinueRef = useRef(false);
   const streamJsonIncompleteContinueCountRef = useRef(0);
   const streamJsonDeferredStartTimerRef = useRef<number | null>(null);
-  const tryScheduleStreamJsonAutoRetryRef = useRef<(finishAgentPrintRun: () => void) => boolean>(
-    () => false,
-  );
+  const tryScheduleStreamJsonAutoRetryRef = useRef<
+    (finishAgentPrintRun: () => void, options?: { forceFreshSession?: boolean }) => boolean
+  >(() => false);
   const tryContinueIncompleteStreamJsonTurnRef = useRef<
     (finishAgentPrintRun: () => void) => boolean
   >(() => false);
@@ -1562,8 +1584,13 @@ export function useAgentPaneSession({
         }));
       }
 
-      if (streamUpdate.usage) {
-        syncContextUsageFromStreamJson(streamUpdate.usage);
+      const streamUsage = streamUpdate.usage;
+
+      if (streamUsage) {
+        syncContextUsageFromStreamJson(streamUsage);
+        updateActiveTurn((turn) =>
+          turn.usage === streamUsage ? turn : { ...turn, usage: streamUsage },
+        );
       }
 
       if (streamUpdate.shellToolEvents.length > 0) {
@@ -1601,7 +1628,11 @@ export function useAgentPaneSession({
   }, []);
 
   const startStreamJsonAgentRun = useCallback(
-    (prompt: string, imageRefs: string[], options?: { isAutoRetry?: boolean }) => {
+    (
+      prompt: string,
+      imageRefs: string[],
+      options?: { isAutoRetry?: boolean; forceFreshSession?: boolean },
+    ) => {
       const paneId = paneIdRef.current;
       const session = useTerminalSessionStore.getState();
       const currentMode = session.activeAgentModeByPane[paneId] ?? 'agent';
@@ -1618,6 +1649,16 @@ export function useAgentPaneSession({
         imageRefs,
         root,
       );
+      const forceFreshSession = Boolean(options?.forceFreshSession);
+
+      if (forceFreshSession) {
+        session.clearResumeChatId(paneId);
+        cursorAgentContinueRef.current = false;
+        turnsRef.current = turnsRef.current.map((turn) =>
+          turn.resumeChatId ? { ...turn, resumeChatId: null } : turn,
+        );
+      }
+
       const lastTurnResumeChatId =
         [...turnsRef.current]
           .reverse()
@@ -1633,12 +1674,13 @@ export function useAgentPaneSession({
         return false;
       }
 
-      if (modeChangedSinceLastPrint) {
+      if (modeChangedSinceLastPrint || forceFreshSession) {
         session.clearResumeChatId(paneId);
         cursorAgentContinueRef.current = false;
       }
 
-      const resumeChatId = modeChangedSinceLastPrint ? null : storedResumeChatId;
+      const resumeChatId =
+        modeChangedSinceLastPrint || forceFreshSession ? null : storedResumeChatId;
       const hasCompletedTurn = turnsRef.current.some(
         (turn) => !turn.running && !turn.pendingFollowUp,
       );
@@ -1684,6 +1726,7 @@ export function useAgentPaneSession({
         resumeChatId,
         attachmentPaths,
         continueSession:
+          !forceFreshSession &&
           !resumeChatId &&
           cursorAgentContinueRef.current &&
           hasCompletedTurn &&
@@ -1700,12 +1743,14 @@ export function useAgentPaneSession({
   );
 
   const tryScheduleStreamJsonAutoRetry = useCallback(
-    (finishAgentPrintRun: () => void): boolean => {
+    (finishAgentPrintRun: () => void, options?: { forceFreshSession?: boolean }): boolean => {
       if (streamJsonAutoRetryRef.current) {
         return false;
       }
 
-      if (hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current)) {
+      const forceFreshSession = Boolean(options?.forceFreshSession);
+
+      if (!forceFreshSession && hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current)) {
         return false;
       }
 
@@ -1726,6 +1771,18 @@ export function useAgentPaneSession({
         return false;
       }
 
+      if (forceFreshSession) {
+        const paneId = paneIdRef.current;
+        const session = useTerminalSessionStore.getState();
+        session.clearResumeChatId(paneId);
+        cursorAgentContinueRef.current = false;
+        updateActiveTurn((turn) => ({
+          ...turn,
+          resumeChatId: null,
+          activities: createInitialTurnActivities(),
+        }));
+      }
+
       streamJsonAutoRetryRef.current = true;
       finishAgentPrintRun();
       streamJsonStateRef.current = replaceAgentStreamJsonSession(paneIdRef.current);
@@ -1744,12 +1801,15 @@ export function useAgentPaneSession({
           return;
         }
 
-        startStreamJsonAgentRun(prompt, imageRefs, { isAutoRetry: true });
+        startStreamJsonAgentRun(prompt, imageRefs, {
+          isAutoRetry: true,
+          ...(forceFreshSession ? { forceFreshSession: true } : {}),
+        });
       }, STREAM_JSON_AUTO_RETRY_DELAY_MS);
 
       return true;
     },
-    [clearStreamJsonDeferredStart, startStreamJsonAgentRun],
+    [clearStreamJsonDeferredStart, startStreamJsonAgentRun, updateActiveTurn],
   );
   tryScheduleStreamJsonAutoRetryRef.current = tryScheduleStreamJsonAutoRetry;
 
@@ -2422,6 +2482,11 @@ export function useAgentPaneSession({
 
       const paneId = paneIdRef.current;
       const agentPrompt = resolveFollowUpAgentPrompt(item);
+
+      if (item.skillAiProvider) {
+        runCommand(formatAgentAiProviderCommand(item.skillAiProvider));
+      }
+
       const user = createUserMessage(
         item.content,
         item.attachments,
@@ -2532,6 +2597,7 @@ export function useAgentPaneSession({
       markStreamJsonTurnStarted,
       persistTurns,
       resetAgentReadyDetectors,
+      runCommand,
       startStreamJsonAgentRun,
       stopAgent,
       tab,
@@ -2592,7 +2658,11 @@ export function useAgentPaneSession({
   );
 
   const enqueueFollowUp = useCallback(
-    (content: string, attachments: AgentPromptAttachment[]): boolean => {
+    (
+      content: string,
+      attachments: AgentPromptAttachment[],
+      skillAiProvider?: Exclude<AiProviderId, 'nexus'> | null,
+    ): boolean => {
       const fields = resolveFollowUpEnqueueFields(content);
       const item: AgentFollowUp = {
         id: crypto.randomUUID(),
@@ -2602,6 +2672,7 @@ export function useAgentPaneSession({
         mode: resolvePaneAgentMode(paneIdRef.current),
         ...(fields.skillLabel ? { skillLabel: fields.skillLabel } : {}),
         ...(fields.agentPrompt ? { agentPrompt: fields.agentPrompt } : {}),
+        ...(skillAiProvider ? { skillAiProvider } : {}),
       };
 
       persistFollowUps([...followUpsRef.current, item]);
@@ -2664,12 +2735,14 @@ export function useAgentPaneSession({
         return false;
       }
 
+      const skillHints = await loadAgentSkillHints(agentRootPath);
+      const skillAiProvider = resolvePromptSkillAiProvider(trimmed, skillHints);
       const hasRunningTurn = turnsRef.current.some((turn) => turn.running);
       const editingTurnId = editingTurnIdRef.current;
 
       if (hasRunningTurn && !editingTurnId && !options?.forceNewTurn) {
         useTerminalPasteImageStore.getState().clearPaneImages(paneIdRef.current);
-        return enqueueFollowUp(trimmed, attachments);
+        return enqueueFollowUp(trimmed, attachments, skillAiProvider);
       }
 
       if (submitInFlightRef.current && !options?.forceNewTurn) {
@@ -2716,6 +2789,10 @@ export function useAgentPaneSession({
 
         if (shouldAbort()) {
           return false;
+        }
+
+        if (skillAiProvider) {
+          runCommand(formatAgentAiProviderCommand(skillAiProvider));
         }
 
         const composerReady = await waitForComposerAgentReady(shouldAbort);
@@ -2816,6 +2893,7 @@ export function useAgentPaneSession({
       }
     },
     [
+      agentRootPath,
       clearApprovalConfirmTimer,
       enqueueFollowUp,
       finalizeActiveTurn,
@@ -2823,6 +2901,7 @@ export function useAgentPaneSession({
       persistFollowUps,
       persistTurns,
       rollbackAgentFromTurn,
+      runCommand,
       sendPromptToPty,
       stopAgent,
       tab,
@@ -3757,6 +3836,21 @@ export function useAgentPaneSession({
         };
 
         applyStreamJsonChunk('');
+
+        const staleSessionError =
+          isStaleAgentSessionError(payload.error ?? '') ||
+          isStaleAgentSessionError(streamJsonStateRef.current.pendingResponseText) ||
+          streamJsonStateRef.current.activities.some((entry) =>
+            isStaleAgentSessionError(entry.label),
+          );
+
+        if (
+          staleSessionError &&
+          turnsRef.current.some((turn) => turn.running) &&
+          tryScheduleStreamJsonAutoRetry(finishAgentPrintRun, { forceFreshSession: true })
+        ) {
+          return;
+        }
 
         if (
           turnsRef.current.some((turn) => turn.running) &&

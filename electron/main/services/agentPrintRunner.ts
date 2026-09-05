@@ -104,6 +104,7 @@ function resolveExecutable(baseName: string, extraDirs: string[] = []): string {
   const localAppData = process.env.LOCALAPPDATA ?? '';
   const dirs = [
     path.join(home, '.local', 'bin'),
+    path.join(home, '.opencode', 'bin'),
     path.join(home, '.cursor', 'bin'),
     path.join(home, 'bin'),
     ...extraDirs,
@@ -700,6 +701,41 @@ class AgentPrintRunner {
         return;
       }
 
+      const stderr = stderrBuffer.trim();
+      const canRetryStaleSession =
+        !stdoutSeen &&
+        /session not found|conversation not found|thread not found|unknown session/i.test(stderr) &&
+        Boolean(options.resumeChatId?.trim() || options.continueSession);
+
+      if (canRetryStaleSession) {
+        closed = true;
+        this.clearWatchdog(options.paneId);
+        this.flushStdoutBatch(options.paneId);
+        this.clearStdoutBatch(options.paneId);
+
+        if (this.processes.get(options.paneId) === child) {
+          this.processes.delete(options.paneId);
+        }
+
+        writeDebugSessionLog({
+          location: 'agentPrintRunner.ts:close',
+          message: 'Retrying agent print without stale session',
+          data: {
+            paneId: options.paneId,
+            runToken,
+            stderrPreview: stderr.slice(0, 200),
+          },
+          hypothesisId: 'A',
+        });
+
+        this.start({
+          ...options,
+          resumeChatId: null,
+          continueSession: false,
+        });
+        return;
+      }
+
       closed = true;
       this.clearWatchdog(options.paneId);
       this.flushStdoutBatch(options.paneId);
@@ -711,7 +747,6 @@ class AgentPrintRunner {
 
       syncAgentRunningMarker(this.processes.size > 0);
 
-      const stderr = stderrBuffer.trim();
       const error =
         code !== 0 && stderr
           ? stderr

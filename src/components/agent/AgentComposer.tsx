@@ -11,10 +11,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowUp, BookOpen, File, Pencil, Square, X } from 'lucide-react';
-import {
-  AGENT_MODE_INPUT_PLACEHOLDERS,
-  getAgentModeOption,
-} from '@/constants/agentModes';
+import { AGENT_MODE_INPUT_PLACEHOLDERS, getAgentModeOption } from '@/constants/agentModes';
 import { AgentComposerModeChip } from '@/components/agent/AgentComposerModeChip';
 import { cycleAgentMode } from '@/utils/cycleAgentMode';
 import {
@@ -43,6 +40,7 @@ import { useCursorUsage } from '@/hooks/useCursorUsage';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useTerminalPasteImageStore } from '@/stores/useTerminalPasteImageStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
+import { cliAgentToAiProvider } from '@/constants/aiProviders';
 import { TERMINAL_AGENTS } from '@/constants/terminalAgents';
 import type { TerminalAgent } from '@/types';
 import { registerAgentPaneAttach } from '@/utils/agentPaneRegistry';
@@ -68,7 +66,8 @@ import {
   buildAgentPromptImageMentionInsertion,
 } from '@/utils/agentPromptImageBadge';
 import { isExternalFileDrag } from '@/utils/explorerExternalDrop';
-import { parseComposerSkillDraft } from '@/utils/agentSkillDisplay';
+import { parseComposerSkillDraft, resolvePromptSkillAiProvider } from '@/utils/agentSkillDisplay';
+import { formatAgentAiProviderCommand } from '@/utils/parseAgentModeCommand';
 import {
   applyComposerMention,
   type ComposerMentionMatch,
@@ -409,7 +408,9 @@ function AgentComposerComponent({
 }: AgentComposerProps) {
   const agentConfig = TERMINAL_AGENTS[terminalAgent];
   const interactionPending = questionPending;
-  const images = useTerminalPasteImageStore((state) => state.imagesByPane[paneId] ?? EMPTY_PASTE_IMAGES);
+  const images = useTerminalPasteImageStore(
+    (state) => state.imagesByPane[paneId] ?? EMPTY_PASTE_IMAGES,
+  );
   const removeImage = useTerminalPasteImageStore((state) => state.removeImage);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [caretIndex, setCaretIndex] = useState(0);
@@ -426,8 +427,11 @@ function AgentComposerComponent({
   );
   const activeModeOption = getAgentModeOption(activeMode);
   const modelHints = useAgentModelHints(paneId, projectPath, isVisible, cliAgent);
-  const { usage: cursorUsage, isLoading: cursorUsageLoading, refresh: refreshCursorUsage } =
-    useCursorUsage(isVisible);
+  const {
+    usage: cursorUsage,
+    isLoading: cursorUsageLoading,
+    refresh: refreshCursorUsage,
+  } = useCursorUsage(isVisible);
 
   useEffect(() => {
     if (!isVisible) {
@@ -447,14 +451,29 @@ function AgentComposerComponent({
     };
   }, [isVisible, projectPath]);
 
-  const skillDraft = useMemo(
-    () => parseComposerSkillDraft(draft, skillHints),
-    [draft, skillHints],
-  );
+  const skillDraft = useMemo(() => parseComposerSkillDraft(draft, skillHints), [draft, skillHints]);
   const composerInputValue = skillDraft.hasSkill ? skillDraft.body : draft;
-  const mentionCaretIndex = skillDraft.hasSkill
-    ? skillDraft.prefixLength + caretIndex
-    : caretIndex;
+  const mentionCaretIndex = skillDraft.hasSkill ? skillDraft.prefixLength + caretIndex : caretIndex;
+
+  useEffect(() => {
+    if (isBusy || isSubmitting || isEditing) {
+      return;
+    }
+
+    const skillAiProvider = resolvePromptSkillAiProvider(draft, skillHints);
+
+    if (!skillAiProvider) {
+      return;
+    }
+
+    const currentProvider = cliAgentToAiProvider(cliAgent ?? '');
+
+    if (skillAiProvider === currentProvider) {
+      return;
+    }
+
+    onRunCommand(formatAgentAiProviderCommand(skillAiProvider));
+  }, [cliAgent, draft, isBusy, isEditing, isSubmitting, onRunCommand, skillHints]);
 
   const mention = useAgentComposerMention({
     draft,
@@ -621,7 +640,15 @@ function AgentComposerComponent({
         syncComposerInputScroll();
       });
     },
-    [draft, inputRef, onDraftChange, skillDraft.body, skillDraft.hasSkill, skillDraft.skillCommand, syncComposerInputScroll],
+    [
+      draft,
+      inputRef,
+      onDraftChange,
+      skillDraft.body,
+      skillDraft.hasSkill,
+      skillDraft.skillCommand,
+      syncComposerInputScroll,
+    ],
   );
 
   const insertMultipleImageMentions = useCallback(
@@ -642,9 +669,7 @@ function AgentComposerComponent({
       const before = bodyValue.slice(0, selectionStart);
       const after = bodyValue.slice(selectionEnd);
       const needsNewlineBefore = before.length > 0 && !/\n$/.test(before);
-      const block = imageNumbers
-        .map((n) => `${buildAgentPromptImageMention(n)} = `)
-        .join('\n');
+      const block = imageNumbers.map((n) => `${buildAgentPromptImageMention(n)} = `).join('\n');
       const insertion = `${needsNewlineBefore ? '\n' : ''}${block}\n`;
       const currentDraft = `${before}${insertion}${after}`;
       const currentCaret = selectionStart + insertion.length;
@@ -669,7 +694,16 @@ function AgentComposerComponent({
         syncComposerInputScroll();
       });
     },
-    [draft, inputRef, insertImageMention, onDraftChange, skillDraft.body, skillDraft.hasSkill, skillDraft.skillCommand, syncComposerInputScroll],
+    [
+      draft,
+      inputRef,
+      insertImageMention,
+      onDraftChange,
+      skillDraft.body,
+      skillDraft.hasSkill,
+      skillDraft.skillCommand,
+      syncComposerInputScroll,
+    ],
   );
 
   const attachImageWithMention = useCallback(
@@ -992,7 +1026,14 @@ function AgentComposerComponent({
         }
       }
     })();
-  }, [draft, images.length, interactionPending, onDraftChange, onSubmit, resetPromptHistoryNavigation]);
+  }, [
+    draft,
+    images.length,
+    interactionPending,
+    onDraftChange,
+    onSubmit,
+    resetPromptHistoryNavigation,
+  ]);
 
   const handleModeChange = useCallback(
     (mode: typeof activeMode) => {
@@ -1408,9 +1449,7 @@ function AgentComposerComponent({
                 onRefresh={() => void refreshCursorUsage(true)}
                 onRequestComposerFocus={() => inputRef.current?.focus({ preventScroll: true })}
               />
-              {showWaitingStatus ? (
-                <AgentLiveStatus label={waitingLabel} />
-              ) : null}
+              {showWaitingStatus ? <AgentLiveStatus label={waitingLabel} /> : null}
             </div>
             <div className='agent-view__composer-bar-actions'>
               <button
@@ -1456,7 +1495,10 @@ function AgentComposerComponent({
           )
         : null}
       {previewUrl ? (
-        <AnimatedModal panelClassName='terminal-paste-image-lightbox' onClose={() => setPreviewUrl(null)}>
+        <AnimatedModal
+          panelClassName='terminal-paste-image-lightbox'
+          onClose={() => setPreviewUrl(null)}
+        >
           {(requestClose) => (
             <button
               type='button'
@@ -1502,9 +1544,7 @@ export async function handleAgentComposerDrop(
     if (imageNumbers.length === 1) {
       mentionDraft = buildAgentPromptImageMentionAppendFragment('', imageNumbers[0]!);
     } else if (imageNumbers.length > 1) {
-      mentionDraft = imageNumbers
-        .map((n) => `${buildAgentPromptImageMention(n)} = `)
-        .join('\n');
+      mentionDraft = imageNumbers.map((n) => `${buildAgentPromptImageMention(n)} = `).join('\n');
       mentionDraft = `${mentionDraft}\n`;
     }
 

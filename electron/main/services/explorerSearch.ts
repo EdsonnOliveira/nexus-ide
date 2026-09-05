@@ -1,6 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import path from 'node:path';
-import { rgPath } from '@vscode/ripgrep';
 import { listDirectoryEntries, type DirectoryEntry } from './directoryListing';
 
 export interface ExplorerSearchOptions {
@@ -46,6 +45,22 @@ const MAX_TOTAL_LINE_MATCHES = 400;
 
 let contentSearchGeneration = 0;
 let activeContentSearch: ChildProcessWithoutNullStreams | null = null;
+let resolvedRgPath: string | null | undefined;
+
+async function getRipgrepPath(): Promise<string | null> {
+  if (resolvedRgPath !== undefined) {
+    return resolvedRgPath;
+  }
+
+  try {
+    const ripgrep = await import('@vscode/ripgrep');
+    resolvedRgPath = ripgrep.rgPath || null;
+  } catch {
+    resolvedRgPath = null;
+  }
+
+  return resolvedRgPath;
+}
 
 interface RipgrepSubmatch {
   match: { text: string };
@@ -373,15 +388,16 @@ function normalizePreviewText(text: string): string {
   return text.replace(/\r?\n$/, '');
 }
 
-function searchProjectContent(
+async function searchProjectContent(
   rootPath: string,
   query: string,
   options: ExplorerSearchOptions,
 ): Promise<Map<string, ExplorerSearchLineMatch[]>> {
   const args = buildRipgrepArgs(rootPath, query, options);
+  const rgPath = await getRipgrepPath();
 
-  if (!args) {
-    return Promise.resolve(new Map());
+  if (!args || !rgPath) {
+    return new Map();
   }
 
   const generation = contentSearchGeneration + 1;

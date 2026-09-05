@@ -16,6 +16,7 @@ import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
 import { findGitFlatChangeByPath, gitChangePathsMatch } from '@/utils/gitPaths';
 import { schedulePersistAgentGitGroups } from '@/utils/persistAgentGitGroups';
 import { sanitizeAgentPrompt } from '@/utils/terminalShellPrompt';
+import { isAgentTurnNoiseFile } from '@/utils/agentTurnSummary';
 
 interface PendingAgentGitTurn {
   prompt: string;
@@ -129,13 +130,19 @@ function appendGroup(
   };
 }
 
+function excludeNoiseGitFiles(files: GitFlatChange[]): GitFlatChange[] {
+  return files.filter((file) => !isAgentTurnNoiseFile(file.path));
+}
+
 function createGroupFromDelta(
   paneId: string,
   projectId: string,
   prompt: string,
   delta: GitSnapshotDelta,
 ): AgentGitChangeGroup | null {
-  if (delta.fileCount === 0) {
+  const files = excludeNoiseGitFiles(delta.files);
+
+  if (files.length === 0) {
     return null;
   }
 
@@ -144,9 +151,9 @@ function createGroupFromDelta(
     paneId,
     projectId,
     prompt: sanitizeAgentPrompt(prompt),
-    files: delta.files,
-    additions: delta.additions,
-    deletions: delta.deletions,
+    files,
+    additions: files.reduce((sum, file) => sum + file.additions, 0),
+    deletions: files.reduce((sum, file) => sum + file.deletions, 0),
     completedAt: Date.now(),
   };
 }

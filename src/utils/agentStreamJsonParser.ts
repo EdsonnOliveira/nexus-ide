@@ -397,28 +397,68 @@ function extractThinkingDelta(event: Record<string, unknown>): string {
   return extractThinkingFromMessage(event);
 }
 
+function readSessionIdValue(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function extractSessionIdFromRecord(
+  record: Record<string, unknown> | null | undefined,
+): string | null {
+  if (!record) {
+    return null;
+  }
+
+  return (
+    readSessionIdValue(record.sessionID) ||
+    readSessionIdValue(record.sessionId) ||
+    readSessionIdValue(record.session_id)
+  );
+}
+
 function extractSessionId(event: Record<string, unknown>): string | null {
-  if (typeof event.thread_id === 'string' && event.thread_id.trim()) {
-    return event.thread_id;
+  const part =
+    event.part && typeof event.part === 'object' ? (event.part as Record<string, unknown>) : null;
+  const session =
+    event.session && typeof event.session === 'object'
+      ? (event.session as Record<string, unknown>)
+      : null;
+  const properties =
+    event.properties && typeof event.properties === 'object'
+      ? (event.properties as Record<string, unknown>)
+      : null;
+  const info =
+    properties?.info && typeof properties.info === 'object'
+      ? (properties.info as Record<string, unknown>)
+      : null;
+  const fromFields =
+    extractSessionIdFromRecord(event) ||
+    extractSessionIdFromRecord(part) ||
+    extractSessionIdFromRecord(session) ||
+    readSessionIdValue(session?.id);
+
+  if (fromFields) {
+    return fromFields;
   }
 
-  if (typeof event.conversation_id === 'string' && event.conversation_id.trim()) {
-    return event.conversation_id;
+  const type = typeof event.type === 'string' ? event.type : '';
+  const infoId = readSessionIdValue(info?.id);
+
+  if (
+    infoId &&
+    (infoId.startsWith('ses_') ||
+      type === 'session.created' ||
+      type === 'session.updated' ||
+      type === 'session.idle')
+  ) {
+    return infoId;
   }
 
-  if (typeof event.session_id === 'string' && event.session_id.trim()) {
-    return event.session_id;
-  }
-
-  if (typeof event.sessionId === 'string' && event.sessionId.trim()) {
-    return event.sessionId;
-  }
-
-  if (typeof event.sessionID === 'string' && event.sessionID.trim()) {
-    return event.sessionID;
-  }
-
-  return null;
+  return readSessionIdValue(event.conversation_id) || readSessionIdValue(event.thread_id);
 }
 
 function extractAssistantText(message: unknown): string {
@@ -528,7 +568,34 @@ function appendThoughtDelta(currentLabel: string, delta: string): string {
     : combined;
 }
 
-function upsertThought(state: AgentStreamJsonParserState, delta: string): void {
+function isOpenCodeReasoningPartType(value: unknown): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const type = value.toLowerCase();
+  return type === 'reasoning' || type === 'thinking';
+}
+
+function isOpenCodePartCompleted(part: Record<string, unknown> | null): boolean {
+  if (!part) {
+    return false;
+  }
+
+  const time = part.time;
+
+  if (!time || typeof time !== 'object') {
+    return false;
+  }
+
+  return Boolean((time as { end?: unknown }).end);
+}
+
+function upsertThought(
+  state: AgentStreamJsonParserState,
+  delta: string,
+  mode: 'delta' | 'snapshot' = 'delta',
+): void {
   if (!delta) {
     return;
   }
@@ -541,11 +608,15 @@ function upsertThought(state: AgentStreamJsonParserState, delta: string): void {
     state.thoughtId = streamingThought.id;
     state.thoughtStartedAt = state.thoughtSessionStartedAt ?? streamingThought.createdAt;
     state.thoughtSessionStartedAt = state.thoughtSessionStartedAt ?? streamingThought.createdAt;
+    const nextLabel =
+      mode === 'snapshot'
+        ? mergeAssistantSnapshot(streamingThought.label, delta)
+        : appendThoughtDelta(streamingThought.label, delta);
     state.activities = state.activities.map((entry) =>
       entry.id === streamingThought.id
         ? {
             ...entry,
-            label: appendThoughtDelta(entry.label, delta),
+            label: nextLabel,
             collapsed: false,
           }
         : entry,
@@ -2236,42 +2307,247 @@ function handleToolCallStarted(state: AgentStreamJsonParserState, toolCall: unkn
   }
 }
 
+function readTokenCount(...values: unknown[]): number {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      return value;
+    }
+  }
+
+  return 0;
+}
+
 function parseUsage(raw: unknown): AgentStreamJsonUsage | null {
   if (!raw || typeof raw !== 'object') {
     return null;
   }
 
   const usage = raw as Record<string, unknown>;
-  const inputTokens =
-    typeof usage.inputTokens === 'number'
-      ? usage.inputTokens
-      : typeof usage.input_tokens === 'number'
-        ? usage.input_tokens
-        : 0;
+
+  if (usage.tokens && typeof usage.tokens === 'object' && usage.tokens !== raw) {
+    const nested = parseUsage(usage.tokens);
+
+    if (nested) {
+      return nested;
+    }
+  }
+
+  const cache =
+    usage.cache && typeof usage.cache === 'object'
+      ? (usage.cache as Record<string, unknown>)
+      : null;
+  const inputTokens = readTokenCount(
+    usage.inputTokens,
+    usage.input_tokens,
+    usage.input,
+    usage.prompt_tokens,
+  );
   const outputTokens =
-    typeof usage.outputTokens === 'number'
-      ? usage.outputTokens
-      : typeof usage.output_tokens === 'number'
-        ? usage.output_tokens
-        : 0;
-  const cacheReadTokens =
-    typeof usage.cacheReadTokens === 'number'
-      ? usage.cacheReadTokens
-      : typeof usage.cache_read_tokens === 'number'
-        ? usage.cache_read_tokens
-        : 0;
-  const cacheWriteTokens =
-    typeof usage.cacheWriteTokens === 'number'
-      ? usage.cacheWriteTokens
-      : typeof usage.cache_write_tokens === 'number'
-        ? usage.cache_write_tokens
-        : 0;
+    readTokenCount(usage.outputTokens, usage.output_tokens, usage.output, usage.completion_tokens) +
+    readTokenCount(usage.reasoning, usage.reasoning_tokens);
+  const cacheReadTokens = readTokenCount(
+    usage.cacheReadTokens,
+    usage.cache_read_tokens,
+    usage.cache_read_input_tokens,
+    cache?.read,
+  );
+  const cacheWriteTokens = readTokenCount(
+    usage.cacheWriteTokens,
+    usage.cache_write_tokens,
+    usage.cache_creation_input_tokens,
+    cache?.write,
+  );
 
   if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0) {
     return null;
   }
 
   return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
+}
+
+function readToolFilePath(input: Record<string, unknown> | undefined): string {
+  if (!input) {
+    return '';
+  }
+
+  for (const key of ['path', 'filePath', 'file_path', 'filename', 'file']) {
+    const value = input[key];
+
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return '';
+}
+
+function countTextLines(value: unknown): number {
+  if (typeof value !== 'string' || !value) {
+    return 0;
+  }
+
+  return value.split('\n').length;
+}
+
+function resolveToolEditLineDelta(input: Record<string, unknown> | undefined): {
+  additions: number;
+  deletions: number;
+} {
+  if (!input) {
+    return { additions: 0, deletions: 0 };
+  }
+
+  const oldString =
+    typeof input.oldString === 'string'
+      ? input.oldString
+      : typeof input.old_string === 'string'
+        ? input.old_string
+        : '';
+  const newString =
+    typeof input.newString === 'string'
+      ? input.newString
+      : typeof input.new_string === 'string'
+        ? input.new_string
+        : typeof input.content === 'string'
+          ? input.content
+          : '';
+
+  if (oldString || newString) {
+    return {
+      additions: countTextLines(newString),
+      deletions: countTextLines(oldString),
+    };
+  }
+
+  return { additions: 0, deletions: 0 };
+}
+
+function collectToolEditPaths(input: Record<string, unknown> | undefined): string[] {
+  const paths: string[] = [];
+  const primary = readToolFilePath(input);
+
+  if (primary) {
+    paths.push(primary);
+  }
+
+  const edits = input?.edits;
+
+  if (Array.isArray(edits)) {
+    for (const edit of edits) {
+      if (!edit || typeof edit !== 'object') {
+        continue;
+      }
+
+      const path = readToolFilePath(edit as Record<string, unknown>);
+
+      if (path) {
+        paths.push(path);
+      }
+    }
+  }
+
+  return [...new Set(paths)];
+}
+
+function isCliFileEditTool(toolName: string): boolean {
+  return (
+    toolName === 'write' ||
+    toolName === 'edit' ||
+    toolName === 'multiedit' ||
+    toolName === 'strreplace' ||
+    toolName === 'str_replace' ||
+    toolName === 'apply_patch' ||
+    toolName === 'write_to_file' ||
+    toolName === 'edit_file' ||
+    toolName === 'replace_file_content' ||
+    toolName === 'notebookedit' ||
+    toolName === 'notebook_edit'
+  );
+}
+
+function applyCliFileEditTool(
+  state: AgentStreamJsonParserState,
+  toolName: string,
+  input: Record<string, unknown> | undefined,
+): boolean {
+  const paths = collectToolEditPaths(input);
+
+  if (paths.length === 0) {
+    return false;
+  }
+
+  const delta = resolveToolEditLineDelta(input);
+  const isWrite = toolName.includes('write');
+
+  for (const filePath of paths) {
+    const label = isWrite
+      ? `Writing ${basenamePath(filePath)}`
+      : `Editing ${basenamePath(filePath)}`;
+    startToolRun(state, label, { filePath });
+    upsertFileEdit(state, filePath, delta.additions, delta.deletions);
+    completeToolRun(state);
+  }
+
+  return true;
+}
+
+function handleAssistantMessageTools(state: AgentStreamJsonParserState, message: unknown): void {
+  if (!message || typeof message !== 'object') {
+    return;
+  }
+
+  const content = (message as { content?: unknown }).content;
+
+  if (!Array.isArray(content)) {
+    return;
+  }
+
+  for (const part of content) {
+    if (!part || typeof part !== 'object') {
+      continue;
+    }
+
+    const entry = part as Record<string, unknown>;
+    const partType = typeof entry.type === 'string' ? entry.type.toLowerCase() : '';
+
+    if (partType !== 'tool_use' && partType !== 'tool_call') {
+      continue;
+    }
+
+    const toolName = (
+      typeof entry.name === 'string' ? entry.name : typeof entry.tool === 'string' ? entry.tool : ''
+    ).toLowerCase();
+    const input =
+      entry.input && typeof entry.input === 'object'
+        ? (entry.input as Record<string, unknown>)
+        : entry.arguments && typeof entry.arguments === 'object'
+          ? (entry.arguments as Record<string, unknown>)
+          : undefined;
+
+    if (toolName === 'read' || toolName === 'read_file' || toolName === 'readfile') {
+      const filePath = readToolFilePath(input);
+
+      if (filePath) {
+        captureResponseLeadBeforeTools(state);
+        sealActiveResponseSegment(state);
+        settleThought(state);
+        startToolRun(state, `Reading ${basenamePath(filePath)}`, { filePath });
+        upsertFileRead(state, filePath);
+        completeToolRun(state);
+      }
+
+      continue;
+    }
+
+    if (!isCliFileEditTool(toolName)) {
+      continue;
+    }
+
+    captureResponseLeadBeforeTools(state);
+    sealActiveResponseSegment(state);
+    settleThought(state);
+    applyCliFileEditTool(state, toolName, input);
+  }
 }
 
 function extractOpenCodePart(event: Record<string, unknown>): Record<string, unknown> | null {
@@ -2337,23 +2613,8 @@ function handleOpenCodeToolUse(
     return;
   }
 
-  if (tool === 'write' || tool === 'edit') {
-    const filePath =
-      typeof input?.path === 'string'
-        ? input.path
-        : typeof input?.filePath === 'string'
-          ? input.filePath
-          : '';
-
-    if (filePath) {
-      const label =
-        tool === 'write'
-          ? `Writing ${basenamePath(filePath)}`
-          : `Editing ${basenamePath(filePath)}`;
-      startToolRun(state, label, { filePath });
-      completeToolRun(state);
-    }
-
+  if (tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'strreplace') {
+    applyCliFileEditTool(state, tool, input);
     return;
   }
 
@@ -2505,23 +2766,12 @@ function handleAntigravityToolStep(
     return;
   }
 
-  if (toolName === 'write_to_file' || toolName === 'edit_file') {
-    const filePath =
-      typeof parameters?.path === 'string'
-        ? parameters.path
-        : typeof parameters?.file_path === 'string'
-          ? parameters.file_path
-          : '';
-    const label =
-      toolName === 'write_to_file'
-        ? `Writing ${basenamePath(filePath)}`
-        : `Editing ${basenamePath(filePath)}`;
-
-    if (filePath) {
-      startToolRun(state, label, { filePath });
-      completeToolRun(state);
-    }
-
+  if (
+    toolName === 'write_to_file' ||
+    toolName === 'edit_file' ||
+    toolName === 'replace_file_content'
+  ) {
+    applyCliFileEditTool(state, toolName, parameters);
     return;
   }
 
@@ -2962,6 +3212,12 @@ function handleStreamJsonEvent(
   state: AgentStreamJsonParserState,
   event: Record<string, unknown>,
 ): void {
+  const sessionId = extractSessionId(event);
+
+  if (sessionId) {
+    state.sessionId = sessionId;
+  }
+
   const antigravityEvent = typeof event.event === 'string' ? event.event : '';
 
   if (antigravityEvent) {
@@ -2986,12 +3242,41 @@ function handleStreamJsonEvent(
     return;
   }
 
+  if (type === 'part_delta') {
+    const partType = typeof event.partType === 'string' ? event.partType : '';
+    const delta = typeof event.delta === 'string' ? event.delta : '';
+
+    if (!delta) {
+      return;
+    }
+
+    if (isOpenCodeReasoningPartType(partType)) {
+      upsertThought(state, delta);
+      return;
+    }
+
+    if (partType.toLowerCase() === 'text') {
+      upsertResponse(state, delta, 'delta');
+    }
+
+    return;
+  }
+
   if (type === 'thinking' || type === 'reasoning') {
     const openCodePart = extractOpenCodePart(event);
     const openCodeText = typeof openCodePart?.text === 'string' ? openCodePart.text : '';
 
     if (openCodeText) {
-      upsertThought(state, openCodeText);
+      upsertThought(state, openCodeText, 'snapshot');
+
+      if (
+        isOpenCodePartCompleted(openCodePart) ||
+        event.subtype === 'completed' ||
+        event.subtype === 'end'
+      ) {
+        settleThought(state);
+      }
+
       return;
     }
 
@@ -3038,6 +3323,8 @@ function handleStreamJsonEvent(
   }
 
   if (type === 'assistant') {
+    handleAssistantMessageTools(state, event.message);
+
     const thinkingText = extractThinkingFromMessage(event.message);
 
     if (thinkingText) {
@@ -3072,7 +3359,9 @@ function handleStreamJsonEvent(
       state.sessionId = resultSessionId;
     }
 
-    const usage = parseUsage(event.usage);
+    const usage =
+      parseUsage(event.usage) ??
+      parseUsage((event.message as Record<string, unknown> | undefined)?.usage);
 
     if (usage) {
       state.pendingUsage = usage;
@@ -3122,7 +3411,30 @@ function handleStreamJsonEvent(
 
   if (type === 'text') {
     const part = extractOpenCodePart(event);
+    const partType = typeof part?.type === 'string' ? part.type : '';
     const text = typeof part?.text === 'string' ? part.text.trim() : '';
+
+    if (isOpenCodeReasoningPartType(partType)) {
+      if (text) {
+        upsertThought(state, text, 'snapshot');
+      }
+
+      if (
+        isOpenCodePartCompleted(part) ||
+        event.subtype === 'completed' ||
+        event.subtype === 'end'
+      ) {
+        settleThought(state);
+      }
+
+      const reasoningSessionId = extractSessionId(event);
+
+      if (reasoningSessionId) {
+        state.sessionId = reasoningSessionId;
+      }
+
+      return;
+    }
 
     if (text) {
       upsertResponse(state, text, 'final');
@@ -3139,6 +3451,12 @@ function handleStreamJsonEvent(
 
   if (type === 'step_finish') {
     const part = extractOpenCodePart(event);
+    const usage = parseUsage(part) ?? parseUsage(event.usage) ?? parseUsage(event.tokens);
+
+    if (usage) {
+      state.pendingUsage = usage;
+    }
+
     const reason = typeof part?.reason === 'string' ? part.reason : '';
 
     if (reason === 'stop') {
@@ -3148,7 +3466,7 @@ function handleStreamJsonEvent(
     return;
   }
 
-  if (type === 'error') {
+  if (type === 'error' || type === 'session.error') {
     const errorPayload = event.error as Record<string, unknown> | undefined;
     const errorData = errorPayload?.data as Record<string, unknown> | undefined;
     const message =
@@ -3156,7 +3474,9 @@ function handleStreamJsonEvent(
         ? errorData.message
         : typeof errorPayload?.message === 'string'
           ? errorPayload.message
-          : 'Erro no agent.';
+          : typeof event.message === 'string'
+            ? event.message
+            : 'Erro no agent.';
 
     upsertResponse(state, message, 'final');
     markStreamJsonTerminalResult(state, message);

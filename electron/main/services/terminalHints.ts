@@ -25,6 +25,7 @@ export interface TerminalCommandHint {
   command: string;
   hintKind?: 'skill' | 'mode' | 'model';
   skillOrigin?: 'user' | 'builtin';
+  skillAiProvider?: 'cursor' | 'claude' | 'codex' | 'opencode' | 'antigravity';
 }
 
 interface PackageJson {
@@ -185,7 +186,11 @@ function buildCliAgentHints(seen: Set<string>): TerminalCommandHint[] {
   return hints;
 }
 
-function buildNodeProjectHints(root: string, pm: PackageManager, seen: Set<string>): TerminalCommandHint[] {
+function buildNodeProjectHints(
+  root: string,
+  pm: PackageManager,
+  seen: Set<string>,
+): TerminalCommandHint[] {
   const pkg = readPackageJson(root);
 
   if (!pkg) {
@@ -195,11 +200,10 @@ function buildNodeProjectHints(root: string, pm: PackageManager, seen: Set<strin
   const hints: TerminalCommandHint[] = [];
   const scripts = pkg.scripts ?? {};
   const isNext =
-    hasDep(pkg, 'next') ||
-    hasFile(root, ['next.config.js', 'next.config.mjs', 'next.config.ts']);
-  const isExpo = hasDep(pkg, 'expo') || hasFile(root, ['app.json', 'app.config.js', 'app.config.ts']);
-  const isReactNative =
-    hasDep(pkg, 'react-native') && hasFile(root, ['android', 'ios']) && !isExpo;
+    hasDep(pkg, 'next') || hasFile(root, ['next.config.js', 'next.config.mjs', 'next.config.ts']);
+  const isExpo =
+    hasDep(pkg, 'expo') || hasFile(root, ['app.json', 'app.config.js', 'app.config.ts']);
+  const isReactNative = hasDep(pkg, 'react-native') && hasFile(root, ['android', 'ios']) && !isExpo;
   const isVite =
     hasDep(pkg, 'vite') || hasFile(root, ['vite.config.js', 'vite.config.mts', 'vite.config.ts']);
   const isNuxt = hasDep(pkg, 'nuxt') || hasFile(root, ['nuxt.config.js', 'nuxt.config.ts']);
@@ -564,9 +568,12 @@ function buildPythonHints(root: string, seen: Set<string>): TerminalCommandHint[
 }
 
 function buildDockerHints(root: string, seen: Set<string>): TerminalCommandHint[] {
-  const composeFile = ['docker-compose.yml', 'docker-compose.yaml', 'compose.yml', 'compose.yaml'].find(
-    (name) => existsSync(path.join(root, name)),
-  );
+  const composeFile = [
+    'docker-compose.yml',
+    'docker-compose.yaml',
+    'compose.yml',
+    'compose.yaml',
+  ].find((name) => existsSync(path.join(root, name)));
 
   if (!composeFile) {
     return [];

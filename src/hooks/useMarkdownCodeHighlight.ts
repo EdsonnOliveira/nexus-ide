@@ -4,11 +4,16 @@ import {
   hydrateMarkdownImageHtml,
   resolveDesktopMarkdownImage,
 } from '@/utils/hydrateMarkdownImages';
-import { renderMarkdownPreview } from '@/utils/markdownPreview';
+import { renderMarkdownPreview, type MarkdownPreviewOptions } from '@/utils/markdownPreview';
 import { normalizeMarkdownSource } from '@/utils/markdownText';
 
-export function useDeferredMarkdownHtml(source: string, imageBaseDir?: string): string {
+export function useDeferredMarkdownHtml(
+  source: string,
+  imageBaseDir?: string,
+  options?: MarkdownPreviewOptions,
+): string {
   const normalized = useMemo(() => normalizeMarkdownSource(source), [source]);
+  const detectImplicitCode = options?.detectImplicitCode !== false;
   const [html, setHtml] = useState('');
   const lastRenderRef = useRef(0);
 
@@ -34,7 +39,9 @@ export function useDeferredMarkdownHtml(source: string, imageBaseDir?: string): 
           }
 
           lastRenderRef.current = Date.now();
-          const rendered = renderMarkdownPreview(normalized, imageBaseDir);
+          const rendered = renderMarkdownPreview(normalized, imageBaseDir, {
+            detectImplicitCode,
+          });
           setHtml(rendered);
 
           void hydrateMarkdownImageHtml(
@@ -71,7 +78,7 @@ export function useDeferredMarkdownHtml(source: string, imageBaseDir?: string): 
         window.clearTimeout(timeoutId);
       }
     };
-  }, [normalized, imageBaseDir]);
+  }, [normalized, imageBaseDir, detectImplicitCode]);
 
   return html;
 }

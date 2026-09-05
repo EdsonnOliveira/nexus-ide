@@ -65,6 +65,7 @@ import { registerDebugSessionHandlers } from './ipc/debugSession';
 import { registerSystemStatusHandlers } from './ipc/systemStatus';
 import { registerSystemNotificationsHandlers } from './ipc/systemNotifications';
 import { registerCloudHandlers } from './ipc/cloud';
+import { registerCliSetupHandlers } from './ipc/cliSetup';
 import {
   bindAgentPipMainWindow,
   configureAgentPipWindow,
@@ -1261,6 +1262,7 @@ app.whenReady().then(() => {
   registerCalendarHandlers();
   registerMacParakeetHandlers();
   registerJarvisHandlers();
+  registerCliSetupHandlers();
   registerVercelHandlers();
   registerRenderHandlers();
   registerCursorUsageHandlers();

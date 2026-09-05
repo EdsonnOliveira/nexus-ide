@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { bridge } from '../lib/supabase';
 import { waitForCommandResult } from './webCommandResult';
+import { isWebAskAiProviderId, type WebAskAiProviderId } from './webAiProviders';
 
 export interface WebAgentSkillHint {
   id: string;
   label: string;
   command: string;
+  skillAiProvider: WebAskAiProviderId;
 }
 
 function parseSkillHints(result: Record<string, unknown>): WebAgentSkillHint[] {
@@ -23,7 +25,14 @@ function parseSkillHints(result: Record<string, unknown>): WebAgentSkillHint[] {
     if (!id || !label || !command) {
       continue;
     }
-    hints.push({ id, label, command });
+    hints.push({
+      id,
+      label,
+      command,
+      skillAiProvider: isWebAskAiProviderId(String(row.skillAiProvider ?? ''))
+        ? (row.skillAiProvider as WebAskAiProviderId)
+        : 'cursor',
+    });
   }
 
   return hints;
@@ -32,16 +41,9 @@ function parseSkillHints(result: Record<string, unknown>): WebAgentSkillHint[] {
 const SKILLS_FETCH_TIMEOUT_MS = 8000;
 const SKILLS_CACHE_TTL_MS = 60_000;
 
-const skillsCache = new Map<
-  string,
-  { skills: WebAgentSkillHint[]; cachedAt: number }
->();
+const skillsCache = new Map<string, { skills: WebAgentSkillHint[]; cachedAt: number }>();
 
-function skillsCacheKey(
-  workspaceId: string,
-  deviceId: string,
-  projectId: string | null,
-): string {
+function skillsCacheKey(workspaceId: string, deviceId: string, projectId: string | null): string {
   return `${workspaceId}:${deviceId}:${projectId ?? ''}`;
 }
 

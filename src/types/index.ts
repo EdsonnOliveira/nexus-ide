@@ -221,6 +221,7 @@ export interface AgentFollowUp {
   mode?: 'agent' | 'plan' | 'debug' | 'multitask' | 'ask';
   skillLabel?: string;
   agentPrompt?: string;
+  skillAiProvider?: 'cursor' | 'claude' | 'codex' | 'opencode' | 'antigravity';
 }
 
 export interface AgentTurnSummaryFileRef {
@@ -572,6 +573,7 @@ export interface TerminalCommandHint {
   command: string;
   hintKind?: 'skill' | 'mode' | 'model';
   skillOrigin?: 'user' | 'builtin';
+  skillAiProvider?: 'cursor' | 'claude' | 'codex' | 'opencode' | 'antigravity';
 }
 
 export interface AppleMusicUpcomingTrack {
@@ -904,6 +906,15 @@ export interface JarvisProcessResult {
   intent: JarvisIntent | null;
   error?: string;
 }
+
+export interface CliSetupStatus {
+  opencodeInstalled: boolean;
+  pendingInstall: boolean;
+  shouldOfferSetup: boolean;
+}
+
+export type CliSetupInstallResult =
+  { ok: true; alreadyInstalled: boolean } | { ok: false; error: string };
 
 export type VercelDeploymentState =
   'READY' | 'ERROR' | 'BUILDING' | 'QUEUED' | 'INITIALIZING' | 'CANCELED' | 'BLOCKED';
@@ -1505,6 +1516,11 @@ export interface NexusAPI {
   whatsapp: {
     isDesktopInstalled: () => Promise<boolean>;
     openLink: (url: string) => Promise<void>;
+  };
+  cliSetup: {
+    getStatus: () => Promise<CliSetupStatus>;
+    installOpenCode: () => Promise<CliSetupInstallResult>;
+    dismissSetup: () => Promise<void>;
   };
   mail: {
     getMailboxes: () => Promise<MailMailboxesSnapshot>;

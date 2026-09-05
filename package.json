@@ -1,6 +1,6 @@
 {
   "name": "nexus-ide",
-  "version": "1.0.62",
+  "version": "1.0.63",
   "private": true,
   "description": "Nexus IDE — AI-powered desktop IDE",
   "engines": {
@@ -24,7 +24,7 @@
     "cloud:deploy-push": "node scripts/deploy-push-functions.mjs",
     "build": "tsc --noEmit && npm run build:runtime && vite build && electron-builder",
     "build:local": "node scripts/build-shell-helpers.mjs && tsc --noEmit && npm run build:runtime && vite build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder && node scripts/finish-mac-local-build.mjs",
-    "build:win": "tsc --noEmit && npm run build:runtime && vite build && electron-builder --win nsis",
+    "build:win": "tsc --noEmit && npm run build:runtime && vite build && electron-builder --win nsis --x64",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "postinstall": "node scripts/setup-native.mjs",

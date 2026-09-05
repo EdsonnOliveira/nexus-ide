@@ -8,12 +8,9 @@ import {
   useAgentGitChangeStore,
   useAgentGitGroupsForProject,
 } from '@/stores/useAgentGitChangeStore';
-import type {
-  AgentTurnSummary,
-  AgentTurnSummaryFileRef,
-  AgentTurnUsage,
-} from '@/types';
+import type { AgentTurnSummary, AgentTurnSummaryFileRef, AgentTurnUsage } from '@/types';
 import type { AgentGitChangeGroup } from '@/types/agentGit';
+import { mergeAgentTurnFileRefs } from '@/utils/agentTurnSummary';
 
 interface AgentResponseActionsProps {
   projectId: string;
@@ -98,23 +95,13 @@ function resolveFilesForCard(
   matchedGroup: AgentGitChangeGroup | null,
   editedFiles?: AgentTurnSummaryFileRef[],
 ): AgentTurnSummaryFileRef[] {
-  if (editedFiles && editedFiles.length > 0) {
-    return editedFiles;
-  }
+  const groupFiles = (matchedGroup?.files ?? []).map((file) => ({
+    path: file.path,
+    ...(file.additions > 0 ? { additions: file.additions } : {}),
+    ...(file.deletions > 0 ? { deletions: file.deletions } : {}),
+  }));
 
-  if (summary?.editedFiles && summary.editedFiles.length > 0) {
-    return summary.editedFiles;
-  }
-
-  if (matchedGroup && matchedGroup.files.length > 0) {
-    return matchedGroup.files.map((file) => ({
-      path: file.path,
-      ...(file.additions > 0 ? { additions: file.additions } : {}),
-      ...(file.deletions > 0 ? { deletions: file.deletions } : {}),
-    }));
-  }
-
-  return [];
+  return mergeAgentTurnFileRefs(editedFiles, summary?.editedFiles, groupFiles);
 }
 
 function AgentResponseActionsComponent({

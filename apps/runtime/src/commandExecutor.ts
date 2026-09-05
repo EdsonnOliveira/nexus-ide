@@ -127,6 +127,7 @@ function resolveCliAgentExecutable(agentCommand: string): string {
   const home = os.homedir();
   const candidates = [
     path.join(home, '.local', 'bin', base),
+    path.join(home, '.opencode', 'bin', base),
     path.join(home, '.cursor', 'bin', base),
     path.join(home, 'bin', base),
     `/opt/homebrew/bin/${base}`,
@@ -1128,8 +1129,15 @@ async function runAgentPrompt(
     .eq('id', execution!.id);
 
   const cursorFromStream = (() => {
-    const match = output.match(/"session_id"\s*:\s*"([^"]+)"/);
-    return match?.[1] ?? null;
+    const sesMatch = output.match(/"sessionID"\s*:\s*"(ses_[^"]+)"/i);
+    if (sesMatch?.[1]) {
+      return sesMatch[1];
+    }
+    const sessionIdMatch =
+      output.match(/"sessionID"\s*:\s*"([^"]+)"/) ??
+      output.match(/"session_id"\s*:\s*"([^"]+)"/) ??
+      output.match(/"sessionId"\s*:\s*"([^"]+)"/);
+    return sessionIdMatch?.[1] ?? null;
   })();
 
   const nextCursorChatId = resumeChatId || cursorFromStream;

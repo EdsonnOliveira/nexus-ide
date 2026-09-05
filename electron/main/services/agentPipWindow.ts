@@ -20,6 +20,14 @@ let detachMain: (() => void) | null = null;
 let detachApp: (() => void) | null = null;
 let pipReady = false;
 
+function applyPipOverlay(window: BrowserWindow) {
+  window.setAlwaysOnTop(true, 'screen-saver');
+  window.setVisibleOnAllWorkspaces(true, {
+    visibleOnFullScreen: true,
+    skipTransformProcessType: true,
+  });
+}
+
 function isNexusInForeground() {
   try {
     const main = getMainWindow();
@@ -45,8 +53,10 @@ function isNexusInForeground() {
       }
     }
 
-    const pipFocused = Boolean(pipWindow && !pipWindow.isDestroyed() && pipWindow.isFocused());
-    if (pipFocused) {
+    const pipAlive = Boolean(pipWindow && !pipWindow.isDestroyed());
+    const pipFocused = Boolean(pipAlive && pipWindow?.isFocused());
+    const pipVisible = Boolean(pipAlive && pipWindow?.isVisible());
+    if (pipFocused && pipVisible) {
       return false;
     }
 
@@ -54,7 +64,15 @@ function isNexusInForeground() {
       return false;
     }
 
-    return main.isFocused();
+    if (main.isFocused()) {
+      return true;
+    }
+
+    if (!main.isFullScreen()) {
+      return false;
+    }
+
+    return process.platform !== 'darwin' || app.isActive();
   } catch {
     return false;
   }
@@ -148,8 +166,7 @@ function movePipToCursorDisplayIfNeeded(window: BrowserWindow) {
 
 function revealPipWindow(window: BrowserWindow) {
   sendSnapshot(window.webContents);
-  window.setAlwaysOnTop(true, 'screen-saver');
-  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  applyPipOverlay(window);
 
   if (process.platform === 'darwin' && app.isHidden()) {
     app.show();
@@ -158,9 +175,16 @@ function revealPipWindow(window: BrowserWindow) {
   movePipToCursorDisplayIfNeeded(window);
   if (window.isVisible()) {
     window.moveTop();
-  } else {
-    window.show();
+    return;
   }
+
+  const main = getMainWindow();
+  if (main && !main.isDestroyed() && main.isFullScreen()) {
+    window.showInactive();
+    return;
+  }
+
+  window.show();
 }
 
 function syncVisibility() {
@@ -258,7 +282,6 @@ async function ensurePipWindow() {
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
-    alwaysOnTop: true,
     skipTaskbar: true,
     resizable: false,
     minimizable: false,
@@ -279,8 +302,6 @@ async function ensurePipWindow() {
     },
   });
 
-  window.setAlwaysOnTop(true, 'screen-saver');
-  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   window.setWindowButtonVisibility(false);
   placeAtDefaultCorner(window);
   attachPipWindowEvents(window);

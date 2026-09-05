@@ -17,10 +17,7 @@ import type { CloudProject, DeviceRecord } from '@nexus/protocol';
 import { useWebStore, type WebAgentSession } from '../store';
 import { WebAskAiProviderMenu } from './WebAskAiProviderMenu';
 import { WebAskMenuSelect } from './WebAskMenuSelect';
-import {
-  webAiProviderToAgentCommand,
-  type WebAskAiProviderId,
-} from './webAiProviders';
+import { webAiProviderToAgentCommand, type WebAskAiProviderId } from './webAiProviders';
 import { WebMacSelect } from './WebMacSelect';
 import { WebAgentPromptImageMentionText } from './WebAgentPromptImageMentionText';
 import { WebMarkdownImageLightbox } from './WebMarkdownImageLightbox';
@@ -29,6 +26,7 @@ import { useWebAgentSkills } from './useWebAgentSkills';
 import { useWebAgentSkillSlash } from './useWebAgentSkillSlash';
 import {
   applyWebSkillSlashMention,
+  resolveWebPromptSkillAiProvider,
   type WebSkillSlashMatch,
 } from './webAgentSkillSlash';
 import {
@@ -84,9 +82,7 @@ function ProjectLeading({
     <span
       className='home-dashboard__ask-project-icon'
       style={
-        color
-          ? { background: color }
-          : { background: 'rgba(255,255,255,0.08)', color: '#fff' }
+        color ? { background: color } : { background: 'rgba(255,255,255,0.08)', color: '#fff' }
       }
     >
       {icon ? (
@@ -164,8 +160,12 @@ export function WebMaestroAskBar({
     }
     return devices.find((device) => device.id === deviceId)?.workspace_id ?? activeWorkspaceId;
   }, [activeWorkspaceId, deviceId, devices]);
-  const { skills, loading: skillsLoading, error: skillsError, refresh: refreshSkills } =
-    useWebAgentSkills({
+  const {
+    skills,
+    loading: skillsLoading,
+    error: skillsError,
+    refresh: refreshSkills,
+  } = useWebAgentSkills({
     workspaceId: skillWorkspaceId,
     deviceId,
     projectId,
@@ -178,6 +178,14 @@ export function WebMaestroAskBar({
     enabled: Boolean(deviceId) && !submitting,
   });
   const skillSlashOpenedRef = useRef(false);
+
+  useEffect(() => {
+    const skillAiProvider = resolveWebPromptSkillAiProvider(prompt, skills);
+    if (!skillAiProvider || skillAiProvider === aiProvider) {
+      return;
+    }
+    setAiProvider(skillAiProvider);
+  }, [aiProvider, prompt, skills]);
 
   useEffect(() => {
     if (!skillSlash.isOpen) {
@@ -261,7 +269,8 @@ export function WebMaestroAskBar({
       setSkillMenuRect(null);
       return;
     }
-    const rect = askFormRef.current?.getBoundingClientRect() ?? inputRef.current?.getBoundingClientRect();
+    const rect =
+      askFormRef.current?.getBoundingClientRect() ?? inputRef.current?.getBoundingClientRect();
     if (!rect) {
       return;
     }
@@ -280,9 +289,13 @@ export function WebMaestroAskBar({
         match.insertText,
       );
       skillSlash.dismiss();
+      const skillAiProvider = resolveWebPromptSkillAiProvider(nextValue, skills);
+      if (skillAiProvider && skillAiProvider !== aiProvider) {
+        setAiProvider(skillAiProvider);
+      }
       setPromptWithCaret(nextValue, nextCaret);
     },
-    [prompt, setPromptWithCaret, skillSlash],
+    [aiProvider, prompt, setPromptWithCaret, skillSlash, skills],
   );
 
   const removePendingImage = useCallback(
@@ -414,8 +427,7 @@ export function WebMaestroAskBar({
 
   const ingestFiles = useCallback(
     async (fileList: Iterable<File>) => {
-      const { imageDataUrls, fileAttachments, rejectedNames } =
-        await readAttachmentFiles(fileList);
+      const { imageDataUrls, fileAttachments, rejectedNames } = await readAttachmentFiles(fileList);
       notifyRejectedAttachments(rejectedNames);
       attachImagesWithMentions(imageDataUrls);
       attachFilesWithMentions(fileAttachments);
@@ -478,10 +490,7 @@ export function WebMaestroAskBar({
     }
     const onPointerDown = (event: MouseEvent) => {
       const target = event.target as Node;
-      if (
-        attachTriggerRef.current?.contains(target) ||
-        attachMenuRef.current?.contains(target)
-      ) {
+      if (attachTriggerRef.current?.contains(target) || attachMenuRef.current?.contains(target)) {
         return;
       }
       closeAttachMenu();
@@ -515,12 +524,12 @@ export function WebMaestroAskBar({
     const workspaceNameById = new Map(
       workspaces.map((workspace) => [workspace.id, workspace.name]),
     );
-    const workspaceOrderById = new Map(
-      workspaces.map((workspace, index) => [workspace.id, index]),
-    );
+    const workspaceOrderById = new Map(workspaces.map((workspace, index) => [workspace.id, index]));
     const sorted = [...projects].sort((left, right) => {
-      const leftWorkspaceOrder = workspaceOrderById.get(left.workspace_id) ?? Number.MAX_SAFE_INTEGER;
-      const rightWorkspaceOrder = workspaceOrderById.get(right.workspace_id) ?? Number.MAX_SAFE_INTEGER;
+      const leftWorkspaceOrder =
+        workspaceOrderById.get(left.workspace_id) ?? Number.MAX_SAFE_INTEGER;
+      const rightWorkspaceOrder =
+        workspaceOrderById.get(right.workspace_id) ?? Number.MAX_SAFE_INTEGER;
       if (leftWorkspaceOrder !== rightWorkspaceOrder) {
         return leftWorkspaceOrder - rightWorkspaceOrder;
       }
@@ -533,20 +542,13 @@ export function WebMaestroAskBar({
       label: project.name,
       subtitle: showWorkspace ? workspaceNameById.get(project.workspace_id) : undefined,
       leading: (
-        <ProjectLeading
-          logoUrl={project.logo_url}
-          color={project.color}
-          icon={project.icon}
-        />
+        <ProjectLeading logoUrl={project.logo_url} color={project.color} icon={project.icon} />
       ),
     }));
   }, [projects, workspaces]);
 
   const desktopAgentsForProject = useMemo(
-    () =>
-      desktopAgents.filter(
-        (agent) => Boolean(projectId) && agent.projectId === projectId,
-      ),
+    () => desktopAgents.filter((agent) => Boolean(projectId) && agent.projectId === projectId),
     [desktopAgents, projectId],
   );
 
@@ -642,7 +644,12 @@ export function WebMaestroAskBar({
       window.removeEventListener('resize', sync);
       window.removeEventListener('scroll', sync, true);
     };
-  }, [desktopAgentsPhase, desktopAgentsForProject.length, desktopAgentsLoading, updateDesktopAgentsMenuPosition]);
+  }, [
+    desktopAgentsPhase,
+    desktopAgentsForProject.length,
+    desktopAgentsLoading,
+    updateDesktopAgentsMenuPosition,
+  ]);
 
   useEffect(() => {
     const { prompt: nextPrompt, pendingImages: nextImages } = renumberWebAgentPromptImages(
@@ -741,8 +748,19 @@ export function WebMaestroAskBar({
       inputRef.current.style.height = 'auto';
     }
 
+    const skillAiProvider = resolveWebPromptSkillAiProvider(nextPrompt, skills);
+    const launchProvider = skillAiProvider ?? aiProvider;
+    if (skillAiProvider && skillAiProvider !== aiProvider) {
+      setAiProvider(skillAiProvider);
+    }
+
     void Promise.resolve(
-      onSubmit(nextPrompt, imageDataUrls, fileAttachments, webAiProviderToAgentCommand(aiProvider)),
+      onSubmit(
+        nextPrompt,
+        imageDataUrls,
+        fileAttachments,
+        webAiProviderToAgentCommand(launchProvider),
+      ),
     )
       .then((ok) => {
         if (ok === false) {
@@ -763,6 +781,7 @@ export function WebMaestroAskBar({
     pendingImages,
     prompt,
     resizeAskInput,
+    skills,
   ]);
 
   const handleSubmit = (event: FormEvent) => {
@@ -946,18 +965,9 @@ export function WebMaestroAskBar({
           hidden
           onChange={handleImageInputChange}
         />
-        <input
-          ref={fileInputRef}
-          type='file'
-          multiple
-          hidden
-          onChange={handleFileInputChange}
-        />
+        <input ref={fileInputRef} type='file' multiple hidden onChange={handleFileInputChange} />
         {pendingImages.length > 0 || pendingFiles.length > 0 ? (
-          <div
-            className='home-dashboard__ask-attachments app-button--enter'
-            aria-label='Anexos'
-          >
+          <div className='home-dashboard__ask-attachments app-button--enter' aria-label='Anexos'>
             {pendingImages.map((image, index) => {
               const imageNumber = index + 1;
               const badgeColor = getWebAgentPromptImageBadgeColor(imageNumber);
@@ -975,9 +985,7 @@ export function WebMaestroAskBar({
                     className='home-dashboard__ask-attachment-thumb-btn app-button'
                     aria-label={`Ver imagem ${imageNumber}`}
                     disabled={imageActionsDisabled}
-                    onClick={() =>
-                      handlePreviewImage(image.dataUrl, `imagem-${imageNumber}.png`)
-                    }
+                    onClick={() => handlePreviewImage(image.dataUrl, `imagem-${imageNumber}.png`)}
                   >
                     <img
                       src={image.dataUrl}
@@ -1140,11 +1148,7 @@ export function WebMaestroAskBar({
           >
             <Paperclip size={16} strokeWidth={2} aria-hidden='true' />
           </button>
-          <WebAskAiProviderMenu
-            value={aiProvider}
-            disabled={submitting}
-            onChange={setAiProvider}
-          />
+          <WebAskAiProviderMenu value={aiProvider} disabled={submitting} onChange={setAiProvider} />
           <button
             type='submit'
             className='home-dashboard__ask-send app-button app-button--enter'

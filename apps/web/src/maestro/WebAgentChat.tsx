@@ -56,7 +56,11 @@ import {
 import { useWebAgentSkills, type WebAgentSkillHint } from './useWebAgentSkills';
 import { useWebAgentSkillSlash } from './useWebAgentSkillSlash';
 import { WebAgentSkillSlashMenu } from './WebAgentSkillSlashMenu';
-import { applyWebSkillSlashMention, type WebSkillSlashMatch } from './webAgentSkillSlash';
+import {
+  applyWebSkillSlashMention,
+  resolveWebPromptSkillAiProvider,
+  type WebSkillSlashMatch,
+} from './webAgentSkillSlash';
 
 interface WebAgentChatProps {
   agent: WebAgentSession;
@@ -873,6 +877,29 @@ export function WebAgentChat({
     void refreshSkills();
   }, [refreshSkills, showSkills, skillSlash.isOpen, skills.length, skillsLoading]);
 
+  useEffect(() => {
+    if (agent.status === 'running' || sendingFollowUp) {
+      return;
+    }
+    const skillAiProvider = resolveWebPromptSkillAiProvider(draft, skills);
+    if (!skillAiProvider) {
+      return;
+    }
+    const nextCommand = webAiProviderToAgentCommand(skillAiProvider);
+    if (nextCommand === agent.agentCommand) {
+      return;
+    }
+    onAgentCommandChange(agent.id, nextCommand);
+  }, [
+    agent.agentCommand,
+    agent.id,
+    agent.status,
+    draft,
+    onAgentCommandChange,
+    sendingFollowUp,
+    skills,
+  ]);
+
   draftRef.current = draft;
   pendingImagesRef.current = pendingImages;
   pendingFilesRef.current = pendingFiles;
@@ -945,9 +972,23 @@ export function WebAgentChat({
       const existingSkill = rest.match(/^(\/[^\s/]+(?:\/[^\s/]+)*)(?:\s([\s\S]*))?$/);
       const body = existingSkill ? (existingSkill[2] ?? '').trimStart() : rest;
       const nextDraft = body ? `${skillToken} ${body}` : `${skillToken} `;
+      const skillAiProvider = skill.skillAiProvider;
+      if (skillAiProvider && agent.status !== 'running' && !sendingFollowUp) {
+        const nextCommand = webAiProviderToAgentCommand(skillAiProvider);
+        if (nextCommand !== agent.agentCommand) {
+          onAgentCommandChange(agent.id, nextCommand);
+        }
+      }
       setDraftWithCaret(nextDraft, nextDraft.length);
     },
-    [setDraftWithCaret],
+    [
+      agent.agentCommand,
+      agent.id,
+      agent.status,
+      onAgentCommandChange,
+      sendingFollowUp,
+      setDraftWithCaret,
+    ],
   );
 
   const handleSkillSlashSelect = useCallback(
@@ -962,9 +1003,26 @@ export function WebAgentChat({
         match.insertText,
       );
       skillSlash.dismiss();
+      const skillAiProvider = resolveWebPromptSkillAiProvider(nextValue, skills);
+      if (skillAiProvider && agent.status !== 'running' && !sendingFollowUp) {
+        const nextCommand = webAiProviderToAgentCommand(skillAiProvider);
+        if (nextCommand !== agent.agentCommand) {
+          onAgentCommandChange(agent.id, nextCommand);
+        }
+      }
       setDraftWithCaret(nextValue, nextCaret);
     },
-    [draft, setDraftWithCaret, skillSlash],
+    [
+      agent.agentCommand,
+      agent.id,
+      agent.status,
+      draft,
+      onAgentCommandChange,
+      sendingFollowUp,
+      setDraftWithCaret,
+      skillSlash,
+      skills,
+    ],
   );
 
   const attachImagesWithMentions = useCallback(
@@ -1266,6 +1324,14 @@ export function WebAgentChat({
     pendingFilesRef.current = [];
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
+    }
+
+    const skillAiProvider = resolveWebPromptSkillAiProvider(nextPrompt, skills);
+    if (skillAiProvider) {
+      const nextCommand = webAiProviderToAgentCommand(skillAiProvider);
+      if (nextCommand !== agent.agentCommand) {
+        onAgentCommandChange(agent.id, nextCommand);
+      }
     }
 
     void Promise.resolve(onFollowUp(agent.id, nextPrompt, imageDataUrls, fileAttachments))

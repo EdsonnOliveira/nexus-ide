@@ -1,4 +1,6 @@
 import type { TerminalCommandHint } from '@/types';
+import { isSelectableAiProviderId, type AiProviderId } from '@/constants/aiProviders';
+import { isAgentSetupCommand } from '@/utils/parseAgentModeCommand';
 import { resolvePromptDisplayContent } from '@/utils/agentPromptAttachments';
 
 const SKILL_SLASH_PATTERN = /^\/[^\s/]+(?:\/[^\s/]+)*$/;
@@ -52,7 +54,8 @@ export function parseComposerSkillDraft(
   }
 
   const skillLabel = knownHint ? `/${knownHint.label}` : skillCommand;
-  const hasTrailingSeparator = rest.length > skillCommand.length && rest[skillCommand.length] === ' ';
+  const hasTrailingSeparator =
+    rest.length > skillCommand.length && rest[skillCommand.length] === ' ';
 
   if (!hasTrailingSeparator) {
     return {
@@ -75,6 +78,56 @@ export function parseComposerSkillDraft(
 
 export function normalizeSkillToken(value: string): string {
   return value.trim().replace(/^\/+/, '').toLowerCase();
+}
+
+function extractLeadingSkillToken(prompt: string): string {
+  const match = SKILL_COMMAND_PATTERN.exec(prompt.trim());
+
+  if (!match?.[1]) {
+    return '';
+  }
+
+  return normalizeSkillToken(match[1]);
+}
+
+function resolveHintSkillAiProvider(
+  hint: TerminalCommandHint | undefined,
+): Exclude<AiProviderId, 'nexus'> | null {
+  if (!hint || hint.hintKind !== 'skill') {
+    return null;
+  }
+
+  if (hint.skillAiProvider && isSelectableAiProviderId(hint.skillAiProvider)) {
+    return hint.skillAiProvider;
+  }
+
+  return 'cursor';
+}
+
+export function resolvePromptSkillAiProvider(
+  prompt: string,
+  skillHints: TerminalCommandHint[],
+): Exclude<AiProviderId, 'nexus'> | null {
+  const trimmed = prompt.trim();
+
+  if (!trimmed || isAgentSetupCommand(trimmed)) {
+    return null;
+  }
+
+  const parsed = parseComposerSkillDraft(trimmed, skillHints);
+  const skillToken = parsed.hasSkill
+    ? normalizeSkillToken(parsed.skillLabel)
+    : extractLeadingSkillToken(trimmed);
+
+  if (!skillToken) {
+    return null;
+  }
+
+  const hint = skillHints.find(
+    (entry) => entry.hintKind === 'skill' && normalizeSkillToken(entry.label) === skillToken,
+  );
+
+  return resolveHintSkillAiProvider(hint);
 }
 
 export function formatSkillChipLabel(value: string): string {
@@ -120,7 +173,10 @@ function stripSkillPrefixFromContent(content: string, skillChipLabel: string): s
       trimmed.startsWith(`${skillCommand} `) ||
       normalizeSkillToken(trimmed) === normalizeSkillToken(skillCommand))
   ) {
-    if (trimmed === skillCommand || normalizeSkillToken(trimmed) === normalizeSkillToken(skillCommand)) {
+    if (
+      trimmed === skillCommand ||
+      normalizeSkillToken(trimmed) === normalizeSkillToken(skillCommand)
+    ) {
       return '';
     }
 

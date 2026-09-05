@@ -27,3 +27,22 @@
 
   customCheckAppRunning_done:
 !macroend
+
+!macro customInstall
+  MessageBox MB_YESNO|MB_ICONQUESTION "Deseja baixar o OpenCode com as principais IAs (Claude, GPT e Gemini)?" IDYES install_opencode IDNO skip_opencode
+
+  install_opencode:
+    CreateDirectory "$PROFILE\.nexus-ide"
+    FileOpen $0 "$PROFILE\.nexus-ide\pending-opencode-install" w
+    FileWrite $0 "1"
+    FileClose $0
+    Goto opencode_setup_done
+
+  skip_opencode:
+    CreateDirectory "$PROFILE\.nexus-ide"
+    FileOpen $0 "$PROFILE\.nexus-ide\skip-opencode-setup" w
+    FileWrite $0 "1"
+    FileClose $0
+
+  opencode_setup_done:
+!macroend

@@ -1,8 +1,5 @@
 import type { AutomationAgentMode } from '@/constants/agentModes';
-import {
-  isSelectableAiProviderId,
-  type AiProviderId,
-} from '@/constants/aiProviders';
+import { isSelectableAiProviderId, type AiProviderId } from '@/constants/aiProviders';
 
 const AGENT_MODE_COMMANDS: AutomationAgentMode[] = ['agent', 'plan', 'debug', 'multitask', 'ask'];
 
@@ -20,6 +17,10 @@ export function parseAgentModeCommand(command: string): AutomationAgentMode | nu
   }
 
   return mode as AutomationAgentMode;
+}
+
+export function formatAgentAiProviderCommand(provider: Exclude<AiProviderId, 'nexus'>): string {
+  return `/ai ${provider}\n`;
 }
 
 export function parseAgentAiProviderCommand(

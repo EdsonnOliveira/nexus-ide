@@ -239,6 +239,13 @@ function stripInlineMarkdownCode(line: string): string {
   return line.replace(/`[^`]*`/g, ' ');
 }
 
+const SPOKEN_COMMENTARY_MARKERS =
+  /\b(na verdade|espera|deixa eu|deixa|então|porque|quando|ainda não|não aparece|deveria|parece|vamos|vou ver|vou |hmm+|olha|olhando|reconsiderar|problema é|wait[,.]|actually|let me|looking at|the issue|i think|i'm |i am )\b/i;
+
+function countCodeTokens(value: string): number {
+  return (value.match(/[{}();]|=>|===|!==|&&|\|\|/g) ?? []).length;
+}
+
 function looksLikeMarkdownProseLine(line: string): boolean {
   const trimmed = line.trim();
 
@@ -252,12 +259,54 @@ function looksLikeMarkdownProseLine(line: string): boolean {
 
   const letterCount = (trimmed.match(/[a-zA-ZáàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ]/g) ?? []).length;
   const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+  const letterRatio = letterCount / Math.max(trimmed.length, 1);
 
   if (wordCount >= 10 && letterCount >= 40) {
     return true;
   }
 
-  if (wordCount >= 6 && letterCount / Math.max(trimmed.length, 1) > 0.62) {
+  if (wordCount >= 6 && letterRatio > 0.62) {
+    return true;
+  }
+
+  if (/[.!?…]$/.test(trimmed) && wordCount >= 4 && letterRatio > 0.58) {
+    return true;
+  }
+
+  return false;
+}
+
+function looksLikeSpokenCommentary(line: string): boolean {
+  const trimmed = line.trim();
+
+  if (!trimmed) {
+    return false;
+  }
+
+  const structural = stripInlineMarkdownCode(trimmed);
+  const codeTokens = countCodeTokens(structural);
+  const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+  const startsWithCodeKeyword =
+    /^\s*(export|import|const|let|var|function|class|interface|type|return|if|else|for|while|switch|case|await|async|new|throw|default)\b/.test(
+      trimmed,
+    );
+
+  if (SPOKEN_COMMENTARY_MARKERS.test(trimmed) && wordCount >= 3 && codeTokens <= 2) {
+    return true;
+  }
+
+  if (startsWithCodeKeyword) {
+    return false;
+  }
+
+  if (looksLikeMarkdownProseLine(trimmed) && codeTokens <= 2) {
+    return true;
+  }
+
+  const letterCount = (trimmed.match(/[a-zA-ZáàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ]/g) ?? []).length;
+  const letterRatio = letterCount / Math.max(trimmed.length, 1);
+
+  if (/[.!?…]$/.test(trimmed) && wordCount >= 4 && letterRatio > 0.58 && codeTokens <= 2) {
     return true;
   }
 
@@ -272,6 +321,10 @@ function looksLikeCodeLine(line: string): boolean {
   }
 
   if (isTableSeparator(trimmed)) {
+    return false;
+  }
+
+  if (looksLikeSpokenCommentary(trimmed)) {
     return false;
   }
 
@@ -548,6 +601,14 @@ function stripMermaidFenceContent(rawCode: string): string {
 }
 
 function looksLikeProseLine(trimmed: string): boolean {
+  if (!trimmed) {
+    return false;
+  }
+
+  if (looksLikeSpokenCommentary(trimmed) || looksLikeMarkdownProseLine(trimmed)) {
+    return true;
+  }
+
   if (looksLikeCodeLine(trimmed)) {
     return false;
   }
@@ -569,17 +630,20 @@ function looksLikeProseLine(trimmed: string): boolean {
     return alpha >= 8;
   }
 
-  return false;
+  const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+  const letterCount = (trimmed.match(/[a-zA-ZáàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ]/g) ?? []).length;
+
+  return wordCount >= 5 && letterCount / Math.max(trimmed.length, 1) > 0.62;
 }
 
 function shouldAutoCloseMarkdownFence(line: string, codeLineCount: number): boolean {
-  if (codeLineCount === 0) {
-    return false;
-  }
-
   const trimmed = line.trim();
 
   if (!trimmed) {
+    return false;
+  }
+
+  if (codeLineCount === 0 && !looksLikeProseLine(trimmed)) {
     return false;
   }
 
@@ -766,12 +830,20 @@ function normalizeSectionTitle(line: string): string {
   return line.replace(/^\*\*(.+)\*\*$/, '$1').trim();
 }
 
-export function renderMarkdownPreview(source: string, imageBaseDir?: string): string {
-  activeImageBaseDir = imageBaseDir?.trim() || null;
-  return renderMarkdownBlocks(source);
+export interface MarkdownPreviewOptions {
+  detectImplicitCode?: boolean;
 }
 
-function renderMarkdownBlocks(source: string): string {
+export function renderMarkdownPreview(
+  source: string,
+  imageBaseDir?: string,
+  options?: MarkdownPreviewOptions,
+): string {
+  activeImageBaseDir = imageBaseDir?.trim() || null;
+  return renderMarkdownBlocks(source, options?.detectImplicitCode !== false);
+}
+
+function renderMarkdownBlocks(source: string, detectImplicitCode: boolean): string {
   const lines = expandMarkdownLines(source);
   const blocks: string[] = [];
   let index = 0;
@@ -790,6 +862,11 @@ function renderMarkdownBlocks(source: string): string {
       const language = fenceMatch[1] ?? '';
       const safeLanguage = language.replace(/[^a-zA-Z0-9_-]/g, '');
       const isMarkdownFence = safeLanguage === 'markdown' || safeLanguage === 'md';
+      const skipFenceAutoClose =
+        isMarkdownFence ||
+        safeLanguage === 'text' ||
+        safeLanguage === 'plaintext' ||
+        safeLanguage === 'txt';
       index += 1;
       const codeLines: string[] = [];
 
@@ -801,7 +878,7 @@ function renderMarkdownBlocks(source: string): string {
           break;
         }
 
-        if (!isMarkdownFence && shouldAutoCloseMarkdownFence(currentLine, codeLines.length)) {
+        if (!skipFenceAutoClose && shouldAutoCloseMarkdownFence(currentLine, codeLines.length)) {
           break;
         }
 
@@ -810,10 +887,15 @@ function renderMarkdownBlocks(source: string): string {
       }
 
       const rawCode = codeLines.join('\n');
+
+      if (!rawCode.trim()) {
+        continue;
+      }
+
       const resolvedLanguage = safeLanguage || inferMarkdownCodeLanguage(rawCode);
 
       if (isMarkdownFence) {
-        blocks.push(renderMarkdownBlocks(rawCode));
+        blocks.push(renderMarkdownBlocks(rawCode, detectImplicitCode));
         continue;
       }
 
@@ -842,7 +924,7 @@ function renderMarkdownBlocks(source: string): string {
       continue;
     }
 
-    if (looksLikeCodeLine(trimmed) && !isMermaidDiagramLine(trimmed)) {
+    if (detectImplicitCode && looksLikeCodeLine(trimmed) && !isMermaidDiagramLine(trimmed)) {
       const { block, nextIndex } = collectCodeBlock(lines, index);
       index = nextIndex;
       const rawCode = block.join('\n').trimEnd();
@@ -1010,7 +1092,7 @@ function renderMarkdownBlocks(source: string): string {
         break;
       }
 
-      if (looksLikeCodeLine(current)) {
+      if (detectImplicitCode && looksLikeCodeLine(current)) {
         break;
       }
 

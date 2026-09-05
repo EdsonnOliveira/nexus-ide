@@ -1,4 +1,5 @@
 import type { WebAgentSkillHint } from './useWebAgentSkills';
+import { isWebAskAiProviderId, type WebAskAiProviderId } from './webAiProviders';
 
 const SKILL_SLASH_LIMIT = 12;
 
@@ -124,4 +125,37 @@ export function applyWebSkillSlashMention(
     nextValue,
     nextCaret: startIndex + insertText.length,
   };
+}
+
+const WEB_SETUP_COMMAND = /^\/(agent|plan|debug|multitask|ask|ai|model)(\s|$)/i;
+const WEB_SKILL_COMMAND = /^(\/[^\s/]+(?:\/[^\s/]+)*)/;
+
+function normalizeWebSkillToken(value: string): string {
+  return value.trim().replace(/^\/+/, '').toLowerCase();
+}
+
+export function resolveWebPromptSkillAiProvider(
+  prompt: string,
+  skills: WebAgentSkillHint[],
+): WebAskAiProviderId | null {
+  const trimmed = prompt.trim();
+
+  if (!trimmed || WEB_SETUP_COMMAND.test(trimmed)) {
+    return null;
+  }
+
+  const match = WEB_SKILL_COMMAND.exec(trimmed);
+  const skillToken = match?.[1] ? normalizeWebSkillToken(match[1]) : '';
+
+  if (!skillToken) {
+    return null;
+  }
+
+  const skill = skills.find((entry) => normalizeWebSkillToken(entry.label) === skillToken);
+
+  if (!skill) {
+    return null;
+  }
+
+  return isWebAskAiProviderId(skill.skillAiProvider) ? skill.skillAiProvider : 'cursor';
 }

@@ -7,6 +7,49 @@ import type {
 import { sanitizeResponseText } from '@/utils/agentTranscriptParser';
 import { normalizeMarkdownSource } from '@/utils/markdownText';
 
+export function isAgentTurnNoiseFile(filePath: string): boolean {
+  const name = filePath.replace(/\\/g, '/').split('/').pop() ?? filePath;
+  return /^\.tmp(?:$|[.-])/i.test(name) || /\.tmp$/i.test(name);
+}
+
+export function mergeAgentTurnFileRefs(
+  ...lists: Array<AgentTurnSummaryFileRef[] | undefined>
+): AgentTurnSummaryFileRef[] {
+  const byPath = new Map<string, AgentTurnSummaryFileRef>();
+
+  for (const list of lists) {
+    for (const file of list ?? []) {
+      const path = file.path.trim();
+
+      if (!path || isAgentTurnNoiseFile(path)) {
+        continue;
+      }
+
+      const key = path.replace(/\\/g, '/').toLowerCase();
+      const existing = byPath.get(key);
+
+      if (!existing) {
+        byPath.set(key, {
+          path,
+          ...(file.additions && file.additions > 0 ? { additions: file.additions } : {}),
+          ...(file.deletions && file.deletions > 0 ? { deletions: file.deletions } : {}),
+        });
+        continue;
+      }
+
+      if (file.additions && file.additions > 0) {
+        existing.additions = file.additions;
+      }
+
+      if (file.deletions && file.deletions > 0) {
+        existing.deletions = file.deletions;
+      }
+    }
+  }
+
+  return [...byPath.values()];
+}
+
 export function buildEditedFilesFromActivities(
   activities: AgentActivity[],
 ): AgentTurnSummaryFileRef[] {
@@ -19,7 +62,7 @@ export function buildEditedFilesFromActivities(
 
     const path = activity.filePath?.trim();
 
-    if (!path) {
+    if (!path || isAgentTurnNoiseFile(path)) {
       continue;
     }
 
@@ -88,7 +131,7 @@ export function computeAgentTurnSummaryFromActivities(
     if (activity.kind === 'file_edit') {
       const path = activity.filePath?.trim();
 
-      if (path) {
+      if (path && !isAgentTurnNoiseFile(path)) {
         const key = path.toLowerCase();
         const fileAdditions = activity.additions ?? 0;
         const fileDeletions = activity.deletions ?? 0;
@@ -108,10 +151,11 @@ export function computeAgentTurnSummaryFromActivities(
             existing.deletions = (existing.deletions ?? 0) + fileDeletions;
           }
         }
+
+        additions += fileAdditions;
+        deletions += fileDeletions;
       }
 
-      additions += activity.additions ?? 0;
-      deletions += activity.deletions ?? 0;
       continue;
     }
 
@@ -131,7 +175,10 @@ export function computeAgentTurnSummaryFromActivities(
     }
 
     if (activity.kind === 'status' && /^Ran\b/i.test(activity.label.trim())) {
-      const command = activity.label.trim().replace(/^Ran\s+/i, '').trim();
+      const command = activity.label
+        .trim()
+        .replace(/^Ran\s+/i, '')
+        .trim();
 
       if (command) {
         commands.push({ command });
@@ -178,9 +225,7 @@ export function buildAgentTurnSummaryParts(summary: AgentTurnSummary): string[] 
   const parts: string[] = [];
 
   if (summary.editedFileCount > 0) {
-    parts.push(
-      `Edited ${summary.editedFileCount} file${summary.editedFileCount === 1 ? '' : 's'}`,
-    );
+    parts.push(`Edited ${summary.editedFileCount} file${summary.editedFileCount === 1 ? '' : 's'}`);
   }
 
   if (summary.exploredFileCount > 0) {
@@ -190,9 +235,7 @@ export function buildAgentTurnSummaryParts(summary: AgentTurnSummary): string[] 
   }
 
   if (summary.commandCount > 0) {
-    parts.push(
-      `ran ${summary.commandCount} command${summary.commandCount === 1 ? '' : 's'}`,
-    );
+    parts.push(`ran ${summary.commandCount} command${summary.commandCount === 1 ? '' : 's'}`);
   }
 
   return parts;
@@ -207,7 +250,9 @@ export interface AgentTurnSummarySegment {
   commands?: AgentTurnSummaryCommandRef[];
 }
 
-export function buildAgentTurnSummarySegments(summary: AgentTurnSummary): AgentTurnSummarySegment[] {
+export function buildAgentTurnSummarySegments(
+  summary: AgentTurnSummary,
+): AgentTurnSummarySegment[] {
   const segments: AgentTurnSummarySegment[] = [];
 
   if (summary.editedFileCount > 0) {
@@ -419,15 +464,15 @@ export function buildActionBlockSummary(activities: AgentActivity[]): ActionBloc
   for (const activity of activities) {
     if (activity.kind === 'file_edit') {
       const path = activity.filePath?.trim();
-      if (path) {
+      if (path && !isAgentTurnNoiseFile(path)) {
         const key = path.toLowerCase();
         if (!editedPaths.has(key)) {
           editedPaths.add(key);
           editedFiles.push({ path });
         }
+        additions += activity.additions ?? 0;
+        deletions += activity.deletions ?? 0;
       }
-      additions += activity.additions ?? 0;
-      deletions += activity.deletions ?? 0;
       continue;
     }
 
@@ -691,7 +736,8 @@ function getLiveToolBatchDetailLabel(activity: AgentActivity): string {
 
   if (activity.kind === 'file_read' || activity.kind === 'file_edit') {
     const verb = activity.kind === 'file_read' ? 'Read' : 'Edited';
-    const fileName = activity.filePath?.trim().split(/[/\\]/).pop() ?? activity.filePath?.trim() ?? '';
+    const fileName =
+      activity.filePath?.trim().split(/[/\\]/).pop() ?? activity.filePath?.trim() ?? '';
     return fileName ? `${verb} ${fileName}` : verb;
   }
 
@@ -707,9 +753,7 @@ export function buildLiveToolBatchSummary(
       .reverse()
       .find(
         (activity) =>
-          activity.kind === 'tool_run' &&
-          activity.streaming &&
-          activity.toolCommand?.trim(),
+          activity.kind === 'tool_run' && activity.streaming && activity.toolCommand?.trim(),
       );
 
     if (streamingShell?.toolCommand?.trim()) {
@@ -721,7 +765,9 @@ export function buildLiveToolBatchSummary(
 
     const streamingTool = [...activities]
       .reverse()
-      .find((activity) => activity.kind === 'tool_run' && activity.streaming && activity.label.trim());
+      .find(
+        (activity) => activity.kind === 'tool_run' && activity.streaming && activity.label.trim(),
+      );
 
     if (streamingTool?.label.trim()) {
       return streamingTool.label.trim();
@@ -737,9 +783,7 @@ export function buildLiveToolBatchSummary(
   return buildLiveToolBatchAggregateSummary(activities, running);
 }
 
-export function findLiveToolBatchDetailActivity(
-  activities: AgentActivity[],
-): AgentActivity | null {
+export function findLiveToolBatchDetailActivity(activities: AgentActivity[]): AgentActivity | null {
   for (let index = activities.length - 1; index >= 0; index -= 1) {
     const entry = activities[index];
 
@@ -761,9 +805,7 @@ export function findLiveToolBatchDetailActivity(
 
     if (
       entry &&
-      (entry.kind === 'file_edit' ||
-        entry.kind === 'tool_run' ||
-        entry.kind === 'file_read')
+      (entry.kind === 'file_edit' || entry.kind === 'tool_run' || entry.kind === 'file_read')
     ) {
       return entry;
     }

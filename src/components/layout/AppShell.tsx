@@ -25,6 +25,7 @@ import { GlobalSearchPalette } from '@/components/search/GlobalSearchPalette';
 import { DailyGenerationProvider } from '@/components/home/DailyGenerationProvider';
 import { CalendarEventAlertHost } from '@/components/sidebar/CalendarEventAlertHost';
 import { AppToastHost } from '@/components/overlay/AppToastHost';
+import { CliSetupModal } from '@/components/settings/CliSetupModal';
 import { CloudDevicesDrawer } from '@/components/cloud/CloudDevicesDrawer';
 import { CloudDeviceSelect } from '@/components/cloud/CloudDeviceSelect';
 import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
@@ -611,6 +612,7 @@ function AppShellComponent() {
         <GlobalSearchPalette />
         <CalendarEventAlertHost />
         <AppToastHost />
+        <CliSetupModal />
       </div>
     </DailyGenerationProvider>
   );

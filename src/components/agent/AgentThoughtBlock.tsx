@@ -202,9 +202,12 @@ function AgentThoughtBlockComponent({
   }, [canToggle]);
 
   const isBriefThought = !activity.streaming && !bodyText;
-  const firstLine = bodyText.split('\n').find((line) => line.trim())?.trim() ?? '';
-  const streamingTitle =
-    firstLine.length > 88 ? `${firstLine.slice(0, 85)}…` : firstLine;
+  const firstLine =
+    bodyText
+      .split('\n')
+      .find((line) => line.trim())
+      ?.trim() ?? '';
+  const streamingTitle = firstLine.length > 88 ? `${firstLine.slice(0, 85)}…` : firstLine;
   const titleLabel = activity.streaming
     ? streamingTitle || `Pensando ${elapsedSeconds}s`
     : isBriefThought

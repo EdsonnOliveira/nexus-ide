@@ -10,6 +10,7 @@ function getCliPathSegments(home: string): string[] {
     return [
       path.join(home, 'bin'),
       path.join(home, '.local', 'bin'),
+      path.join(home, '.opencode', 'bin'),
       path.join(home, '.cursor', 'bin'),
       localAppData ? path.join(localAppData, 'Programs', 'cursor') : '',
       appData ? path.join(appData, 'npm') : '',
@@ -21,6 +22,7 @@ function getCliPathSegments(home: string): string[] {
   return [
     path.join(home, 'bin'),
     path.join(home, '.local', 'bin'),
+    path.join(home, '.opencode', 'bin'),
     path.join(home, '.cursor', 'bin'),
     path.join(home, '.antigravity', 'antigravity', 'bin'),
     '/opt/homebrew/bin',
@@ -44,8 +46,7 @@ export function buildCliPathEnv(basePath?: string): string {
 
   try {
     segments.add(path.join(app.getPath('userData'), 'mission-bridge'));
-  } catch {
-  }
+  } catch {}
 
   for (const segment of getCliPathSegments(home)) {
     segments.add(segment);

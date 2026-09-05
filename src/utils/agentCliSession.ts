@@ -480,6 +480,22 @@ export function detectSmartModeApprovalInTail(tail: string): boolean {
   );
 }
 
+export function sanitizeAgentCliError(text: string): string {
+  return cleanAgentPtyChunk(text).replace(/\s+/g, ' ').trim();
+}
+
+export function isStaleAgentSessionError(text: string): boolean {
+  const cleaned = sanitizeAgentCliError(text);
+
+  return (
+    /session not found/i.test(cleaned) ||
+    /conversation not found/i.test(cleaned) ||
+    /thread not found/i.test(cleaned) ||
+    /unknown session/i.test(cleaned) ||
+    /no (?:valid )?session/i.test(cleaned)
+  );
+}
+
 export function detectAgentLaunchErrorInTail(tail: string): string | null {
   const recent = tail.slice(-4096);
 

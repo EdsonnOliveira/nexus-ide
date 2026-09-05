@@ -13,6 +13,7 @@ export interface AgentSkillHint {
   command: string;
   hintKind: 'skill';
   skillOrigin: 'user' | 'builtin';
+  skillAiProvider: 'cursor' | 'claude' | 'codex' | 'opencode' | 'antigravity';
 }
 
 function readSkillName(skillDir: string, folderName: string): string {
@@ -35,6 +36,7 @@ function collectSkillsFromDirectory(
   seen: Set<string>,
   hints: AgentSkillHint[],
   skillOrigin: 'user' | 'builtin',
+  skillAiProvider: AgentSkillHint['skillAiProvider'] = 'cursor',
 ): void {
   if (!existsSync(skillsRoot)) {
     return;
@@ -78,6 +80,7 @@ function collectSkillsFromDirectory(
       command: `/${name}\n`,
       hintKind: 'skill',
       skillOrigin,
+      skillAiProvider,
     });
   }
 }

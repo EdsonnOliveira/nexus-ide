@@ -42,10 +42,7 @@ import {
   getAgentModeOption,
   type AutomationAgentMode,
 } from '@/constants/agentModes';
-import {
-  ASK_AI_PROVIDER_OPTIONS,
-  type AiProviderId,
-} from '@/constants/aiProviders';
+import { ASK_AI_PROVIDER_OPTIONS, type AiProviderId } from '@/constants/aiProviders';
 import { useAppSettingsStore } from '@/stores/useAppSettingsStore';
 import {
   positionDropdownAboveAnchor,
@@ -55,10 +52,7 @@ import {
 import { useAgentComposerMention } from '@/hooks/useAgentComposerMention';
 import { useTabActions } from '@/stores/useTabStore';
 import type { Project, TerminalCommandHint } from '@/types';
-import {
-  applyComposerMention,
-  type ComposerMentionMatch,
-} from '@/utils/agentComposerMention';
+import { applyComposerMention, type ComposerMentionMatch } from '@/utils/agentComposerMention';
 import {
   buildAgentComposerMentionsInsertion,
   resolveAgentComposerDropMentions,
@@ -70,12 +64,10 @@ import {
   buildAgentPromptImageMentionInsertion,
   getAgentPromptImageBadgeColor,
 } from '@/utils/agentPromptImageBadge';
-import {
-  readDroppedImageDataUrls,
-  readImagePathAsDataUrl,
-} from '@/utils/attachAgentPromptImage';
+import { readDroppedImageDataUrls, readImagePathAsDataUrl } from '@/utils/attachAgentPromptImage';
 import { cycleAgentMode } from '@/utils/cycleAgentMode';
 import { executeHomeDashboardAgentPrompt } from '@/utils/executeHomeDashboardAgentPrompt';
+import { resolvePromptSkillAiProvider } from '@/utils/agentSkillDisplay';
 import { isExternalFileDrag } from '@/utils/explorerExternalDrop';
 import { HOME_ASK_FOCUS_EVENT } from '@/utils/homeDashboardAgents';
 import { blobToDataUrl } from '@/utils/terminalClipboardImage';
@@ -523,7 +515,8 @@ function AskMentionMenuPanelComponent({
       ) : null}
       {matches.map((match, index) => {
         const isActive = index === activeIndex;
-        const MatchIcon = match.kind === 'skill' ? BookOpen : match.kind === 'directory' ? FolderKanban : File;
+        const MatchIcon =
+          match.kind === 'skill' ? BookOpen : match.kind === 'directory' ? FolderKanban : File;
 
         return (
           <button
@@ -612,16 +605,14 @@ function HomeDashboardAskBarComponent({
   const workspaces = useProjectStore((state) => state.workspaces);
   const selectableProjects = useMemo(() => {
     const source = storeProjects.length > 0 ? storeProjects : projects;
-    const workspaceOrderById = new Map(
-      workspaces.map((workspace, index) => [workspace.id, index]),
-    );
-    const projectOrderById = new Map(
-      storeProjects.map((project, index) => [project.id, index]),
-    );
+    const workspaceOrderById = new Map(workspaces.map((workspace, index) => [workspace.id, index]));
+    const projectOrderById = new Map(storeProjects.map((project, index) => [project.id, index]));
 
     return [...source].sort((left, right) => {
-      const leftWorkspaceOrder = workspaceOrderById.get(left.workspaceId) ?? Number.MAX_SAFE_INTEGER;
-      const rightWorkspaceOrder = workspaceOrderById.get(right.workspaceId) ?? Number.MAX_SAFE_INTEGER;
+      const leftWorkspaceOrder =
+        workspaceOrderById.get(left.workspaceId) ?? Number.MAX_SAFE_INTEGER;
+      const rightWorkspaceOrder =
+        workspaceOrderById.get(right.workspaceId) ?? Number.MAX_SAFE_INTEGER;
       if (leftWorkspaceOrder !== rightWorkspaceOrder) {
         return leftWorkspaceOrder - rightWorkspaceOrder;
       }
@@ -730,7 +721,9 @@ function HomeDashboardAskBarComponent({
 
   const projectOptions = useMemo(() => {
     const showWorkspace = workspaces.length > 1;
-    const workspaceNameById = new Map(workspaces.map((workspace) => [workspace.id, workspace.name]));
+    const workspaceNameById = new Map(
+      workspaces.map((workspace) => [workspace.id, workspace.name]),
+    );
 
     return selectableProjects.map((project) => ({
       value: project.id,
@@ -784,6 +777,16 @@ function HomeDashboardAskBarComponent({
   });
 
   useEffect(() => {
+    const skillAiProvider = resolvePromptSkillAiProvider(prompt, skillHints);
+
+    if (!skillAiProvider || skillAiProvider === aiProvider) {
+      return;
+    }
+
+    setAiProvider(skillAiProvider);
+  }, [aiProvider, prompt, skillHints]);
+
+  useEffect(() => {
     if (!mention.isOpen) {
       setMentionAnchorRect((current) => (current ? null : current));
       return;
@@ -834,23 +837,26 @@ function HomeDashboardAskBarComponent({
     mirror.scrollTop = input.scrollTop;
   }, []);
 
-  const setPromptWithCaret = useCallback((nextValue: string, nextCaret: number) => {
-    setPrompt(nextValue);
-    setCaretIndex(nextCaret);
+  const setPromptWithCaret = useCallback(
+    (nextValue: string, nextCaret: number) => {
+      setPrompt(nextValue);
+      setCaretIndex(nextCaret);
 
-    window.requestAnimationFrame(() => {
-      const input = inputRef.current;
+      window.requestAnimationFrame(() => {
+        const input = inputRef.current;
 
-      if (!input) {
-        return;
-      }
+        if (!input) {
+          return;
+        }
 
-      input.focus({ preventScroll: true });
-      input.setSelectionRange(nextCaret, nextCaret);
-      resizeAskInput(input);
-      syncInputScroll();
-    });
-  }, [syncInputScroll]);
+        input.focus({ preventScroll: true });
+        input.setSelectionRange(nextCaret, nextCaret);
+        resizeAskInput(input);
+        syncInputScroll();
+      });
+    },
+    [syncInputScroll],
+  );
 
   useLayoutEffect(() => {
     const input = inputRef.current;
@@ -881,9 +887,7 @@ function HomeDashboardAskBarComponent({
   const selectedAiProviderLabel =
     ASK_AI_PROVIDER_OPTIONS.find((option) => option.id === aiProvider)?.label ?? 'Cursor';
   const askPlaceholder =
-    agentMode !== 'agent'
-      ? AGENT_MODE_INPUT_PLACEHOLDERS[agentMode]
-      : 'Pergunte algo ao Nexus...';
+    agentMode !== 'agent' ? AGENT_MODE_INPUT_PLACEHOLDERS[agentMode] : 'Pergunte algo ao Nexus...';
 
   const handleClearMode = useCallback(() => {
     setAgentMode('agent');
@@ -1041,6 +1045,12 @@ function HomeDashboardAskBarComponent({
       projectId,
     };
     const nextPrompt = trimmed;
+    const skillAiProvider = resolvePromptSkillAiProvider(nextPrompt, skillHints);
+    const launchAiProvider = skillAiProvider ?? aiProvider;
+
+    if (skillAiProvider && skillAiProvider !== aiProvider) {
+      setAiProvider(skillAiProvider);
+    }
 
     const flightSource = formRef.current ?? inputRef.current;
     const sourceRect = flightSource?.getBoundingClientRect();
@@ -1075,7 +1085,7 @@ function HomeDashboardAskBarComponent({
         imageDataUrls,
         preferredPaneId: null,
         agentMode,
-        aiProvider,
+        aiProvider: launchAiProvider,
         addAgentTabForProject,
         syncAgentWorkingDirectory: async (nextPaneId, workingDirectory) => {
           await updateAgentTab(nextPaneId, { workingDirectory });
@@ -1115,6 +1125,7 @@ function HomeDashboardAskBarComponent({
     projects,
     prompt,
     submitting,
+    skillHints,
     updateAgentTab,
   ]);
 
@@ -1248,8 +1259,7 @@ function HomeDashboardAskBarComponent({
         try {
           const dataUrl = await blobToDataUrl(imageFile);
           attachImagesWithMentions([dataUrl]);
-        } catch {
-        }
+        } catch {}
       })();
     },
     [attachImagesWithMentions, imageActionsDisabled],
@@ -1536,9 +1546,7 @@ function HomeDashboardAskBarComponent({
                 imagePreviewByNumber={imagePreviewByNumber}
               />
             ) : (
-              <span className='home-dashboard__ask-input-mirror-placeholder'>
-                {askPlaceholder}
-              </span>
+              <span className='home-dashboard__ask-input-mirror-placeholder'>{askPlaceholder}</span>
             )}
           </div>
           <textarea

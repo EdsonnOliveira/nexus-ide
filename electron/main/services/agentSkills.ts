@@ -26,6 +26,7 @@ function collectSkillsFromDirectory(
   seen: Set<string>,
   hints: TerminalCommandHint[],
   skillOrigin: 'user' | 'builtin',
+  skillAiProvider: NonNullable<TerminalCommandHint['skillAiProvider']> = 'cursor',
 ): void {
   if (!existsSync(skillsRoot)) {
     return;
@@ -66,6 +67,7 @@ function collectSkillsFromDirectory(
       command: `/${name}\n`,
       hintKind: 'skill',
       skillOrigin,
+      skillAiProvider,
     });
   }
 }

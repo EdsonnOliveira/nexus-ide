@@ -941,9 +941,7 @@ const nexusApi = {
       url: string | null;
       cliDir: string;
     }> => ipcRenderer.invoke('mission-live:status'),
-    onUpdated: (
-      callback: (mission: import('../types/mission').Mission) => void,
-    ): (() => void) => {
+    onUpdated: (callback: (mission: import('../types/mission').Mission) => void): (() => void) => {
       const listener = (
         _: Electron.IpcRendererEvent,
         payload: import('../types/mission').Mission,
@@ -1016,6 +1014,11 @@ const nexusApi = {
     replyHostCommand: (requestId: string, ok: boolean): void => {
       ipcRenderer.send('agentPip:hostResult', { requestId, ok });
     },
+  },
+  cliSetup: {
+    getStatus: () => ipcRenderer.invoke('cliSetup:getStatus'),
+    installOpenCode: () => ipcRenderer.invoke('cliSetup:installOpenCode'),
+    dismissSetup: () => ipcRenderer.invoke('cliSetup:dismissSetup'),
   },
 };
 

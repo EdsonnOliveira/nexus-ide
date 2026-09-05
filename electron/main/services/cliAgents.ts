@@ -3,12 +3,7 @@ import path from 'node:path';
 import { buildCliPathEnv } from '../utils/cliPathEnv';
 
 export type CliAgentBadgeIcon =
-  | 'cursor'
-  | 'claude'
-  | 'opencode'
-  | 'antigravity'
-  | 'codex'
-  | 'gemini';
+  'cursor' | 'claude' | 'opencode' | 'antigravity' | 'codex' | 'gemini';
 
 export interface CliAgentDefinition {
   id: string;
@@ -123,6 +118,15 @@ function getAvailableCommands(): Set<string> {
   cacheTimestamp = now;
 
   return available;
+}
+
+export function invalidateCliAgentCache(): void {
+  cachedAvailableCommands = null;
+  cacheTimestamp = 0;
+}
+
+export function isCliAgentCommandInstalled(command: string): boolean {
+  return getAvailableCommands().has(command);
 }
 
 export function getInstalledCliAgentDefinitions(): CliAgentDefinition[] {
