@@ -7,12 +7,17 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
+  type RefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { FileCode2, FileWarning, Image } from 'lucide-react';
+import { FileCode2, FileWarning, GitBranch, Image } from 'lucide-react';
 import { ExplorerFileIcon } from '@/components/explorer/ExplorerTreeIcon';
 import { EmptyState } from '@/components/overlay/EmptyState';
-import { positionDropdownAboveAnchor } from '@/hooks/useAnchoredDropdownMenu';
+import {
+  positionDropdownAboveAnchor,
+  positionDropdownBelowAnchor,
+  useAnchoredDropdownMenu,
+} from '@/hooks/useAnchoredDropdownMenu';
 import { useTabActions } from '@/stores/useTabStore';
 import { useProjectStore } from '@/stores/useProjectStore';
 import type { AgentTurnSummaryFileRef, AgentTurnUsage } from '@/types';
@@ -34,7 +39,9 @@ export interface AgentFilesChangedCardProps {
   startedAt?: number;
   completedAt?: number;
   usage?: AgentTurnUsage;
-  onReview: () => void;
+  onReview?: () => void;
+  showReview?: boolean;
+  disableProjectOpen?: boolean;
 }
 
 interface PreviewAnchor {
@@ -334,6 +341,8 @@ function AgentFilesChangedCardComponent({
   completedAt,
   usage,
   onReview,
+  showReview = true,
+  disableProjectOpen = false,
 }: AgentFilesChangedCardProps) {
   const { openDiffTab } = useTabActions();
   const openExplorerGit = useProjectStore((state) => state.openExplorerGit);
@@ -415,6 +424,11 @@ function AgentFilesChangedCardComponent({
       }
 
       closePreview();
+
+      if (disableProjectOpen) {
+        return;
+      }
+
       openExplorerGit();
       const absolutePath = resolveAgentActivityFilePath(projectPath, trimmed);
       const diffTargetPath = absolutePath || trimmed;
@@ -451,7 +465,7 @@ function AgentFilesChangedCardComponent({
         repoPath,
       });
     },
-    [closePreview, openDiffTab, openExplorerGit, projectPath],
+    [closePreview, disableProjectOpen, openDiffTab, openExplorerGit, projectPath],
   );
 
   const handleRowEnter = useCallback(
@@ -506,13 +520,15 @@ function AgentFilesChangedCardComponent({
       ) : null}
       <div className='agent-view__files-changed-header'>
         <span className='agent-view__files-changed-title'>{countLabel}</span>
-        <button
-          type='button'
-          className='agent-view__files-changed-review app-button'
-          onClick={onReview}
-        >
-          Review
-        </button>
+        {showReview && onReview ? (
+          <button
+            type='button'
+            className='agent-view__files-changed-review app-button'
+            onClick={onReview}
+          >
+            Review
+          </button>
+        ) : null}
       </div>
       <div className='agent-view__files-changed-list'>
         {visibleFiles.map((file) => {
@@ -531,7 +547,19 @@ function AgentFilesChangedCardComponent({
                 handleRowEnter(file, event);
               }}
               onMouseLeave={handleRowLeave}
-              onClick={() => {
+              onClick={(event) => {
+                if (disableProjectOpen) {
+                  clearHoverTimer();
+                  clearLeaveTimer();
+                  setActivePreview({
+                    path: file.path,
+                    additions,
+                    deletions,
+                    anchor: rectToAnchor(event.currentTarget.getBoundingClientRect()),
+                  });
+                  return;
+                }
+
                 void handleOpenFile(file.path);
               }}
             >
@@ -565,3 +593,87 @@ function AgentFilesChangedCardComponent({
 }
 
 export const AgentFilesChangedCard = memo(AgentFilesChangedCardComponent);
+
+interface AgentFilesChangedPopupProps {
+  anchorRect: DOMRect;
+  anchorRef: RefObject<HTMLButtonElement | null>;
+  files: AgentTurnSummaryFileRef[];
+  projectPath: string;
+  onClose: () => void;
+}
+
+function AgentFilesChangedPopupComponent({
+  anchorRect,
+  anchorRef,
+  files,
+  projectPath,
+  onClose,
+}: AgentFilesChangedPopupProps) {
+  const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
+    onClose,
+    (menu) => positionDropdownBelowAnchor(menu, anchorRect, 'end'),
+    [anchorRect, files.length],
+  );
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+
+      if (menuRef.current?.contains(target) || anchorRef.current?.contains(target)) {
+        return;
+      }
+
+      requestClose();
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      window.addEventListener('mousedown', handlePointerDown);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [anchorRef, menuRef, requestClose]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        requestClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [requestClose]);
+
+  const countLabel =
+    files.length === 1 ? '1 arquivo modificado' : `${files.length} arquivos modificados`;
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className={`context-menu home-dashboard__agent-git-popup overlay-popup overlay-popup--anchor-end ${animationClass}`}
+      role='dialog'
+      aria-label={countLabel}
+    >
+      {files.length === 0 ? (
+        <EmptyState icon={GitBranch} message='Nenhum arquivo modificado' compact />
+      ) : (
+        <AgentFilesChangedCard
+          files={files}
+          projectPath={projectPath}
+          showReview={false}
+          disableProjectOpen
+        />
+      )}
+    </div>,
+    document.body,
+  );
+}
+
+export const AgentFilesChangedPopup = memo(AgentFilesChangedPopupComponent);

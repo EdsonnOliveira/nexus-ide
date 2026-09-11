@@ -17,10 +17,12 @@ import { TabItem } from '@/components/tabs/TabItem';
 import { TabToolbar } from '@/components/tabs/TabToolbar';
 import { UnsavedFileCloseDialog } from '@/components/tabs/UnsavedFileCloseDialog';
 import type { TabBarItem } from '@/types';
-import { getPanesFromItem, resolveActiveTabBarItem } from '@/utils/tabGroups';
+import { getPanesFromItem } from '@/utils/tabGroups';
 import { isAgentPaneTabLoading, isPaneAgentLoading } from '@/utils/projectAgentStatus';
 import { getProjectPingTone } from '@/utils/projectPingTone';
 import { countPinnedTabs, isTabPinned } from '@/utils/tabOrder';
+import { listProjectSurfaceTabs, resolveProjectSurfaceActiveTab } from '@/utils/homeDashboardAgents';
+import { useHomeBoundPaneIds } from '@/hooks/useHomeAgentBindings';
 
 interface TabContextMenuState {
   tabId: string;
@@ -37,8 +39,8 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
   useTabCloseShortcut();
   useTabIndexShortcuts();
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
-  const activeProject = useProjectStore((state) =>
-    state.projects.find((project) => project.id === state.activeProjectId) ?? null,
+  const activeProject = useProjectStore(
+    (state) => state.projects.find((project) => project.id === state.activeProjectId) ?? null,
   );
   const sidePanel = useProjectStore((state) => state.sidePanel);
   const toggleBrain = useProjectStore((state) => state.toggleBrain);
@@ -55,12 +57,17 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
   const [renameTabId, setRenameTabId] = useState<string | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
 
-  const tabs = useMemo(() => activeProject?.tabs ?? [], [activeProject?.tabs]);
+  const homeBoundPaneIds = useHomeBoundPaneIds(activeProjectId);
+  const allTabs = useMemo(() => activeProject?.tabs ?? [], [activeProject?.tabs]);
+  const tabs = useMemo(
+    () => (activeProject ? listProjectSurfaceTabs(activeProject, homeBoundPaneIds) : []),
+    [activeProject, homeBoundPaneIds],
+  );
   const pinnedCount = useMemo(() => countPinnedTabs(tabs), [tabs]);
   const canCloseAllTabs = tabs.length > pinnedCount;
   const activeTabItem = useMemo(
-    () => resolveActiveTabBarItem(tabs, activeProject?.activeTabId ?? null),
-    [activeProject?.activeTabId, tabs],
+    () => (activeProject ? resolveProjectSurfaceActiveTab(activeProject, homeBoundPaneIds) : null),
+    [activeProject, homeBoundPaneIds],
   );
   const paneIdsKey = useMemo(
     () =>
@@ -163,9 +170,7 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
           }
 
           const hasPendingLaunch =
-            Boolean(pendingLaunchCommands[pane.id]) &&
-            pane.type === 'terminal' &&
-            !pane.ptyId;
+            Boolean(pendingLaunchCommands[pane.id]) && pane.type === 'terminal' && !pane.ptyId;
 
           return (
             Boolean(restartingPaneIds[pane.id]) ||
@@ -236,10 +241,10 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
   );
 
   const promptNextDirtyCloseAll = useCallback((): 'continue' | true => {
-    const project = useProjectStore.getState().projects.find(
-      (entry) => entry.id === useProjectStore.getState().activeProjectId,
-    );
-    const remainingTabs = project?.tabs ?? [];
+    const project = useProjectStore
+      .getState()
+      .projects.find((entry) => entry.id === useProjectStore.getState().activeProjectId);
+    const remainingTabs = project ? listProjectSurfaceTabs(project, homeBoundPaneIds) : [];
     const nextDirty = remainingTabs.find(
       (item) => !isTabPinned(item) && findDirtyFileTabs(item).length > 0,
     );
@@ -259,7 +264,7 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
       closeAll: true,
     });
     return 'continue';
-  }, [closeAllTabs, findDirtyFileTabs, setPendingClose]);
+  }, [closeAllTabs, findDirtyFileTabs, homeBoundPaneIds, setPendingClose]);
 
   const handleCancelUnsavedClose = useCallback(() => {
     setPendingClose(null);
@@ -376,7 +381,7 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
   useEffect(() => {
     const openPaneIds = new Set<string>();
 
-    for (const tab of tabs) {
+    for (const tab of allTabs) {
       openPaneIds.add(tab.id);
 
       for (const pane of getPanesFromItem(tab)) {
@@ -389,7 +394,7 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
         clearDirtyTab(tabId);
       }
     }
-  }, [clearDirtyTab, dirtyByTabId, tabs]);
+  }, [allTabs, clearDirtyTab, dirtyByTabId]);
 
   const handleContextMenu = useCallback((tab: TabBarItem, x: number, y: number) => {
     setContextMenu({ tabId: tab.id, x, y });
@@ -431,10 +436,16 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
 
   const handleDropTab = useCallback(
     (sourceTabId: string, targetIndex: number) => {
-      void reorderTab(sourceTabId, targetIndex);
+      const targetTab = tabs[targetIndex];
+      const fullIndex = targetTab ? allTabs.findIndex((item) => item.id === targetTab.id) : -1;
+
+      if (fullIndex >= 0) {
+        void reorderTab(sourceTabId, fullIndex);
+      }
+
       setDropTargetIndex(null);
     },
-    [reorderTab],
+    [allTabs, reorderTab, tabs],
   );
 
   const handleTabDragEnd = useCallback(() => {
@@ -496,13 +507,20 @@ function TabStripComponent({ onTabDragStart, onTabDragEnd }: TabStripProps) {
       const sourceTabId = event.dataTransfer.getData(TAB_DRAG_MIME);
 
       if (sourceTabId && tabs.length > 0) {
-        void reorderTab(sourceTabId, tabs.length - 1);
+        const lastVisible = tabs[tabs.length - 1];
+        const fullIndex = lastVisible
+          ? allTabs.findIndex((item) => item.id === lastVisible.id)
+          : -1;
+
+        if (fullIndex >= 0) {
+          void reorderTab(sourceTabId, fullIndex);
+        }
       }
 
       setDropTargetIndex(null);
       onTabDragEnd();
     },
-    [onTabDragEnd, reorderTab, tabs.length],
+    [allTabs, onTabDragEnd, reorderTab, tabs],
   );
 
   if (!activeProject) {

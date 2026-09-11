@@ -382,7 +382,19 @@ export function reuseStableAgentTurns(previous: AgentTurn[], next: AgentTurn[]):
 
     const prev = previous[index];
 
-    if (prev && prev.id === turn.id && !turn.running) {
+    if (
+      prev &&
+      prev.id === turn.id &&
+      !turn.running &&
+      prev.running === turn.running &&
+      prev.activities === turn.activities &&
+      prev.summary === turn.summary &&
+      prev.completedAt === turn.completedAt &&
+      prev.user === turn.user &&
+      prev.usage === turn.usage &&
+      prev.pendingFollowUp === turn.pendingFollowUp &&
+      prev.resumeChatId === turn.resumeChatId
+    ) {
       return prev;
     }
 

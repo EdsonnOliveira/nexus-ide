@@ -371,6 +371,7 @@ export const useAgentGitChangeStore = create<AgentGitChangeState>((set, get) => 
       });
 
       if (repoPathForRefresh || projectIdForRefresh) {
+        await delay(FINALIZE_SNAPSHOT_DELAY_MS);
         await refreshProjectGitCounts(projectIdForRefresh ?? '', repoPathForRefresh);
       }
 

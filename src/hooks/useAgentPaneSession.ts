@@ -709,8 +709,10 @@ export function useAgentPaneSession({
     const incoming = sanitizeAgentTurnHistory(tab.turns ?? []);
 
     if (!isRuntimeActive) {
-      turnsRef.current = incoming;
-      setTurnsRevision((revision) => revision + 1);
+      if (turnsRef.current !== incoming) {
+        turnsRef.current = incoming;
+        setTurnsRevision((revision) => revision + 1);
+      }
       return;
     }
 
@@ -733,19 +735,17 @@ export function useAgentPaneSession({
         return;
       }
 
-      const hadLocalTranscript = localTurns.length > 0;
+      if (localTurns.length === 0) {
+        return;
+      }
 
       cursorAgentContinueRef.current = false;
       streamJsonStateRef.current = replaceAgentStreamJsonSession(paneIdRef.current);
       turnsRef.current = incoming;
       editingTurnIdRef.current = null;
       setEditingTurnId(null);
-
-      if (hadLocalTranscript) {
-        consumedFollowUpIdsRef.current.clear();
-        persistFollowUps([]);
-      }
-
+      consumedFollowUpIdsRef.current.clear();
+      persistFollowUps([]);
       setTurnsRevision((revision) => revision + 1);
       return;
     }
@@ -755,6 +755,10 @@ export function useAgentPaneSession({
     }
 
     if (shouldPreferLocalAgentTurnHistory(localTurns, incoming)) {
+      return;
+    }
+
+    if (localTurns === incoming) {
       return;
     }
 
@@ -836,7 +840,13 @@ export function useAgentPaneSession({
 
   const persistTurns = useCallback(
     (nextTurns: AgentTurn[], options?: { flush?: boolean }) => {
-      const stableTurns = reuseStableAgentTurns(turnsRef.current, nextTurns);
+      const previousTurns = turnsRef.current;
+      const stableTurns = reuseStableAgentTurns(previousTurns, nextTurns);
+
+      if (stableTurns === previousTurns) {
+        return;
+      }
+
       turnsRef.current = stableTurns;
       setAgentPaneLiveTranscript(paneIdRef.current, {
         turns: stableTurns,

@@ -5,6 +5,7 @@ import { hasAgentPaneSubmit, writeAgentPaneDraft } from '@/utils/agentPaneRegist
 import { resolvePaneAgentCommand } from '@/utils/projectAgentStatus';
 import { collectProjectPanes, resolveActiveTabBarItem } from '@/utils/tabGroups';
 import { toProjectRelativePath } from '@/utils/explorerRelativePath';
+import { isHomeBoundAgentPane } from '@/utils/homeDashboardAgents';
 
 function findAgentPaneId(project: Project): string | null {
   const activeAgentByPane = useTerminalSessionStore.getState().activeAgentByPane;
@@ -15,15 +16,27 @@ function findAgentPaneId(project: Project): string | null {
     const activePane = activeItem.panes.find((pane) => pane.id === activePaneId);
 
     if (activePane && resolvePaneAgentCommand(activePane, activeAgentByPane)) {
-      return activePane.id;
+      if (!isHomeBoundAgentPane(project.id, activePane.id)) {
+        return activePane.id;
+      }
     }
   } else if (activeItem?.type === 'terminal') {
     if (resolvePaneAgentCommand(activeItem, activeAgentByPane)) {
+      if (!isHomeBoundAgentPane(project.id, activeItem.id)) {
+        return activeItem.id;
+      }
+    }
+  } else if (activeItem?.type === 'agent') {
+    if (!isHomeBoundAgentPane(project.id, activeItem.id)) {
       return activeItem.id;
     }
   }
 
   for (const pane of collectProjectPanes(project.tabs)) {
+    if (isHomeBoundAgentPane(project.id, pane.id)) {
+      continue;
+    }
+
     if (resolvePaneAgentCommand(pane, activeAgentByPane)) {
       return pane.id;
     }
@@ -32,7 +45,10 @@ function findAgentPaneId(project: Project): string | null {
   return null;
 }
 
-function waitForTerminalHandle(paneId: string, attempts = 16): Promise<ReturnType<typeof getTerminalHandle>> {
+function waitForTerminalHandle(
+  paneId: string,
+  attempts = 16,
+): Promise<ReturnType<typeof getTerminalHandle>> {
   return new Promise((resolve) => {
     let remaining = attempts;
 

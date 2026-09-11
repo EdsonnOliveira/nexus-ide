@@ -6,13 +6,15 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import { Bot, Maximize2, Minimize2, Pin, X } from 'lucide-react';
+import { Bot, GitBranch, Maximize2, Minimize2, Pin, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { AgentShellTerminalDock } from '@/components/agent/AgentShellTerminalDock';
+import { AgentFilesChangedPopup } from '@/components/agent/AgentFilesChangedCard';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { EmptyState } from '@/components/overlay/EmptyState';
 import {
@@ -23,15 +25,18 @@ import { HomeDashboardCloudAgentCard } from '@/components/home/HomeDashboardClou
 import { MissionCard } from '@/components/mission/MissionCard';
 import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
 import { useAgentPipSync } from '@/hooks/useAgentPipSync';
+import { useProjectGitFlatChanges } from '@/hooks/useProjectGitFlatChanges';
 import { useHomeSurfaceProjects } from '@/hooks/useHomeDashboardData';
 import { useMissionHydration } from '@/hooks/useMissionHydration';
 import { useAgentPipStore } from '@/stores/useAgentPipStore';
 import { useMissionStore } from '@/stores/useMissionStore';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { useAgentGitGroupsForProject } from '@/stores/useAgentGitChangeStore';
 import { useCloudAgentSessionsStore } from '@/stores/useCloudAgentSessionsStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useTabActions } from '@/stores/useTabStore';
 import type { AgentTab, Project } from '@/types';
+import { listAgentPaneGitChangedFiles } from '@/utils/agentGitPromptGroups';
 import {
   forgetHomeDashboardProjectAgent,
   HOME_AGENT_CHANGE_EVENT,
@@ -116,24 +121,44 @@ function AgentProjectThumbComponent({
 
 const AgentProjectThumb = memo(AgentProjectThumbComponent);
 
+function isAgentPaneHiddenInMission(
+  paneId: string,
+  missions: Array<{ nodes: Array<{ paneId?: string | null }> }>,
+): boolean {
+  return missions.some((mission) => mission.nodes.some((node) => node.paneId === paneId));
+}
+
 interface AgentCardCloseConfirmProps {
   projectName: string;
+  agentCount: number;
   onConfirm: () => void;
   onClose: () => void;
 }
 
 function AgentCardCloseConfirmComponent({
   projectName,
+  agentCount,
   onConfirm,
   onClose,
 }: AgentCardCloseConfirmProps) {
+  const isBulk = agentCount > 1;
+
   return (
     <AnimatedModal panelClassName='project-dialog' onClose={onClose}>
       {(requestClose) => (
         <>
-          <h2 className='project-dialog__title'>Fechar agent</h2>
+          <h2 className='project-dialog__title'>{isBulk ? 'Fechar agents' : 'Fechar agent'}</h2>
           <p className='project-dialog__message'>
-            Remover o agent de <strong>{projectName}</strong> da área do Maestro?
+            {isBulk ? (
+              <>
+                Remover todos os <strong>{agentCount}</strong> agents de{' '}
+                <strong>{projectName}</strong> da área do Maestro?
+              </>
+            ) : (
+              <>
+                Remover o agent de <strong>{projectName}</strong> da área do Maestro?
+              </>
+            )}
           </p>
           <div className='project-dialog__actions'>
             <button type='button' className='project-dialog__btn app-button' onClick={requestClose}>
@@ -144,7 +169,7 @@ function AgentCardCloseConfirmComponent({
               className='project-dialog__btn project-dialog__btn--danger app-button'
               onClick={onConfirm}
             >
-              Fechar
+              {isBulk ? 'Fechar todos' : 'Fechar'}
             </button>
           </div>
         </>
@@ -162,8 +187,9 @@ interface AgentCardProps {
   isFocused: boolean;
   isSpawning: boolean;
   isMultiSelected: boolean;
+  projectAgentCount: number;
   onFocus: (paneId: string, additive: boolean) => void;
-  onRemove: (project: Project, pane: AgentTab) => void;
+  onRemove: (project: Project, pane: AgentTab, closeAllOfProject: boolean) => void;
 }
 
 function AgentCardComponent({
@@ -173,6 +199,7 @@ function AgentCardComponent({
   isFocused,
   isSpawning,
   isMultiSelected,
+  projectAgentCount,
   onFocus,
   onRemove,
 }: AgentCardProps) {
@@ -193,11 +220,28 @@ function AgentCardComponent({
   );
   const { updateAgentTab } = useTabActions();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [closeAllProjectAgents, setCloseAllProjectAgents] = useState(false);
   const fullscreen = useAgentCardFullscreen();
   const pinnedPaneId = useAgentPipStore((state) => state.paneId);
   const pinAgent = useAgentPipStore((state) => state.pin);
   const unpinAgent = useAgentPipStore((state) => state.unpin);
   const isPinned = pinnedPaneId === paneId;
+  const agentGitGroups = useAgentGitGroupsForProject(project.id);
+  const { changes: gitFlatChanges, loading: gitLoading } = useProjectGitFlatChanges(project.path);
+  const agentChangedFiles = useMemo(
+    () =>
+      listAgentPaneGitChangedFiles(
+        paneId,
+        pane.turns,
+        agentGitGroups,
+        gitLoading ? null : gitFlatChanges,
+      ),
+    [agentGitGroups, gitFlatChanges, gitLoading, pane.turns, paneId],
+  );
+  const gitChangedFileCount = agentChangedFiles.length;
+  const gitButtonRef = useRef<HTMLButtonElement>(null);
+  const [gitPopupOpen, setGitPopupOpen] = useState(false);
+  const [gitPopupAnchor, setGitPopupAnchor] = useState<DOMRect | null>(null);
 
   const handleFocus = useCallback(
     (event?: ReactMouseEvent) => {
@@ -228,17 +272,24 @@ function AgentCardComponent({
     [paneId, updateAgentTab],
   );
 
-  const handleOpenConfirm = useCallback(() => {
-    setConfirmOpen(true);
-  }, []);
+  const handleOpenConfirm = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation();
+      const closeAll = Boolean(event.metaKey || event.ctrlKey) && projectAgentCount > 1;
+      setCloseAllProjectAgents(closeAll);
+      setConfirmOpen(true);
+    },
+    [projectAgentCount],
+  );
 
   const handleCloseConfirm = useCallback(() => {
     setConfirmOpen(false);
+    setCloseAllProjectAgents(false);
   }, []);
 
   const handleConfirmClose = useCallback(() => {
-    onRemove(project, pane);
-  }, [onRemove, pane, project]);
+    onRemove(project, pane, closeAllProjectAgents);
+  }, [closeAllProjectAgents, onRemove, pane, project]);
 
   const stopCardFocusSteal = useCallback((event: ReactMouseEvent | ReactPointerEvent) => {
     event.stopPropagation();
@@ -262,6 +313,27 @@ function AgentCardComponent({
 
     pinAgent(paneId);
   }, [isPinned, paneId, pinAgent, unpinAgent]);
+
+  const handleOpenGit = useCallback((event: ReactMouseEvent) => {
+    event.stopPropagation();
+    const rect = gitButtonRef.current?.getBoundingClientRect();
+
+    if (!rect) {
+      return;
+    }
+
+    setGitPopupAnchor(rect);
+    setGitPopupOpen((current) => !current);
+  }, []);
+
+  useEffect(() => {
+    if (gitChangedFileCount > 0) {
+      return;
+    }
+
+    setGitPopupOpen(false);
+    setGitPopupAnchor(null);
+  }, [gitChangedFileCount]);
 
   if (missionForPane && missionForPane.nodes.some((node) => node.paneId === paneId)) {
     return null;
@@ -300,6 +372,22 @@ function AgentCardComponent({
               projectPath={project.path}
               variant='header'
             />
+            {gitChangedFileCount > 0 ? (
+              <button
+                ref={gitButtonRef}
+                type='button'
+                className={`home-dashboard__agent-card-terminal home-dashboard__agent-card-git app-button app-button--enter${gitPopupOpen ? ' home-dashboard__agent-card-git--open' : ''}`}
+                aria-label={`${gitChangedFileCount} arquivos modificados`}
+                title={`${gitChangedFileCount} arquivos modificados`}
+                aria-expanded={gitPopupOpen}
+                onClick={handleOpenGit}
+              >
+                <GitBranch size={14} strokeWidth={2.25} aria-hidden='true' />
+                <span className='home-dashboard__agent-card-terminal-badge' aria-hidden='true'>
+                  {gitChangedFileCount > 99 ? '99+' : gitChangedFileCount}
+                </span>
+              </button>
+            ) : null}
             <button
               type='button'
               className={`home-dashboard__agent-card-terminal app-button app-button--enter${isPinned ? ' home-dashboard__agent-card-terminal--pinned' : ''}`}
@@ -332,7 +420,16 @@ function AgentCardComponent({
             <button
               type='button'
               className='home-dashboard__agent-card-close app-button app-button--enter'
-              aria-label='Fechar agent'
+              aria-label={
+                projectAgentCount > 1
+                  ? 'Fechar agent. Command+clique fecha todos os agents deste projeto'
+                  : 'Fechar agent'
+              }
+              title={
+                projectAgentCount > 1
+                  ? 'Fechar · ⌘ clique fecha todos os agents deste projeto'
+                  : 'Fechar'
+              }
               onClick={handleOpenConfirm}
             >
               <X size={14} strokeWidth={2.25} aria-hidden='true' />
@@ -360,9 +457,21 @@ function AgentCardComponent({
           </Suspense>
         </div>
       </AgentCardFrame>
+      {gitPopupOpen && gitPopupAnchor ? (
+        <AgentFilesChangedPopup
+          anchorRect={gitPopupAnchor}
+          anchorRef={gitButtonRef}
+          files={agentChangedFiles}
+          projectPath={project.path}
+          onClose={() => {
+            setGitPopupOpen(false);
+          }}
+        />
+      ) : null}
       {confirmOpen ? (
         <AgentCardCloseConfirm
           projectName={project.name}
+          agentCount={closeAllProjectAgents ? projectAgentCount : 1}
           onConfirm={handleConfirmClose}
           onClose={handleCloseConfirm}
         />
@@ -482,17 +591,49 @@ function HomeDashboardAgentModeComponent({
     [clearSelectedPaneIds, toggleSelectedPaneId],
   );
 
+  const projectAgentCountById = useMemo(() => {
+    const counts: Record<string, number> = {};
+
+    for (const slot of slots) {
+      if (isAgentPaneHiddenInMission(slot.pane.id, missions)) {
+        continue;
+      }
+
+      counts[slot.project.id] = (counts[slot.project.id] ?? 0) + 1;
+    }
+
+    return counts;
+  }, [missions, slots]);
+
   const handleRemove = useCallback(
-    (project: Project, pane: AgentTab) => {
+    (project: Project, pane: AgentTab, closeAllOfProject: boolean) => {
+      const paneIds = closeAllOfProject
+        ? slots
+            .filter(
+              (slot) =>
+                slot.project.id === project.id &&
+                !isAgentPaneHiddenInMission(slot.pane.id, missions),
+            )
+            .map((slot) => slot.pane.id)
+        : [pane.id];
+
       const pinnedId = useAgentPipStore.getState().paneId;
-      if (pinnedId === pane.id) {
+
+      if (pinnedId && paneIds.includes(pinnedId)) {
         useAgentPipStore.getState().unpin();
       }
 
-      forgetHomeDashboardProjectAgent(project.id, pane.id);
-      void closeTabForProject(project.id, pane.id);
+      for (const paneId of paneIds) {
+        forgetHomeDashboardProjectAgent(project.id, paneId);
+      }
+
+      void (async () => {
+        for (const paneId of paneIds) {
+          await closeTabForProject(project.id, paneId);
+        }
+      })();
     },
-    [closeTabForProject],
+    [closeTabForProject, missions, slots],
   );
 
   return (
@@ -528,6 +669,7 @@ function HomeDashboardAgentModeComponent({
               isMultiSelected={
                 selectedPaneIds.length > 1 && selectedPaneIds.includes(slot.pane.id)
               }
+              projectAgentCount={projectAgentCountById[slot.project.id] ?? 1}
               onFocus={handleFocus}
               onRemove={handleRemove}
             />

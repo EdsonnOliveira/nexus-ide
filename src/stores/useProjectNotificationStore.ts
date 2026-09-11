@@ -9,14 +9,36 @@ import { notifyDesktopAgentWebPush } from '@/utils/notifyDesktopAgentWebPush';
 
 interface ProjectNotificationState {
   notifiedAgentPaneByProject: Record<string, string>;
+  notifiedAtByProject: Record<string, number>;
   markProjectReady: (projectId: string, paneId: string) => void;
   restoreProjectNotification: (projectId: string, paneId: string) => void;
   clearProjectNotification: (projectId: string) => void;
   clearNotificationForPane: (paneId: string) => void;
 }
 
+function omitProjectNotification(
+  notifiedAgentPaneByProject: Record<string, string>,
+  notifiedAtByProject: Record<string, number>,
+  projectId: string,
+): Pick<ProjectNotificationState, 'notifiedAgentPaneByProject' | 'notifiedAtByProject'> {
+  const nextPanes = { ...notifiedAgentPaneByProject };
+  delete nextPanes[projectId];
+  const nextAt = { ...notifiedAtByProject };
+  delete nextAt[projectId];
+
+  if (Object.keys(nextPanes).length === 0) {
+    stopAgentNotificationSoundLoop();
+  }
+
+  return {
+    notifiedAgentPaneByProject: nextPanes,
+    notifiedAtByProject: nextAt,
+  };
+}
+
 export const useProjectNotificationStore = create<ProjectNotificationState>((set, get) => ({
   notifiedAgentPaneByProject: {},
+  notifiedAtByProject: {},
   markProjectReady: (projectId, paneId) => {
     if (get().notifiedAgentPaneByProject[projectId] === paneId) {
       startAgentNotificationSoundLoop();
@@ -32,6 +54,10 @@ export const useProjectNotificationStore = create<ProjectNotificationState>((set
         ...state.notifiedAgentPaneByProject,
         [projectId]: paneId,
       },
+      notifiedAtByProject: {
+        ...state.notifiedAtByProject,
+        [projectId]: Date.now(),
+      },
     }));
   },
 
@@ -41,6 +67,10 @@ export const useProjectNotificationStore = create<ProjectNotificationState>((set
         ...state.notifiedAgentPaneByProject,
         [projectId]: paneId,
       },
+      notifiedAtByProject: {
+        ...state.notifiedAtByProject,
+        [projectId]: state.notifiedAtByProject[projectId] ?? Date.now(),
+      },
     }));
   },
   clearProjectNotification: (projectId) => {
@@ -49,14 +79,11 @@ export const useProjectNotificationStore = create<ProjectNotificationState>((set
         return state;
       }
 
-      const next = { ...state.notifiedAgentPaneByProject };
-      delete next[projectId];
-
-      if (Object.keys(next).length === 0) {
-        stopAgentNotificationSoundLoop();
-      }
-
-      return { notifiedAgentPaneByProject: next };
+      return omitProjectNotification(
+        state.notifiedAgentPaneByProject,
+        state.notifiedAtByProject,
+        projectId,
+      );
     });
   },
   clearNotificationForPane: (paneId) => {
@@ -70,14 +97,11 @@ export const useProjectNotificationStore = create<ProjectNotificationState>((set
         return state;
       }
 
-      const next = { ...state.notifiedAgentPaneByProject };
-      delete next[projectId];
-
-      if (Object.keys(next).length === 0) {
-        stopAgentNotificationSoundLoop();
-      }
-
-      return { notifiedAgentPaneByProject: next };
+      return omitProjectNotification(
+        state.notifiedAgentPaneByProject,
+        state.notifiedAtByProject,
+        projectId,
+      );
     });
   },
 }));

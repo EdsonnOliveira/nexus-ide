@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useTabActions } from '@/stores/useTabStore';
 import { isOverlayBlockingTerminalHints } from '@/utils/overlayBlocking';
+import { listProjectSurfaceTabs } from '@/utils/homeDashboardAgents';
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -59,8 +60,14 @@ export function useTabIndexShortcuts(): void {
         return;
       }
 
+      const surfaceTabs = listProjectSurfaceTabs(project);
+
+      if (surfaceTabs.length === 0) {
+        return;
+      }
+
       const index = Number(event.key) - 1;
-      const tab = project.tabs[index];
+      const tab = surfaceTabs[index];
 
       if (!tab) {
         return;

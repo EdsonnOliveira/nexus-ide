@@ -120,6 +120,26 @@ export function completeAgentGitTurn(paneId: string, editedPaths?: string[]): vo
   runFinalizeAgentGitTurn(paneId, editedPaths);
 }
 
+export async function refreshGitAfterAgentComplete(paneId: string): Promise<void> {
+  const projectId = findProjectIdByPaneId(paneId);
+
+  if (!projectId) {
+    return;
+  }
+
+  const project = useProjectStore.getState().projects.find((entry) => entry.id === projectId);
+
+  if (!project) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 700);
+  });
+
+  await emitGitProjectRefresh(project.path).catch(() => undefined);
+}
+
 export async function drainDeferredAgentGitTurns(): Promise<void> {
   if (deferredFinalizePaneIds.size === 0) {
     return;

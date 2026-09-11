@@ -9,7 +9,10 @@ import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
 import { useAgentComposerDraftStore } from '@/stores/useAgentComposerDraftStore';
 import { useLocalDayKey } from '@/hooks/useLocalDayKey';
-import { ProjectAgentRunningIndicator, ProjectListItem } from '@/components/sidebar/ProjectListItem';
+import {
+  ProjectAgentRunningIndicator,
+  ProjectListItem,
+} from '@/components/sidebar/ProjectListItem';
 import { WorkspaceMark } from '@/components/sidebar/WorkspaceMark';
 import { useDailyGeneration } from '@/components/home/dailyGenerationContext';
 import { ProjectContextMenu } from '@/components/sidebar/ProjectContextMenu';
@@ -30,6 +33,7 @@ import { SidebarCalendarEvents } from '@/components/sidebar/SidebarCalendarEvent
 import { SidebarVercelDeployCard } from '@/components/sidebar/SidebarVercelDeployCard';
 import { SidebarRenderDeployCard } from '@/components/sidebar/SidebarRenderDeployCard';
 import { SidebarMobileReleaseCard } from '@/components/sidebar/SidebarMobileReleaseCard';
+import { SidebarMaestroAgentCard } from '@/components/sidebar/SidebarMaestroAgentCard';
 import { SidebarVercelDeploysPopup } from '@/components/sidebar/SidebarVercelDeploysPopup';
 import { SidebarRenderDeploysPopup } from '@/components/sidebar/SidebarRenderDeploysPopup';
 import { SidebarVercelIcon } from '@/components/sidebar/SidebarVercelIcon';
@@ -53,6 +57,7 @@ import { AddProjectMenu } from '@/components/sidebar/AddProjectMenu';
 import { ProjectMoveWorkspaceMenu } from '@/components/sidebar/ProjectMoveWorkspaceMenu';
 import { WorkspaceDeleteDialog } from '@/components/sidebar/WorkspaceDeleteDialog';
 import type {
+  AgentTab,
   ContextMenuState,
   MailMailboxRef,
   Project,
@@ -69,8 +74,12 @@ import {
   getNotifiedWorkspaceIds,
   getRunningAgentWorkspaceIds,
 } from '@/utils/projectNotificationVisibility';
-import { filterProjectSurfaceNotifications } from '@/utils/homeDashboardAgents';
+import {
+  filterHomeBoundNotifications,
+  filterProjectSurfaceNotifications,
+} from '@/utils/homeDashboardAgents';
 import { getProjectPingTone } from '@/utils/projectPingTone';
+import { findPaneTab } from '@/utils/tabGroups';
 
 function ProjectSidebarComponent() {
   const projects = useProjectStore((state) => state.projects);
@@ -99,7 +108,9 @@ function ProjectSidebarComponent() {
     const project = state.projects.find((item) => item.id === state.activeProjectId);
     return project?.whatsappLink ?? null;
   });
-  const setActiveProjectWhatsAppLink = useProjectStore((state) => state.setActiveProjectWhatsAppLink);
+  const setActiveProjectWhatsAppLink = useProjectStore(
+    (state) => state.setActiveProjectWhatsAppLink,
+  );
   const activeProjectMailInbox = useProjectStore((state) => {
     const project = state.projects.find((item) => item.id === state.activeProjectId);
     return project?.mailInbox ?? null;
@@ -109,14 +120,50 @@ function ProjectSidebarComponent() {
   const notifiedAgentPaneByProjectRaw = useProjectNotificationStore(
     (state) => state.notifiedAgentPaneByProject,
   );
+  const notifiedAtByProject = useProjectNotificationStore((state) => state.notifiedAtByProject);
+  const clearProjectNotification = useProjectNotificationStore(
+    (state) => state.clearProjectNotification,
+  );
   const notifiedAgentPaneByProject = useMemo(
     () => filterProjectSurfaceNotifications(notifiedAgentPaneByProjectRaw),
     [notifiedAgentPaneByProjectRaw],
   );
+  const maestroReadyAgents = useMemo(() => {
+    if (!activeProjectId) {
+      return [];
+    }
+
+    const homeBound = filterHomeBoundNotifications(notifiedAgentPaneByProjectRaw);
+    const next: Array<{ project: Project; pane: AgentTab; notifiedAt: number }> = [];
+
+    for (const [projectId, paneId] of Object.entries(homeBound)) {
+      const project = projects.find((item) => item.id === projectId);
+
+      if (!project) {
+        continue;
+      }
+
+      const pane = findPaneTab(project.tabs, paneId);
+
+      if (!pane || pane.type !== 'agent') {
+        continue;
+      }
+
+      next.push({
+        project,
+        pane,
+        notifiedAt: notifiedAtByProject[projectId] ?? 0,
+      });
+    }
+
+    return next;
+  }, [activeProjectId, notifiedAgentPaneByProjectRaw, notifiedAtByProject, projects]);
   const awaitingResponseByPane = useTerminalSessionStore((state) => state.awaitingResponseByPane);
   const activeAgentByPane = useTerminalSessionStore((state) => state.activeAgentByPane);
   const agentBusyByPane = useTerminalSessionStore((state) => state.agentBusyByPane);
-  const agentPrintRunTokenByPane = useTerminalSessionStore((state) => state.agentPrintRunTokenByPane);
+  const agentPrintRunTokenByPane = useTerminalSessionStore(
+    (state) => state.agentPrintRunTokenByPane,
+  );
   const pendingLaunchCommands = useTerminalSessionStore((state) => state.pendingLaunchCommands);
   const runningAgentProjectIdsRaw = useMemo(() => {
     const runningIds = buildRunningAgentProjectIdSet(
@@ -134,7 +181,14 @@ function ProjectSidebarComponent() {
     }
 
     return map;
-  }, [activeAgentByPane, agentBusyByPane, agentPrintRunTokenByPane, awaitingResponseByPane, pendingLaunchCommands, projects]);
+  }, [
+    activeAgentByPane,
+    agentBusyByPane,
+    agentPrintRunTokenByPane,
+    awaitingResponseByPane,
+    pendingLaunchCommands,
+    projects,
+  ]);
   const runningAgentProjectIdsStable = useStableLoadingMap(runningAgentProjectIdsRaw);
   const runningAgentProjectIds = useMemo(
     () => new Set(runningAgentProjectIdsStable.keys()),
@@ -196,11 +250,16 @@ function ProjectSidebarComponent() {
   useMobileReleaseCloudSync(true);
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-  const [workspaceContextMenu, setWorkspaceContextMenu] = useState<WorkspaceContextMenuState | null>(
-    null,
-  );
-  const { openDailyDateMenu, viewCached, hasCachedResult, selectedSkill, isSkillAvailableForProject, runningProjectId } =
-    useDailyGeneration();
+  const [workspaceContextMenu, setWorkspaceContextMenu] =
+    useState<WorkspaceContextMenuState | null>(null);
+  const {
+    openDailyDateMenu,
+    viewCached,
+    hasCachedResult,
+    selectedSkill,
+    isSkillAvailableForProject,
+    runningProjectId,
+  } = useDailyGeneration();
   const [promptMode, setPromptMode] = useState<ProjectPromptMode | null>(null);
   const [promptProjectId, setPromptProjectId] = useState<string | null>(null);
   const [promptWorkspaceId, setPromptWorkspaceId] = useState<string | null>(null);
@@ -299,7 +358,8 @@ function ProjectSidebarComponent() {
 
     return projects.some(
       (project) =>
-        project.workspaceId === activeWorkspaceId && Boolean(notifiedAgentPaneByProject[project.id]),
+        project.workspaceId === activeWorkspaceId &&
+        Boolean(notifiedAgentPaneByProject[project.id]),
     );
   }, [activeWorkspaceId, notifiedAgentPaneByProject, projects]);
 
@@ -326,7 +386,10 @@ function ProjectSidebarComponent() {
       return 'Todos os projetos';
     }
 
-    return workspaces.find((workspace) => workspace.id === activeWorkspaceId)?.name ?? 'Todos os projetos';
+    return (
+      workspaces.find((workspace) => workspace.id === activeWorkspaceId)?.name ??
+      'Todos os projetos'
+    );
   }, [activeWorkspaceId, workspaces]);
 
   const activeWorkspace = useMemo(
@@ -358,7 +421,8 @@ function ProjectSidebarComponent() {
   );
 
   const workspaceContextTarget = useMemo(
-    () => workspaces.find((workspace) => workspace.id === workspaceContextMenu?.workspaceId) ?? null,
+    () =>
+      workspaces.find((workspace) => workspace.id === workspaceContextMenu?.workspaceId) ?? null,
     [workspaceContextMenu?.workspaceId, workspaces],
   );
 
@@ -1149,7 +1213,14 @@ function ProjectSidebarComponent() {
 
       await updateProject(promptProjectId, { icon: value, iconCustomized: true });
     },
-    [createWorkspace, promptMode, promptProjectId, promptWorkspaceId, updateProject, updateWorkspace],
+    [
+      createWorkspace,
+      promptMode,
+      promptProjectId,
+      promptWorkspaceId,
+      updateProject,
+      updateWorkspace,
+    ],
   );
 
   const handleColorClose = useCallback(() => {
@@ -1242,6 +1313,16 @@ function ProjectSidebarComponent() {
         {mailPanelOpen && activeProjectMailInbox ? (
           <SidebarMailPanel mailbox={activeProjectMailInbox} />
         ) : null}
+
+        {maestroReadyAgents.map((entry) => (
+          <SidebarMaestroAgentCard
+            key={`${entry.project.id}:${entry.pane.id}`}
+            project={entry.project}
+            pane={entry.pane}
+            notifiedAt={entry.notifiedAt}
+            onDismiss={() => clearProjectNotification(entry.project.id)}
+          />
+        ))}
 
         {visibleMobileReleases.map((release) => (
           <SidebarMobileReleaseCard

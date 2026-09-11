@@ -1,8 +1,17 @@
-import type { AgentActivity, AgentGitChangeGroup, AgentTurn, TabBarItem } from '@/types';
+import type {
+  AgentActivity,
+  AgentGitChangeGroup,
+  AgentTurn,
+  AgentTurnSummaryFileRef,
+  TabBarItem,
+} from '@/types';
 import { isAgentPaneTab } from '@/utils/agentTabHelpers';
-import { buildEditedFilesFromActivities } from '@/utils/agentTurnSummary';
+import {
+  buildEditedFilesFromActivities,
+  mergeAgentTurnFileRefs,
+} from '@/utils/agentTurnSummary';
 import type { GitFlatChange } from '@/utils/gitFlatChanges';
-import { gitChangePathCovers } from '@/utils/gitPaths';
+import { findGitFlatChangeByPath, gitChangePathCovers } from '@/utils/gitPaths';
 import { collectProjectPanes } from '@/utils/tabGroups';
 import { sanitizeAgentPrompt } from '@/utils/terminalShellPrompt';
 
@@ -270,6 +279,70 @@ function collectEvidenceFolderSections(
   }
 
   return { sections, rest };
+}
+
+export function listAgentPaneGitChangedFiles(
+  paneId: string,
+  turns: AgentTurn[] | undefined,
+  groups: AgentGitChangeGroup[],
+  uncommittedChanges: GitFlatChange[] | null,
+): AgentTurnSummaryFileRef[] {
+  const paneGroups = groups.filter((group) => group.paneId === paneId);
+  const groupFiles = paneGroups.flatMap((group) =>
+    group.files.map((file) => ({
+      path: file.path,
+      ...(file.additions > 0 ? { additions: file.additions } : {}),
+      ...(file.deletions > 0 ? { deletions: file.deletions } : {}),
+    })),
+  );
+
+  const turnFiles = (turns ?? []).flatMap((turn) =>
+    mergeAgentTurnFileRefs(
+      turn.summary?.editedFiles,
+      buildEditedFilesFromActivities(turn.activities),
+    ),
+  );
+
+  if (uncommittedChanges === null) {
+    const liveFiles = (turns ?? [])
+      .filter((turn) => turn.running)
+      .flatMap((turn) =>
+        mergeAgentTurnFileRefs(
+          turn.summary?.editedFiles,
+          buildEditedFilesFromActivities(turn.activities),
+        ),
+      );
+
+    return mergeAgentTurnFileRefs(liveFiles, groupFiles);
+  }
+
+  const merged = mergeAgentTurnFileRefs(turnFiles, groupFiles);
+  const matched = merged
+    .map((file) => {
+      const live = findGitFlatChangeByPath(uncommittedChanges, file.path);
+
+      if (!live) {
+        return null;
+      }
+
+      return {
+        path: live.path,
+        ...(live.additions > 0 ? { additions: live.additions } : {}),
+        ...(live.deletions > 0 ? { deletions: live.deletions } : {}),
+      };
+    })
+    .filter((file): file is AgentTurnSummaryFileRef => file !== null);
+
+  return mergeAgentTurnFileRefs(matched);
+}
+
+export function countAgentPaneGitChangedFiles(
+  paneId: string,
+  turns: AgentTurn[] | undefined,
+  groups: AgentGitChangeGroup[],
+  uncommittedChanges: GitFlatChange[] | null,
+): number {
+  return listAgentPaneGitChangedFiles(paneId, turns, groups, uncommittedChanges).length;
 }
 
 export function buildGitPromptGroupSections(options: {

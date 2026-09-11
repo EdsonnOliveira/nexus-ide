@@ -1,5 +1,9 @@
-import type { Project } from '@/types';
-import { getPanesFromItem } from '@/utils/tabGroups';
+import type { Project, TabBarItem } from '@/types';
+import {
+  getPanesFromItem,
+  resolveActiveTabBarItem,
+  resolveFallbackActiveTabId,
+} from '@/utils/tabGroups';
 
 const HOME_AGENT_STORAGE_KEY = 'nexus.home-dashboard.project-agents';
 const HOME_VIEW_MODE_STORAGE_KEY = 'nexus.home-dashboard.view-mode';
@@ -16,8 +20,7 @@ export function getHomeDashboardViewMode(): HomeDashboardViewMode {
     if (raw === 'agent' || raw === 'dashboard' || raw === 'calendar' || raw === 'tasks') {
       return raw;
     }
-  } catch {
-  }
+  } catch {}
 
   return 'agent';
 }
@@ -25,8 +28,7 @@ export function getHomeDashboardViewMode(): HomeDashboardViewMode {
 export function setHomeDashboardViewMode(mode: HomeDashboardViewMode): void {
   try {
     window.localStorage.setItem(HOME_VIEW_MODE_STORAGE_KEY, mode);
-  } catch {
-  }
+  } catch {}
 }
 
 export function getHomeMaestroDense(): boolean {
@@ -40,8 +42,7 @@ export function getHomeMaestroDense(): boolean {
 export function setHomeMaestroDense(dense: boolean): void {
   try {
     window.localStorage.setItem(HOME_MAESTRO_DENSE_STORAGE_KEY, dense ? '1' : '0');
-  } catch {
-  }
+  } catch {}
 }
 
 export function requestHomeAskFocus(): void {
@@ -173,8 +174,7 @@ export function readHomeAgentQueue(): HomeAgentQueue {
 export function writeHomeAgentQueue(queue: HomeAgentQueue): void {
   try {
     window.localStorage.setItem(HOME_AGENT_STORAGE_KEY, JSON.stringify(queue));
-  } catch {
-  }
+  } catch {}
 }
 
 export function readHomeAgentMap(): HomeAgentMap {
@@ -206,6 +206,51 @@ export function isHomeBoundAgentPane(projectId: string, paneId: string): boolean
   return readHomeAgentPaneIds(projectId).includes(paneId);
 }
 
+export function isHomeBoundTabItem(
+  projectId: string,
+  item: TabBarItem,
+  homeBoundPaneIds?: ReadonlySet<string>,
+): boolean {
+  if (item.type !== 'agent') {
+    return false;
+  }
+
+  if (homeBoundPaneIds) {
+    return homeBoundPaneIds.has(item.id);
+  }
+
+  return isHomeBoundAgentPane(projectId, item.id);
+}
+
+export function listProjectSurfaceTabs(
+  project: Pick<Project, 'id' | 'tabs'>,
+  homeBoundPaneIds?: ReadonlySet<string>,
+): TabBarItem[] {
+  return project.tabs.filter((item) => !isHomeBoundTabItem(project.id, item, homeBoundPaneIds));
+}
+
+export function resolveProjectSurfaceActiveTabId(
+  project: Pick<Project, 'id' | 'tabs'>,
+  activeTabId: string | null,
+  homeBoundPaneIds?: ReadonlySet<string>,
+): string | null {
+  return resolveFallbackActiveTabId(listProjectSurfaceTabs(project, homeBoundPaneIds), activeTabId);
+}
+
+export function resolveProjectSurfaceActiveTab(
+  project: Project,
+  homeBoundPaneIds?: ReadonlySet<string>,
+): TabBarItem | null {
+  const surfaceTabs = listProjectSurfaceTabs(project, homeBoundPaneIds);
+  const resolved = resolveActiveTabBarItem(surfaceTabs, project.activeTabId);
+
+  if (resolved) {
+    return resolved;
+  }
+
+  return surfaceTabs[surfaceTabs.length - 1] ?? surfaceTabs[0] ?? null;
+}
+
 export function isProjectSurfaceNotification(
   projectId: string,
   notifiedPaneId: string | undefined | null,
@@ -224,6 +269,20 @@ export function filterProjectSurfaceNotifications(
 
   for (const [projectId, paneId] of Object.entries(notifiedAgentPaneByProject)) {
     if (isProjectSurfaceNotification(projectId, paneId)) {
+      next[projectId] = paneId;
+    }
+  }
+
+  return next;
+}
+
+export function filterHomeBoundNotifications(
+  notifiedAgentPaneByProject: Record<string, string>,
+): Record<string, string> {
+  const next: Record<string, string> = {};
+
+  for (const [projectId, paneId] of Object.entries(notifiedAgentPaneByProject)) {
+    if (isHomeBoundAgentPane(projectId, paneId)) {
       next[projectId] = paneId;
     }
   }

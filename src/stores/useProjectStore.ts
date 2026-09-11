@@ -1,12 +1,24 @@
 import { create } from 'zustand';
-import type { AgentTab, AgentTurn, AppState, MailMailboxRef, Project, ProjectUpdatePayload, Tab, TabBarItem, Workspace, WorkspaceUpdatePayload } from '@/types';
+import type {
+  AgentTab,
+  AgentTurn,
+  AppState,
+  MailMailboxRef,
+  Project,
+  ProjectUpdatePayload,
+  Tab,
+  TabBarItem,
+  Workspace,
+  WorkspaceUpdatePayload,
+} from '@/types';
 import { PROJECT_COLORS } from '@/types';
-import {
-  migrateProjectTestEntry,
-} from '@/utils/testLabels';
+import { migrateProjectTestEntry } from '@/utils/testLabels';
 import { migrateLegacyProjectTabs } from '@/utils/migrateTabs';
 import { normalizeAutomation } from '@/utils/normalizeAutomation';
-import { rawAgentTurnHistoryNeedsTrim, trimAgentTurnsInTabBarItems } from '@/utils/trimAgentTurnHistory';
+import {
+  rawAgentTurnHistoryNeedsTrim,
+  trimAgentTurnsInTabBarItems,
+} from '@/utils/trimAgentTurnHistory';
 import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useToastStore } from '@/stores/useToastStore';
@@ -17,9 +29,9 @@ import {
   persistLeavingProjectState,
   resetProjectSwitchState,
 } from '@/utils/projectSwitch';
-import { findPaneTab, resolveFallbackActiveTabId, updatePaneInTabs } from '@/utils/tabGroups';
+import { findPaneTab, updatePaneInTabs } from '@/utils/tabGroups';
 import { shouldPreferLocalAgentTurnHistory } from '@/utils/paneAgentSession';
-import { readHomeAgentMap } from '@/utils/homeDashboardAgents';
+import { readHomeAgentMap, resolveProjectSurfaceActiveTabId } from '@/utils/homeDashboardAgents';
 import {
   restoreSidebarVideoSession,
   toPersistedSidebarVideoSession,
@@ -46,7 +58,8 @@ function hasMissingBadgeColorIndex(tabs: TabBarItem[]): boolean {
 
 export type ExplorerView = 'tree' | 'git';
 
-export type SidePanel = 'explorer' | 'passwords' | 'automations' | 'tasks' | 'tests' | 'brain' | null;
+export type SidePanel =
+  'explorer' | 'passwords' | 'automations' | 'tasks' | 'tests' | 'brain' | null;
 
 interface ProjectStoreState {
   projects: Project[];
@@ -128,13 +141,17 @@ function migrateProject(project: Project, fallbackWorkspaceId: string): Project 
     projectWithoutLegacyLayout.path,
   );
   const tabs = trimAgentTurnsInTabBarItems(migrated.tabs);
-  const activeTabId = resolveFallbackActiveTabId(tabs, migrated.activeTabId);
+  const activeTabId = resolveProjectSurfaceActiveTabId(
+    { ...projectWithoutLegacyLayout, tabs },
+    migrated.activeTabId,
+  );
 
   return {
     ...projectWithoutLegacyLayout,
     workspaceId: projectWithoutLegacyLayout.workspaceId ?? fallbackWorkspaceId,
     iconCustomized:
-      projectWithoutLegacyLayout.iconCustomized ?? projectWithoutLegacyLayout.icon.startsWith('preset:'),
+      projectWithoutLegacyLayout.iconCustomized ??
+      projectWithoutLegacyLayout.icon.startsWith('preset:'),
     tabs,
     activeTabId,
     activePaneId: migrated.activePaneId,
@@ -175,9 +192,7 @@ function createDefaultWorkspace(): Workspace {
 
 function migrateAppState(appState: AppState): AppState {
   const rawWorkspaces =
-    appState.workspaces.length > 0
-      ? appState.workspaces
-      : [createDefaultWorkspace()];
+    appState.workspaces.length > 0 ? appState.workspaces : [createDefaultWorkspace()];
 
   const workspaces = rawWorkspaces.map((workspace, index) => migrateWorkspace(workspace, index));
   const fallbackWorkspaceId = workspaces[0]?.id ?? crypto.randomUUID();
@@ -198,9 +213,7 @@ function yieldToIdle(): Promise<void> {
 
 async function migrateAppStateChunked(appState: AppState): Promise<AppState> {
   const rawWorkspaces =
-    appState.workspaces.length > 0
-      ? appState.workspaces
-      : [createDefaultWorkspace()];
+    appState.workspaces.length > 0 ? appState.workspaces : [createDefaultWorkspace()];
 
   const workspaces = rawWorkspaces.map((workspace, index) => migrateWorkspace(workspace, index));
   const fallbackWorkspaceId = workspaces[0]?.id ?? crypto.randomUUID();
@@ -230,7 +243,7 @@ function applyState(
   options?: { preserveActiveProjectId?: string | null },
 ) {
   const projects = appState.projects.map((project) => {
-    const activeTabId = resolveFallbackActiveTabId(project.tabs, project.activeTabId);
+    const activeTabId = resolveProjectSurfaceActiveTabId(project, project.activeTabId);
 
     if (activeTabId === project.activeTabId) {
       return project;
@@ -239,9 +252,7 @@ function applyState(
     return { ...project, activeTabId };
   });
 
-  const hasPreservedActiveProjectId = Boolean(
-    options && 'preserveActiveProjectId' in options,
-  );
+  const hasPreservedActiveProjectId = Boolean(options && 'preserveActiveProjectId' in options);
   const preservedActiveProjectId = options?.preserveActiveProjectId;
   let activeProjectId: string | null;
 
@@ -323,13 +334,19 @@ function scheduleProjectMigration(
         void Promise.all([
           import('@/utils/hydrateTerminalSession'),
           import('@/utils/persistAgentGitGroups'),
-        ]).then(([{ hydrateTerminalSessionFromProjects }, { hydrateAgentGitGroupsFromProjects }]) => {
-          hydrateTerminalSessionFromProjects(appState.projects);
-          hydrateAgentGitGroupsFromProjects(appState.projects);
-        });
+        ]).then(
+          ([{ hydrateTerminalSessionFromProjects }, { hydrateAgentGitGroupsFromProjects }]) => {
+            hydrateTerminalSessionFromProjects(appState.projects);
+            hydrateAgentGitGroupsFromProjects(appState.projects);
+          },
+        );
       }, 0);
 
-      if (shouldPersistBadgeColors || shouldPersistTrimmedAgentHistory || shouldPersistAppOpenAutomations) {
+      if (
+        shouldPersistBadgeColors ||
+        shouldPersistTrimmedAgentHistory ||
+        shouldPersistAppOpenAutomations
+      ) {
         for (const project of appState.projects) {
           const currentProject = get().projects.find((entry) => entry.id === project.id);
           const rawProject = rawState.projects.find((entry) => entry.id === project.id);
@@ -445,7 +462,9 @@ function buildAgentTurnsMap(projects: Project[]): Map<string, AgentTurn[]> {
   return turnsByPane;
 }
 
-function buildAgentFollowUpsMap(projects: Project[]): Map<string, NonNullable<AgentTab['followUps']>> {
+function buildAgentFollowUpsMap(
+  projects: Project[],
+): Map<string, NonNullable<AgentTab['followUps']>> {
   const followUpsByPane = new Map<string, NonNullable<AgentTab['followUps']>>();
 
   for (const project of projects) {
@@ -498,7 +517,11 @@ function mergeAgentTurnsIntoTabs(
 
           const prevFollowUps = prevFollowUpsByPane.get(pane.id);
 
-          if (prevFollowUps && prevFollowUps.length > 0 && (nextPane.followUps?.length ?? 0) === 0) {
+          if (
+            prevFollowUps &&
+            prevFollowUps.length > 0 &&
+            (nextPane.followUps?.length ?? 0) === 0
+          ) {
             nextPane = { ...nextPane, followUps: prevFollowUps };
           }
 
@@ -690,7 +713,9 @@ function reconcileOptimisticProjectUpdate(
       }
 
       const backendTabIds = new Set(project.tabs.map((tab) => tab.id));
-      const hasMissingOptimisticTab = optimisticProject.tabs.some((tab) => !backendTabIds.has(tab.id));
+      const hasMissingOptimisticTab = optimisticProject.tabs.some(
+        (tab) => !backendTabIds.has(tab.id),
+      );
 
       if (!hasMissingOptimisticTab && optimisticProject.tabs.length <= project.tabs.length) {
         return project;
@@ -699,8 +724,8 @@ function reconcileOptimisticProjectUpdate(
       return {
         ...project,
         tabs: optimisticProject.tabs,
-        activeTabId: resolveFallbackActiveTabId(
-          optimisticProject.tabs,
+        activeTabId: resolveProjectSurfaceActiveTabId(
+          optimisticProject,
           optimisticProject.activeTabId,
         ),
         activePaneId: optimisticProject.activePaneId,
@@ -1069,20 +1094,40 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   },
   updateProject: async (id, data, options) => {
     const prevState = get();
+    let didChange = false;
     const nextProjects = prevState.projects.map((project) => {
       if (project.id !== id) {
         return project;
       }
 
       const merged = { ...project, ...data };
-
-      return {
+      const next = {
         ...merged,
-        activeTabId: resolveFallbackActiveTabId(merged.tabs, merged.activeTabId ?? null),
+        activeTabId: resolveProjectSurfaceActiveTabId(merged, merged.activeTabId ?? null),
       };
+
+      if (next.activeTabId === project.activeTabId && next.activePaneId === project.activePaneId) {
+        const dataKeys = Object.keys(data) as Array<keyof ProjectUpdatePayload>;
+        const otherChanged = dataKeys.some((key) => {
+          if (key === 'activeTabId' || key === 'activePaneId') {
+            return false;
+          }
+
+          return next[key] !== project[key];
+        });
+
+        if (!otherChanged) {
+          return project;
+        }
+      }
+
+      didChange = true;
+      return next;
     });
 
-    set({ projects: nextProjects });
+    if (didChange) {
+      set({ projects: nextProjects });
+    }
 
     await window.nexus.projects.update(id, data);
 

@@ -113,13 +113,22 @@ export function useGitChangeCounts(
       : () => undefined;
 
     const handleGitRefresh = (event: Event) => {
-      const detail = (event as CustomEvent<{ repoPath: string }>).detail;
+      const detail = (event as CustomEvent<{ repoPath?: string }>).detail;
+      const repoPath = detail?.repoPath;
 
-      if (!isChangeCountPathMatch(detail.repoPath, projectPath, repoPathsRef.current)) {
+      if (!repoPath) {
         return;
       }
 
-      debouncedRefresh.schedule();
+      if (!isChangeCountPathMatch(repoPath, projectPath, repoPathsRef.current)) {
+        return;
+      }
+
+      void window.nexus.git.invalidateCache(projectPath).then(() => {
+        if (!cancelled) {
+          debouncedRefresh.schedule();
+        }
+      });
     };
 
     const handleWindowFocus = () => {
@@ -134,8 +143,9 @@ export function useGitChangeCounts(
       });
     };
 
+    window.addEventListener(GIT_REPO_REFRESH_EVENT, handleGitRefresh);
+
     if (watch) {
-      window.addEventListener(GIT_REPO_REFRESH_EVENT, handleGitRefresh);
       window.addEventListener('focus', handleWindowFocus);
       document.addEventListener('visibilitychange', handleWindowFocus);
     }
@@ -149,9 +159,9 @@ export function useGitChangeCounts(
 
       unsubscribe();
       debouncedRefresh.cancel();
+      window.removeEventListener(GIT_REPO_REFRESH_EVENT, handleGitRefresh);
 
       if (watch) {
-        window.removeEventListener(GIT_REPO_REFRESH_EVENT, handleGitRefresh);
         window.removeEventListener('focus', handleWindowFocus);
         document.removeEventListener('visibilitychange', handleWindowFocus);
 

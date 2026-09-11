@@ -19,7 +19,13 @@ import type {
 } from '@/types';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import { DEFAULT_OPENCODE_MODEL, preferredAiProviderToCli } from '@/constants/aiProviders';
-import { isAgentPaneTab, isLegacyAgentTerminalTab, resolveAgentPaneRootPath, resolveAgentTabCli, terminalAgentToCli } from '@/utils/agentTabHelpers';
+import {
+  isAgentPaneTab,
+  isLegacyAgentTerminalTab,
+  resolveAgentPaneRootPath,
+  resolveAgentTabCli,
+  terminalAgentToCli,
+} from '@/utils/agentTabHelpers';
 import { buildAgentPaneLaunchCommand } from '@/utils/agentCliSession';
 import { buildCursorAgentResumeCommand } from '@/utils/cursorAgentResume';
 import { parseCursorAgentHistoryTranscript } from '@/utils/parseCursorAgentHistoryTranscript';
@@ -49,6 +55,13 @@ import { resolveGitDiffContext } from '@/utils/gitPaths';
 import { resolveAgentGitPromptForFile } from '@/utils/resolveAgentGitPromptForFile';
 import { resolveFileViewMode } from '@/utils/fileViewMode';
 import { isTabPinned, reorderTabBarItems, toggleTabPinned } from '@/utils/tabOrder';
+import {
+  HOME_AGENT_FOCUS_EVENT,
+  isHomeBoundAgentPane,
+  isHomeBoundTabItem,
+  listProjectSurfaceTabs,
+  setHomeDashboardViewMode,
+} from '@/utils/homeDashboardAgents';
 import { rebalanceMonoChainsToGrid, updateSplitRatioAtPath } from '@/utils/splitLayout';
 
 function persistOpenCodePaneModel(tabId: string, cliAgent: string): void {
@@ -70,10 +83,7 @@ export interface AddTabOptions {
 
 export interface TabStoreActions {
   addTab: (type: TabType, options?: AddTabOptions) => Promise<void>;
-  addTabForProject: (
-    projectId: string,
-    type: Exclude<TabType, 'agent'>,
-  ) => Promise<string | null>;
+  addTabForProject: (projectId: string, type: Exclude<TabType, 'agent'>) => Promise<string | null>;
   addAgentTab: (command: string) => Promise<void>;
   addAgentTabForProject: (projectId: string, command: string) => Promise<string | null>;
   replaceAgentTab: (tabId: string) => Promise<void>;
@@ -118,15 +128,17 @@ export interface TabStoreActions {
     patch: Partial<
       Pick<
         AgentTab,
-        'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title' | 'messages'
+        | 'turns'
+        | 'followUps'
+        | 'workingDirectory'
+        | 'restoreCommand'
+        | 'cliAgent'
+        | 'title'
+        | 'messages'
       >
     >,
   ) => Promise<void>;
-  setSplitRatio: (
-    splitTabId: string,
-    path: readonly number[],
-    ratio: number,
-  ) => Promise<void>;
+  setSplitRatio: (splitTabId: string, path: readonly number[], ratio: number) => Promise<void>;
   getActiveTab: () => Tab | null;
 }
 
@@ -194,6 +206,10 @@ export function useTabActions(): TabStoreActions {
     const project = getProjectSnapshot();
 
     if (!project) {
+      return;
+    }
+
+    if (isHomeBoundAgentPane(project.id, paneId)) {
       return;
     }
 
@@ -650,7 +666,9 @@ export function useTabActions(): TabStoreActions {
         : undefined;
       const existing =
         browserInActive ??
-        collectProjectPanes(project.tabs).find((pane): pane is BrowserTab => pane.type === 'browser');
+        collectProjectPanes(project.tabs).find(
+          (pane): pane is BrowserTab => pane.type === 'browser',
+        );
 
       if (existing) {
         const nextTabs = updatePaneInTabs(project.tabs, existing.id, (entry) =>
@@ -882,10 +900,10 @@ export function useTabActions(): TabStoreActions {
       const untracked = options.untracked ?? false;
       const resolvedInputPath =
         filePath.includes('…') || filePath.includes('...')
-          ? (await import('@/utils/agentTranscriptParser')).resolveAgentActivityFilePath(
+          ? ((await import('@/utils/agentTranscriptParser')).resolveAgentActivityFilePath(
               project.path,
               filePath,
-            ) ?? filePath
+            ) ?? filePath)
           : filePath;
       const resolvedContext = await resolveGitDiffContext(
         project.path,
@@ -987,11 +1005,20 @@ export function useTabActions(): TabStoreActions {
       killTabBarItem(closingTab);
 
       const nextTabs = project.tabs.filter((item) => item.id !== tabId);
+      const surfaceTabs = listProjectSurfaceTabs({ ...project, tabs: nextTabs });
       const closingActiveItem = resolveActiveTabBarItem(project.tabs, project.activeTabId);
-      const activeTabId =
-        closingActiveItem?.id === tabId
-          ? resolvePreviousTabId(project.tabs, tabId)
-          : project.activeTabId;
+      const keepCurrentActive =
+        closingActiveItem &&
+        closingActiveItem.id !== tabId &&
+        !isHomeBoundTabItem(project.id, closingActiveItem);
+      const activeTabId = keepCurrentActive
+        ? project.activeTabId
+        : (resolvePreviousTabId(
+            listProjectSurfaceTabs(project).filter((item) => item.id !== tabId),
+            tabId,
+          ) ??
+          surfaceTabs[surfaceTabs.length - 1]?.id ??
+          null);
 
       await updateProject(project.id, {
         tabs: nextTabs,
@@ -1065,7 +1092,9 @@ export function useTabActions(): TabStoreActions {
         return;
       }
 
-      const tabsToClose = project.tabs.filter((item) => !isTabPinned(item));
+      const tabsToClose = project.tabs.filter(
+        (item) => !isTabPinned(item) && !isHomeBoundTabItem(project.id, item),
+      );
 
       if (tabsToClose.length === 0) {
         return;
@@ -1075,10 +1104,13 @@ export function useTabActions(): TabStoreActions {
         killTabBarItem(tab);
       }
 
-      const nextTabs = project.tabs.filter((item) => isTabPinned(item));
-      const activeTabId = nextTabs.some((item) => item.id === project.activeTabId)
+      const nextTabs = project.tabs.filter(
+        (item) => isTabPinned(item) || isHomeBoundTabItem(project.id, item),
+      );
+      const surfaceTabs = listProjectSurfaceTabs({ ...project, tabs: nextTabs });
+      const activeTabId = surfaceTabs.some((item) => item.id === project.activeTabId)
         ? project.activeTabId
-        : (nextTabs[0]?.id ?? null);
+        : (surfaceTabs[0]?.id ?? null);
 
       await updateProject(project.id, {
         tabs: nextTabs,
@@ -1094,6 +1126,16 @@ export function useTabActions(): TabStoreActions {
       }
 
       const selectedTab = project.tabs.find((item) => item.id === tabId);
+
+      if (selectedTab?.type === 'agent' && isHomeBoundAgentPane(project.id, selectedTab.id)) {
+        setHomeDashboardViewMode('agent');
+        window.dispatchEvent(
+          new CustomEvent(HOME_AGENT_FOCUS_EVENT, { detail: { paneId: selectedTab.id } }),
+        );
+        await useProjectStore.getState().leaveActiveProject();
+        return;
+      }
+
       const activePaneId =
         selectedTab?.type === 'split'
           ? (selectedTab.activePaneId ?? selectedTab.panes[0]?.id ?? null)
@@ -1116,14 +1158,12 @@ export function useTabActions(): TabStoreActions {
       });
 
       const activePaneIdForNotification =
-        selectedTab?.type === 'split'
-          ? activePaneId
-          : selectedTab
-            ? tabId
-            : null;
+        selectedTab?.type === 'split' ? activePaneId : selectedTab ? tabId : null;
 
       if (activePaneIdForNotification) {
-        useProjectNotificationStore.getState().clearNotificationForPane(activePaneIdForNotification);
+        useProjectNotificationStore
+          .getState()
+          .clearNotificationForPane(activePaneIdForNotification);
       }
     },
     selectPane: async (paneId) => {

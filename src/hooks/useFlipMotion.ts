@@ -37,6 +37,8 @@ export function useFlipMotion<T extends HTMLElement>(
 
     if (!element || !enabled) {
       previousActiveRef.current = active;
+      lastRectRef.current = null;
+      isAnimatingRef.current = false;
       return;
     }
 

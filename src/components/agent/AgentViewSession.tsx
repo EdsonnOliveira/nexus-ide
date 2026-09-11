@@ -28,6 +28,9 @@ import {
 } from '@/utils/paneAgentSession';
 import { resolveSanitizedAgentTab } from '@/utils/trimAgentTurnHistory';
 import type { AgentViewProps } from '@/components/agent/AgentView';
+
+const EMPTY_AGENT_TURNS: AgentTurn[] = [];
+
 function AgentViewSessionComponent({
   tab,
   projectId,
@@ -46,7 +49,7 @@ function AgentViewSessionComponent({
   const setPaneDraft = useAgentComposerDraftStore((state) => state.setDraft);
   const clearPaneDraft = useAgentComposerDraftStore((state) => state.clearDraft);
   const [draft, setDraft] = useState(() => useAgentComposerDraftStore.getState().getDraft(tab.id));
-  const [turns, setTurns] = useState<AgentTurn[]>(() => sessionTab.turns ?? []);
+  const [turns, setTurns] = useState<AgentTurn[]>(() => sessionTab.turns ?? EMPTY_AGENT_TURNS);
   const [isTranscriptAtBottom, setIsTranscriptAtBottom] = useState(true);
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -63,34 +66,41 @@ function AgentViewSessionComponent({
   );
   const promptHistory = useMemo(() => buildAgentPromptHistory(turns), [turns]);
   const resumeChatId = useTerminalSessionStore((state) => state.resumeChatIdByPane[tab.id]);
+  const turnsRef = useRef(turns);
+  turnsRef.current = turns;
 
   useEffect(() => {
-    const incomingTurns = sessionTab.turns ?? [];
+    const incomingTurns = sessionTab.turns ?? EMPTY_AGENT_TURNS;
     const incomingTurnCount = incomingTurns.length;
     const hadTurnsBefore = previousTurnCountRef.current > 0;
+    const currentTurns = turnsRef.current;
 
     if (!isRuntimeActive) {
       previousTurnCountRef.current = incomingTurnCount;
-      setTurns(incomingTurns);
+
+      if (currentTurns !== incomingTurns) {
+        setTurns(incomingTurns);
+      }
+
       return;
     }
 
     const sessionLive = isPaneAgentSessionLive(tab.id, readPaneAgentSessionSnapshot());
-    const localRunning = turns.some((turn) => turn.running);
+    const localRunning = currentTurns.some((turn) => turn.running);
 
     if (incomingTurnCount === 0) {
       if (localRunning || sessionLive) {
         return;
       }
 
-      if (resumeChatId && turns.length > 0) {
+      if (resumeChatId && currentTurns.length > 0) {
         return;
       }
 
       previousTurnCountRef.current = 0;
 
-      if (turns.length > 0) {
-        setTurns([]);
+      if (currentTurns.length > 0) {
+        setTurns(EMPTY_AGENT_TURNS);
       }
 
       if (hadTurnsBefore) {
@@ -111,12 +121,14 @@ function AgentViewSessionComponent({
       return;
     }
 
-    if (shouldPreferLocalAgentTurnHistory(turns, incomingTurns)) {
+    if (shouldPreferLocalAgentTurnHistory(currentTurns, incomingTurns)) {
       return;
     }
 
-    setTurns(incomingTurns);
-  }, [clearPaneDraft, isRuntimeActive, resumeChatId, sessionTab.turns, tab.id, turns]);
+    if (currentTurns !== incomingTurns) {
+      setTurns(incomingTurns);
+    }
+  }, [clearPaneDraft, isRuntimeActive, resumeChatId, sessionTab.turns, tab.id]);
 
   useEffect(() => {
     if (!isVisible || turns.length === 0) {

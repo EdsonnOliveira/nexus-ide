@@ -306,6 +306,10 @@ export const useTerminalSessionStore = create<TerminalSessionState>((set, get) =
     void import('@/utils/automationPaneExecution').then(({ handleAutomationPaneTaskComplete }) => {
       handleAutomationPaneTaskComplete(paneId);
     });
+
+    void import('@/utils/agentGitTurn').then(({ refreshGitAfterAgentComplete }) => {
+      void refreshGitAfterAgentComplete(paneId);
+    });
   },
   disposePaneSession: (paneId) => {
     resetAgentReadyDetectors(paneId);

@@ -3880,6 +3880,42 @@ html.nexus-power-save * {
   text-align: center;
 }
 
+.home-dashboard__agent-card-git .home-dashboard__agent-card-terminal-badge {
+  background: #3b82f6;
+  color: #fff;
+}
+
+.home-dashboard__agent-card-git:hover:not(:disabled) {
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.16);
+}
+
+.home-dashboard__agent-card-git--open {
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.16);
+}
+
+.home-dashboard__agent-git-popup {
+  width: min(320px, calc(100vw - 16px));
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 8px;
+}
+
+.home-dashboard__agent-git-popup .agent-view__files-changed {
+  border: none;
+  background: transparent;
+  border-radius: 0;
+}
+
+.home-dashboard__agent-git-popup .agent-view__files-changed-header {
+  padding: 4px 8px 6px;
+}
+
+.home-dashboard__agent-git-popup .agent-view__files-changed-list {
+  max-height: 240px;
+  padding: 0 0 4px;
+}
+
 .home-dashboard__agent-card-status {
   display: inline-flex;
   align-items: center;
@@ -8885,6 +8921,13 @@ html.agent-pip #root {
   background: rgba(255, 255, 255, 0.08);
   color: var(--text-primary);
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.sidebar-vercel-deploy-card__project-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .sidebar-vercel-deploy-card__meta {
@@ -17888,6 +17931,11 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   overflow: hidden;
 }
 
+.project-dialog.home-dashboard__agent-modal {
+  height: calc(100vh - 32px);
+  max-height: calc(100vh - 32px);
+}
+
 .home-dashboard__agent-modal > .home-dashboard__agent-card,
 .home-dashboard__agent-card--modal {
   flex: 1;
@@ -22359,17 +22407,22 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 .agent-view__user-prompt {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
   flex-wrap: wrap;
   gap: 6px;
   max-width: 100%;
   transition: gap var(--motion-in) var(--motion-ease-in);
 }
 
-.agent-view__user-prompt--multiline {
+.agent-view__user-prompt--multiline,
+.agent-view__user-prompt:has(> .agent-view__attachments) {
   flex-direction: column;
   align-items: flex-end;
-  width: min(560px, 100%);
   gap: 4px;
+}
+
+.agent-view__user-prompt--multiline {
+  width: min(560px, 100%);
 }
 
 .agent-view__user-prompt--skill-only {
@@ -22510,6 +22563,7 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 .agent-view__user-prompt-actions {
   display: inline-flex;
   align-items: center;
+  align-self: flex-end;
   gap: 2px;
   flex-shrink: 0;
   padding: 0;
@@ -22664,11 +22718,22 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   .agent-view__user-prompt {
   flex-direction: row;
   align-items: center;
+  justify-content: flex-end;
   width: auto;
   gap: 6px;
   transition:
     gap var(--motion-out) var(--motion-ease-out),
     width var(--motion-out) var(--motion-ease-out);
+}
+
+.agent-view__user-prompt-sticky--stuck.agent-view__user-prompt-sticky--exit
+  .agent-view__user-prompt:is(
+    .agent-view__user-prompt--multiline,
+    :has(> .agent-view__attachments)
+  ) {
+  flex-direction: column;
+  align-items: flex-end;
+  width: min(560px, 100%);
 }
 
 .agent-view__user-prompt-sticky--stuck:not(.agent-view__user-prompt-sticky--exit)

@@ -30,6 +30,11 @@ import {
   resolveActiveTabBarItem,
 } from '@/utils/tabGroups';
 import { useIsHomeAgentOverlayPane } from '@/hooks/useHomeAgentOverlayPanes';
+import { useHomeBoundPaneIds } from '@/hooks/useHomeAgentBindings';
+import {
+  listProjectSurfaceTabs,
+  resolveProjectSurfaceActiveTab,
+} from '@/utils/homeDashboardAgents';
 import { persistTerminalCwd } from '@/utils/persistTerminalSession';
 import { registerTerminalHandle } from '@/utils/terminalHandleRegistry';
 import {
@@ -734,7 +739,7 @@ function isPaneInActiveLayout(project: Project, isProjectActive: boolean, paneId
     return false;
   }
 
-  const activeItem = resolveActiveTabBarItem(project.tabs, project.activeTabId);
+  const activeItem = resolveProjectSurfaceActiveTab(project);
 
   if (!activeItem) {
     return false;
@@ -822,7 +827,7 @@ function isPaneFocused(project: Project, isProjectActive: boolean, paneId: strin
     return false;
   }
 
-  const activeItem = resolveActiveTabBarItem(project.tabs, project.activeTabId);
+  const activeItem = resolveProjectSurfaceActiveTab(project);
 
   if (!activeItem) {
     return false;
@@ -889,6 +894,10 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
 }: ProjectWorkspaceProps) {
   const dirtyByTabId = useFileDirtyStore((state) => state.dirtyByTabId);
   const activeTabItem = useMemo(() => {
+    if (isProjectActive) {
+      return resolveProjectSurfaceActiveTab(project);
+    }
+
     const resolved = resolveActiveTabBarItem(project.tabs, project.activeTabId);
 
     if (resolved) {
@@ -896,7 +905,7 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
     }
 
     return project.tabs[project.tabs.length - 1] ?? project.tabs[0] ?? null;
-  }, [project.activeTabId, project.tabs]);
+  }, [isProjectActive, project]);
 
   const isPaneVisibleForProject = useCallback(
     (paneId: string) => isPaneInActiveLayout(project, isProjectActive, paneId),
@@ -984,12 +993,8 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
   );
 
   const mountedTabs = useMemo(() => {
-    if (!activeTabItem) {
-      return [] as TabBarItem[];
-    }
-
     return project.tabs.filter((item) => {
-      if (isProjectActive && item.id === activeTabItem.id) {
+      if (isProjectActive && activeTabItem && item.id === activeTabItem.id) {
         return true;
       }
 
@@ -1004,7 +1009,11 @@ const ProjectWorkspace = memo(function ProjectWorkspaceComponent({
     runningShellTerminalCount,
   ]);
 
-  if (!project.tabs.length || !activeTabItem) {
+  if (!project.tabs.length) {
+    return null;
+  }
+
+  if (mountedTabs.length === 0) {
     return null;
   }
 
@@ -1109,6 +1118,7 @@ function TerminalPanelComponent() {
     () => projects.find((project) => project.id === activeProjectId) ?? null,
     [activeProjectId, projects],
   );
+  const homeBoundPaneIds = useHomeBoundPaneIds(activeProjectId);
   const hostedProjects = useMemo(
     () => resolveHostedAgentProjects(projects, activeProjectId, agentSession),
     [activeProjectId, agentSession, projects, runningShellTerminalCount],
@@ -1196,7 +1206,9 @@ function TerminalPanelComponent() {
         return;
       }
 
-      const activeTabItem = resolveActiveTabBarItem(activeProject.tabs, activeProject.activeTabId);
+      const activeTabItem = activeProject
+        ? resolveProjectSurfaceActiveTab(activeProject, homeBoundPaneIds)
+        : null;
 
       if (!activeTabItem) {
         return;
@@ -1209,7 +1221,7 @@ function TerminalPanelComponent() {
       void splitTab(sourceTabId, activeTabItem.id, side, targetPaneId);
       setDraggedTabId(null);
     },
-    [activeProject, splitTab],
+    [activeProject, homeBoundPaneIds, splitTab],
   );
 
   const tabDropOverlay = useMemo<TabDropOverlayState | null>(() => {
@@ -1217,7 +1229,8 @@ function TerminalPanelComponent() {
       return null;
     }
 
-    const activeTabItem = resolveActiveTabBarItem(activeProject.tabs, activeProject.activeTabId);
+    const surfaceTabs = listProjectSurfaceTabs(activeProject, homeBoundPaneIds);
+    const activeTabItem = resolveProjectSurfaceActiveTab(activeProject, homeBoundPaneIds);
 
     if (!activeTabItem) {
       return null;
@@ -1227,7 +1240,7 @@ function TerminalPanelComponent() {
       return null;
     }
 
-    if (activeProject.tabs.length < 2) {
+    if (surfaceTabs.length < 2) {
       return null;
     }
 
@@ -1252,7 +1265,7 @@ function TerminalPanelComponent() {
       targetPaneIds: [activeTabItem.id],
       onDrop: handleWorkspaceDrop,
     };
-  }, [activeProject, draggedTabId, handleWorkspaceDrop]);
+  }, [activeProject, draggedTabId, handleWorkspaceDrop, homeBoundPaneIds]);
 
   useEffect(() => {
     if (!draggedTabId) {
@@ -1529,7 +1542,10 @@ function TerminalPanelComponent() {
     return null;
   }
 
-  const hasActiveProjectTabs = Boolean(activeProject?.tabs.length);
+  const hasSurfaceTabs = Boolean(
+    activeProject && listProjectSurfaceTabs(activeProject, homeBoundPaneIds).length > 0,
+  );
+  const showEmptyWorkspace = Boolean(activeProject) && !hasSurfaceTabs;
   const isBrainOpen = Boolean(activeProject) && sidePanel === 'brain';
 
   return (
@@ -1568,145 +1584,162 @@ function TerminalPanelComponent() {
             </div>
           ) : null}
         </>
-      ) : activeProject && !hasActiveProjectTabs ? (
-        <div className='terminal-workspace__empty'>
-          <div className='empty-state'>
-            <div className='empty-state__icon' aria-hidden='true'>
-              <Layers size={26} strokeWidth={1.75} />
-            </div>
-            <span className='empty-state__title'>Nenhuma aba aberta</span>
-            <span>Crie um terminal, agent, navegador, emulador ou API Client para começar</span>
-            <div className='workspace-empty-state__actions'>
-              <div className='workspace-empty-state__row'>
-                <button
-                  type='button'
-                  className='empty-state__action empty-state__action--agent app-button app-button--enter'
-                  onClick={handleAddAgent}
-                >
-                  <Bot size={14} />
-                  Agent
-                </button>
-                <button
-                  type='button'
-                  className='empty-state__action empty-state__action--browser app-button app-button--enter'
-                  onClick={handleAddBrowser}
-                >
-                  <Globe size={14} />
-                  Navegador
-                </button>
-              </div>
-              <div className='workspace-empty-state__row'>
-                <button
-                  type='button'
-                  className='empty-state__action empty-state__action--terminal app-button app-button--enter'
-                  onClick={handleAddTerminal}
-                >
-                  <Terminal size={14} />
-                  Terminal
-                </button>
-                <button
-                  type='button'
-                  className='empty-state__action empty-state__action--emulator app-button app-button--enter'
-                  onClick={handleAddEmulator}
-                >
-                  <Smartphone size={14} />
-                  Emulador
-                </button>
-                <button
-                  type='button'
-                  className='empty-state__action empty-state__action--api app-button app-button--enter'
-                  onClick={handleAddApi}
-                >
-                  <Braces size={14} />
-                  API Client
-                </button>
-              </div>
-            </div>
-
-            {featuredAutomations.length > 0 ? (
-              <div className='workspace-empty-state__automations'>
-                <span className='workspace-empty-state__section-label'>Automações</span>
-                <div className='workspace-empty-state__row'>
-                  {featuredAutomations.slice(0, 2).map((automation, index) => (
-                    <button
-                      key={automation.id}
-                      type='button'
-                      className='empty-state__action empty-state__action--automation app-button app-button--enter'
-                      style={{ animationDelay: `${200 + index * 40}ms` }}
-                      onClick={() => handleRunAutomation(automation.id)}
-                    >
-                      {automation.trigger === 'interval' ? <Clock size={14} /> : <Play size={14} />}
-                      {automation.name}
-                    </button>
-                  ))}
+      ) : (
+        <>
+          {showEmptyWorkspace ? (
+            <div className='terminal-workspace__empty'>
+              <div className='empty-state'>
+                <div className='empty-state__icon' aria-hidden='true'>
+                  <Layers size={26} strokeWidth={1.75} />
                 </div>
-                {featuredAutomations.length > 2 ? (
+                <span className='empty-state__title'>Nenhuma aba aberta</span>
+                <span>Crie um terminal, agent, navegador, emulador ou API Client para começar</span>
+                <div className='workspace-empty-state__actions'>
                   <div className='workspace-empty-state__row'>
-                    {featuredAutomations.slice(2, 5).map((automation, index) => (
+                    <button
+                      type='button'
+                      className='empty-state__action empty-state__action--agent app-button app-button--enter'
+                      onClick={handleAddAgent}
+                    >
+                      <Bot size={14} />
+                      Agent
+                    </button>
+                    <button
+                      type='button'
+                      className='empty-state__action empty-state__action--browser app-button app-button--enter'
+                      onClick={handleAddBrowser}
+                    >
+                      <Globe size={14} />
+                      Navegador
+                    </button>
+                  </div>
+                  <div className='workspace-empty-state__row'>
+                    <button
+                      type='button'
+                      className='empty-state__action empty-state__action--terminal app-button app-button--enter'
+                      onClick={handleAddTerminal}
+                    >
+                      <Terminal size={14} />
+                      Terminal
+                    </button>
+                    <button
+                      type='button'
+                      className='empty-state__action empty-state__action--emulator app-button app-button--enter'
+                      onClick={handleAddEmulator}
+                    >
+                      <Smartphone size={14} />
+                      Emulador
+                    </button>
+                    <button
+                      type='button'
+                      className='empty-state__action empty-state__action--api app-button app-button--enter'
+                      onClick={handleAddApi}
+                    >
+                      <Braces size={14} />
+                      API Client
+                    </button>
+                  </div>
+                </div>
+
+                {featuredAutomations.length > 0 ? (
+                  <div className='workspace-empty-state__automations'>
+                    <span className='workspace-empty-state__section-label'>Automações</span>
+                    <div className='workspace-empty-state__row'>
+                      {featuredAutomations.slice(0, 2).map((automation, index) => (
+                        <button
+                          key={automation.id}
+                          type='button'
+                          className='empty-state__action empty-state__action--automation app-button app-button--enter'
+                          style={{ animationDelay: `${200 + index * 40}ms` }}
+                          onClick={() => handleRunAutomation(automation.id)}
+                        >
+                          {automation.trigger === 'interval' ? (
+                            <Clock size={14} />
+                          ) : (
+                            <Play size={14} />
+                          )}
+                          {automation.name}
+                        </button>
+                      ))}
+                    </div>
+                    {featuredAutomations.length > 2 ? (
+                      <div className='workspace-empty-state__row'>
+                        {featuredAutomations.slice(2, 5).map((automation, index) => (
+                          <button
+                            key={automation.id}
+                            type='button'
+                            className='empty-state__action empty-state__action--automation app-button app-button--enter'
+                            style={{ animationDelay: `${280 + index * 40}ms` }}
+                            onClick={() => handleRunAutomation(automation.id)}
+                          >
+                            {automation.trigger === 'interval' ? (
+                              <Clock size={14} />
+                            ) : (
+                              <Play size={14} />
+                            )}
+                            {automation.name}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    {hasMoreAutomations ? (
                       <button
-                        key={automation.id}
                         type='button'
-                        className='empty-state__action empty-state__action--automation app-button app-button--enter'
-                        style={{ animationDelay: `${280 + index * 40}ms` }}
-                        onClick={() => handleRunAutomation(automation.id)}
+                        className='empty-state__action empty-state__action--ghost app-button app-button--enter'
+                        style={{ animationDelay: '420ms' }}
+                        onClick={handleOpenAutomationsDrawer}
                       >
-                        {automation.trigger === 'interval' ? (
-                          <Clock size={14} />
-                        ) : (
-                          <Play size={14} />
-                        )}
-                        {automation.name}
+                        Ver todas
                       </button>
-                    ))}
+                    ) : null}
                   </div>
                 ) : null}
-                {hasMoreAutomations ? (
-                  <button
-                    type='button'
-                    className='empty-state__action empty-state__action--ghost app-button app-button--enter'
-                    style={{ animationDelay: '420ms' }}
-                    onClick={handleOpenAutomationsDrawer}
-                  >
-                    Ver todas
-                  </button>
-                ) : null}
               </div>
-            ) : null}
-          </div>
-        </div>
-      ) : (
-        <div className='terminal-panel terminal-panel--split'>
-          {paneHostReady ? (
-            <div className='terminal-panel__project-hosts'>
-              {hostedProjects.map((project) => (
-                <div
-                  key={project.id}
-                  className={`terminal-panel__project-host${project.id === activeProjectId ? ' terminal-panel__project-host--active' : ''}`}
-                >
-                  <ProjectWorkspace
-                    project={project}
-                    isProjectActive={project.id === activeProjectId}
-                    agentSession={agentSession}
-                    runningShellTerminalCount={runningShellTerminalCount}
-                    terminalRefs={terminalRefs}
-                    tabDropOverlay={project.id === activeProjectId ? tabDropOverlay : null}
-                    onFocusPane={handleFocusPane}
-                    onPtyCreated={handlePtyCreated}
-                    onPtyLost={handlePtyLost}
-                    onBrowserUrlChange={handleBrowserUrlChange}
-                    onOpenLinkInBrowser={handleOpenLinkInBrowser}
-                    onUpdateEmulatorTab={handleUpdateEmulatorTab}
-                    onUpdateApiTab={handleUpdateApiTab}
-                    onUpdateAgentTab={handleUpdateAgentTab}
-                    onSplitRatioCommit={handleSplitRatioCommit}
-                  />
-                </div>
-              ))}
             </div>
-          ) : (
-            <div className='terminal-panel__view terminal-panel__view--active' />
+          ) : null}
+          {showEmptyWorkspace && !(paneHostReady && hostedProjects.length > 0) ? null : (
+            <div
+              className={
+                showEmptyWorkspace
+                  ? 'terminal-panel__offscreen-host'
+                  : 'terminal-panel terminal-panel--split'
+              }
+              hidden={showEmptyWorkspace}
+              aria-hidden={showEmptyWorkspace}
+            >
+              {paneHostReady ? (
+                <div className='terminal-panel__project-hosts'>
+                  {hostedProjects.map((project) => (
+                    <div
+                      key={project.id}
+                      className={`terminal-panel__project-host${project.id === activeProjectId ? ' terminal-panel__project-host--active' : ''}`}
+                    >
+                      <ProjectWorkspace
+                        project={project}
+                        isProjectActive={project.id === activeProjectId}
+                        agentSession={agentSession}
+                        runningShellTerminalCount={runningShellTerminalCount}
+                        terminalRefs={terminalRefs}
+                        tabDropOverlay={project.id === activeProjectId ? tabDropOverlay : null}
+                        onFocusPane={handleFocusPane}
+                        onPtyCreated={handlePtyCreated}
+                        onPtyLost={handlePtyLost}
+                        onBrowserUrlChange={handleBrowserUrlChange}
+                        onOpenLinkInBrowser={handleOpenLinkInBrowser}
+                        onUpdateEmulatorTab={handleUpdateEmulatorTab}
+                        onUpdateApiTab={handleUpdateApiTab}
+                        onUpdateAgentTab={handleUpdateAgentTab}
+                        onSplitRatioCommit={handleSplitRatioCommit}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className='terminal-panel__view terminal-panel__view--active' />
+              )}
+            </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );

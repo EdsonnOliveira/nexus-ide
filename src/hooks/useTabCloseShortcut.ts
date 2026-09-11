@@ -1,12 +1,10 @@
 import { useEffect } from 'react';
 import { useProjectStore } from '@/stores/useProjectStore';
-import {
-  resolveDirtyFileTabTitle,
-  useFileDirtyStore,
-} from '@/stores/useFileDirtyStore';
+import { resolveDirtyFileTabTitle, useFileDirtyStore } from '@/stores/useFileDirtyStore';
 import { useTabActions } from '@/stores/useTabStore';
 import { isOverlayBlockingTerminalHints } from '@/utils/overlayBlocking';
 import { isTabPinned } from '@/utils/tabOrder';
+import { isHomeBoundTabItem, listProjectSurfaceTabs } from '@/utils/homeDashboardAgents';
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -62,9 +60,13 @@ export function useTabCloseShortcut(): void {
         return;
       }
 
-      const activeTab = project.tabs.find((item) => item.id === project.activeTabId);
+      const surfaceTabs = listProjectSurfaceTabs(project);
+      const activeTab =
+        surfaceTabs.find((item) => item.id === project.activeTabId) ??
+        surfaceTabs[surfaceTabs.length - 1] ??
+        null;
 
-      if (!activeTab || isTabPinned(activeTab)) {
+      if (!activeTab || isTabPinned(activeTab) || isHomeBoundTabItem(project.id, activeTab)) {
         return;
       }
 
@@ -75,14 +77,14 @@ export function useTabCloseShortcut(): void {
       const dirtyFiles = dirtyStore.findDirtyFileTabs(activeTab);
 
       if (dirtyFiles.length === 0) {
-        void closeTab(project.activeTabId);
+        void closeTab(activeTab.id);
         return;
       }
 
       const firstDirty = dirtyFiles[0]!;
 
       dirtyStore.setPendingClose({
-        tabId: project.activeTabId,
+        tabId: activeTab.id,
         title: resolveDirtyFileTabTitle(firstDirty),
         filePath: firstDirty.filePath,
       });
