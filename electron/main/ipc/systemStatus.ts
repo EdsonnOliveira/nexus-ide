@@ -4,6 +4,7 @@ import {
   connectWifiNetwork,
   disconnectWifiNetwork,
   getConnectedWifiNetwork,
+  getInternetPing,
   getSystemStatusSnapshot,
   getWifiPopupState,
   getWifiPower,
@@ -15,6 +16,7 @@ import {
 
 export function registerSystemStatusHandlers(): void {
   ipcMain.handle('systemStatus:getSnapshot', () => getSystemStatusSnapshot());
+  ipcMain.handle('systemStatus:getInternetPing', () => getInternetPing());
   ipcMain.handle('systemStatus:setVolume', (_, volume: number) => setOutputVolume(volume));
   ipcMain.handle('systemStatus:setMuted', (_, muted: boolean) => setOutputMuted(muted));
   ipcMain.handle('systemStatus:listAudioOutputDevices', () => listAudioOutputDevices());

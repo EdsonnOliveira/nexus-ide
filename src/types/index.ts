@@ -635,6 +635,10 @@ export interface SystemStatusSnapshot {
   wifiNetwork: string | null;
 }
 
+export interface InternetPingSnapshot {
+  latencyMs: number | null;
+}
+
 export interface WifiNetworkItem {
   ssid: string;
   connected: boolean;
@@ -1027,6 +1031,27 @@ export interface CursorPeriodUsageSnapshot {
   membershipType: string | null;
   updatedAt: number;
   error: string | null;
+}
+
+export type AiUsageProviderId =
+  | 'cursor'
+  | 'claude'
+  | 'opencode'
+  | 'gemini'
+  | 'codex'
+  | 'antigravity';
+
+export interface AiProviderUsageItem {
+  id: AiUsageProviderId;
+  label: string;
+  available: boolean;
+  percent: number | null;
+  detail: string | null;
+}
+
+export interface AiProviderUsageSnapshot {
+  items: AiProviderUsageItem[];
+  updatedAt: number;
 }
 
 export interface XTermViewHandle {
@@ -1501,6 +1526,7 @@ export interface NexusAPI {
   };
   systemStatus: {
     getSnapshot: () => Promise<SystemStatusSnapshot>;
+    getInternetPing: () => Promise<InternetPingSnapshot>;
     setVolume: (volume: number) => Promise<void>;
     setMuted: (muted: boolean) => Promise<void>;
     listAudioOutputDevices: () => Promise<AudioOutputDeviceItem[]>;
@@ -1600,6 +1626,9 @@ export interface NexusAPI {
   };
   cursorUsage: {
     getCurrentPeriod: (force?: boolean) => Promise<CursorPeriodUsageSnapshot>;
+  };
+  aiUsage: {
+    getSnapshot: (force?: boolean) => Promise<AiProviderUsageSnapshot>;
   };
   emulator: {
     getSetupStatus: () => Promise<EmulatorSetupStatus>;

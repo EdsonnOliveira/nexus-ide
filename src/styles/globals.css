@@ -289,7 +289,7 @@ html.nexus-power-save * {
 .titlebar__tray {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
   -webkit-app-region: no-drag;
 }
@@ -388,9 +388,210 @@ html.nexus-power-save * {
   letter-spacing: 0.01em;
 }
 
-.titlebar__battery-level {
+.titlebar__ping {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 4px;
+  color: var(--text-secondary);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', var(--font-ui);
+  font-size: 13px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.titlebar__ping svg {
+  flex-shrink: 0;
+}
+
+.titlebar__ping--good,
+.titlebar__ping--good:hover:not(:disabled),
+.titlebar__ping--good.titlebar__item--active {
+  color: #86efac;
+}
+
+.titlebar__ping--normal,
+.titlebar__ping--normal:hover:not(:disabled),
+.titlebar__ping--normal.titlebar__item--active {
+  color: var(--text-primary);
+}
+
+.titlebar__ping--slow,
+.titlebar__ping--slow:hover:not(:disabled),
+.titlebar__ping--slow.titlebar__item--active {
+  color: #ef4444;
+}
+
+.titlebar__ping--offline,
+.titlebar__ping--offline:hover:not(:disabled),
+.titlebar__ping--offline.titlebar__item--active {
+  color: var(--text-muted);
+}
+
+.titlebar__item--battery {
+  gap: 4px;
+  padding: 1px 4px;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', var(--font-ui);
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+.titlebar__item--battery svg {
+  flex-shrink: 0;
+}
+
+.titlebar__usage {
+  gap: 4px;
+  padding: 1px 4px;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', var(--font-ui);
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+.titlebar__usage svg {
+  flex-shrink: 0;
+}
+
+.titlebar__usage-level {
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: inherit;
+  color: inherit;
+}
+
+.titlebar__usage--good,
+.titlebar__usage--good:hover:not(:disabled),
+.titlebar__usage--good.titlebar__item--active {
+  color: #86efac;
+}
+
+.titlebar__usage--normal,
+.titlebar__usage--normal:hover:not(:disabled),
+.titlebar__usage--normal.titlebar__item--active {
+  color: var(--text-primary);
+}
+
+.titlebar__usage--warning,
+.titlebar__usage--warning:hover:not(:disabled),
+.titlebar__usage--warning.titlebar__item--active {
+  color: #fbbf24;
+}
+
+.titlebar__usage--critical,
+.titlebar__usage--critical:hover:not(:disabled),
+.titlebar__usage--critical.titlebar__item--active {
+  color: #ef4444;
+}
+
+.titlebar__usage--offline,
+.titlebar__usage--offline:hover:not(:disabled),
+.titlebar__usage--offline.titlebar__item--active {
+  color: var(--text-muted);
+}
+
+.titlebar-panel__usage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.titlebar-panel__usage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 32px;
+  padding: 4px 2px;
+}
+
+.titlebar-panel__usage-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.titlebar-panel__usage-detail {
   font-size: 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.titlebar-panel__usage-logo {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
+}
+
+.titlebar-panel__output-icon.titlebar-panel__usage-icon--cursor {
+  background: #1a1a1a;
+}
+
+.titlebar-panel__output-icon.titlebar-panel__usage-icon--claude {
+  background: #cc785c;
+}
+
+.titlebar-panel__output-icon.titlebar-panel__usage-icon--opencode {
+  background: #6366f1;
+}
+
+.titlebar-panel__output-icon.titlebar-panel__usage-icon--gemini {
+  background: #1c69ff;
+}
+
+.titlebar-panel__output-icon.titlebar-panel__usage-icon--codex {
+  background: #10a37f;
+}
+
+.titlebar-panel__output-icon.titlebar-panel__usage-icon--antigravity {
+  background: #7c3aed;
+}
+
+.titlebar-panel__usage-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.titlebar-panel__usage-value--good {
+  color: #86efac;
+}
+
+.titlebar-panel__usage-value--warning {
+  color: #fbbf24;
+}
+
+.titlebar-panel__usage-value--critical {
+  color: #ef4444;
+}
+
+.titlebar-panel__usage-value--muted {
+  color: var(--text-muted);
+}
+
+.titlebar__battery-level {
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: inherit;
   color: inherit;
 }
 
@@ -628,6 +829,13 @@ html.nexus-power-save * {
 
 .titlebar-panel__section-label:not(:first-child) {
   margin-top: 4px;
+}
+
+.titlebar-panel__network-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
 }
 
 .titlebar-panel__select-list {

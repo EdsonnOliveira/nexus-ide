@@ -382,6 +382,7 @@ const nexusApi = {
   },
   systemStatus: {
     getSnapshot: () => ipcRenderer.invoke('systemStatus:getSnapshot'),
+    getInternetPing: () => ipcRenderer.invoke('systemStatus:getInternetPing'),
     setVolume: (volume: number) => ipcRenderer.invoke('systemStatus:setVolume', volume),
     setMuted: (muted: boolean) => ipcRenderer.invoke('systemStatus:setMuted', muted),
     listAudioOutputDevices: () => ipcRenderer.invoke('systemStatus:listAudioOutputDevices'),
@@ -533,6 +534,9 @@ const nexusApi = {
   },
   cursorUsage: {
     getCurrentPeriod: (force) => ipcRenderer.invoke('cursorUsage:getCurrentPeriod', force),
+  },
+  aiUsage: {
+    getSnapshot: (force) => ipcRenderer.invoke('aiUsage:getSnapshot', force),
   },
   emulator: {
     getSetupStatus: () => ipcRenderer.invoke('emulator:getSetupStatus'),

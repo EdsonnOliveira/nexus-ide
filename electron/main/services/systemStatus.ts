@@ -40,6 +40,10 @@ export interface WifiPopupState {
   networks: WifiNetworkItem[];
 }
 
+export interface InternetPingSnapshot {
+  latencyMs: number | null;
+}
+
 const EMPTY_SNAPSHOT: SystemStatusSnapshot = {
   platformSupported: false,
   volume: 0,
@@ -51,6 +55,9 @@ const EMPTY_SNAPSHOT: SystemStatusSnapshot = {
   wifiConnected: false,
   wifiNetwork: null,
 };
+
+const PING_HOSTS = ['1.1.1.1', '8.8.8.8'];
+const PING_COMMAND_TIMEOUT_MS = 2500;
 
 function assertDarwinSupported(): void {
   if (process.platform !== 'darwin') {
@@ -90,10 +97,12 @@ function parseBatteryStatus(raw: string): {
 
   const levelMatch = line.match(/(\d+)%/);
   const charging =
-    (/\bcharging\b/i.test(line) && !/\bnot charging\b/i.test(line) && !/\bdischarging\b/i.test(line)) ||
+    (/\bcharging\b/i.test(line) &&
+      !/\bnot charging\b/i.test(line) &&
+      !/\bdischarging\b/i.test(line)) ||
     /\bcharged\b/i.test(line) ||
     /\bfinishing charge\b/i.test(line) ||
-    /\bAC Power\b/i.test(line) && /\bfull\b/i.test(line);
+    (/\bAC Power\b/i.test(line) && /\bfull\b/i.test(line));
   const present = /\bpresent:\s*true\b/i.test(line);
   const timeMatch = line.match(/(\d+:\d+)\s+remaining/i);
 
@@ -211,10 +220,7 @@ let cachedProfilerSsid: { value: string | null; fetchedAt: number } | null = nul
 const PROFILER_SSID_CACHE_MS = 60_000;
 
 async function getSsidFromSystemProfiler(device: string): Promise<string | null> {
-  if (
-    cachedProfilerSsid &&
-    Date.now() - cachedProfilerSsid.fetchedAt < PROFILER_SSID_CACHE_MS
-  ) {
+  if (cachedProfilerSsid && Date.now() - cachedProfilerSsid.fetchedAt < PROFILER_SSID_CACHE_MS) {
     return cachedProfilerSsid.value;
   }
 
@@ -320,8 +326,7 @@ export async function getWifiPopupState(): Promise<WifiPopupState> {
   const networks = availableNetworks
     .map((network) => ({
       ssid: network.ssid,
-      connected:
-        connectedNetwork !== null && connectedNetwork === normalizeSsid(network.ssid),
+      connected: connectedNetwork !== null && connectedNetwork === normalizeSsid(network.ssid),
       secured: network.secured,
     }))
     .sort((left, right) => {
@@ -417,6 +422,52 @@ export async function getSystemStatusSnapshot(): Promise<SystemStatusSnapshot> {
   }
 }
 
+function parsePingLatencyMs(raw: string): number | null {
+  const match = raw.match(/time[=<](\d+(?:\.\d+)?)\s*ms/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const value = Number.parseFloat(match[1]);
+
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+
+  return Math.round(value);
+}
+
+async function pingHost(host: string): Promise<number | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      '/sbin/ping',
+      ['-n', '-c', '1', '-t', '2', '-W', '1500', host],
+      { timeout: PING_COMMAND_TIMEOUT_MS },
+    );
+
+    return parsePingLatencyMs(stdout);
+  } catch {
+    return null;
+  }
+}
+
+export async function getInternetPing(): Promise<InternetPingSnapshot> {
+  if (process.platform !== 'darwin') {
+    return { latencyMs: null };
+  }
+
+  for (const host of PING_HOSTS) {
+    const latencyMs = await pingHost(host);
+
+    if (latencyMs !== null) {
+      return { latencyMs };
+    }
+  }
+
+  return { latencyMs: null };
+}
+
 export async function setOutputVolume(volume: number): Promise<void> {
   assertDarwinSupported();
   const clamped = Math.min(Math.max(Math.round(volume), 0), 100);
@@ -425,7 +476,10 @@ export async function setOutputVolume(volume: number): Promise<void> {
 
 export async function setOutputMuted(muted: boolean): Promise<void> {
   assertDarwinSupported();
-  await runCommand('/usr/bin/osascript', ['-e', `set volume output muted ${muted ? 'true' : 'false'}`]);
+  await runCommand('/usr/bin/osascript', [
+    '-e',
+    `set volume output muted ${muted ? 'true' : 'false'}`,
+  ]);
 }
 
 export async function getWifiPower(): Promise<boolean> {

@@ -54,6 +54,7 @@ import { registerJarvisHandlers } from './ipc/jarvis';
 import { registerVercelHandlers } from './ipc/vercel';
 import { registerRenderHandlers } from './ipc/render';
 import { registerCursorUsageHandlers } from './ipc/cursorUsage';
+import { registerAiUsageHandlers } from './ipc/aiUsage';
 import { registerWhatsAppHandlers } from './ipc/whatsapp';
 import { registerSessionHandlers } from './ipc/session';
 import { registerTaskHandlers } from './ipc/tasks';
@@ -1266,6 +1267,7 @@ app.whenReady().then(() => {
   registerVercelHandlers();
   registerRenderHandlers();
   registerCursorUsageHandlers();
+  registerAiUsageHandlers();
   registerWhatsAppHandlers();
   registerEmulatorHandlers(() => win);
   startDesktopControlServer();

@@ -27,16 +27,30 @@ interface CursorPeriodUsageApiResponse {
     autoPercentUsed?: number;
     apiPercentUsed?: number;
     totalPercentUsed?: number;
+    includedSpend?: number;
+    limit?: number;
   };
   displayMessage?: string;
   autoModelSelectedDisplayMessage?: string;
   namedModelSelectedDisplayMessage?: string;
 }
 
+interface CursorPlanInfoResponse {
+  planInfo?: {
+    planName?: string;
+  };
+}
+
 interface CursorStripeApiResponse {
   individualMembershipType?: string;
   membershipType?: string;
 }
+
+const CURSOR_CONNECT_USAGE_URL =
+  'https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage';
+const CURSOR_CONNECT_PLAN_URL = 'https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo';
+const CURSOR_DASHBOARD_USAGE_URL = 'https://cursor.com/api/dashboard/get-current-period-usage';
+const CURSOR_STRIPE_URL = 'https://cursor.com/api/auth/stripe';
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -110,7 +124,7 @@ function buildSessionToken(accessToken: string): string | null {
   return `${sub}::${accessToken}`;
 }
 
-function readCursorSessionToken(): string | null {
+function readCursorAccessToken(): string | null {
   const dbPath = resolveCursorStateDbPath();
 
   if (!dbPath) {
@@ -119,22 +133,42 @@ function readCursorSessionToken(): string | null {
 
   const accessToken = readStateValue(dbPath, 'cursorAuth/accessToken');
 
-  if (!accessToken) {
+  return accessToken && accessToken.length > 0 ? accessToken : null;
+}
+
+function readCachedMembershipType(): string | null {
+  const dbPath = resolveCursorStateDbPath();
+
+  if (!dbPath) {
     return null;
   }
 
-  return buildSessionToken(accessToken);
+  const raw = readStateValue(dbPath, 'cursorAuth/stripeMembershipType');
+
+  if (!raw) {
+    return null;
+  }
+
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
-function requestJson<T>(url: string, sessionToken: string): Promise<T> {
+function requestJson<T>(
+  url: string,
+  options: {
+    method?: 'GET' | 'POST';
+    headers?: Record<string, string>;
+    body?: string;
+  } = {},
+): Promise<T> {
   return new Promise((resolve, reject) => {
+    const method = options.method ?? 'GET';
     const request = https.request(
       url,
       {
-        method: 'GET',
+        method,
         headers: {
-          Cookie: `WorkosCursorSessionToken=${sessionToken}`,
           Accept: 'application/json',
+          ...options.headers,
         },
         timeout: REQUEST_TIMEOUT_MS,
       },
@@ -167,8 +201,93 @@ function requestJson<T>(url: string, sessionToken: string): Promise<T> {
     });
 
     request.on('error', reject);
+
+    if (options.body) {
+      request.end(options.body);
+      return;
+    }
+
     request.end();
   });
+}
+
+async function fetchCursorUsagePayload(
+  accessToken: string,
+  sessionToken: string | null,
+): Promise<CursorPeriodUsageApiResponse> {
+  try {
+    return await requestJson<CursorPeriodUsageApiResponse>(CURSOR_CONNECT_USAGE_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'Connect-Protocol-Version': '1',
+      },
+      body: '{}',
+    });
+  } catch {
+  }
+
+  if (!sessionToken) {
+    throw new Error('cursor_usage_failed');
+  }
+
+  try {
+    return await requestJson<CursorPeriodUsageApiResponse>(CURSOR_DASHBOARD_USAGE_URL, {
+      method: 'POST',
+      headers: {
+        Cookie: `WorkosCursorSessionToken=${sessionToken}`,
+        'Content-Type': 'application/json',
+        Origin: 'https://cursor.com',
+      },
+      body: '{}',
+    });
+  } catch {
+  }
+
+  return requestJson<CursorPeriodUsageApiResponse>(CURSOR_DASHBOARD_USAGE_URL, {
+    headers: {
+      Cookie: `WorkosCursorSessionToken=${sessionToken}`,
+    },
+  });
+}
+
+async function fetchCursorMembershipType(
+  accessToken: string,
+  sessionToken: string | null,
+): Promise<string | null> {
+  try {
+    const planPayload = await requestJson<CursorPlanInfoResponse>(CURSOR_CONNECT_PLAN_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'Connect-Protocol-Version': '1',
+      },
+      body: '{}',
+    });
+    const planName = planPayload.planInfo?.planName?.trim();
+
+    if (planName) {
+      return planName;
+    }
+  } catch {
+  }
+
+  if (sessionToken) {
+    try {
+      const stripePayload = await requestJson<CursorStripeApiResponse>(CURSOR_STRIPE_URL, {
+        headers: {
+          Cookie: `WorkosCursorSessionToken=${sessionToken}`,
+        },
+      });
+
+      return parseMembershipLabel(stripePayload);
+    } catch {
+    }
+  }
+
+  return readCachedMembershipType();
 }
 
 function buildUnavailableSnapshot(error: string): CursorPeriodUsageSnapshot {
@@ -211,7 +330,7 @@ function parseUsageSnapshot(
 
   return {
     available: true,
-    percent: Math.max(0, Math.min(100, totalPercentUsed)),
+    percent: Math.max(0, Math.min(100, Math.max(autoPercentUsed, apiPercentUsed, totalPercentUsed))),
     autoPercentUsed,
     apiPercentUsed,
     totalPercentUsed,
@@ -233,26 +352,23 @@ export async function getCursorPeriodUsage(force = false): Promise<CursorPeriodU
     return cachedSnapshot;
   }
 
-  const sessionToken = readCursorSessionToken();
+  const accessToken = readCursorAccessToken();
 
-  if (!sessionToken) {
+  if (!accessToken) {
     cachedSnapshot = buildUnavailableSnapshot('not_authenticated');
     cacheExpiresAt = now + 60_000;
     return cachedSnapshot;
   }
 
+  const sessionToken = buildSessionToken(accessToken);
+
   try {
-    const [usagePayload, stripePayload] = await Promise.all([
-      requestJson<CursorPeriodUsageApiResponse>(
-        'https://cursor.com/api/dashboard/get-current-period-usage',
-        sessionToken,
-      ),
-      requestJson<CursorStripeApiResponse>('https://cursor.com/api/auth/stripe', sessionToken).catch(
-        () => ({} as CursorStripeApiResponse),
-      ),
+    const [usagePayload, membershipType] = await Promise.all([
+      fetchCursorUsagePayload(accessToken, sessionToken),
+      fetchCursorMembershipType(accessToken, sessionToken),
     ]);
 
-    cachedSnapshot = parseUsageSnapshot(usagePayload, parseMembershipLabel(stripePayload));
+    cachedSnapshot = parseUsageSnapshot(usagePayload, membershipType);
     cacheExpiresAt = now + CACHE_TTL_MS;
     return cachedSnapshot;
   } catch (error) {
