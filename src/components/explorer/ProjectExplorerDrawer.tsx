@@ -34,7 +34,12 @@ import {
   type ExplorerSearchOptions,
 } from '@/utils/explorerSearch';
 import type { ExplorerEnvHint } from '@/utils/explorerEnvHints';
-import { resolveExplorerTargetDirectory } from '@/utils/explorerTarget';
+import {
+  consumeExplorerRevealPath,
+  EXPLORER_REVEAL_PATH_EVENT,
+  resolveExplorerTargetDirectory,
+  type ExplorerRevealPathDetail,
+} from '@/utils/explorerTarget';
 import {
   getDroppedFilePaths,
   isExplorerInternalDrag,
@@ -96,6 +101,7 @@ interface ExplorerTreeNodeProps {
   onImportOnTarget: (sourcePaths: string[], targetDirPath: string) => void;
   onContextMenu: (entry: ProjectDirectoryEntry, x: number, y: number) => void;
   resolveGitDecoration: (absolutePath: string) => ExplorerGitDecoration | null;
+  revealPath?: string | null;
 }
 
 function renderExplorerSearchPreview(
@@ -245,8 +251,10 @@ const ExplorerTreeNode = memo(function ExplorerTreeNodeComponent({
   onImportOnTarget,
   onContextMenu,
   resolveGitDecoration,
+  revealPath = null,
 }: ExplorerTreeNodeProps) {
   const [expanded, setExpanded] = useState(initialExpanded);
+  const rowRef = useRef<HTMLButtonElement>(null);
   const [children, setChildren] = useState<ProjectDirectoryEntry[] | null>(
     preloadedChildren ?? null,
   );
@@ -371,6 +379,16 @@ const ExplorerTreeNode = memo(function ExplorerTreeNodeComponent({
     };
   }, [directoryInvalidation, entry.path, expanded, isDirectory, isSearchTree]);
 
+  useEffect(() => {
+    if (!revealPath || revealPath !== entry.path || !isDirectory) {
+      return;
+    }
+
+    setExpanded(true);
+    onSelect(entry.path, entry.type);
+    rowRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [entry.path, entry.type, isDirectory, onSelect, revealPath]);
+
   const handleToggle = useCallback(() => {
     if (!isDirectory) {
       onOpenFile(entry);
@@ -474,6 +492,7 @@ const ExplorerTreeNode = memo(function ExplorerTreeNodeComponent({
       className={`project-explorer__branch${expanded ? ' project-explorer__branch--expanded' : ''}`}
     >
       <button
+        ref={rowRef}
         type='button'
         className={`project-explorer__row app-button app-button--enter${isSelected ? ' project-explorer__row--selected' : ''}${rowDropClass}`}
         style={{ paddingLeft: `${8 + depth * 14}px` }}
@@ -598,6 +617,7 @@ const ExplorerTreeNode = memo(function ExplorerTreeNodeComponent({
                     onImportOnTarget={onImportOnTarget}
                     onContextMenu={onContextMenu}
                     resolveGitDecoration={resolveGitDecoration}
+                    revealPath={revealPath}
                   />
                 ))
               : null}
@@ -630,6 +650,7 @@ function ProjectExplorerDrawerComponent({
   const [projectKinds, setProjectKinds] = useState<Record<string, ProjectKind | null>>({});
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [selectedType, setSelectedType] = useState<ProjectDirectoryEntry['type'] | null>(null);
+  const [revealPath, setRevealPath] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchOptions, setSearchOptions] = useState<ExplorerSearchOptions>(
@@ -737,6 +758,41 @@ function ProjectExplorerDrawerComponent({
 
     clearPendingExplorerCreate();
   }, [clearPendingExplorerCreate, pendingExplorerCreate, projectId]);
+
+  useEffect(() => {
+    const applyRevealPath = (nextPath: string) => {
+      if (isGitView) {
+        toggleExplorerGit();
+      }
+
+      setRevealPath(nextPath);
+      setSelectedPath(nextPath);
+      setSelectedType('directory');
+    };
+
+    const pendingPath = consumeExplorerRevealPath(projectId);
+
+    if (pendingPath) {
+      applyRevealPath(pendingPath);
+    }
+
+    const handleReveal = (event: Event) => {
+      const detail = (event as CustomEvent<ExplorerRevealPathDetail>).detail;
+
+      if (!detail || detail.projectId !== projectId) {
+        return;
+      }
+
+      consumeExplorerRevealPath(projectId);
+      applyRevealPath(detail.path);
+    };
+
+    window.addEventListener(EXPLORER_REVEAL_PATH_EVENT, handleReveal);
+
+    return () => {
+      window.removeEventListener(EXPLORER_REVEAL_PATH_EVENT, handleReveal);
+    };
+  }, [isGitView, projectId, toggleExplorerGit]);
 
   useEffect(() => {
     void loadRootEntries();
@@ -1362,6 +1418,7 @@ function ProjectExplorerDrawerComponent({
                       onImportOnTarget={handleImportOnTarget}
                       onContextMenu={handleContextMenu}
                       resolveGitDecoration={resolveGitDecoration}
+                      revealPath={revealPath}
                     />
                   ))
                 : null}

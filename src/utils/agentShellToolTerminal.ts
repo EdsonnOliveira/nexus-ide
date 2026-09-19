@@ -84,6 +84,17 @@ export function shouldKeepAgentShellsAlive(
   );
 }
 
+export function hasStreamingDevServerShell(
+  activities: Array<{ kind: string; streaming?: boolean; toolCommand?: string }>,
+): boolean {
+  return activities.some(
+    (entry) =>
+      entry.kind === 'tool_run' &&
+      Boolean(entry.streaming) &&
+      shouldOpenAgentShellToolTerminal(entry.toolCommand ?? ''),
+  );
+}
+
 export function hasBlockingAgentToolWork(
   activities: Array<{ kind: string; streaming?: boolean; toolCommand?: string }>,
 ): boolean {
@@ -92,11 +103,7 @@ export function hasBlockingAgentToolWork(
       return true;
     }
 
-    if (entry.kind !== 'tool_run' || !entry.streaming) {
-      return false;
-    }
-
-    return !shouldOpenAgentShellToolTerminal(entry.toolCommand ?? '');
+    return entry.kind === 'tool_run' && Boolean(entry.streaming);
   });
 }
 
@@ -267,12 +274,110 @@ function registerShellToolStarted(
     status: 'starting',
     exitCode: null,
     ptyId: null,
+    commandDispatched: false,
+    dispatchedAt: null,
+    launchRetryCount: 0,
   });
 
-  useTerminalSessionStore.getState().setPendingLaunchCommand(paneId, trimmed);
   enqueuePendingTerminal(agentPaneId, paneId);
 
   return paneId;
+}
+
+const SHELL_HANDOFF_LAUNCH_DELAY_MS = 3_000;
+const SHELL_HANDOFF_RETRY_WINDOW_MS = 25_000;
+const SHELL_HANDOFF_MAX_RETRIES = 6;
+const handoffLaunchTimers = new Map<string, number>();
+
+function isLongRunningScript(command: string): boolean {
+  const scriptName = resolveScriptName(command);
+
+  if (!scriptName) {
+    return false;
+  }
+
+  return AGENT_TERMINAL_SCRIPT_NAMES.has(scriptName);
+}
+
+function writeLaunchCommand(entry: { paneId: string; command: string; ptyId: string | null }): void {
+  const session = useTerminalSessionStore.getState();
+
+  if (entry.ptyId) {
+    session.takePendingLaunchCommand(entry.paneId);
+    window.nexus.terminal.write(entry.ptyId, `\x15${entry.command}\n`);
+    session.setLastCommand(entry.paneId, entry.command);
+    return;
+  }
+
+  session.setPendingLaunchCommand(entry.paneId, entry.command);
+}
+
+function launchUndispatchedShellCommands(agentPaneId: string, paneId?: string): void {
+  const store = useAgentShellTerminalStore.getState();
+
+  for (const entry of store.getEntries(agentPaneId)) {
+    if (paneId && entry.paneId !== paneId) {
+      continue;
+    }
+
+    if (entry.commandDispatched || !isLongRunningScript(entry.command)) {
+      continue;
+    }
+
+    store.updateEntry(agentPaneId, entry.paneId, {
+      commandDispatched: true,
+      dispatchedAt: Date.now(),
+      launchRetryCount: 0,
+      status: 'starting',
+    });
+    writeLaunchCommand(
+      store.getEntries(agentPaneId).find((item) => item.paneId === entry.paneId) ?? entry,
+    );
+  }
+}
+
+export function scheduleAgentShellCommandHandoff(agentPaneId: string, paneId?: string): void {
+  const timerKey = paneId ? `${agentPaneId}:${paneId}` : agentPaneId;
+  const existing = handoffLaunchTimers.get(timerKey);
+
+  if (existing) {
+    window.clearTimeout(existing);
+  }
+
+  const timer = window.setTimeout(() => {
+    handoffLaunchTimers.delete(timerKey);
+    launchUndispatchedShellCommands(agentPaneId, paneId);
+  }, SHELL_HANDOFF_LAUNCH_DELAY_MS);
+
+  handoffLaunchTimers.set(timerKey, timer);
+}
+
+export function retryAgentShellCommandIfNeeded(agentPaneId: string, paneId: string): boolean {
+  const store = useAgentShellTerminalStore.getState();
+  const entry = store.getEntries(agentPaneId).find((item) => item.paneId === paneId);
+
+  if (!entry?.commandDispatched || !isLongRunningScript(entry.command)) {
+    return false;
+  }
+
+  if (entry.launchRetryCount >= SHELL_HANDOFF_MAX_RETRIES) {
+    return false;
+  }
+
+  const dispatchedAt = entry.dispatchedAt ?? entry.startedAt;
+
+  if (Date.now() - dispatchedAt > SHELL_HANDOFF_RETRY_WINDOW_MS) {
+    return false;
+  }
+
+  store.updateEntry(agentPaneId, paneId, {
+    launchRetryCount: entry.launchRetryCount + 1,
+    dispatchedAt: Date.now(),
+    status: 'starting',
+    exitCode: null,
+  });
+  writeLaunchCommand(entry);
+  return true;
 }
 
 function registerShellToolCompleted(agentPaneId: string, event: StreamJsonShellToolEvent): void {
@@ -282,12 +387,7 @@ function registerShellToolCompleted(agentPaneId: string, event: StreamJsonShellT
     return;
   }
 
-  const scriptName = resolveScriptName(event.command);
-  const isLongRunning = scriptName
-    ? ['dev', 'start', 'serve', 'ios', 'android', 'web'].includes(scriptName)
-    : false;
-
-  if (isLongRunning) {
+  if (isLongRunningScript(event.command)) {
     const current = useAgentShellTerminalStore
       .getState()
       .getEntries(agentPaneId)
@@ -297,9 +397,7 @@ function registerShellToolCompleted(agentPaneId: string, event: StreamJsonShellT
       return;
     }
 
-    useAgentShellTerminalStore.getState().updateEntry(agentPaneId, paneId, {
-      status: 'running',
-    });
+    scheduleAgentShellCommandHandoff(agentPaneId, paneId);
     return;
   }
 

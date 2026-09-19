@@ -112,7 +112,10 @@ class RenderCredentialStoreService {
       })
       .filter((item): item is RenderStoredCredential => item !== null);
 
-    this.decryptedCache = credentials;
+    if (credentials.length > 0 || stored.length === 0) {
+      this.decryptedCache = credentials;
+    }
+
     return credentials;
   }
 

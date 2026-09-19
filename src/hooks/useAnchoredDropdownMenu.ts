@@ -32,6 +32,15 @@ export function positionDropdownAtPointer(menu: HTMLDivElement, x: number, y: nu
   menu.style.top = `${Math.max(8, Math.min(y, maxY))}px`;
 }
 
+export function positionDropdownAfterAnchor(menu: HTMLDivElement, anchorRect: DOMRect): void {
+  const rect = menu.getBoundingClientRect();
+  const left = Math.min(anchorRect.right + 8, window.innerWidth - rect.width - 8);
+  const top = Math.min(Math.max(8, anchorRect.top), window.innerHeight - rect.height - 8);
+
+  menu.style.left = `${Math.max(8, left)}px`;
+  menu.style.top = `${Math.max(8, top)}px`;
+}
+
 export function positionDropdownAboveAnchor(
   menu: HTMLDivElement,
   anchorRect: DOMRect,
@@ -44,10 +53,7 @@ export function positionDropdownAboveAnchor(
       : Math.min(anchorRect.left, window.innerWidth - rect.width - 8);
   const aboveTop = anchorRect.top - rect.height - 6;
   const belowTop = anchorRect.bottom + 6;
-  const top =
-    aboveTop >= 8
-      ? aboveTop
-      : Math.min(belowTop, window.innerHeight - rect.height - 8);
+  const top = aboveTop >= 8 ? aboveTop : Math.min(belowTop, window.innerHeight - rect.height - 8);
 
   menu.style.left = `${Math.max(8, left)}px`;
   menu.style.top = `${Math.max(8, top)}px`;
@@ -86,7 +92,10 @@ export function positionDropdownAboveComposerInput(
   }
 
   const menuWidth = menu.offsetWidth || menu.getBoundingClientRect().width;
-  const left = Math.max(padding, Math.min(anchorRect.left, window.innerWidth - menuWidth - padding));
+  const left = Math.max(
+    padding,
+    Math.min(anchorRect.left, window.innerWidth - menuWidth - padding),
+  );
 
   menu.style.left = `${left}px`;
   menu.style.top = `${top}px`;

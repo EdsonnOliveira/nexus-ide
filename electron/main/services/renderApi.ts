@@ -100,8 +100,19 @@ const SERVICE_CACHE_TTL_MS = 60_000;
 
 const serviceCache = new Map<string, { expiresAt: number; services: RenderServiceRecord[] }>();
 
+function isHeaderSafeToken(token: string): boolean {
+  return token.length > 0 && /^[\x20-\x7E]+$/.test(token) && !token.startsWith('v10');
+}
+
 function requestRaw(token: string, path: string): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (!isHeaderSafeToken(token)) {
+      const error = new Error('Render API error 401') as RenderApiError;
+      error.statusCode = 401;
+      reject(error);
+      return;
+    }
+
     const url = new URL(path, RENDER_API_BASE);
 
     const request = https.request(

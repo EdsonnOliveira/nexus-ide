@@ -38,9 +38,13 @@ import {
 import { useAgentComposerShortcuts } from '@/hooks/useAgentComposerShortcuts';
 import { useCursorUsage } from '@/hooks/useCursorUsage';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { useAppSettingsStore } from '@/stores/useAppSettingsStore';
 import { useTerminalPasteImageStore } from '@/stores/useTerminalPasteImageStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
-import { cliAgentToAiProvider } from '@/constants/aiProviders';
+import {
+  cliAgentToAiProvider,
+  resolveAiProviderForPromptAttachments,
+} from '@/constants/aiProviders';
 import { TERMINAL_AGENTS } from '@/constants/terminalAgents';
 import type { TerminalAgent } from '@/types';
 import { registerAgentPaneAttach } from '@/utils/agentPaneRegistry';
@@ -64,6 +68,7 @@ import {
   buildAgentPromptImageMention,
   buildAgentPromptImageMentionAppendFragment,
   buildAgentPromptImageMentionInsertion,
+  hasAgentPromptAttachments,
 } from '@/utils/agentPromptImageBadge';
 import { isExternalFileDrag } from '@/utils/explorerExternalDrop';
 import { parseComposerSkillDraft, resolvePromptSkillAiProvider } from '@/utils/agentSkillDisplay';
@@ -168,6 +173,7 @@ const PROJECT_KIND_BADGE_COLORS: Record<ProjectKind, string> = {
   web: '#6ee7b7',
   mobile: '#fcd34d',
   desktop: '#c4b5fd',
+  mcp: '#f9a8d4',
 };
 
 interface ComposerMentionProjectThumbProps {
@@ -474,6 +480,37 @@ function AgentComposerComponent({
 
     onRunCommand(formatAgentAiProviderCommand(skillAiProvider));
   }, [cliAgent, draft, isBusy, isEditing, isSubmitting, onRunCommand, skillHints]);
+
+  useEffect(() => {
+    if (isBusy || isSubmitting || isEditing) {
+      return;
+    }
+
+    if (resolvePromptSkillAiProvider(draft, skillHints)) {
+      return;
+    }
+
+    const hasAttachments = hasAgentPromptAttachments(draft, images.length);
+
+    if (!hasAttachments) {
+      return;
+    }
+
+    const settings = useAppSettingsStore.getState();
+    const nextProvider = resolveAiProviderForPromptAttachments({
+      hasAttachments: true,
+      preferredAiProvider: settings.preferredAiProvider,
+      noAttachmentAiProvider: settings.noAttachmentAiProvider,
+      enabledAiProviders: settings.enabledAiProviders,
+    });
+    const currentProvider = cliAgentToAiProvider(cliAgent ?? '');
+
+    if (!nextProvider || nextProvider === currentProvider) {
+      return;
+    }
+
+    onRunCommand(formatAgentAiProviderCommand(nextProvider));
+  }, [cliAgent, draft, images.length, isBusy, isEditing, isSubmitting, onRunCommand, skillHints]);
 
   const mention = useAgentComposerMention({
     draft,

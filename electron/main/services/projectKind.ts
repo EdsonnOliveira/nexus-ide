@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-export type ProjectKind = 'web' | 'mobile' | 'api' | 'desktop';
+export type ProjectKind = 'web' | 'mobile' | 'api' | 'desktop' | 'mcp';
 
 interface PackageJson {
   dependencies?: Record<string, string>;
@@ -25,10 +25,18 @@ function hasDep(pkg: PackageJson, name: string): boolean {
   return Boolean(pkg.dependencies?.[name] || pkg.devDependencies?.[name]);
 }
 
+function isMcpProject(root: string, pkg: PackageJson): boolean {
+  if (hasDep(pkg, '@modelcontextprotocol/sdk') || hasDep(pkg, '@modelcontextprotocol/server')) {
+    return true;
+  }
+
+  return /(?:^|[-_.])mcp(?:[-_.]|$)/i.test(path.basename(root));
+}
+
 function detectNodeProjectKind(root: string, pkg: PackageJson): ProjectKind | null {
-  const isExpo = hasDep(pkg, 'expo') || hasFile(root, ['app.json', 'app.config.js', 'app.config.ts']);
-  const isReactNative =
-    hasDep(pkg, 'react-native') && hasFile(root, ['android', 'ios']) && !isExpo;
+  const isExpo =
+    hasDep(pkg, 'expo') || hasFile(root, ['app.json', 'app.config.js', 'app.config.ts']);
+  const isReactNative = hasDep(pkg, 'react-native') && hasFile(root, ['android', 'ios']) && !isExpo;
   const isCapacitor =
     (hasDep(pkg, '@capacitor/core') || hasDep(pkg, '@capacitor/cli')) &&
     hasFile(root, ['android', 'ios']);
@@ -57,6 +65,10 @@ function detectNodeProjectKind(root: string, pkg: PackageJson): ProjectKind | nu
 
   if (isDesktop) {
     return 'desktop';
+  }
+
+  if (isMcpProject(root, pkg)) {
+    return 'mcp';
   }
 
   if (hasDep(pkg, '@nestjs/core')) {

@@ -1,0 +1,36 @@
+#!/bin/sh
+url=""
+
+for arg in "$@"; do
+  case "$arg" in
+    http://*|https://*)
+      url="$arg"
+      break
+      ;;
+  esac
+done
+
+queue="${NEXUS_BROWSER_QUEUE:-$HOME/.nexus-ide-dev-browser}"
+mkdir -p "$queue" 2>/dev/null
+
+token="${NEXUS_BROWSER_TOKEN:-}"
+if [ -z "$token" ] && [ -f "${queue}/.token" ]; then
+  token=$(sed -n '1p' "${queue}/.token")
+fi
+
+if [ -z "$url" ] || [ -z "$token" ]; then
+  exit 0
+fi
+
+file="${queue}/$(date +%s)-$$"
+tmp="${queue}/.${$}.tmp"
+
+{
+  printf '%s\n' "$token"
+  printf '%s\n' "${NEXUS_PTY_ID:-}"
+  printf '%s\n' "$url"
+} > "$tmp"
+
+mv "$tmp" "$file"
+
+exit 0

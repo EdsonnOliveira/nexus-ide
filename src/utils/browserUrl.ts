@@ -1,3 +1,5 @@
+import { rewriteLocalDevBindHost } from '@/utils/browserSiteStatus';
+
 export function normalizeBrowserUrl(input: string): string {
   const trimmed = input.trim();
 
@@ -23,15 +25,19 @@ export function normalizeBrowserUrl(input: string): string {
       return trimmed;
     }
 
-    return trimmed;
+    return rewriteLocalDevBindHost(trimmed);
   }
 
   if (/^(about|chrome-error|data|blob|file|devtools):/i.test(trimmed)) {
     return trimmed;
   }
 
-  if (trimmed.startsWith('localhost') || trimmed.startsWith('127.0.0.1')) {
-    return `http://${trimmed}`;
+  if (
+    trimmed.startsWith('localhost') ||
+    trimmed.startsWith('127.0.0.1') ||
+    trimmed.startsWith('0.0.0.0')
+  ) {
+    return rewriteLocalDevBindHost(`http://${trimmed}`);
   }
 
   if (trimmed.includes('.') && !trimmed.includes(' ')) {

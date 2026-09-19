@@ -52,8 +52,8 @@ import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
 import { getBuiltinRoleById } from '@/constants/agentRoles';
 import { getBuiltinTemplateById } from '@/constants/agentTemplates';
 import {
-  ASK_AI_PROVIDER_OPTIONS,
   DEFAULT_AI_PROVIDER,
+  visibleAskAiProviderOptions,
   type AiProviderId,
 } from '@/constants/aiProviders';
 import { getMissionAutomationCategoryLabel } from '@/constants/missionAutomationCatalog';
@@ -334,6 +334,7 @@ function MissionInspectorComponent({
   const setTabPtyId = useProjectStore((state) => state.setTabPtyId);
   const { updateAgentTab } = useTabActions();
   const preferredAiProvider = useAppSettingsStore((state) => state.preferredAiProvider);
+  const enabledAiProviders = useAppSettingsStore((state) => state.enabledAiProviders);
   const [tab, setTab] = useState<InspectorTabId>('overview');
   const [nameDraft, setNameDraft] = useState('');
   const [objectiveDraft, setObjectiveDraft] = useState('');
@@ -1067,8 +1068,12 @@ function MissionInspectorComponent({
   }, [selectedAiProvider]);
 
   const aiProviderOptions = useMemo(
-    () => ASK_AI_PROVIDER_OPTIONS.map((option) => ({ value: option.id, label: option.label })),
-    [],
+    () =>
+      visibleAskAiProviderOptions(enabledAiProviders, selectedAiProvider).map((option) => ({
+        value: option.id,
+        label: option.label,
+      })),
+    [enabledAiProviders, selectedAiProvider],
   );
 
   const modelSelectOptions = useMemo(

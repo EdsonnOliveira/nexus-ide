@@ -170,7 +170,11 @@ export function registerRenderHandlers(): void {
       return [];
     }
 
-    return listAllRenderDeployments();
+    try {
+      return await listAllRenderDeployments();
+    } catch {
+      return [];
+    }
   });
 
   ipcMain.handle('render:getDeploymentLogs', async (_, rawQuery: unknown) => {

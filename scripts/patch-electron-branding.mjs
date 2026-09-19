@@ -21,6 +21,7 @@ const calendarHelperInfoPlistPath = path.join(rootDir, 'resources/shell/Calendar
 const speechToTextSourcePath = path.join(rootDir, 'resources/shell/macosSpeechToText.swift');
 const speechToTextBinaryPath = path.join(rootDir, 'resources/shell/macosSpeechToText');
 const notificationReaderSourcePath = path.join(rootDir, 'resources/shell/macosNotificationReader.swift');
+const agentFinishNotifierSourcePath = path.join(rootDir, 'resources/shell/macosAgentFinishNotifier.swift');
 const mailReaderSourcePath = path.join(rootDir, 'resources/shell/macosMailReader.swift');
 const notificationReaderBinaryPath = path.join(rootDir, 'resources/shell/macosNotificationReader');
 const notificationHelperAppPath = path.join(rootDir, 'resources/shell/NotificationHelper.app');
@@ -192,7 +193,21 @@ function buildNotificationReader() {
     return;
   }
 
-  const compileArgs = ['-o', notificationReaderBinaryPath, notificationReaderSourcePath, '-l', 'sqlite3'];
+  const compileArgs = [
+    '-o',
+    notificationReaderBinaryPath,
+    notificationReaderSourcePath,
+    '-l',
+    'sqlite3',
+    '-framework',
+    'UserNotifications',
+    '-framework',
+    'AppKit',
+  ];
+
+  if (existsSync(agentFinishNotifierSourcePath)) {
+    compileArgs.splice(3, 0, agentFinishNotifierSourcePath);
+  }
 
   if (existsSync(mailReaderSourcePath)) {
     compileArgs.splice(2, 0, mailReaderSourcePath);

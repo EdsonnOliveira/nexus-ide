@@ -1,10 +1,20 @@
 import { Settings, Sparkles } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import logoAntigravity from '@/assets/logo-antigravity.svg';
+import logoClaude from '@/assets/logo-claude.svg';
+import logoCodex from '@/assets/logo-codex.svg';
+import logoCursor from '@/assets/logo-cursor.svg';
+import logoOpencode from '@/assets/logo-opencode.svg';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { AnchoredSelect } from '@/components/overlay/AnchoredSelect';
 import { AppCheckbox } from '@/components/overlay/AppCheckbox';
+import { AppRadio } from '@/components/overlay/AppRadio';
 import { OpenCodeSetupSection } from '@/components/settings/OpenCodeSetupSection';
-import { AI_PROVIDER_OPTIONS, type AiProviderId } from '@/constants/aiProviders';
+import {
+  AI_PROVIDER_OPTIONS,
+  type AiProviderId,
+  type SelectableAiProviderId,
+} from '@/constants/aiProviders';
 import { useAppSettingsStore } from '@/stores/useAppSettingsStore';
 import { useToastStore } from '@/stores/useToastStore';
 import { stopAgentNotificationSoundLoop } from '@/utils/agentNotificationSound';
@@ -16,6 +26,14 @@ import type { CliSetupStatus } from '@/types';
 
 type SettingsTabId = 'geral' | 'ia';
 
+const AI_PROVIDER_LOGOS: Record<SelectableAiProviderId, string> = {
+  cursor: logoCursor,
+  claude: logoClaude,
+  codex: logoCodex,
+  opencode: logoOpencode,
+  antigravity: logoAntigravity,
+};
+
 interface SettingsModalProps {
   onClose: () => void;
 }
@@ -26,7 +44,11 @@ function SettingsModalComponent({ onClose }: SettingsModalProps) {
   const [installingOpenCode, setInstallingOpenCode] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
   const preferredAiProvider = useAppSettingsStore((state) => state.preferredAiProvider);
+  const enabledAiProviders = useAppSettingsStore((state) => state.enabledAiProviders);
+  const noAttachmentAiProvider = useAppSettingsStore((state) => state.noAttachmentAiProvider);
   const setPreferredAiProvider = useAppSettingsStore((state) => state.setPreferredAiProvider);
+  const setEnabledAiProvider = useAppSettingsStore((state) => state.setEnabledAiProvider);
+  const setNoAttachmentAiProvider = useAppSettingsStore((state) => state.setNoAttachmentAiProvider);
   const notificationSoundEnabled = useAppSettingsStore((state) => state.notificationSoundEnabled);
   const setNotificationSoundEnabled = useAppSettingsStore(
     (state) => state.setNotificationSoundEnabled,
@@ -40,32 +62,42 @@ function SettingsModalComponent({ onClose }: SettingsModalProps) {
 
     let cancelled = false;
 
-    void window.nexus.cliSetup.getStatus().then((nextStatus) => {
-      if (!cancelled) {
-        setCliStatus(nextStatus);
-      }
-    }).catch(() => {
-      if (!cancelled) {
-        setCliStatus({
-          opencodeInstalled: false,
-          pendingInstall: false,
-          shouldOfferSetup: false,
-        });
-      }
-    });
+    void window.nexus.cliSetup
+      .getStatus()
+      .then((nextStatus) => {
+        if (!cancelled) {
+          setCliStatus(nextStatus);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCliStatus({
+            opencodeInstalled: false,
+            pendingInstall: false,
+            shouldOfferSetup: false,
+          });
+        }
+      });
 
     return () => {
       cancelled = true;
     };
   }, []);
 
+  const selectableProviders = useMemo(
+    () => AI_PROVIDER_OPTIONS.filter((option) => !option.disabled),
+    [],
+  );
+
   const providerOptions = useMemo(
     () =>
-      AI_PROVIDER_OPTIONS.filter((option) => !option.disabled).map((option) => ({
-        value: option.id,
-        label: option.label,
-      })),
-    [],
+      selectableProviders
+        .filter((option) => enabledAiProviders.includes(option.id as SelectableAiProviderId))
+        .map((option) => ({
+          value: option.id,
+          label: option.label,
+        })),
+    [enabledAiProviders, selectableProviders],
   );
 
   const handleProviderChange = useCallback(
@@ -75,6 +107,20 @@ function SettingsModalComponent({ onClose }: SettingsModalProps) {
       }
     },
     [setPreferredAiProvider],
+  );
+
+  const handleEnabledProviderChange = useCallback(
+    (provider: SelectableAiProviderId, enabled: boolean) => {
+      setEnabledAiProvider(provider, enabled);
+    },
+    [setEnabledAiProvider],
+  );
+
+  const handleNoAttachmentProviderChange = useCallback(
+    (provider: SelectableAiProviderId | null) => {
+      setNoAttachmentAiProvider(provider);
+    },
+    [setNoAttachmentAiProvider],
   );
 
   const handleNotificationSoundChange = useCallback(
@@ -113,7 +159,9 @@ function SettingsModalComponent({ onClose }: SettingsModalProps) {
       });
       showToast(result.alreadyInstalled ? 'OpenCode já estava instalado' : 'OpenCode instalado');
     } catch (error) {
-      setInstallError(error instanceof Error ? error.message : 'Não foi possível baixar o OpenCode');
+      setInstallError(
+        error instanceof Error ? error.message : 'Não foi possível baixar o OpenCode',
+      );
     } finally {
       setInstallingOpenCode(false);
     }
@@ -181,7 +229,44 @@ function SettingsModalComponent({ onClose }: SettingsModalProps) {
             {activeTab === 'ia' ? (
               <>
                 <div className='settings-modal__section'>
-                  <span className='settings-modal__section-label'>Provedor do Agent</span>
+                  <span className='settings-modal__section-label'>IAs nos Agents</span>
+                  <p className='settings-modal__section-hint'>
+                    Marque as IAs que aparecem nos agents. Para ver as outras, habilite aqui.
+                  </p>
+                  <div className='settings-modal__ai-toggles'>
+                    {selectableProviders.map((option) => {
+                      const providerId = option.id as SelectableAiProviderId;
+                      const enabled = enabledAiProviders.includes(providerId);
+                      const locked = enabled && enabledAiProviders.length === 1;
+
+                      return (
+                        <div key={option.id} className='settings-modal__check'>
+                          <AppCheckbox
+                            checked={enabled}
+                            disabled={locked}
+                            aria-label={
+                              enabled
+                                ? `Ocultar ${option.label} nos agents`
+                                : `Mostrar ${option.label} nos agents`
+                            }
+                            onChange={(checked) => handleEnabledProviderChange(providerId, checked)}
+                          />
+                          <button
+                            type='button'
+                            className='settings-modal__check-label settings-modal__ai-toggle-label app-button'
+                            disabled={locked}
+                            onClick={() => handleEnabledProviderChange(providerId, !enabled)}
+                          >
+                            <img src={AI_PROVIDER_LOGOS[providerId]} alt='' draggable={false} />
+                            <span>{option.label}</span>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className='settings-modal__section'>
+                  <span className='settings-modal__section-label'>Padrão nas novas abas</span>
                   <p className='settings-modal__section-hint'>
                     Define qual IA será usada nas novas abas Agent.
                   </p>
@@ -191,6 +276,53 @@ function SettingsModalComponent({ onClose }: SettingsModalProps) {
                     onChange={handleProviderChange}
                     triggerClassName='settings-modal__provider-select'
                   />
+                </div>
+                <div className='settings-modal__section'>
+                  <span className='settings-modal__section-label'>Sem anexo</span>
+                  <p className='settings-modal__section-hint'>
+                    Sem anexo, muda para esta IA. Com anexo, fica na IA padrão.
+                  </p>
+                  <div
+                    className='settings-modal__ai-toggles'
+                    role='radiogroup'
+                    aria-label='IA sem anexo'
+                  >
+                    <div className='settings-modal__check'>
+                      <AppRadio
+                        checked={noAttachmentAiProvider === null}
+                        aria-label='Não mudar de IA sem anexo'
+                        onChange={() => handleNoAttachmentProviderChange(null)}
+                      />
+                      <button
+                        type='button'
+                        className='settings-modal__check-label settings-modal__ai-toggle-label app-button'
+                        onClick={() => handleNoAttachmentProviderChange(null)}
+                      >
+                        <span>Nenhuma</span>
+                      </button>
+                    </div>
+                    {selectableProviders.map((option) => {
+                      const providerId = option.id as SelectableAiProviderId;
+
+                      return (
+                        <div key={option.id} className='settings-modal__check'>
+                          <AppRadio
+                            checked={noAttachmentAiProvider === providerId}
+                            aria-label={`Mudar para ${option.label} quando não tiver anexo`}
+                            onChange={() => handleNoAttachmentProviderChange(providerId)}
+                          />
+                          <button
+                            type='button'
+                            className='settings-modal__check-label settings-modal__ai-toggle-label app-button'
+                            onClick={() => handleNoAttachmentProviderChange(providerId)}
+                          >
+                            <img src={AI_PROVIDER_LOGOS[providerId]} alt='' draggable={false} />
+                            <span>{option.label}</span>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
                 <OpenCodeSetupSection
                   status={cliStatus}

@@ -35,6 +35,15 @@ interface RemoteTerminalContext {
 
 const pendingTerminalIdsByAgent = new Map<string, string[]>();
 const remoteUnsubscribes = new Map<string, () => void>();
+const remoteContexts = new Map<string, RemoteTerminalContext>();
+const ensureChains = new Map<string, Promise<string | null>>();
+const portBusyRetryTimers = new Map<string, number>();
+const portBusyRetryCounts = new Map<string, number>();
+
+const LONG_RUNNING_HANDOFF_DELAY_MS = 3_000;
+const PORT_BUSY_RETRY_DELAY_MS = 2_500;
+const PORT_BUSY_MAX_RETRIES = 6;
+const PORT_BUSY_PATTERN = /EADDRINUSE|address already in use|port \d+ is already in use/i;
 
 function normalizeShellCommand(command: string): string {
   return command.replace(/\s+/g, ' ').trim();
@@ -220,19 +229,34 @@ function dequeuePendingTerminal(agentId: string): string | null {
   return terminalId;
 }
 
+function readLatestTerminal(agentId: string, terminalId: string): WebAgentTerminal | null {
+  return (
+    useWebStore.getState().agents.find((entry) => entry.id === agentId)?.terminals.find(
+      (entry) => entry.id === terminalId,
+    ) ?? null
+  );
+}
+
 function appendTerminalOutput(agentId: string, terminalId: string, chunk: string): void {
   if (!chunk) {
     return;
   }
 
-  const agent = useWebStore.getState().agents.find((entry) => entry.id === agentId);
-  const current = agent?.terminals.find((entry) => entry.id === terminalId);
+  const current = readLatestTerminal(agentId, terminalId);
   const nextOutput = `${current?.output ?? ''}${chunk}`.slice(-200_000);
 
   useWebStore.getState().patchAgentTerminal(agentId, terminalId, {
     output: nextOutput,
-    status: 'running',
+    status: current?.status === 'starting' ? 'starting' : 'running',
   });
+
+  if (
+    current?.commandSent &&
+    isLongRunningScript(current.command) &&
+    PORT_BUSY_PATTERN.test(chunk)
+  ) {
+    schedulePortBusyRetry(agentId, terminalId);
+  }
 }
 
 function stopRemoteTerminalSubscription(terminalId: string): void {
@@ -244,32 +268,124 @@ function stopRemoteTerminalSubscription(terminalId: string): void {
   }
 }
 
-export async function ensureWebAgentRemoteTerminal(
+function subscribeRemoteTerminal(agentId: string, terminalId: string, sessionId: string): void {
+  if (remoteUnsubscribes.has(terminalId)) {
+    return;
+  }
+
+  const channel = supabase
+    .channel(`terminal:${sessionId}`)
+    .on('broadcast', { event: 'nexus' }, (message) => {
+      const payload = message.payload as {
+        payload?: { chunk?: string; session_id?: string };
+      };
+      const chunk = payload?.payload?.chunk;
+      if (typeof chunk === 'string') {
+        appendTerminalOutput(agentId, terminalId, chunk);
+      }
+    })
+    .subscribe();
+
+  remoteUnsubscribes.set(terminalId, () => {
+    void supabase.removeChannel(channel);
+  });
+}
+
+async function sendWebTerminalCommand(
+  terminal: WebAgentTerminal,
+  context: RemoteTerminalContext,
+  sessionId: string,
+  delayMs: number,
+): Promise<void> {
+  if (delayMs > 0) {
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, delayMs);
+    });
+  }
+
+  await bridge.executeCommand({
+    workspace_id: context.workspaceId,
+    project_id: context.projectId,
+    target_device_id: context.deviceId,
+    type: 'terminal_stdin',
+    payload: {
+      session_id: sessionId,
+      data: `\x15${terminal.command}\n`,
+    },
+    terminal_session_id: sessionId,
+    idempotency_key: crypto.randomUUID(),
+  });
+}
+
+function schedulePortBusyRetry(agentId: string, terminalId: string): void {
+  const terminal = readLatestTerminal(agentId, terminalId);
+  const context = remoteContexts.get(terminalId);
+  const sessionId = terminal?.remoteSessionId;
+
+  if (!terminal || !context || !sessionId || !isLongRunningScript(terminal.command)) {
+    return;
+  }
+
+  const retryCount = portBusyRetryCounts.get(terminalId) ?? 0;
+
+  if (retryCount >= PORT_BUSY_MAX_RETRIES) {
+    return;
+  }
+
+  const existing = portBusyRetryTimers.get(terminalId);
+
+  if (existing) {
+    return;
+  }
+
+  portBusyRetryCounts.set(terminalId, retryCount + 1);
+  const timer = window.setTimeout(() => {
+    portBusyRetryTimers.delete(terminalId);
+    void sendWebTerminalCommand(terminal, context, sessionId, 0);
+  }, PORT_BUSY_RETRY_DELAY_MS);
+
+  portBusyRetryTimers.set(terminalId, timer);
+}
+
+function clearPortBusyRetry(terminalId: string): void {
+  const existing = portBusyRetryTimers.get(terminalId);
+
+  if (existing) {
+    window.clearTimeout(existing);
+    portBusyRetryTimers.delete(terminalId);
+  }
+
+  portBusyRetryCounts.delete(terminalId);
+}
+
+async function ensureRemoteTerminalSession(
   agentId: string,
   terminal: WebAgentTerminal,
   context: RemoteTerminalContext,
 ): Promise<string | null> {
-  if (terminal.remoteSessionId) {
-    if (!remoteUnsubscribes.has(terminal.id)) {
-      const channel = supabase
-        .channel(`terminal:${terminal.remoteSessionId}`)
-        .on('broadcast', { event: 'nexus' }, (message) => {
-          const payload = message.payload as {
-            payload?: { chunk?: string; session_id?: string };
-          };
-          const chunk = payload?.payload?.chunk;
-          if (typeof chunk === 'string') {
-            appendTerminalOutput(agentId, terminal.id, chunk);
-          }
-        })
-        .subscribe();
+  remoteContexts.set(terminal.id, context);
 
-      remoteUnsubscribes.set(terminal.id, () => {
-        void supabase.removeChannel(channel);
+  const latest = readLatestTerminal(agentId, terminal.id) ?? terminal;
+  const shouldSendCommand =
+    !latest.commandSent &&
+    (!isLongRunningScript(latest.command) || latest.status !== 'starting');
+
+  if (latest.remoteSessionId) {
+    subscribeRemoteTerminal(agentId, latest.id, latest.remoteSessionId);
+
+    if (shouldSendCommand) {
+      useWebStore.getState().patchAgentTerminal(agentId, latest.id, {
+        commandSent: true,
       });
+      await sendWebTerminalCommand(
+        latest,
+        context,
+        latest.remoteSessionId,
+        isLongRunningScript(latest.command) ? LONG_RUNNING_HANDOFF_DELAY_MS : 0,
+      );
     }
 
-    return terminal.remoteSessionId;
+    return latest.remoteSessionId;
   }
 
   const createCommandId = await bridge.executeCommand({
@@ -278,7 +394,7 @@ export async function ensureWebAgentRemoteTerminal(
     target_device_id: context.deviceId,
     type: 'terminal_create',
     payload: {
-      title: terminal.title,
+      title: latest.title,
       cols: 100,
       rows: 28,
     },
@@ -293,9 +409,18 @@ export async function ensureWebAgentRemoteTerminal(
     throw new Error('Sessão de terminal não retornada');
   }
 
-  useWebStore.getState().patchAgentTerminal(agentId, terminal.id, {
+  const stillLatest = readLatestTerminal(agentId, latest.id);
+  const stillShouldSend =
+    stillLatest != null &&
+    !stillLatest.commandSent &&
+    (!isLongRunningScript(stillLatest.command) || stillLatest.status !== 'starting');
+
+  useWebStore.getState().patchAgentTerminal(agentId, latest.id, {
     remoteSessionId: sessionId,
-    status: 'running',
+    status:
+      isLongRunningScript(latest.command) && (stillLatest?.status ?? latest.status) === 'starting'
+        ? 'starting'
+        : 'running',
   });
 
   const { data: chunks } = await supabase
@@ -310,41 +435,65 @@ export async function ensureWebAgentRemoteTerminal(
       .map((chunk) => (typeof chunk.content === 'string' ? chunk.content : ''))
       .join('');
     if (replay) {
-      appendTerminalOutput(agentId, terminal.id, replay);
+      appendTerminalOutput(agentId, latest.id, replay);
     }
   }
 
-  const channel = supabase
-    .channel(`terminal:${sessionId}`)
-    .on('broadcast', { event: 'nexus' }, (message) => {
-      const payload = message.payload as {
-        payload?: { chunk?: string; session_id?: string };
-      };
-      const chunk = payload?.payload?.chunk;
-      if (typeof chunk === 'string') {
-        appendTerminalOutput(agentId, terminal.id, chunk);
-      }
-    })
-    .subscribe();
+  subscribeRemoteTerminal(agentId, latest.id, sessionId);
 
-  remoteUnsubscribes.set(terminal.id, () => {
-    void supabase.removeChannel(channel);
-  });
-
-  await bridge.executeCommand({
-    workspace_id: context.workspaceId,
-    project_id: context.projectId,
-    target_device_id: context.deviceId,
-    type: 'terminal_stdin',
-    payload: {
-      session_id: sessionId,
-      data: `${terminal.command}\n`,
-    },
-    terminal_session_id: sessionId,
-    idempotency_key: crypto.randomUUID(),
-  });
+  if (stillShouldSend) {
+    useWebStore.getState().patchAgentTerminal(agentId, latest.id, {
+      commandSent: true,
+    });
+    await sendWebTerminalCommand(
+      stillLatest ?? latest,
+      context,
+      sessionId,
+      isLongRunningScript(latest.command) ? LONG_RUNNING_HANDOFF_DELAY_MS : 0,
+    );
+  }
 
   return sessionId;
+}
+
+export async function ensureWebAgentRemoteTerminal(
+  agentId: string,
+  terminal: WebAgentTerminal,
+  context: RemoteTerminalContext,
+): Promise<string | null> {
+  const key = `${agentId}:${terminal.id}`;
+  const previous = ensureChains.get(key) ?? Promise.resolve(null);
+  const next = previous
+    .catch(() => null)
+    .then(() =>
+      ensureRemoteTerminalSession(
+        agentId,
+        readLatestTerminal(agentId, terminal.id) ?? terminal,
+        context,
+      ),
+    );
+
+  ensureChains.set(key, next);
+  return next;
+}
+
+export async function keepAliveWebAgentShellTerminals(
+  agentId: string,
+  terminals: WebAgentTerminal[],
+  context: RemoteTerminalContext,
+): Promise<void> {
+  for (const terminal of terminals) {
+    const current = readLatestTerminal(agentId, terminal.id);
+
+    if (!current) {
+      continue;
+    }
+
+    try {
+      await ensureWebAgentRemoteTerminal(agentId, current, context);
+    } catch {
+    }
+  }
 }
 
 export async function dismissWebAgentTerminal(
@@ -352,6 +501,8 @@ export async function dismissWebAgentTerminal(
   terminal: WebAgentTerminal,
   context: RemoteTerminalContext | null,
 ): Promise<void> {
+  clearPortBusyRetry(terminal.id);
+  remoteContexts.delete(terminal.id);
   stopRemoteTerminalSubscription(terminal.id);
 
   if (terminal.remoteSessionId && context) {
@@ -384,6 +535,7 @@ function registerShellToolStarted(agentId: string, command: string): string {
     exitCode: null,
     output: '',
     remoteSessionId: null,
+    commandSent: false,
   };
 
   useWebStore.getState().upsertAgentTerminal(agentId, entry);
@@ -467,6 +619,7 @@ export function collectWebShellTerminalsFromEvents(
         exitCode: null,
         output: '',
         remoteSessionId: null,
+        commandSent: false,
       });
       continue;
     }

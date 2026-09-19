@@ -218,3 +218,7 @@ export function hasAgentPromptImageMentions(text: string): boolean {
   AGENT_PROMPT_PATH_MENTION_REGEX.lastIndex = 0;
   return AGENT_PROMPT_PATH_MENTION_REGEX.test(text);
 }
+
+export function hasAgentPromptAttachments(text: string, imageCount = 0): boolean {
+  return imageCount > 0 || hasAgentPromptImageMentions(text);
+}

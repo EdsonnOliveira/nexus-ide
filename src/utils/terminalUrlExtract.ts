@@ -1,4 +1,4 @@
-import { isLocalDevUrl, isSameLocalDevTarget } from '@/utils/browserSiteStatus';
+import { isLocalDevUrl, isSameLocalDevTarget, rewriteLocalDevBindHost } from '@/utils/browserSiteStatus';
 import { normalizeBrowserUrl } from '@/utils/browserUrl';
 
 export const TERMINAL_URL_HINT_LABEL_REFERENCE = 'http://localhost:3000';
@@ -258,10 +258,21 @@ export function extractTerminalUrls(text: string): string[] {
     }
 
     seen.add(normalized);
-    urls.push(normalized);
+    urls.push(rewriteLocalDevBindHost(normalized));
   }
 
   return sortTerminalUrlHints(urls);
+}
+
+const LOCAL_DEV_READY_HINT =
+  /Local:\s*https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)|waiting on\s+https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)/i;
+
+export function extractTerminalLocalDevReadyUrls(text: string): string[] {
+  if (!LOCAL_DEV_READY_HINT.test(text)) {
+    return [];
+  }
+
+  return extractTerminalUrls(text).filter((url) => isLocalDevUrl(url));
 }
 
 export function resolveTerminalUrlHints(

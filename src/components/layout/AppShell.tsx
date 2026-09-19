@@ -1,5 +1,6 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { FolderPlus } from 'lucide-react';
+import { useAutoOpenTerminalDevBrowser } from '@/hooks/useAutoOpenTerminalDevBrowser';
 import { useNexusReady } from '@/hooks/useNexusReady';
 import { useGitChangeCount } from '@/hooks/useGitChangeCount';
 import { useAutomationScheduler } from '@/hooks/useAutomationScheduler';
@@ -34,11 +35,13 @@ import { useProjectNotificationStore } from '@/stores/useProjectNotificationStor
 import { stopAgentNotificationSoundLoop } from '@/utils/agentNotificationSound';
 import { useCloudAgentSessionsSync } from '@/hooks/useCloudAgentSessionsSync';
 import { useDesktopAgentViewedAck } from '@/hooks/useDesktopAgentViewedAck';
+import { useAgentFinishMacNotification } from '@/hooks/useAgentFinishMacNotification';
 import { useRemoteEmulatorTabSync } from '@/hooks/useRemoteEmulatorTabSync';
 import { useCloudStore } from '@/stores/useCloudStore';
 import { projectNeedsBackgroundHost } from '@/utils/paneAgentSession';
 import { useAgentShellTerminalStore } from '@/stores/useAgentShellTerminalStore';
 import { isAnyModalOpen, subscribeOverlayBlockingChange } from '@/utils/overlayBlocking';
+import { findProjectIdByPtyId } from '@/utils/findProjectIdByPaneId';
 import { requestHomeAskFocus, getHomeDashboardViewMode } from '@/utils/homeDashboardAgents';
 import { useToastStore } from '@/stores/useToastStore';
 import { useMissionHydration } from '@/hooks/useMissionHydration';
@@ -163,6 +166,7 @@ function AppShellComponent() {
   useMissionLiveBridge();
   useTestRunnerEvents();
   useMarkdownPreviewCmdLinks();
+  useAutoOpenTerminalDevBrowser(nexusReady);
   const initialize = useProjectStore((state) => state.initialize);
   const toggleExplorerEntry = useProjectStore((state) => state.toggleExplorerEntry);
   const toggleGlobalSearch = useGlobalSearchStore((state) => state.toggle);
@@ -267,6 +271,7 @@ function AppShellComponent() {
   const refreshCloud = useCloudStore((state) => state.refresh);
   useCloudAgentSessionsSync(true);
   useDesktopAgentViewedAck();
+  useAgentFinishMacNotification();
   useRemoteEmulatorTabSync();
 
   useEffect(() => {
@@ -457,8 +462,8 @@ function AppShellComponent() {
       return;
     }
 
-    const unsubscribe = window.nexus.browser.onOpenInTab((url) => {
-      void openBrowserTab(url);
+    const unsubscribe = window.nexus.browser.onOpenInTab((url, ptyId) => {
+      void openBrowserTab(url, ptyId ? findProjectIdByPtyId(ptyId) : null);
     });
 
     return unsubscribe;

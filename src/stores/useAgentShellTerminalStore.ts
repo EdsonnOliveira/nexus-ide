@@ -11,16 +11,28 @@ export interface AgentShellTerminalEntry {
   status: AgentShellTerminalStatus;
   exitCode: number | null;
   ptyId: string | null;
+  commandDispatched: boolean;
+  dispatchedAt: number | null;
+  launchRetryCount: number;
 }
+
+type AgentShellTerminalEntryPatch = Partial<
+  Pick<
+    AgentShellTerminalEntry,
+    | 'status'
+    | 'exitCode'
+    | 'ptyId'
+    | 'title'
+    | 'commandDispatched'
+    | 'dispatchedAt'
+    | 'launchRetryCount'
+  >
+>;
 
 interface AgentShellTerminalStoreState {
   entriesByAgentPane: Record<string, AgentShellTerminalEntry[]>;
   addEntry: (agentPaneId: string, entry: AgentShellTerminalEntry) => void;
-  updateEntry: (
-    agentPaneId: string,
-    paneId: string,
-    patch: Partial<Pick<AgentShellTerminalEntry, 'status' | 'exitCode' | 'ptyId' | 'title'>>,
-  ) => void;
+  updateEntry: (agentPaneId: string, paneId: string, patch: AgentShellTerminalEntryPatch) => void;
   removeEntry: (agentPaneId: string, paneId: string) => void;
   getEntries: (agentPaneId: string) => AgentShellTerminalEntry[];
 }

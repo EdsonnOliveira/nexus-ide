@@ -1,0 +1,46 @@
+#!/bin/sh
+REAL_OPEN=/usr/bin/open
+NEXUS_OPEN="$(cd "$(dirname "$0")" && pwd)/nexus-open-browser"
+
+is_local_url() {
+  case "$1" in
+    http://localhost|http://localhost/*|http://localhost:*|https://localhost|https://localhost/*|https://localhost:*|http://127.0.0.1|http://127.0.0.1/*|http://127.0.0.1:*|https://127.0.0.1|https://127.0.0.1/*|https://127.0.0.1:*|http://0.0.0.0|http://0.0.0.0/*|http://0.0.0.0:*|https://0.0.0.0|https://0.0.0.0/*|https://0.0.0.0:*|http://\[::1\]|http://\[::1\]/*|http://\[::1\]:*|https://\[::1\]|https://\[::1\]/*|https://\[::1\]:*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+local_url=""
+skip_next=0
+
+for arg in "$@"; do
+  if [ "$skip_next" = 1 ]; then
+    skip_next=0
+    continue
+  fi
+
+  case "$arg" in
+    -a|-b|--args|-H)
+      skip_next=1
+      continue
+      ;;
+    -*)
+      continue
+      ;;
+  esac
+
+  if is_local_url "$arg"; then
+    local_url="$arg"
+    break
+  fi
+done
+
+if [ -n "$local_url" ]; then
+  if [ -x "$NEXUS_OPEN" ]; then
+    "$NEXUS_OPEN" "$local_url"
+  fi
+  exit 0
+fi
+
+exec "$REAL_OPEN" "$@"

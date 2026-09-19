@@ -96,8 +96,19 @@ interface VercelProjectRecord {
 
 const projectCache = new Map<string, VercelProjectRecord>();
 
+function isHeaderSafeToken(token: string): boolean {
+  return token.length > 0 && /^[\x20-\x7E]+$/.test(token) && !token.startsWith('v10');
+}
+
 function requestRaw(token: string, path: string): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (!isHeaderSafeToken(token)) {
+      const error = new Error('Vercel API error 401') as VercelApiError;
+      error.statusCode = 401;
+      reject(error);
+      return;
+    }
+
     const url = new URL(path, VERCEL_API_BASE);
 
     const request = https.request(

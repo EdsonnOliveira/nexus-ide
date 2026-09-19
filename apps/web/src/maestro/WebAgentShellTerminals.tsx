@@ -9,6 +9,7 @@ import { useWebStore, type WebAgentSession, type WebAgentTerminal } from '../sto
 import {
   dismissWebAgentTerminal,
   ensureWebAgentRemoteTerminal,
+  keepAliveWebAgentShellTerminals,
 } from './webShellTerminal';
 
 interface WebAgentShellTerminalsProps {
@@ -189,7 +190,7 @@ function WebAgentTerminalModal({
     return () => {
       cancelled = true;
     };
-  }, [agentId, deviceId, projectId, terminal.id]);
+  }, [agentId, deviceId, liveTerminal.commandSent, liveTerminal.status, projectId, terminal.id]);
 
   return createPortal(
     <div className='web-modal web-modal--viewport app-button--enter' role='presentation' onClick={onClose}>
@@ -384,6 +385,39 @@ function WebAgentShellTerminalsComponent({ agent, deviceId }: WebAgentShellTermi
       window.clearInterval(intervalId);
     };
   }, [terminals.length]);
+
+  const keepAliveKey = useMemo(
+    () =>
+      terminals
+        .map((entry) => `${entry.id}:${entry.status}:${entry.commandSent}:${entry.remoteSessionId}`)
+        .join('|'),
+    [terminals],
+  );
+
+  useEffect(() => {
+    if (!deviceId || terminals.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      const workspaceId = await resolveAgentWorkspaceId(agent.projectId);
+      if (!workspaceId || cancelled) {
+        return;
+      }
+
+      await keepAliveWebAgentShellTerminals(agent.id, terminals, {
+        deviceId,
+        projectId: agent.projectId,
+        workspaceId,
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [agent.id, agent.projectId, deviceId, keepAliveKey, terminals]);
 
   const handleOpenPopup = useCallback(() => {
     const rect = buttonRef.current?.getBoundingClientRect();

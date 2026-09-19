@@ -6,6 +6,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 const rootDir = path.dirname(fileURLToPath(new URL('../package.json', import.meta.url)));
 const calendarHelperSourcePath = path.join(rootDir, 'resources/shell/macosCalendarHelper.swift');
 const calendarHelperBinaryPath = path.join(rootDir, 'resources/shell/macosCalendarHelper');
+const agentFinishNotifierSourcePath = path.join(rootDir, 'resources/shell/macosAgentFinishNotifier.swift');
 const notificationReaderSourcePath = path.join(rootDir, 'resources/shell/macosNotificationReader.swift');
 const notificationReaderBinaryPath = path.join(rootDir, 'resources/shell/macosNotificationReader');
 const notificationHelperAppPath = path.join(rootDir, 'resources/shell/NotificationHelper.app');
@@ -47,7 +48,21 @@ if (existsSync(calendarHelperSourcePath)) {
 const mailReaderSourcePath = path.join(rootDir, 'resources/shell/macosMailReader.swift');
 
 if (existsSync(notificationReaderSourcePath)) {
-  const compileArgs = ['-o', notificationReaderBinaryPath, notificationReaderSourcePath, '-l', 'sqlite3'];
+  const compileArgs = [
+    '-o',
+    notificationReaderBinaryPath,
+    notificationReaderSourcePath,
+    '-l',
+    'sqlite3',
+    '-framework',
+    'UserNotifications',
+    '-framework',
+    'AppKit',
+  ];
+
+  if (existsSync(agentFinishNotifierSourcePath)) {
+    compileArgs.splice(3, 0, agentFinishNotifierSourcePath);
+  }
 
   if (existsSync(mailReaderSourcePath)) {
     compileArgs.splice(2, 0, mailReaderSourcePath);

@@ -36,6 +36,7 @@ import { SidebarMobileReleaseCard } from '@/components/sidebar/SidebarMobileRele
 import { SidebarMaestroAgentCard } from '@/components/sidebar/SidebarMaestroAgentCard';
 import { SidebarVercelDeploysPopup } from '@/components/sidebar/SidebarVercelDeploysPopup';
 import { SidebarRenderDeploysPopup } from '@/components/sidebar/SidebarRenderDeploysPopup';
+import { SidebarProjectFoldersPopup } from '@/components/sidebar/SidebarProjectFoldersPopup';
 import { SidebarVercelIcon } from '@/components/sidebar/SidebarVercelIcon';
 import { SidebarRenderIcon } from '@/components/sidebar/SidebarRenderIcon';
 import { SidebarVercelTokenPopup } from '@/components/sidebar/SidebarVercelTokenPopup';
@@ -80,6 +81,22 @@ import {
 } from '@/utils/homeDashboardAgents';
 import { getProjectPingTone } from '@/utils/projectPingTone';
 import { findPaneTab } from '@/utils/tabGroups';
+import { isAnyModalOpen } from '@/utils/overlayBlocking';
+import { queueExplorerRevealPath } from '@/utils/explorerTarget';
+
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tag = target.tagName;
+
+  if (tag === 'INPUT' || tag === 'TEXTAREA') {
+    return true;
+  }
+
+  return target.isContentEditable;
+}
 
 function ProjectSidebarComponent() {
   const projects = useProjectStore((state) => state.projects);
@@ -279,6 +296,14 @@ function ProjectSidebarComponent() {
     projectId: string;
     previousProjectId: string | null;
   } | null>(null);
+  const [commandHeld, setCommandHeld] = useState(false);
+  const [hoveredProjectId, setHoveredProjectId] = useState<string | null>(null);
+  const [hoveredProjectRect, setHoveredProjectRect] = useState<DOMRect | null>(null);
+  const [foldersPopupHover, setFoldersPopupHover] = useState(false);
+  const [foldersPeekDismissed, setFoldersPeekDismissed] = useState(false);
+  const [foldersPeekLockedId, setFoldersPeekLockedId] = useState<string | null>(null);
+  const hoverLeaveTimerRef = useRef<number | null>(null);
+  const hoveredProjectIdRef = useRef<string | null>(null);
 
   const filteredProjects = useMemo(() => {
     if (activeWorkspaceId === null) {
@@ -905,6 +930,147 @@ function ProjectSidebarComponent() {
     [activeProjectId, leaveActiveProject, projects, selectProject],
   );
 
+  const handleProjectHoverChange = useCallback(
+    (projectId: string | null, rect: DOMRect | null, modifierHeld: boolean) => {
+      if (hoverLeaveTimerRef.current !== null) {
+        window.clearTimeout(hoverLeaveTimerRef.current);
+        hoverLeaveTimerRef.current = null;
+      }
+
+      if (projectId) {
+        setHoveredProjectId(projectId);
+        hoveredProjectIdRef.current = projectId;
+        setHoveredProjectRect(rect);
+        setFoldersPeekLockedId(projectId);
+
+        if (modifierHeld) {
+          setCommandHeld(true);
+          setFoldersPeekDismissed(false);
+        }
+
+        return;
+      }
+
+      hoverLeaveTimerRef.current = window.setTimeout(() => {
+        setHoveredProjectId(null);
+        hoveredProjectIdRef.current = null;
+        hoverLeaveTimerRef.current = null;
+      }, 120);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (hoverLeaveTimerRef.current !== null) {
+        window.clearTimeout(hoverLeaveTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const syncCommandHeld = (event: KeyboardEvent) => {
+      if (isAnyModalOpen()) {
+        setCommandHeld(false);
+        return;
+      }
+
+      const modifier = event.metaKey || event.ctrlKey;
+
+      if (modifier && hoveredProjectIdRef.current) {
+        setCommandHeld(true);
+        return;
+      }
+
+      if (isEditableKeyboardTarget(event.target)) {
+        setCommandHeld(false);
+        return;
+      }
+
+      setCommandHeld(modifier);
+    };
+
+    const clearCommandHeld = () => {
+      setCommandHeld(false);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        clearCommandHeld();
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      syncCommandHeld(event);
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      syncCommandHeld(event);
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    window.addEventListener('keyup', handleKeyUp, true);
+    window.addEventListener('blur', clearCommandHeld);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('keyup', handleKeyUp, true);
+      window.removeEventListener('blur', clearCommandHeld);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!commandHeld) {
+      setFoldersPeekDismissed(false);
+    }
+  }, [commandHeld]);
+
+  const foldersPeekProjectId = commandHeld
+    ? (hoveredProjectId ?? (foldersPopupHover ? foldersPeekLockedId : null))
+    : null;
+  const foldersPeekProject = useMemo(
+    () =>
+      foldersPeekProjectId
+        ? (projects.find((item) => item.id === foldersPeekProjectId) ?? null)
+        : null,
+    [foldersPeekProjectId, projects],
+  );
+  const foldersPeekVisible =
+    Boolean(foldersPeekProject && hoveredProjectRect) &&
+    !foldersPeekDismissed &&
+    !contextMenu &&
+    !promptMode &&
+    !pendingFlagAccess &&
+    !workspaceMenuOpen;
+
+  const handleCloseFoldersPeek = useCallback(() => {
+    setFoldersPeekDismissed(true);
+    setFoldersPopupHover(false);
+  }, []);
+
+  const handleSelectProjectFolder = useCallback(
+    (folderPath: string) => {
+      if (!foldersPeekProject) {
+        return;
+      }
+
+      if (foldersPeekProject.flag && foldersPeekProject.id !== activeProjectId) {
+        setPendingFlagAccess({
+          projectId: foldersPeekProject.id,
+          previousProjectId: activeProjectId,
+        });
+      } else if (foldersPeekProject.id !== activeProjectId) {
+        void selectProject(foldersPeekProject.id);
+      }
+
+      useProjectStore.getState().setSidePanel('explorer');
+      queueExplorerRevealPath(foldersPeekProject.id, folderPath);
+    },
+    [activeProjectId, foldersPeekProject, selectProject],
+  );
+
   const handleCreateFlag = useCallback((projectId: string) => {
     setFlagCreateProjectId(projectId);
   }, []);
@@ -992,11 +1158,13 @@ function ProjectSidebarComponent() {
         showShortcutHint={showProjectIndexHints}
         onSelect={handleSelectProject}
         onContextMenu={handleContextMenu}
+        onHoverChange={handleProjectHoverChange}
       />
     ),
     [
       activeProjectId,
       handleContextMenu,
+      handleProjectHoverChange,
       handleSelectProject,
       notifiedAgentPaneByProject,
       projectIdsWithDraft,
@@ -1433,6 +1601,17 @@ function ProjectSidebarComponent() {
           anchorRect={addProjectMenuAnchor}
           onClose={handleCloseAddProjectMenu}
           onSelect={handleAddProjectOption}
+        />
+      ) : null}
+
+      {foldersPeekVisible && foldersPeekProject && hoveredProjectRect ? (
+        <SidebarProjectFoldersPopup
+          key={foldersPeekProject.id}
+          project={foldersPeekProject}
+          anchorRect={hoveredProjectRect}
+          onClose={handleCloseFoldersPeek}
+          onPointerInsideChange={setFoldersPopupHover}
+          onSelectFolder={handleSelectProjectFolder}
         />
       ) : null}
 

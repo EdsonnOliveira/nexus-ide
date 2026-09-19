@@ -20,6 +20,7 @@ interface ProjectListItemProps {
   showShortcutHint?: boolean;
   onSelect: (id: string) => void;
   onContextMenu: (project: Project, x: number, y: number) => void;
+  onHoverChange?: (projectId: string | null, rect: DOMRect | null, modifierHeld: boolean) => void;
 }
 
 export function ProjectAgentRunningIndicator({ className }: { className?: string }) {
@@ -56,6 +57,7 @@ function ProjectListItemComponent({
   showShortcutHint = false,
   onSelect,
   onContextMenu,
+  onHoverChange,
 }: ProjectListItemProps) {
   const [logoSrc, setLogoSrc] = useState<string | null>(null);
   const [logoFailed, setLogoFailed] = useState(false);
@@ -99,6 +101,21 @@ function ProjectListItemComponent({
     },
     [onContextMenu, project],
   );
+
+  const handleMouseEnter = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      onHoverChange?.(
+        project.id,
+        event.currentTarget.getBoundingClientRect(),
+        event.metaKey || event.ctrlKey,
+      );
+    },
+    [onHoverChange, project.id],
+  );
+
+  const handleMouseLeave = useCallback(() => {
+    onHoverChange?.(null, null, false);
+  }, [onHoverChange]);
 
   const handleLogoError = useCallback(() => {
     setLogoFailed(true);
@@ -166,9 +183,12 @@ function ProjectListItemComponent({
       type='button'
       className={`project-item${isActive ? ' project-item--active' : ''}${hasNotification ? ' project-item--notified' : ''}${isFlagged ? ' project-item--flagged' : ''}${isEntering ? ' project-item--enter' : ''}`}
       style={isEntering ? { ['--enter-index' as string]: enterIndex } : undefined}
+      data-project-id={project.id}
       title={project.name}
       onClick={handleClick}
       onContextMenu={handleContextMenu}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
       {showLogo ? (
         <span className='project-item__icon-wrap'>
@@ -195,10 +215,7 @@ function ProjectListItemComponent({
       {showStatusIndicators ? (
         <span className='project-item__indicators'>
           {hasAgentDraft ? (
-            <span
-              className='project-item__draft'
-              aria-label='Rascunho do agent pendente'
-            />
+            <span className='project-item__draft' aria-label='Rascunho do agent pendente' />
           ) : null}
           {showGitBadge ? (
             <span
@@ -217,7 +234,10 @@ function ProjectListItemComponent({
             </span>
           ) : null}
           {isAutomationRunning ? (
-            <span className='project-item__automation project-item__automation--loading' aria-label='Automação em execução' />
+            <span
+              className='project-item__automation project-item__automation--loading'
+              aria-label='Automação em execução'
+            />
           ) : null}
           {isAgentRunning ? <ProjectAgentRunningIndicator /> : null}
         </span>

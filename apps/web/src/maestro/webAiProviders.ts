@@ -77,3 +77,28 @@ export function normalizeWebAgentCommand(command: string | null | undefined): st
 
   return DEFAULT_WEB_AGENT_COMMAND;
 }
+
+const UUID_CHAT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isWebResumeChatIdCompatible(
+  agentCommand: string,
+  resumeChatId: string | null | undefined,
+): boolean {
+  const id = resumeChatId?.trim() ?? '';
+
+  if (!id) {
+    return false;
+  }
+
+  const base = normalizeWebAgentCommand(agentCommand);
+
+  if (base === 'opencode') {
+    return id.startsWith('ses_');
+  }
+
+  if (base === 'cursor-agent') {
+    return UUID_CHAT_ID.test(id);
+  }
+
+  return !id.startsWith('ses_');
+}

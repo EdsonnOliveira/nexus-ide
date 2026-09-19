@@ -535,7 +535,7 @@ export interface ProjectUpdatePayload {
   flag?: ProjectFlag | null;
 }
 
-export type ProjectKind = 'web' | 'mobile' | 'api' | 'desktop';
+export type ProjectKind = 'web' | 'mobile' | 'api' | 'desktop' | 'mcp';
 
 export interface ProjectDirectoryEntry {
   name: string;
@@ -1034,12 +1034,7 @@ export interface CursorPeriodUsageSnapshot {
 }
 
 export type AiUsageProviderId =
-  | 'cursor'
-  | 'claude'
-  | 'opencode'
-  | 'gemini'
-  | 'codex'
-  | 'antigravity';
+  'cursor' | 'claude' | 'opencode' | 'gemini' | 'codex' | 'antigravity';
 
 export interface AiProviderUsageItem {
   id: AiUsageProviderId;
@@ -1368,7 +1363,7 @@ export interface NexusAPI {
     openDevTools: (guestWebContentsId: number, devtoolsWebContentsId: number) => Promise<void>;
     closeDevTools: (guestWebContentsId: number) => Promise<void>;
     captureScreenshot: (guestWebContentsId: number) => Promise<boolean>;
-    onOpenInTab: (callback: (url: string) => void) => () => void;
+    onOpenInTab: (callback: (url: string, ptyId?: string | null) => void) => () => void;
   };
   session: {
     getScrollback: (paneId: string) => Promise<string>;
@@ -1523,6 +1518,16 @@ export interface NexusAPI {
     openApp: (appId: string) => Promise<void>;
     openFullDiskAccessSettings: () => Promise<void>;
     revealFullDiskAccessApp: () => Promise<void>;
+  };
+  agentFinish: {
+    notify: (payload: {
+      projectId: string;
+      paneId: string;
+      projectName: string;
+    }) => Promise<boolean>;
+    onAction: (
+      callback: (payload: { action: 'git' | 'open'; projectId: string; paneId: string }) => void,
+    ) => () => void;
   };
   systemStatus: {
     getSnapshot: () => Promise<SystemStatusSnapshot>;

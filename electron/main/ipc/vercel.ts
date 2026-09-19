@@ -180,7 +180,11 @@ export function registerVercelHandlers(): void {
       return [];
     }
 
-    return listAllVercelDeployments();
+    try {
+      return await listAllVercelDeployments();
+    } catch {
+      return [];
+    }
   });
 
   ipcMain.handle(

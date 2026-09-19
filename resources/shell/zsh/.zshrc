@@ -1,4 +1,12 @@
-export PATH="${HOME}/.local/bin:${HOME}/.cursor/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
+_nexus_path_prefix=""
+if [[ -n "${NEXUS_SHELL_DIR:-}" && -d "${NEXUS_SHELL_DIR}/bin" ]]; then
+  _nexus_path_prefix="${NEXUS_SHELL_DIR}/bin:"
+fi
+export PATH="${_nexus_path_prefix}${HOME}/.local/bin:${HOME}/.cursor/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
+unset _nexus_path_prefix
+if [[ -n "${NEXUS_SHELL_DIR:-}" && -x "${NEXUS_SHELL_DIR}/bin/nexus-open-browser" ]]; then
+  export BROWSER="${NEXUS_SHELL_DIR}/bin/nexus-open-browser"
+fi
 
 export STARSHIP_DISABLE=1
 export POWERLEVEL9K_DISABLE_CONFIGURATION=true

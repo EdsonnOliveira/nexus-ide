@@ -41,9 +41,14 @@ import { useWebVercelDeployments } from './useWebVercelDeployments';
 import { WebMobileReleaseCard } from './WebMobileReleaseCard';
 import { useWebMobileReleases } from './useWebMobileReleases';
 import type { WebFileAttachmentPayload } from './webAgentPromptImages';
-import { normalizeWebAgentCommand } from './webAiProviders';
+import { wrapPromptWithWebAgentConversationHandoff } from './buildWebAgentConversationHandoff';
+import { normalizeWebAgentCommand, isWebResumeChatIdCompatible } from './webAiProviders';
 import { buildWebTaskPrompt, type WebProjectTask } from './webProjectTasks';
-import { dismissWebAgentTerminal, handleWebAgentShellToolEvents } from './webShellTerminal';
+import {
+  dismissWebAgentTerminal,
+  handleWebAgentShellToolEvents,
+  keepAliveWebAgentShellTerminals,
+} from './webShellTerminal';
 import {
   createWebStreamJsonState,
   extractStreamChunk,
@@ -621,6 +626,71 @@ export function WebMaestroHome() {
     };
   }, [activeWorkspaceId, selectedProjectId, selectedDeviceId, setAgents, subscribeAgent]);
 
+  const shellKeepAliveKey = useMemo(
+    () =>
+      agents
+        .map((agent) =>
+          (agent.terminals ?? [])
+            .filter((entry) => entry.status === 'starting' || entry.status === 'running')
+            .map(
+              (entry) =>
+                `${agent.id}:${entry.id}:${entry.status}:${entry.commandSent}:${entry.remoteSessionId}`,
+            )
+            .join(','),
+        )
+        .filter(Boolean)
+        .join('|'),
+    [agents],
+  );
+
+  useEffect(() => {
+    if (!shellKeepAliveKey) {
+      return;
+    }
+
+    const deviceId = resolveDeviceId();
+    if (!deviceId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      for (const agent of useWebStore.getState().agents) {
+        if (cancelled) {
+          return;
+        }
+
+        if (agent.source === 'desktop_pane') {
+          continue;
+        }
+
+        const live = (agent.terminals ?? []).filter(
+          (entry) => entry.status === 'starting' || entry.status === 'running',
+        );
+
+        if (live.length === 0) {
+          continue;
+        }
+
+        const workspaceId = await resolveAgentWorkspaceId(agent.projectId);
+        if (!workspaceId || cancelled) {
+          continue;
+        }
+
+        await keepAliveWebAgentShellTerminals(agent.id, live, {
+          deviceId,
+          projectId: agent.projectId,
+          workspaceId,
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [resolveDeviceId, shellKeepAliveKey]);
+
   useEffect(() => {
     let inFlight = false;
     const hydrateRunningAgents = async () => {
@@ -1026,6 +1096,21 @@ export function WebMaestroHome() {
         }
         subscribeAgent(agentId, commandId);
         const agentCommand = normalizeWebAgentCommand(agent.agentCommand);
+        const hasPriorTurns = agent.turns.some(
+          (turn) =>
+            turn.status !== 'running' &&
+            (turn.prompt.trim() || turn.response.trim() || turn.activities.length > 0),
+        );
+        const resumeChatId = isWebResumeChatIdCompatible(agentCommand, agent.cursorSessionId)
+          ? agent.cursorSessionId
+          : null;
+        const needsConversationHandoff =
+          !resumeChatId &&
+          hasPriorTurns &&
+          prompt !== WEB_AGENT_INCOMPLETE_CONTINUE_PROMPT;
+        const promptForCli = needsConversationHandoff
+          ? wrapPromptWithWebAgentConversationHandoff(prompt, agent.turns)
+          : prompt;
         await bridge.executeCommand({
           id: commandId,
           workspace_id: workspaceId,
@@ -1035,14 +1120,15 @@ export function WebMaestroHome() {
           type: 'agent_prompt',
           payload: {
             prompt,
+            ...(promptForCli !== prompt ? { agent_prompt: promptForCli } : {}),
             ...(imageDataUrls.length > 0 ? { image_data_urls: imageDataUrls } : {}),
             ...(fileAttachments.length > 0 ? { file_attachments: fileAttachments } : {}),
             agent_command: agentCommand,
             model: agent.modelId || 'auto',
             mode: agent.modeId && agent.modeId !== 'agent' ? agent.modeId : undefined,
             session_id: agent.id,
-            resume_chat_id: agent.cursorSessionId,
-            continue_session: !agent.cursorSessionId,
+            resume_chat_id: resumeChatId,
+            continue_session: !resumeChatId && !needsConversationHandoff,
           },
           idempotency_key: crypto.randomUUID(),
         });
@@ -1289,7 +1375,10 @@ export function WebMaestroHome() {
   const handleAgentCommandChange = useCallback(
     (agentId: string, agentCommand: string) => {
       setAgentCommand(agentId, agentCommand);
-      void updateAgentSessionMeta(supabase, agentId, { agent_command: agentCommand });
+      void updateAgentSessionMeta(supabase, agentId, {
+        agent_command: agentCommand,
+        cursor_chat_id: null,
+      });
     },
     [setAgentCommand],
   );

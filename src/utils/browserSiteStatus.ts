@@ -26,10 +26,26 @@ export function isLocalDevUrl(url: string): boolean {
     return (
       parsed.hostname === 'localhost' ||
       parsed.hostname === '127.0.0.1' ||
-      parsed.hostname === '[::1]'
+      parsed.hostname === '[::1]' ||
+      parsed.hostname === '0.0.0.0' ||
+      parsed.hostname === '[::]'
     );
   } catch {
     return false;
+  }
+}
+
+export function rewriteLocalDevBindHost(url: string): string {
+  try {
+    const parsed = new URL(url);
+
+    if (parsed.hostname === '0.0.0.0' || parsed.hostname === '[::]' || parsed.hostname === '::') {
+      parsed.hostname = 'localhost';
+    }
+
+    return parsed.toString();
+  } catch {
+    return url;
   }
 }
 
@@ -51,7 +67,10 @@ export function isSameLocalDevTarget(loadedUrl: string, expectedUrl: string): bo
         hostname === 'localhost' ||
         hostname === '127.0.0.1' ||
         hostname === '[::1]' ||
-        hostname === '::1'
+        hostname === '::1' ||
+        hostname === '0.0.0.0' ||
+        hostname === '[::]' ||
+        hostname === '::'
       ) {
         return 'local';
       }

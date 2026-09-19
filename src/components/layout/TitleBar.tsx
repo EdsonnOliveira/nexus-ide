@@ -13,9 +13,11 @@ import { TitleBarBatteryCriticalAlert } from '@/components/layout/titlebar/Title
 import { TitleBarBatteryPopup } from '@/components/layout/titlebar/TitleBarBatteryPopup';
 import { TitleBarPingPopup } from '@/components/layout/titlebar/TitleBarPingPopup';
 import { TitleBarUsagePopup } from '@/components/layout/titlebar/TitleBarUsagePopup';
+import { isVisibleAiUsageProvider } from '@/constants/aiProviders';
 import { useAiProviderUsage } from '@/hooks/useAiProviderUsage';
 import { useInternetPing } from '@/hooks/useInternetPing';
 import { useSystemStatus } from '@/hooks/useSystemStatus';
+import { useAppSettingsStore } from '@/stores/useAppSettingsStore';
 import { startBatteryAlertSoundLoop, stopBatteryAlertSoundLoop } from '@/utils/batteryAlertSound';
 import { closeAllAnchoredDropdowns } from '@/utils/overlayBlocking';
 
@@ -26,6 +28,7 @@ function TitleBarComponent() {
   const { snapshot: systemStatus } = useSystemStatus(true);
   const { snapshot: aiUsage, isLoading: aiUsageLoading, refresh: refreshAiUsage } =
     useAiProviderUsage(true);
+  const enabledAiProviders = useAppSettingsStore((state) => state.enabledAiProviders);
   const batteryButtonRef = useRef<HTMLButtonElement>(null);
   const pingButtonRef = useRef<HTMLButtonElement>(null);
   const usageButtonRef = useRef<HTMLButtonElement>(null);
@@ -55,8 +58,13 @@ function TitleBarComponent() {
     return ' titlebar__ping--slow';
   }, [latencyMs]);
 
+  const visibleUsageItems = useMemo(
+    () => aiUsage.items.filter((item) => isVisibleAiUsageProvider(item.id, enabledAiProviders)),
+    [aiUsage.items, enabledAiProviders],
+  );
+
   const usagePercent = useMemo(() => {
-    const percents = aiUsage.items
+    const percents = visibleUsageItems
       .map((item) => item.percent)
       .filter((value): value is number => value !== null);
 
@@ -65,7 +73,7 @@ function TitleBarComponent() {
     }
 
     return percents.reduce((sum, value) => sum + value, 0) / percents.length;
-  }, [aiUsage.items]);
+  }, [visibleUsageItems]);
 
   const usageLabel = useMemo(
     () => (usagePercent === null ? 'Limites de IA' : `Limites de IA ${Math.round(usagePercent)}%`),
@@ -269,7 +277,7 @@ function TitleBarComponent() {
         <TitleBarUsagePopup
           anchorRect={anchorRect}
           anchorRef={usageButtonRef}
-          items={aiUsage.items}
+          items={visibleUsageItems}
           isLoading={aiUsageLoading}
           onClose={handleClosePopup}
           onRefresh={() => {

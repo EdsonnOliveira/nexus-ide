@@ -7,6 +7,7 @@ import { app } from 'electron';
 import type { BrowserWindow } from 'electron';
 import * as pty from 'node-pty';
 import type { TerminalAgent } from '../../types';
+import { getDevBrowserHookEnv } from './devBrowserHook';
 import { buildCliPathEnv } from '../utils/cliPathEnv';
 
 interface PtySession {
@@ -86,6 +87,10 @@ function getShellResources(): string {
 
 function getZshConfigDir(): string {
   return path.join(getShellResources(), 'zsh');
+}
+
+function getShellBinDir(): string {
+  return path.join(getShellResources(), 'bin');
 }
 
 function getNexusZshWrapper(): string {
@@ -201,7 +206,33 @@ function isCmdShell(shell: string): boolean {
   return base === 'cmd.exe' || base === 'cmd';
 }
 
-function buildEnv(agent: TerminalAgent, shell: string): Record<string, string> {
+export function applyDevBrowserEnv(
+  env: Record<string, string>,
+  ptyId?: string,
+): Record<string, string> {
+  const nextEnv = {
+    ...env,
+    ...getDevBrowserHookEnv(),
+  };
+  const binDir = getShellBinDir();
+  const browserScript = path.join(binDir, 'nexus-open-browser');
+
+  if (existsSync(binDir)) {
+    nextEnv.PATH = `${binDir}${path.delimiter}${nextEnv.PATH ?? ''}`;
+  }
+
+  if (existsSync(browserScript)) {
+    nextEnv.BROWSER = browserScript;
+  }
+
+  if (ptyId) {
+    nextEnv.NEXUS_PTY_ID = ptyId;
+  }
+
+  return nextEnv;
+}
+
+function buildEnv(agent: TerminalAgent, shell: string, ptyId: string): Record<string, string> {
   const env: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(process.env)) {
@@ -236,7 +267,11 @@ function buildEnv(agent: TerminalAgent, shell: string): Record<string, string> {
     nextEnv.RPROMPT = '';
   }
 
-  return nextEnv;
+  if (isBashShell(shell)) {
+    nextEnv.NEXUS_SHELL_DIR = getShellResources();
+  }
+
+  return applyDevBrowserEnv(nextEnv, ptyId);
 }
 
 function buildShellArgs(shell: string): string[] {
@@ -345,7 +380,7 @@ class PtyManager {
     const terminal = pty.spawn(shell, buildShellArgs(shell), {
       name: 'xterm-256color',
       cwd: resolvedCwd,
-      env: buildEnv(agent, shell),
+      env: buildEnv(agent, shell, id),
       cols: 80,
       rows: 24,
     });

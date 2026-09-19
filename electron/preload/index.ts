@@ -297,11 +297,24 @@ const nexusApi = {
       ipcRenderer.invoke('browser:closeDevTools', guestWebContentsId),
     captureScreenshot: (guestWebContentsId: number): Promise<boolean> =>
       ipcRenderer.invoke('browser:captureScreenshot', guestWebContentsId),
-    onOpenInTab: (callback: (url: string) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, url: string) => {
-        if (typeof url === 'string' && url.length > 0) {
-          callback(url);
+    onOpenInTab: (callback: (url: string, ptyId?: string | null) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+        if (typeof payload === 'string' && payload.length > 0) {
+          callback(payload, null);
+          return;
         }
+
+        if (!payload || typeof payload !== 'object' || !('url' in payload)) {
+          return;
+        }
+
+        const next = payload as { url?: unknown; ptyId?: unknown };
+
+        if (typeof next.url !== 'string' || next.url.length === 0) {
+          return;
+        }
+
+        callback(next.url, typeof next.ptyId === 'string' ? next.ptyId : null);
       };
       ipcRenderer.on('browser:open-in-tab', listener);
       return () => ipcRenderer.off('browser:open-in-tab', listener);
@@ -379,6 +392,36 @@ const nexusApi = {
       ipcRenderer.invoke('systemNotifications:openFullDiskAccessSettings'),
     revealFullDiskAccessApp: () =>
       ipcRenderer.invoke('systemNotifications:revealFullDiskAccessApp'),
+  },
+  agentFinish: {
+    notify: (payload: {
+      projectId: string;
+      paneId: string;
+      projectName: string;
+    }): Promise<boolean> => ipcRenderer.invoke('agentFinish:notify', payload),
+    onAction: (
+      callback: (payload: { action: 'git' | 'open'; projectId: string; paneId: string }) => void,
+    ): (() => void) => {
+      const listener = (
+        _: Electron.IpcRendererEvent,
+        payload: { action?: unknown; projectId?: unknown; paneId?: unknown },
+      ) => {
+        if (payload?.action !== 'git' && payload?.action !== 'open') {
+          return;
+        }
+        if (typeof payload.projectId !== 'string' || typeof payload.paneId !== 'string') {
+          return;
+        }
+        callback({
+          action: payload.action,
+          projectId: payload.projectId,
+          paneId: payload.paneId,
+        });
+      };
+
+      ipcRenderer.on('agentFinish:action', listener);
+      return () => ipcRenderer.off('agentFinish:action', listener);
+    },
   },
   systemStatus: {
     getSnapshot: () => ipcRenderer.invoke('systemStatus:getSnapshot'),

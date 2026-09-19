@@ -22,6 +22,7 @@ import type {
 } from '@/types';
 import { registerAgentPaneHandlers, setAgentPaneLiveTranscript } from '@/utils/agentPaneRegistry';
 import { useTabActions } from '@/stores/useTabStore';
+import { useAppSettingsStore } from '@/stores/useAppSettingsStore';
 import { registerAgentPrintPaneHandlers } from '@/utils/agentPrintBridge';
 import {
   getOrCreateAgentStreamJsonSession,
@@ -45,6 +46,8 @@ import {
 import {
   handleAgentShellToolTerminalEvents,
   hasBlockingAgentToolWork,
+  hasStreamingDevServerShell,
+  scheduleAgentShellCommandHandoff,
   shouldKeepAgentShellsAlive,
   shouldOpenAgentShellToolTerminal,
 } from '@/utils/agentShellToolTerminal';
@@ -52,6 +55,7 @@ import {
   cliAgentToAiProvider,
   DEFAULT_OPENCODE_MODEL,
   preferredAiProviderToCli,
+  resolveAiProviderForPromptAttachments,
   type AiProviderId,
 } from '@/constants/aiProviders';
 import {
@@ -60,6 +64,7 @@ import {
   parseAgentAiProviderCommand,
   parseAgentModeCommand,
 } from '@/utils/parseAgentModeCommand';
+import { hasAgentPromptAttachments } from '@/utils/agentPromptImageBadge';
 import { shouldMarkAgentAwaiting } from '@/utils/projectAgentStatus';
 import { cleanAgentPtyChunk } from '@/utils/stripAnsi';
 import {
@@ -87,6 +92,7 @@ import {
   isStaleAgentSessionError,
   isStreamJsonAgentCli,
   resolveStreamJsonPromptPayload,
+  resolveCompatibleResumeChatId,
   resolveCursorAgentPrintMode,
   sanitizeAgentCliError,
   sendAgentInterruptSequence,
@@ -106,8 +112,6 @@ import {
   hasStreamJsonVisibleProgress,
   hydrateAgentStreamJsonSessionFromTurn,
   isAgentStreamJsonStateAwaitingCompletion,
-  isInjectedDevServerHandoffReply,
-  looksLikeLiveServerReply,
   resolveStreamJsonStallLiveStatus,
   tryMarkStreamJsonReadyToFinalize,
   upsertStreamJsonLiveStatus,
@@ -153,6 +157,7 @@ import {
   buildEditedFilesFromActivities,
   isAgentTurnSummaryVisible,
 } from '@/utils/agentTurnSummary';
+import { wrapPromptWithAgentConversationHandoff } from '@/utils/buildAgentConversationHandoff';
 
 const LAUNCH_COMMAND_DELAY_MS = 350;
 const PLAN_BODY_RESOLVE_MAX_ATTEMPTS = 8;
@@ -285,8 +290,38 @@ function resolvePaneAiProvider(paneId: string, tab: AgentTab): Exclude<AiProvide
   return cliAgentToAiProvider(resolveLiveCliAgent(paneId, tab));
 }
 
+function resolveAttachmentAwareAiProvider(
+  hasAttachments: boolean,
+  skillAiProvider?: Exclude<AiProviderId, 'nexus'> | null,
+): Exclude<AiProviderId, 'nexus'> | null {
+  if (skillAiProvider) {
+    return skillAiProvider;
+  }
+
+  const settings = useAppSettingsStore.getState();
+  return resolveAiProviderForPromptAttachments({
+    hasAttachments,
+    preferredAiProvider: settings.preferredAiProvider,
+    noAttachmentAiProvider: settings.noAttachmentAiProvider,
+    enabledAiProviders: settings.enabledAiProviders,
+  });
+}
+
 function sameCliAgent(left: string, right: string): boolean {
   return (extractCliAgentCommand(left) ?? left) === (extractCliAgentCommand(right) ?? right);
+}
+
+function takeConversationHandoffPrompt(
+  prompt: string,
+  turns: AgentTurn[],
+  pendingRef: { current: boolean },
+): string {
+  if (!pendingRef.current) {
+    return prompt;
+  }
+
+  pendingRef.current = false;
+  return wrapPromptWithAgentConversationHandoff(prompt, turns);
 }
 
 async function loadAgentSkillHints(cwd: string): Promise<TerminalCommandHint[]> {
@@ -394,11 +429,16 @@ export function useAgentPaneSession({
   const resolvePreserveAgentPrintChildren = (force = false): boolean => {
     const flagged = preserveAgentShellChildrenRef.current;
     preserveAgentShellChildrenRef.current = false;
-    return (
+    const preserve =
       force ||
       flagged ||
-      shouldKeepAgentShellsAlive(paneIdRef.current, streamJsonStateRef.current.activities)
-    );
+      shouldKeepAgentShellsAlive(paneIdRef.current, streamJsonStateRef.current.activities);
+
+    if (preserve) {
+      scheduleAgentShellCommandHandoff(paneIdRef.current);
+    }
+
+    return preserve;
   };
   const hasStreamJsonChunkRef = useRef(false);
   const lastStreamJsonChunkAtRef = useRef(Date.now());
@@ -437,6 +477,7 @@ export function useAgentPaneSession({
   >(() => false);
   const streamJsonBootstrappedRef = useRef(false);
   const streamJsonRunCliRef = useRef<string | null>(null);
+  const conversationHandoffPendingRef = useRef(false);
   const streamJsonSettleTimerRef = useRef<number | null>(null);
   const streamJsonStallLabelRef = useRef('');
   const stalePtyClearedRef = useRef<string | null>(null);
@@ -899,10 +940,15 @@ export function useAgentPaneSession({
       return;
     }
 
+    if (!resolveCompatibleResumeChatId(resolveLiveCliAgent(tab.id, tab), boundResumeChatId)) {
+      useTerminalSessionStore.getState().clearResumeChatId(tab.id);
+      return;
+    }
+
     cursorAgentContinueRef.current = true;
     streamJsonStateRef.current.sessionId = boundResumeChatId;
     setIsAgentReady(true);
-  }, [resumeChatId, tab.id]);
+  }, [resumeChatId, tab, tab.cliAgent, tab.id]);
 
   const updateActiveTurn = useCallback(
     (updater: (turn: AgentTurn) => AgentTurn) => {
@@ -1202,6 +1248,10 @@ export function useAgentPaneSession({
         return false;
       }
 
+      if (processRunning && hasStreamingDevServerShell(streamJsonStateRef.current.activities)) {
+        return false;
+      }
+
       feedAgentStreamJsonChunk(streamJsonStateRef.current, '');
 
       if (streamJsonStateRef.current.shouldFinalize) {
@@ -1373,6 +1423,10 @@ export function useAgentPaneSession({
   const tryHandoffLongRunningDevShell = useCallback((idleMs: number): boolean => {
     const state = streamJsonStateRef.current;
 
+    if (hasStreamingDevServerShell(state.activities)) {
+      return false;
+    }
+
     if (hasPendingStreamJsonInteraction(state) || hasIncompleteStreamJsonTurnEnding(state)) {
       return false;
     }
@@ -1385,26 +1439,16 @@ export function useAgentPaneSession({
       return false;
     }
 
-    const streamingShell = [...state.activities]
-      .reverse()
-      .find((entry) => entry.kind === 'tool_run' && entry.streaming && entry.toolCommand?.trim());
-    const command = streamingShell?.toolCommand?.trim() ?? '';
+    const command =
+      [...state.activities]
+        .reverse()
+        .find(
+          (entry) =>
+            entry.kind === 'tool_run' && shouldOpenAgentShellToolTerminal(entry.toolCommand ?? ''),
+        )
+        ?.toolCommand?.trim() ?? '';
 
-    if (!command || !shouldOpenAgentShellToolTerminal(command)) {
-      return false;
-    }
-
-    const lastReply = [...state.activities]
-      .reverse()
-      .find(
-        (entry) =>
-          entry.kind === 'response' &&
-          entry.label.trim() &&
-          !isInjectedDevServerHandoffReply(entry.label),
-      )?.label;
-    const liveServer = looksLikeLiveServerReply(lastReply ?? state.pendingResponseText);
-
-    if (!liveServer) {
+    if (!command) {
       return false;
     }
 
@@ -1413,6 +1457,7 @@ export function useAgentPaneSession({
     }
 
     preserveAgentShellChildrenRef.current = true;
+    scheduleAgentShellCommandHandoff(paneIdRef.current);
     state.handoffComplete = true;
     state.shouldFinalize = true;
     writeDebugSessionLog({
@@ -1420,7 +1465,6 @@ export function useAgentPaneSession({
       message: 'handoff accepted',
       data: {
         idleMs,
-        liveServer,
         command: command.slice(0, 120),
       },
       hypothesisId: 'H2',
@@ -1441,6 +1485,10 @@ export function useAgentPaneSession({
       }
 
       if (hasBlockingAgentToolWork(state.activities)) {
+        return false;
+      }
+
+      if (hasStreamingDevServerShell(state.activities)) {
         return false;
       }
 
@@ -1531,17 +1579,8 @@ export function useAgentPaneSession({
       }
 
       const streamUpdate = feedAgentStreamJsonChunk(streamJsonStateRef.current, chunk);
-      const onlyLongRunningShellProgress =
-        streamUpdate.shellToolEvents.length > 0 &&
-        streamUpdate.shellToolEvents.every((event) =>
-          shouldOpenAgentShellToolTerminal(event.command),
-        ) &&
-        !streamUpdate.shouldFinalize;
-      const skipIdleReset =
-        onlyLongRunningShellProgress &&
-        hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current);
 
-      if (chunk && !skipIdleReset) {
+      if (chunk) {
         lastStreamJsonChunkAtRef.current = Date.now();
       }
       const hasMeaningfulProgress =
@@ -1574,6 +1613,10 @@ export function useAgentPaneSession({
           sameCliAgent(
             streamJsonRunCliRef.current ?? '',
             resolveLiveCliAgent(paneIdRef.current, tab),
+          ) &&
+          resolveCompatibleResumeChatId(
+            streamJsonRunCliRef.current || resolveLiveCliAgent(paneIdRef.current, tab),
+            streamUpdate.sessionId,
           )
         ) {
           useTerminalSessionStore
@@ -1653,12 +1696,6 @@ export function useAgentPaneSession({
       const model = resolveStreamJsonModel(paneId, cliAgent);
       const mode = resolveCursorAgentPrintMode(currentMode);
       const root = agentRootPath.replace(/\/+$/, '');
-      const { prompt: resolvedPrompt, attachmentPaths } = resolveStreamJsonPromptPayload(
-        cliAgent,
-        prompt,
-        imageRefs,
-        root,
-      );
       const forceFreshSession = Boolean(options?.forceFreshSession);
 
       if (forceFreshSession) {
@@ -1676,24 +1713,57 @@ export function useAgentPaneSession({
           ?.resumeChatId?.trim() || null;
       const lastRunCli = streamJsonRunCliRef.current;
       const allowTurnResume = !lastRunCli || sameCliAgent(lastRunCli, cliAgent);
-      const storedResumeChatId =
+      const rawResumeChatId =
         session.resumeChatIdByPane[paneId]?.trim() ||
         (allowTurnResume ? lastTurnResumeChatId : null);
+      const compatibleResumeChatId = resolveCompatibleResumeChatId(cliAgent, rawResumeChatId);
+      const droppedIncompatibleResume = Boolean(rawResumeChatId) && !compatibleResumeChatId;
 
-      if (!resolvedPrompt && attachmentPaths.length === 0) {
-        return false;
-      }
-
-      if (modeChangedSinceLastPrint || forceFreshSession) {
+      if (modeChangedSinceLastPrint || forceFreshSession || droppedIncompatibleResume) {
         session.clearResumeChatId(paneId);
         cursorAgentContinueRef.current = false;
       }
 
+      if (droppedIncompatibleResume) {
+        turnsRef.current = turnsRef.current.map((turn) =>
+          turn.resumeChatId ? { ...turn, resumeChatId: null } : turn,
+        );
+      }
+
       const resumeChatId =
-        modeChangedSinceLastPrint || forceFreshSession ? null : storedResumeChatId;
+        modeChangedSinceLastPrint || forceFreshSession || droppedIncompatibleResume
+          ? null
+          : compatibleResumeChatId;
       const hasCompletedTurn = turnsRef.current.some(
         (turn) => !turn.running && !turn.pendingFollowUp,
       );
+      const cliChanged = Boolean(lastRunCli && !sameCliAgent(lastRunCli, cliAgent));
+      const continueSession =
+        !cliChanged &&
+        !droppedIncompatibleResume &&
+        !forceFreshSession &&
+        !resumeChatId &&
+        cursorAgentContinueRef.current &&
+        hasCompletedTurn &&
+        !modeChangedSinceLastPrint;
+      const promptForRun =
+        prompt.trim() &&
+        prompt.trim() !== STREAM_JSON_INCOMPLETE_CONTINUE_PROMPT &&
+        !resumeChatId &&
+        !continueSession
+          ? wrapPromptWithAgentConversationHandoff(prompt, turnsRef.current)
+          : prompt;
+      conversationHandoffPendingRef.current = false;
+      const { prompt: resolvedPrompt, attachmentPaths } = resolveStreamJsonPromptPayload(
+        cliAgent,
+        promptForRun,
+        imageRefs,
+        root,
+      );
+
+      if (!resolvedPrompt && attachmentPaths.length === 0) {
+        return false;
+      }
 
       streamJsonStateRef.current = replaceAgentStreamJsonSession(paneIdRef.current);
 
@@ -1735,12 +1805,7 @@ export function useAgentPaneSession({
         mode,
         resumeChatId,
         attachmentPaths,
-        continueSession:
-          !forceFreshSession &&
-          !resumeChatId &&
-          cursorAgentContinueRef.current &&
-          hasCompletedTurn &&
-          !modeChangedSinceLastPrint,
+        continueSession,
         runToken,
         preserveChildren: resolvePreserveAgentPrintChildren(),
       });
@@ -1841,11 +1906,14 @@ export function useAgentPaneSession({
 
       const paneId = paneIdRef.current;
       const session = useTerminalSessionStore.getState();
-      const resumeChatId =
+      const continueCli = streamJsonRunCliRef.current || resolveLiveCliAgent(paneId, tab);
+      const resumeChatId = resolveCompatibleResumeChatId(
+        continueCli,
         streamJsonStateRef.current.sessionId?.trim() ||
-        session.resumeChatIdByPane[paneId]?.trim() ||
-        runningTurn.resumeChatId?.trim() ||
-        null;
+          session.resumeChatIdByPane[paneId]?.trim() ||
+          runningTurn.resumeChatId?.trim() ||
+          null,
+      );
 
       hydrateAgentStreamJsonSessionFromTurn(streamJsonStateRef.current, runningTurn, resumeChatId);
 
@@ -1889,7 +1957,6 @@ export function useAgentPaneSession({
       }));
 
       const currentMode = session.activeAgentModeByPane[paneId] ?? 'agent';
-      const continueCli = streamJsonRunCliRef.current || resolveLiveCliAgent(paneId, tab);
       const model = resolveStreamJsonModel(paneId, continueCli);
       const mode = resolveCursorAgentPrintMode(currentMode);
       const runToken = crypto.randomUUID();
@@ -2129,6 +2196,17 @@ export function useAgentPaneSession({
         session.clearResumeChatId(paneId);
         cursorAgentContinueRef.current = false;
         streamJsonStateRef.current.sessionId = null;
+        streamJsonRunCliRef.current = null;
+        conversationHandoffPendingRef.current = turnsRef.current.some(
+          (turn) => !turn.running && !turn.pendingFollowUp,
+        );
+        const nextTurns = turnsRef.current.map((turn) =>
+          turn.resumeChatId ? { ...turn, resumeChatId: null } : turn,
+        );
+        if (nextTurns.some((turn, index) => turn !== turnsRef.current[index])) {
+          turnsRef.current = nextTurns;
+          persistTurns(nextTurns, { flush: true });
+        }
         session.setActiveAgent(paneId, nextCli);
 
         if (aiProvider === 'opencode') {
@@ -2197,7 +2275,7 @@ export function useAgentPaneSession({
 
       return written;
     },
-    [scheduleSetupSettled, tab, usesStreamJson, writeToPty],
+    [persistTurns, scheduleSetupSettled, tab, usesStreamJson, writeToPty],
   );
 
   const stopAgent = useCallback(
@@ -2374,14 +2452,19 @@ export function useAgentPaneSession({
 
       const paneId = paneIdRef.current;
       const session = useTerminalSessionStore.getState();
+      const promptForPty = takeConversationHandoffPrompt(
+        trimmed,
+        turnsRef.current,
+        conversationHandoffPendingRef,
+      );
 
       writeToPty(PTY_CLEAR_INPUT);
 
-      if (trimmed) {
-        session.setLastCommand(paneId, trimmed);
-        trackAgentGitPrompt(paneId, trimmed);
+      if (promptForPty) {
+        session.setLastCommand(paneId, promptForPty);
+        trackAgentGitPrompt(paneId, promptForPty);
 
-        if (shouldMarkAgentAwaiting(paneId, trimmed, session.activeAgentByPane)) {
+        if (shouldMarkAgentAwaiting(paneId, promptForPty, session.activeAgentByPane)) {
           session.markAwaitingResponse(paneId);
         }
 
@@ -2391,14 +2474,14 @@ export function useAgentPaneSession({
           session.setActiveAgent(paneId, cliAgent);
         }
 
-        writeToPty(trimmed);
+        writeToPty(promptForPty);
       }
 
       for (const reference of imageRefs) {
         writeToPty(` ${reference}`);
       }
 
-      if (trimmed || imageRefs.length > 0) {
+      if (promptForPty || imageRefs.length > 0) {
         writeToPty('\n');
         recordHomeDashboardActivity('prompts');
       }
@@ -2524,25 +2607,30 @@ export function useAgentPaneSession({
             stopAgent({ preserveFollowUps: true, preserveShellTerminals: preserveShells });
           } else {
             const session = useTerminalSessionStore.getState();
+            const promptForPty = takeConversationHandoffPrompt(
+              agentPrompt,
+              turnsRef.current,
+              conversationHandoffPendingRef,
+            );
 
             writeToPty(PTY_CLEAR_INPUT);
 
-            if (agentPrompt) {
-              session.setLastCommand(paneId, agentPrompt);
-              trackAgentGitPrompt(paneId, agentPrompt);
+            if (promptForPty) {
+              session.setLastCommand(paneId, promptForPty);
+              trackAgentGitPrompt(paneId, promptForPty);
 
-              if (shouldMarkAgentAwaiting(paneId, agentPrompt, session.activeAgentByPane)) {
+              if (shouldMarkAgentAwaiting(paneId, promptForPty, session.activeAgentByPane)) {
                 session.markAwaitingResponse(paneId);
               }
 
-              writeToPty(agentPrompt);
+              writeToPty(promptForPty);
             }
 
             for (const reference of imageRefs) {
               writeToPty(` ${reference}`);
             }
 
-            if (agentPrompt || imageRefs.length > 0) {
+            if (promptForPty || imageRefs.length > 0) {
               writeToPty('\n');
             }
 
@@ -2574,25 +2662,30 @@ export function useAgentPaneSession({
           startStreamJsonAgentRun(agentPrompt, imageRefs);
         } else {
           const session = useTerminalSessionStore.getState();
+          const promptForPty = takeConversationHandoffPrompt(
+            agentPrompt,
+            turnsRef.current,
+            conversationHandoffPendingRef,
+          );
 
           writeToPty(PTY_CLEAR_INPUT);
 
-          if (agentPrompt) {
-            session.setLastCommand(paneId, agentPrompt);
-            trackAgentGitPrompt(paneId, agentPrompt);
+          if (promptForPty) {
+            session.setLastCommand(paneId, promptForPty);
+            trackAgentGitPrompt(paneId, promptForPty);
 
-            if (shouldMarkAgentAwaiting(paneId, agentPrompt, session.activeAgentByPane)) {
+            if (shouldMarkAgentAwaiting(paneId, promptForPty, session.activeAgentByPane)) {
               session.markAwaitingResponse(paneId);
             }
 
-            writeToPty(agentPrompt);
+            writeToPty(promptForPty);
           }
 
           for (const reference of imageRefs) {
             writeToPty(` ${reference}`);
           }
 
-          if (agentPrompt || imageRefs.length > 0) {
+          if (promptForPty || imageRefs.length > 0) {
             writeToPty('\n');
           }
         }
@@ -2747,12 +2840,16 @@ export function useAgentPaneSession({
 
       const skillHints = await loadAgentSkillHints(agentRootPath);
       const skillAiProvider = resolvePromptSkillAiProvider(trimmed, skillHints);
+      const targetAiProvider = resolveAttachmentAwareAiProvider(
+        hasAgentPromptAttachments(trimmed, attachments.length),
+        skillAiProvider,
+      );
       const hasRunningTurn = turnsRef.current.some((turn) => turn.running);
       const editingTurnId = editingTurnIdRef.current;
 
       if (hasRunningTurn && !editingTurnId && !options?.forceNewTurn) {
         useTerminalPasteImageStore.getState().clearPaneImages(paneIdRef.current);
-        return enqueueFollowUp(trimmed, attachments, skillAiProvider);
+        return enqueueFollowUp(trimmed, attachments, targetAiProvider);
       }
 
       if (submitInFlightRef.current && !options?.forceNewTurn) {
@@ -2801,8 +2898,8 @@ export function useAgentPaneSession({
           return false;
         }
 
-        if (skillAiProvider) {
-          runCommand(formatAgentAiProviderCommand(skillAiProvider));
+        if (targetAiProvider) {
+          runCommand(formatAgentAiProviderCommand(targetAiProvider));
         }
 
         const composerReady = await waitForComposerAgentReady(shouldAbort);
@@ -3281,15 +3378,17 @@ export function useAgentPaneSession({
     const sessionState = getOrCreateAgentStreamJsonSession(tab.id);
     streamJsonStateRef.current = sessionState;
     const runningTurn = turnsRef.current.find((turn) => turn.running);
-    const storedResumeChatId =
+    const storedResumeChatId = resolveCompatibleResumeChatId(
+      resolveLiveCliAgent(tab.id, tab),
       useTerminalSessionStore.getState().resumeChatIdByPane[tab.id]?.trim() ||
-      runningTurn?.resumeChatId?.trim() ||
-      sessionState.sessionId?.trim() ||
-      null;
+        runningTurn?.resumeChatId?.trim() ||
+        sessionState.sessionId?.trim() ||
+        null,
+    );
 
     if (runningTurn) {
       hydrateAgentStreamJsonSessionFromTurn(sessionState, runningTurn, storedResumeChatId);
-    } else if (storedResumeChatId) {
+    } else {
       sessionState.sessionId = storedResumeChatId;
     }
 
@@ -4140,6 +4239,9 @@ export function useAgentPaneSession({
           const hasBlockingToolWork = hasBlockingAgentToolWork(
             streamJsonStateRef.current.activities,
           );
+          const keepDevServerProcess =
+            hasBlockingToolWork ||
+            hasStreamingDevServerShell(streamJsonStateRef.current.activities);
 
           if (tryHandoffLongRunningDevShell(idleMs)) {
             agentPrintRunActiveRef.current = false;
@@ -4155,7 +4257,7 @@ export function useAgentPaneSession({
             return;
           }
 
-          if (hasBlockingToolWork && idleMs < STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS) {
+          if (keepDevServerProcess && idleMs < STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS) {
             if (idleMs >= STREAM_JSON_STALL_UI_MS) {
               syncStreamJsonStallLiveStatus(idleMs);
             }
@@ -4165,7 +4267,7 @@ export function useAgentPaneSession({
 
           if (
             idleMs >= STREAM_JSON_EMPTY_HUNG_IDLE_MS &&
-            !hasBlockingToolWork &&
+            !keepDevServerProcess &&
             !hasStreamJsonVisibleProgress(streamJsonStateRef.current) &&
             !hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current) &&
             !hasPendingStreamJsonInteraction(streamJsonStateRef.current)
@@ -4198,7 +4300,9 @@ export function useAgentPaneSession({
 
           const hungIdleExceeded =
             idleMs >=
-            (hasBlockingToolWork ? STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS : STREAM_JSON_HUNG_IDLE_MS);
+            (keepDevServerProcess
+              ? STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS
+              : STREAM_JSON_HUNG_IDLE_MS);
 
           if (hungIdleExceeded) {
             forceSettleStreamJsonInFlightWork(streamJsonStateRef.current);

@@ -46,7 +46,7 @@ export function hydrateWebAgentsFromBundles(bundles: AgentSessionBundle[]): WebA
       const stream = messagesByExecution.get(execution.id) ?? '';
       const parser = createWebStreamJsonState();
       const parsed = stream ? feedWebStreamJson(parser, stream) : null;
-      if (parsed?.sessionId) {
+      if (parsed?.sessionId && session.cursor_chat_id) {
         cursorSessionId = parsed.sessionId;
       }
       if (parsed?.shellToolEvents?.length) {

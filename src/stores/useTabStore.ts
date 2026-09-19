@@ -18,7 +18,11 @@ import type {
   TerminalAgent,
 } from '@/types';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
-import { DEFAULT_OPENCODE_MODEL, preferredAiProviderToCli } from '@/constants/aiProviders';
+import {
+  DEFAULT_OPENCODE_MODEL,
+  preferredAiProviderToCli,
+  resolveAiProviderForPromptAttachments,
+} from '@/constants/aiProviders';
 import {
   isAgentPaneTab,
   isLegacyAgentTerminalTab,
@@ -33,6 +37,7 @@ import { hydrateAgentTurns } from '@/utils/agentPromptAttachments';
 import { sanitizeAgentFollowUps, sanitizeAgentTurnHistory } from '@/utils/trimAgentTurnHistory';
 import { stopAgentPane } from '@/utils/agentPaneRegistry';
 import { normalizeBrowserUrl } from '@/utils/browserUrl';
+import { isSameLocalDevTarget } from '@/utils/browserSiteStatus';
 import { createBadgeColorIndex } from '@/utils/tabBadge';
 import { useAppSettingsStore } from '@/stores/useAppSettingsStore';
 import {
@@ -77,6 +82,19 @@ function persistOpenCodePaneModel(tabId: string, cliAgent: string): void {
   }));
 }
 
+function resolveNewAgentTabCli(): ReturnType<typeof preferredAiProviderToCli> {
+  const settings = useAppSettingsStore.getState();
+  const provider =
+    resolveAiProviderForPromptAttachments({
+      hasAttachments: false,
+      preferredAiProvider: settings.preferredAiProvider,
+      noAttachmentAiProvider: settings.noAttachmentAiProvider,
+      enabledAiProviders: settings.enabledAiProviders,
+    }) ?? settings.preferredAiProvider;
+
+  return preferredAiProviderToCli(provider);
+}
+
 export interface AddTabOptions {
   launchCommand?: string;
 }
@@ -88,7 +106,7 @@ export interface TabStoreActions {
   addAgentTabForProject: (projectId: string, command: string) => Promise<string | null>;
   replaceAgentTab: (tabId: string) => Promise<void>;
   resumeAgentHistorySession: (tabId: string, chatId: string, projectPath: string) => Promise<void>;
-  openBrowserTab: (url: string) => Promise<void>;
+  openBrowserTab: (url: string, projectId?: string | null) => Promise<void>;
   openFileTab: (filePath: string, fileName: string) => Promise<void>;
   openFilePreviewTab: (filePath: string, fileName: string) => Promise<void>;
   openFileCodeTab: (filePath: string, fileName: string) => Promise<void>;
@@ -404,9 +422,7 @@ export function useTabActions(): TabStoreActions {
       const tabId = crypto.randomUUID();
       const badgeColorIndex = createBadgeColorIndex(project.tabs);
       const trimmed = command.trim();
-      const preferredCli = preferredAiProviderToCli(
-        useAppSettingsStore.getState().preferredAiProvider,
-      );
+      const preferredCli = resolveNewAgentTabCli();
       const cliAgent = extractCliAgentCommand(trimmed) ?? preferredCli;
       const nextTab: AgentTab = {
         id: tabId,
@@ -440,9 +456,7 @@ export function useTabActions(): TabStoreActions {
       const tabId = crypto.randomUUID();
       const badgeColorIndex = createBadgeColorIndex(project.tabs);
       const trimmed = command.trim();
-      const preferredCli = preferredAiProviderToCli(
-        useAppSettingsStore.getState().preferredAiProvider,
-      );
+      const preferredCli = resolveNewAgentTabCli();
       const cliAgent = extractCliAgentCommand(trimmed) ?? preferredCli;
       const nextTab: AgentTab = {
         id: tabId,
@@ -647,8 +661,11 @@ export function useTabActions(): TabStoreActions {
         session.setRestarting(tabId, false);
       }
     },
-    openBrowserTab: async (url) => {
-      const project = getProjectSnapshot();
+    openBrowserTab: async (url, projectId) => {
+      const store = useProjectStore.getState();
+      const project = projectId
+        ? (store.projects.find((entry) => entry.id === projectId) ?? null)
+        : getProjectSnapshot();
 
       if (!project) {
         return;
@@ -671,15 +688,28 @@ export function useTabActions(): TabStoreActions {
         );
 
       if (existing) {
+        const currentUrl = normalizeBrowserUrl(existing.url);
+        const sameTarget =
+          currentUrl === normalized || isSameLocalDevTarget(currentUrl, normalized);
+
+        if (sameTarget) {
+          return;
+        }
+
         const nextTabs = updatePaneInTabs(project.tabs, existing.id, (entry) =>
           entry.type === 'browser' ? { ...entry, url: normalized } : entry,
         );
         const splitTab = findSplitTabByPaneId(nextTabs, existing.id);
+        const shouldFocus = project.id === store.activeProjectId;
 
         if (splitTab) {
           await updateProject(project.id, {
-            activeTabId: splitTab.id,
-            activePaneId: existing.id,
+            ...(shouldFocus
+              ? {
+                  activeTabId: splitTab.id,
+                  activePaneId: existing.id,
+                }
+              : {}),
             tabs: nextTabs.map((item) =>
               item.id === splitTab.id && item.type === 'split'
                 ? { ...item, activePaneId: existing.id }
@@ -690,8 +720,12 @@ export function useTabActions(): TabStoreActions {
         }
 
         await updateProject(project.id, {
-          activeTabId: existing.id,
-          activePaneId: null,
+          ...(shouldFocus
+            ? {
+                activeTabId: existing.id,
+                activePaneId: null,
+              }
+            : {}),
           tabs: nextTabs,
         });
         return;
@@ -705,11 +739,16 @@ export function useTabActions(): TabStoreActions {
         url: normalized,
         badgeColorIndex: createBadgeColorIndex(project.tabs),
       };
+      const shouldFocus = project.id === store.activeProjectId;
 
       await updateProject(project.id, {
         tabs: [...project.tabs, nextTab],
-        activeTabId: tabId,
-        activePaneId: null,
+        ...(shouldFocus
+          ? {
+              activeTabId: tabId,
+              activePaneId: null,
+            }
+          : {}),
       });
     },
     openFileTab: async (filePath, fileName) => {

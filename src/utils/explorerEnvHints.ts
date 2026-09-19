@@ -16,7 +16,11 @@ export function isExplorerEnvFileName(fileName: string): boolean {
     return false;
   }
 
-  return !fileName.endsWith('.example') && !fileName.endsWith('.sample') && !fileName.endsWith('.template');
+  return (
+    !fileName.endsWith('.example') &&
+    !fileName.endsWith('.sample') &&
+    !fileName.endsWith('.template')
+  );
 }
 
 export function getProjectKindBadgeLabel(kind: ProjectKind): string {
@@ -29,6 +33,25 @@ export function getProjectKindBadgeLabel(kind: ProjectKind): string {
   }
 
   return kind.toUpperCase();
+}
+
+export const PROJECT_KIND_BADGE_COLORS: Record<ProjectKind, string> = {
+  api: '#93c5fd',
+  web: '#6ee7b7',
+  mobile: '#fcd34d',
+  desktop: '#c4b5fd',
+  mcp: '#f9a8d4',
+};
+
+export function resolveProjectKindBadge(
+  folderName: string,
+  detected: ProjectKind | null,
+): ProjectKind | null {
+  if (/(?:^|[-_.])mcp(?:[-_.]|$)/i.test(folderName)) {
+    return 'mcp';
+  }
+
+  return detected;
 }
 
 function envFilePriority(fileName: string): number {
@@ -97,7 +120,8 @@ export function collectExplorerEnvHintsFromEntries(params: {
     });
   };
 
-  const rootName = params.rootPath.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? 'projeto';
+  const rootName =
+    params.rootPath.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? 'projeto';
   const rootListed = params.listedByDirectory[params.rootPath] ?? params.rootEntries;
 
   for (const entry of rootListed) {

@@ -5,6 +5,7 @@ import { cloudBridge, cloudSupabase } from '@/lib/nexusCloud';
 import { useCloudStore } from '@/stores/useCloudStore';
 import { useCloudAgentSessionsStore } from '@/stores/useCloudAgentSessionsStore';
 import { hydrateCloudAgentSessions } from '@/utils/hydrateCloudAgentSessions';
+import type { CloudAgentSession } from '@/types/cloudAgent';
 import {
   createCloudAgentStreamState,
   extractCloudAgentStreamChunk,
@@ -12,13 +13,29 @@ import {
   type CloudAgentStreamState,
 } from '@/utils/cloudAgentStreamParser';
 
+function notifyCloudAgentFinished(session: CloudAgentSession): void {
+  const notify = window.nexus?.agentFinish?.notify;
+  if (!notify) {
+    return;
+  }
+
+  const projectId = session.projectId?.trim() || '';
+  if (!projectId) {
+    return;
+  }
+
+  void notify({
+    projectId,
+    paneId: session.id,
+    projectName: session.projectName.trim() || 'Projeto',
+  }).catch(() => undefined);
+}
+
 const ACTIVE_POLL_MS = 4000;
 const IDLE_POLL_MS = 30_000;
 const HIDDEN_POLL_MS = 120_000;
 
-async function fetchOpenAgentSessionBundles(
-  authenticated: boolean,
-): Promise<AgentSessionBundle[]> {
+async function fetchOpenAgentSessionBundles(authenticated: boolean): Promise<AgentSessionBundle[]> {
   if (authenticated && cloudSupabase) {
     return listOpenAgentSessionBundles(cloudSupabase, null, null, null, {
       excludeSources: ['desktop_pane'],
@@ -89,6 +106,12 @@ export function useCloudAgentSessionsSync(active: boolean): void {
 
           if (update.done) {
             setSessionStatus(sessionId, 'done');
+            const session = useCloudAgentSessionsStore
+              .getState()
+              .sessions.find((item) => item.id === sessionId);
+            if (session) {
+              notifyCloudAgentFinished(session);
+            }
             unsubscribeSession(sessionId);
           }
         }
@@ -99,6 +122,12 @@ export function useCloudAgentSessionsSync(active: boolean): void {
 
         if (type === 'completed' || type === 'agent.completed' || status === 'completed') {
           setSessionStatus(sessionId, 'done');
+          const session = useCloudAgentSessionsStore
+            .getState()
+            .sessions.find((item) => item.id === sessionId);
+          if (session) {
+            notifyCloudAgentFinished(session);
+          }
           unsubscribeSession(sessionId);
         }
 
@@ -145,8 +174,9 @@ export function useCloudAgentSessionsSync(active: boolean): void {
           return;
         }
 
-        const remoteBundles = bundles.filter(
-          (bundle) => bundle.session.source !== 'desktop_pane',
+        const remoteBundles = bundles.filter((bundle) => bundle.session.source !== 'desktop_pane');
+        const previousById = new Map(
+          useCloudAgentSessionsStore.getState().sessions.map((session) => [session.id, session]),
         );
         const hydrated = hydrateCloudAgentSessions(remoteBundles);
         const hydratedIds = new Set(hydrated.map((session) => session.id));
@@ -160,6 +190,11 @@ export function useCloudAgentSessionsSync(active: boolean): void {
         mergeSessions(hydrated);
 
         for (const session of hydrated) {
+          const previous = previousById.get(session.id);
+          if (previous?.status === 'running' && session.status !== 'running') {
+            notifyCloudAgentFinished(session);
+          }
+
           if (session.status === 'running') {
             hasRunning = true;
             subscribeRunningSession(session.id, session.commandId);
@@ -198,12 +233,5 @@ export function useCloudAgentSessionsSync(active: boolean): void {
         unsubscribeSession(sessionId);
       }
     };
-  }, [
-    active,
-    authenticated,
-    clearSessions,
-    mergeSessions,
-    patchRunningTurn,
-    setSessionStatus,
-  ]);
+  }, [active, authenticated, clearSessions, mergeSessions, patchRunningTurn, setSessionStatus]);
 }

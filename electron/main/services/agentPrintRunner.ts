@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { BrowserWindow } from 'electron';
+import { applyDevBrowserEnv } from './ptyManager';
 import { buildCliPathEnv } from '../utils/cliPathEnv';
 import { writeDebugSessionLog } from '../utils/debugSessionLog';
 import { killProcessTree } from '../utils/killProcessTree';
@@ -180,10 +181,13 @@ function buildCursorAgentArgs(options: AgentPrintRunOptions, resolvedCwd: string
     resolvedCwd,
   ];
   const resumeChatId = options.resumeChatId?.trim();
+  const canResume =
+    Boolean(resumeChatId) &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(resumeChatId);
 
-  if (resumeChatId) {
+  if (canResume && resumeChatId) {
     args.push('--resume', resumeChatId);
-  } else if (options.continueSession) {
+  } else if (options.continueSession && !resumeChatId) {
     args.push('--continue');
   }
 
@@ -218,9 +222,9 @@ function buildOpenCodeArgs(options: AgentPrintRunOptions, resolvedCwd: string): 
   const args = ['run', '--format', 'json', '--auto', '--thinking', '--dir', resolvedCwd];
   const resumeChatId = options.resumeChatId?.trim();
 
-  if (resumeChatId) {
+  if (resumeChatId?.startsWith('ses_')) {
     args.push('--session', resumeChatId);
-  } else if (options.continueSession) {
+  } else if (options.continueSession && !resumeChatId) {
     args.push('--continue');
   }
 
@@ -574,7 +578,12 @@ class AgentPrintRunner {
     const executable = resolveCliAgentExecutable(cliAgent);
     const child = spawnCliProcess(executable, args, {
       cwd: resolvedCwd,
-      env: { ...process.env, PATH: buildCliPathEnv() },
+      env: applyDevBrowserEnv({
+        ...Object.fromEntries(
+          Object.entries(process.env).filter((entry): entry is [string, string] => Boolean(entry[1])),
+        ),
+        PATH: buildCliPathEnv(),
+      }),
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
       windowsHide: true,
@@ -704,7 +713,9 @@ class AgentPrintRunner {
       const stderr = stderrBuffer.trim();
       const canRetryStaleSession =
         !stdoutSeen &&
-        /session not found|conversation not found|thread not found|unknown session/i.test(stderr) &&
+        /session not found|conversation not found|thread not found|unknown session|chat id must be a uuid|failed to claim persistent session|invalid (?:chat|session) id/i.test(
+          stderr,
+        ) &&
         Boolean(options.resumeChatId?.trim() || options.continueSession);
 
       if (canRetryStaleSession) {
@@ -815,14 +826,19 @@ class AgentPrintRunner {
     });
     // #endregion
 
-    this.signalChild(child, 'SIGTERM', preserveChildren);
+    if (preserveChildren) {
+      this.signalChild(child, 'SIGKILL', true);
+      return;
+    }
+
+    this.signalChild(child, 'SIGTERM', false);
 
     setTimeout(() => {
       if (child.exitCode !== null || child.signalCode !== null) {
         return;
       }
 
-      this.signalChild(child, 'SIGKILL', preserveChildren);
+      this.signalChild(child, 'SIGKILL', false);
     }, 400);
   }
 

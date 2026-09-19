@@ -6,6 +6,7 @@ import {
 } from '@/utils/agentNotificationSound';
 import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
 import { notifyDesktopAgentWebPush } from '@/utils/notifyDesktopAgentWebPush';
+import { useProjectStore } from '@/stores/useProjectStore';
 
 interface ProjectNotificationState {
   notifiedAgentPaneByProject: Record<string, string>;
@@ -45,9 +46,27 @@ export const useProjectNotificationStore = create<ProjectNotificationState>((set
       return;
     }
 
-    playAgentNotificationSound();
-    startAgentNotificationSoundLoop();
     notifyDesktopAgentWebPush(projectId, paneId);
+    const notify = window.nexus?.agentFinish?.notify;
+    if (notify) {
+      const project = useProjectStore.getState().projects.find((item) => item.id === projectId);
+      const projectName = project?.name?.trim() || 'Projeto';
+      void notify({ projectId, paneId, projectName })
+        .then((shown) => {
+          if (shown) {
+            return;
+          }
+          playAgentNotificationSound();
+          startAgentNotificationSoundLoop();
+        })
+        .catch(() => {
+          playAgentNotificationSound();
+          startAgentNotificationSoundLoop();
+        });
+    } else {
+      playAgentNotificationSound();
+      startAgentNotificationSoundLoop();
+    }
 
     set((state) => ({
       notifiedAgentPaneByProject: {

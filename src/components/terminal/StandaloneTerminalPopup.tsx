@@ -4,7 +4,9 @@ import { Terminal, X } from 'lucide-react';
 import { OVERLAY_MODAL_DURATION_MS, useAnimatedUnmount } from '@/hooks/useAnimatedUnmount';
 import { TerminalFooter } from '@/components/terminal/TerminalFooter';
 import { XTermView } from '@/components/terminal/XTermView';
+import { useTabActions } from '@/stores/useTabStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
+import { isLocalDevUrl } from '@/utils/browserSiteStatus';
 import { registerModalOpen } from '@/utils/overlayBlocking';
 import { parseCdCommandLine } from '@/utils/terminalCwd';
 import { registerTerminalHandle } from '@/utils/terminalHandleRegistry';
@@ -28,6 +30,7 @@ function StandaloneTerminalPopupComponent({
   onClose,
 }: StandaloneTerminalPopupProps) {
   const { phase, requestClose } = useAnimatedUnmount(onClose, OVERLAY_MODAL_DURATION_MS);
+  const { openBrowserTab } = useTabActions();
   const terminalHandleRef = useRef<XTermViewHandle | null>(null);
   const [homePath, setHomePath] = useState<string | null>(null);
   const [cwd, setCwd] = useState('');
@@ -131,9 +134,17 @@ function StandaloneTerminalPopupComponent({
     [cwd],
   );
 
-  const handleOpenLink = useCallback((url: string) => {
-    void window.nexus.tasks.openExternalUrl(url);
-  }, []);
+  const handleOpenLink = useCallback(
+    (url: string) => {
+      if (isLocalDevUrl(url)) {
+        void openBrowserTab(url);
+        return;
+      }
+
+      void window.nexus.tasks.openExternalUrl(url);
+    },
+    [openBrowserTab],
+  );
 
   return createPortal(
     <div className={`project-dialog-overlay overlay-backdrop--${phase}`} onMouseDown={requestClose}>

@@ -42,6 +42,7 @@ export interface WebAgentTerminal {
   exitCode: number | null;
   output: string;
   remoteSessionId: string | null;
+  commandSent: boolean;
 }
 
 export interface WebAgentSession {
@@ -111,7 +112,10 @@ interface WebState {
     agentId: string,
     terminalId: string,
     patch: Partial<
-      Pick<WebAgentTerminal, 'status' | 'exitCode' | 'output' | 'remoteSessionId' | 'title'>
+      Pick<
+        WebAgentTerminal,
+        'status' | 'exitCode' | 'output' | 'remoteSessionId' | 'title' | 'commandSent'
+      >
     >,
   ) => void;
   removeAgentTerminal: (agentId: string, terminalId: string) => void;
@@ -159,7 +163,10 @@ function mergeWebAgentSession(
     return {
       ...existing,
       commandId: existing.commandId || incoming.commandId,
-      cursorSessionId: existing.cursorSessionId ?? incoming.cursorSessionId,
+      cursorSessionId:
+        existing.agentCommand !== incoming.agentCommand
+          ? existing.cursorSessionId
+          : (existing.cursorSessionId ?? incoming.cursorSessionId),
       agentCommand: existing.agentCommand || incoming.agentCommand,
     };
   }
@@ -173,7 +180,10 @@ function mergeWebAgentSession(
     return {
       ...existing,
       commandId: existing.commandId || incoming.commandId,
-      cursorSessionId: existing.cursorSessionId ?? incoming.cursorSessionId,
+      cursorSessionId:
+        existing.agentCommand !== incoming.agentCommand
+          ? existing.cursorSessionId
+          : (existing.cursorSessionId ?? incoming.cursorSessionId),
       agentCommand: existing.agentCommand || incoming.agentCommand,
     };
   }
@@ -187,7 +197,10 @@ function mergeWebAgentSession(
       ...existing,
       status: incoming.status,
       commandId: existing.commandId || incoming.commandId,
-      cursorSessionId: existing.cursorSessionId ?? incoming.cursorSessionId,
+      cursorSessionId:
+        existing.agentCommand !== incoming.agentCommand
+          ? existing.cursorSessionId
+          : (existing.cursorSessionId ?? incoming.cursorSessionId),
       agentCommand: existing.agentCommand || incoming.agentCommand,
       turns: existing.turns.map((turn, index) =>
         index === existing.turns.length - 1
@@ -214,6 +227,10 @@ function mergeWebAgentSession(
     modelId: existing.modelId,
     modeId: existing.modeId,
     agentCommand: existing.agentCommand || incoming.agentCommand,
+    cursorSessionId:
+      existing.agentCommand !== incoming.agentCommand
+        ? existing.cursorSessionId
+        : (existing.cursorSessionId ?? incoming.cursorSessionId),
     terminals:
       existing.terminals.length >= incoming.terminals.length
         ? existing.terminals
@@ -313,8 +330,7 @@ export const useWebStore = create<WebState>((set) => ({
           ? {
               ...agent,
               agentCommand,
-              cursorSessionId:
-                agent.agentCommand === agentCommand ? agent.cursorSessionId : null,
+              cursorSessionId: agent.agentCommand === agentCommand ? agent.cursorSessionId : null,
             }
           : agent,
       ),

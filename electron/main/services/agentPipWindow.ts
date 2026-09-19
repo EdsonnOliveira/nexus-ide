@@ -28,7 +28,7 @@ function applyPipOverlay(window: BrowserWindow) {
   });
 }
 
-function isNexusInForeground() {
+export function isNexusInForeground() {
   try {
     const main = getMainWindow();
     if (!main || main.isDestroyed()) {

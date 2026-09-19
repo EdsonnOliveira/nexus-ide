@@ -14,6 +14,7 @@ import {
   positionDropdownBelowAnchor,
   useAnchoredDropdownMenu,
 } from '@/hooks/useAnchoredDropdownMenu';
+import { useTabActions } from '@/stores/useTabStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import {
   useAgentShellTerminalEntries,
@@ -21,6 +22,8 @@ import {
   type AgentShellTerminalEntry,
   type AgentShellTerminalStatus,
 } from '@/stores/useAgentShellTerminalStore';
+import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
+import { retryAgentShellCommandIfNeeded } from '@/utils/agentShellToolTerminal';
 import { registerModalOpen } from '@/utils/overlayBlocking';
 import { registerTerminalHandle } from '@/utils/terminalHandleRegistry';
 import type { TerminalCommandStatusEvent } from '@/utils/terminalStream';
@@ -96,6 +99,7 @@ function AgentShellTerminalPanelComponent({
   onClose,
 }: AgentShellTerminalPanelProps) {
   const updateEntry = useAgentShellTerminalStore((state) => state.updateEntry);
+  const { openBrowserTab } = useTabActions();
   const terminalHandleRef = useRef<XTermViewHandle | null>(null);
   const sawCommandStartRef = useRef(entry.status === 'running');
   const [cwd, setCwd] = useState(entry.cwd);
@@ -112,11 +116,9 @@ function AgentShellTerminalPanelComponent({
     (ptyId: string) => {
       updateEntry(agentPaneId, entry.paneId, {
         ptyId,
-        status: 'running',
       });
-      useTerminalSessionStore.getState().setLastCommand(entry.paneId, entry.command);
     },
-    [agentPaneId, entry.command, entry.paneId, updateEntry],
+    [agentPaneId, entry.paneId, updateEntry],
   );
 
   const handlePtyLost = useCallback(() => {
@@ -144,17 +146,26 @@ function AgentShellTerminalPanelComponent({
         .getEntries(agentPaneId)
         .find((item) => item.paneId === entry.paneId);
 
-      if (current && !isLiveShellStatus(current.status)) {
+      if (!current || !isLiveShellStatus(current.status)) {
         return;
       }
 
       if (event.type === 'start') {
+        if (!current.commandDispatched) {
+          return;
+        }
+
         sawCommandStartRef.current = true;
         updateEntry(agentPaneId, entry.paneId, { status: 'running' });
         return;
       }
 
-      if (!sawCommandStartRef.current) {
+      if (!current.commandDispatched || !sawCommandStartRef.current) {
+        return;
+      }
+
+      if (retryAgentShellCommandIfNeeded(agentPaneId, entry.paneId)) {
+        sawCommandStartRef.current = false;
         return;
       }
 
@@ -165,6 +176,13 @@ function AgentShellTerminalPanelComponent({
       });
     },
     [agentPaneId, entry.paneId, updateEntry],
+  );
+
+  const handleOpenLinkInBrowser = useCallback(
+    (url: string) => {
+      void openBrowserTab(url, findProjectIdByPaneId(agentPaneId));
+    },
+    [agentPaneId, openBrowserTab],
   );
 
   useEffect(() => {
@@ -257,8 +275,8 @@ function AgentShellTerminalPanelComponent({
             onPtyCreated={handlePtyCreated}
             onPtyLost={handlePtyLost}
             onCwdChange={setCwd}
-            onOpenLinkInBrowser={() => undefined}
-            restoreCommand={entry.status === 'starting' ? entry.command : null}
+            onOpenLinkInBrowser={handleOpenLinkInBrowser}
+            restoreCommand={entry.commandDispatched && !entry.ptyId ? entry.command : null}
             onCommandStatus={handleCommandStatus}
           />
         </div>

@@ -159,9 +159,9 @@ function buildAgentPromptArgs(
 
   if (base === 'opencode') {
     const args = ['run', '--format', 'json', '--auto', '--thinking', '--dir', options.cwd];
-    if (options.resumeChatId) {
+    if (options.resumeChatId?.startsWith('ses_')) {
       args.push('--session', options.resumeChatId);
-    } else if (options.continueSession) {
+    } else if (options.continueSession && !options.resumeChatId) {
       args.push('--continue');
     }
     if (model && model.toLowerCase() !== 'auto') {
@@ -250,9 +250,12 @@ function buildAgentPromptArgs(
     options.cwd,
   ];
 
-  if (options.resumeChatId) {
+  if (
+    options.resumeChatId &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(options.resumeChatId)
+  ) {
     args.push('--resume', options.resumeChatId);
-  } else if (options.continueSession) {
+  } else if (options.continueSession && !options.resumeChatId) {
     args.push('--continue');
   }
 
@@ -855,6 +858,7 @@ async function runAgentPrompt(
   deviceId: string,
 ): Promise<Record<string, unknown>> {
   const prompt = String(command.payload?.prompt ?? '');
+  const cliPrompt = String(command.payload?.agent_prompt ?? prompt);
   const imageDataUrls = collectAgentPromptImageDataUrls(command.payload);
   const fileAttachments = collectAgentPromptFileAttachments(command.payload);
   const agentCommand = String(command.payload?.agent_command ?? 'cursor-agent');
@@ -944,7 +948,7 @@ async function runAgentPrompt(
   const fileRefs = projectRoot
     ? saveAgentPromptFileAttachments(projectRoot, session!.id, fileAttachments)
     : [];
-  const fullPrompt = [prompt, ...imageRefs, ...fileRefs].filter(Boolean).join(' ').trim();
+  const fullPrompt = [cliPrompt, ...imageRefs, ...fileRefs].filter(Boolean).join(' ').trim();
   const args = buildAgentPromptArgs(agentCommand, {
     cwd,
     fullPrompt,

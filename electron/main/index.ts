@@ -42,10 +42,7 @@ import { flushProjectStoreWrites } from './services/projectStore';
 import { registerGitHandlers } from './ipc/git';
 import { registerHomeDashboardHandlers } from './ipc/homeDashboard';
 import { registerMissionHandlers } from './ipc/missions';
-import {
-  startMissionAgentBridge,
-  stopMissionAgentBridge,
-} from './services/missionAgentBridge';
+import { startMissionAgentBridge, stopMissionAgentBridge } from './services/missionAgentBridge';
 import { registerMusicHandlers } from './ipc/music';
 import { registerMailHandlers } from './ipc/mail';
 import { registerCalendarHandlers } from './ipc/calendar';
@@ -65,6 +62,7 @@ import { registerAgentPrintHandlers } from './ipc/agentPrint';
 import { registerDebugSessionHandlers } from './ipc/debugSession';
 import { registerSystemStatusHandlers } from './ipc/systemStatus';
 import { registerSystemNotificationsHandlers } from './ipc/systemNotifications';
+import { registerAgentFinishNotificationHandlers } from './ipc/agentFinishNotification';
 import { registerCloudHandlers } from './ipc/cloud';
 import { registerCliSetupHandlers } from './ipc/cliSetup';
 import {
@@ -75,6 +73,7 @@ import {
 import { registerLocalFileProtocol, registerLocalFileScheme } from './protocol/localFiles';
 import { applyChromeUserAgentToWebContents } from './services/browserChromeUserAgent';
 import { attachBrowserWebviewContextMenu } from './services/browserWebviewContextMenu';
+import { startDevBrowserHook, stopDevBrowserHook } from './services/devBrowserHook';
 import { registerYouTubeSidebarWebviewSession } from './services/youtubeSidebarWebviewSession';
 import { ptyManager } from './services/ptyManager';
 import { agentPrintRunner } from './services/agentPrintRunner';
@@ -1256,9 +1255,13 @@ app.whenReady().then(() => {
   registerHomeDashboardHandlers();
   registerMissionHandlers();
   startMissionAgentBridge();
+  startDevBrowserHook((url, ptyId) => {
+    requestOpenBrowserTab(url, ptyId);
+  });
   registerMusicHandlers();
   registerSystemStatusHandlers();
   registerSystemNotificationsHandlers();
+  registerAgentFinishNotificationHandlers();
   registerMailHandlers();
   registerCalendarHandlers();
   registerMacParakeetHandlers();
@@ -1296,12 +1299,12 @@ app.whenReady().then(() => {
   });
 });
 
-function requestOpenBrowserTab(url: string): void {
+function requestOpenBrowserTab(url: string, ptyId?: string | null): void {
   if (!url.startsWith('https:') && !url.startsWith('http:')) {
     return;
   }
 
-  win?.webContents.send('browser:open-in-tab', url);
+  win?.webContents.send('browser:open-in-tab', { url, ptyId: ptyId ?? null });
 }
 
 function registerWebviewHandlers(): void {
@@ -1472,6 +1475,7 @@ app.on('will-quit', () => {
   stopManagedRuntime();
   stopDesktopControlServer();
   stopMissionAgentBridge();
+  stopDevBrowserHook();
   stopIdleWakeLock();
   void cleanupEmulatorSessions();
   destroyAgentPipWindow();

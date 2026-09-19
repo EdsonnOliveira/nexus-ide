@@ -162,9 +162,14 @@ class VercelCredentialStoreService {
     }
 
     const legacyToken = this.readLegacyToken();
+    const hasStoredSecrets =
+      stored.some((item) => Boolean(item.id?.trim() && item.token?.trim())) ||
+      Boolean(this.store.get('vercelAccessToken'));
 
     if (!legacyToken) {
-      this.decryptedCache = [];
+      if (!hasStoredSecrets) {
+        this.decryptedCache = [];
+      }
       return [];
     }
 

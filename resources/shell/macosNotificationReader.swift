@@ -457,6 +457,12 @@ struct NexusNotificationHelperMain {
         let outputPath = rawArgs.first
         let action = rawArgs.count >= 2 ? rawArgs[1] : "list"
 
+        if action == "post-agent-finish" {
+            let name = rawArgs.count >= 3 ? rawArgs[2] : "Projeto"
+            runAgentFinishNotifier(projectName: name, outputPath: outputPath)
+            exit(0)
+        }
+
         if handleMailHelperAction(action: action, rawArgs: rawArgs, outputPath: outputPath) {
             exit(0)
         }

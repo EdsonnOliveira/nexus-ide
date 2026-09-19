@@ -484,6 +484,42 @@ export function sanitizeAgentCliError(text: string): string {
   return cleanAgentPtyChunk(text).replace(/\s+/g, ' ').trim();
 }
 
+const UUID_CHAT_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isResumeChatIdCompatibleWithCli(cliAgent: string, resumeChatId: string): boolean {
+  const id = resumeChatId.trim();
+
+  if (!id) {
+    return false;
+  }
+
+  const base = extractCliAgentCommand(cliAgent.trim() || 'cursor-agent') ?? cliAgent.trim().split(/\s+/)[0] ?? '';
+
+  if (base === 'opencode') {
+    return id.startsWith('ses_');
+  }
+
+  if (base === 'cursor-agent' || base === 'cursor') {
+    return UUID_CHAT_ID.test(id);
+  }
+
+  return !id.startsWith('ses_');
+}
+
+export function resolveCompatibleResumeChatId(
+  cliAgent: string,
+  resumeChatId: string | null | undefined,
+): string | null {
+  const trimmed = resumeChatId?.trim() ?? '';
+
+  if (!trimmed || !isResumeChatIdCompatibleWithCli(cliAgent, trimmed)) {
+    return null;
+  }
+
+  return trimmed;
+}
+
 export function isStaleAgentSessionError(text: string): boolean {
   const cleaned = sanitizeAgentCliError(text);
 
@@ -492,7 +528,10 @@ export function isStaleAgentSessionError(text: string): boolean {
     /conversation not found/i.test(cleaned) ||
     /thread not found/i.test(cleaned) ||
     /unknown session/i.test(cleaned) ||
-    /no (?:valid )?session/i.test(cleaned)
+    /no (?:valid )?session/i.test(cleaned) ||
+    /chat id must be a uuid/i.test(cleaned) ||
+    /failed to claim persistent session/i.test(cleaned) ||
+    /invalid (?:chat|session) id/i.test(cleaned)
   );
 }
 

@@ -42,7 +42,12 @@ import {
   getAgentModeOption,
   type AutomationAgentMode,
 } from '@/constants/agentModes';
-import { ASK_AI_PROVIDER_OPTIONS, type AiProviderId } from '@/constants/aiProviders';
+import {
+  ASK_AI_PROVIDER_OPTIONS,
+  resolveAiProviderForPromptAttachments,
+  type AiProviderId,
+  visibleAskAiProviderOptions,
+} from '@/constants/aiProviders';
 import { useAppSettingsStore } from '@/stores/useAppSettingsStore';
 import {
   positionDropdownAboveAnchor,
@@ -63,6 +68,7 @@ import {
   buildAgentPromptImageMention,
   buildAgentPromptImageMentionInsertion,
   getAgentPromptImageBadgeColor,
+  hasAgentPromptAttachments,
 } from '@/utils/agentPromptImageBadge';
 import { readDroppedImageDataUrls, readImagePathAsDataUrl } from '@/utils/attachAgentPromptImage';
 import { cycleAgentMode } from '@/utils/cycleAgentMode';
@@ -357,6 +363,11 @@ function AskAiProviderMenuPanelComponent({
   onClose,
   onSelect,
 }: Omit<AskAiProviderMenuProps, 'open'>) {
+  const enabledAiProviders = useAppSettingsStore((state) => state.enabledAiProviders);
+  const providerOptions = useMemo(
+    () => visibleAskAiProviderOptions(enabledAiProviders, value),
+    [enabledAiProviders, value],
+  );
   const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
     onClose,
     (menu) => {
@@ -403,7 +414,7 @@ function AskAiProviderMenuPanelComponent({
       role='menu'
       aria-label='IA deste agent'
     >
-      {ASK_AI_PROVIDER_OPTIONS.map((option) => {
+      {providerOptions.map((option) => {
         const isActive = option.id === value;
 
         return (
@@ -601,6 +612,8 @@ function HomeDashboardAskBarComponent({
 }: HomeDashboardAskBarProps) {
   const { addAgentTabForProject, updateAgentTab } = useTabActions();
   const preferredAiProvider = useAppSettingsStore((state) => state.preferredAiProvider);
+  const enabledAiProviders = useAppSettingsStore((state) => state.enabledAiProviders);
+  const noAttachmentAiProvider = useAppSettingsStore((state) => state.noAttachmentAiProvider);
   const storeProjects = useProjectStore((state) => state.projects);
   const workspaces = useProjectStore((state) => state.workspaces);
   const selectableProjects = useMemo(() => {
@@ -641,9 +654,17 @@ function HomeDashboardAskBarComponent({
   const [attachAnchorRect, setAttachAnchorRect] = useState<DOMRect | null>(null);
   const [aiProviderMenuOpen, setAiProviderMenuOpen] = useState(false);
   const [aiProviderAnchorRect, setAiProviderAnchorRect] = useState<DOMRect | null>(null);
-  const [aiProvider, setAiProvider] = useState<Exclude<AiProviderId, 'nexus'>>(
-    () => useAppSettingsStore.getState().preferredAiProvider,
-  );
+  const [aiProvider, setAiProvider] = useState<Exclude<AiProviderId, 'nexus'>>(() => {
+    const settings = useAppSettingsStore.getState();
+    return (
+      resolveAiProviderForPromptAttachments({
+        hasAttachments: false,
+        preferredAiProvider: settings.preferredAiProvider,
+        noAttachmentAiProvider: settings.noAttachmentAiProvider,
+        enabledAiProviders: settings.enabledAiProviders,
+      }) ?? settings.preferredAiProvider
+    );
+  });
   const [mentionAnchorRect, setMentionAnchorRect] = useState<DOMRect | null>(null);
   const [dropActive, setDropActive] = useState(false);
   const [skillHints, setSkillHints] = useState<TerminalCommandHint[]>(EMPTY_SKILL_HINTS);
@@ -783,8 +804,49 @@ function HomeDashboardAskBarComponent({
       return;
     }
 
+    if (!enabledAiProviders.includes(skillAiProvider)) {
+      return;
+    }
+
     setAiProvider(skillAiProvider);
-  }, [aiProvider, prompt, skillHints]);
+  }, [aiProvider, enabledAiProviders, prompt, skillHints]);
+
+  useEffect(() => {
+    const skillAiProvider = resolvePromptSkillAiProvider(prompt, skillHints);
+
+    if (skillAiProvider) {
+      return;
+    }
+
+    const nextProvider = resolveAiProviderForPromptAttachments({
+      hasAttachments: hasAgentPromptAttachments(prompt, pendingImages.length),
+      preferredAiProvider,
+      noAttachmentAiProvider,
+      enabledAiProviders,
+    });
+
+    if (!nextProvider || nextProvider === aiProvider) {
+      return;
+    }
+
+    setAiProvider(nextProvider);
+  }, [
+    aiProvider,
+    enabledAiProviders,
+    noAttachmentAiProvider,
+    pendingImages.length,
+    preferredAiProvider,
+    prompt,
+    skillHints,
+  ]);
+
+  useEffect(() => {
+    if (enabledAiProviders.includes(aiProvider)) {
+      return;
+    }
+
+    setAiProvider(preferredAiProvider);
+  }, [aiProvider, enabledAiProviders, preferredAiProvider]);
 
   useEffect(() => {
     if (!mention.isOpen) {
@@ -1046,7 +1108,13 @@ function HomeDashboardAskBarComponent({
     };
     const nextPrompt = trimmed;
     const skillAiProvider = resolvePromptSkillAiProvider(nextPrompt, skillHints);
-    const launchAiProvider = skillAiProvider ?? aiProvider;
+    const attachmentAiProvider = resolveAiProviderForPromptAttachments({
+      hasAttachments: hasAgentPromptAttachments(nextPrompt, pendingImages.length),
+      preferredAiProvider,
+      noAttachmentAiProvider,
+      enabledAiProviders,
+    });
+    const launchAiProvider = skillAiProvider ?? attachmentAiProvider ?? aiProvider;
 
     if (skillAiProvider && skillAiProvider !== aiProvider) {
       setAiProvider(skillAiProvider);
@@ -1116,6 +1184,9 @@ function HomeDashboardAskBarComponent({
     agentMode,
     aiProvider,
     caretIndex,
+    enabledAiProviders,
+    noAttachmentAiProvider,
+    preferredAiProvider,
     onAgentOpened,
     onPromptFlightCancel,
     onPromptFlightLand,
