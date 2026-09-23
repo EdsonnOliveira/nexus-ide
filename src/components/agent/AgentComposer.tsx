@@ -432,12 +432,18 @@ function AgentComposerComponent({
     (state) => state.activeAgentModeByPane[paneId] ?? 'agent',
   );
   const activeModeOption = getAgentModeOption(activeMode);
+  const liveCliAgent = useTerminalSessionStore((state) => state.activeAgentByPane[paneId]);
+  const currentAiProvider = useMemo(
+    () => cliAgentToAiProvider(liveCliAgent?.trim() || cliAgent || ''),
+    [cliAgent, liveCliAgent],
+  );
+  const showCursorUsage = isVisible && currentAiProvider === 'cursor';
   const modelHints = useAgentModelHints(paneId, projectPath, isVisible, cliAgent);
   const {
     usage: cursorUsage,
     isLoading: cursorUsageLoading,
     refresh: refreshCursorUsage,
-  } = useCursorUsage(isVisible);
+  } = useCursorUsage(showCursorUsage);
 
   useEffect(() => {
     if (!isVisible) {
@@ -472,14 +478,12 @@ function AgentComposerComponent({
       return;
     }
 
-    const currentProvider = cliAgentToAiProvider(cliAgent ?? '');
-
-    if (skillAiProvider === currentProvider) {
+    if (skillAiProvider === currentAiProvider) {
       return;
     }
 
     onRunCommand(formatAgentAiProviderCommand(skillAiProvider));
-  }, [cliAgent, draft, isBusy, isEditing, isSubmitting, onRunCommand, skillHints]);
+  }, [currentAiProvider, draft, isBusy, isEditing, isSubmitting, onRunCommand, skillHints]);
 
   useEffect(() => {
     if (isBusy || isSubmitting || isEditing) {
@@ -491,19 +495,23 @@ function AgentComposerComponent({
     }
 
     const hasAttachments = hasAgentPromptAttachments(draft, images.length);
+    const settings = useAppSettingsStore.getState();
+    const currentProvider = cliAgentToAiProvider(cliAgent ?? '');
 
-    if (!hasAttachments) {
+    if (
+      !hasAttachments ||
+      !settings.noAttachmentAiProvider ||
+      currentProvider !== settings.noAttachmentAiProvider
+    ) {
       return;
     }
 
-    const settings = useAppSettingsStore.getState();
     const nextProvider = resolveAiProviderForPromptAttachments({
       hasAttachments: true,
       preferredAiProvider: settings.preferredAiProvider,
       noAttachmentAiProvider: settings.noAttachmentAiProvider,
       enabledAiProviders: settings.enabledAiProviders,
     });
-    const currentProvider = cliAgentToAiProvider(cliAgent ?? '');
 
     if (!nextProvider || nextProvider === currentProvider) {
       return;
@@ -914,7 +922,7 @@ function AgentComposerComponent({
     inputRef.current?.focus();
   }, [inputRef, onRunCommand]);
 
-  const canStop = isBusy && !draft.trim();
+  const canStop = isBusy && !draft.trim() && images.length === 0;
   const hasDraft = Boolean(draft.trim()) || images.length > 0;
   const canSend = hasDraft && !canStop && !interactionPending;
   const isActionDisabled = !canStop && !canSend;
@@ -1074,9 +1082,17 @@ function AgentComposerComponent({
 
   const handleModeChange = useCallback(
     (mode: typeof activeMode) => {
+      if (mode !== 'agent') {
+        const preferredAiProvider = useAppSettingsStore.getState().preferredAiProvider;
+
+        if (preferredAiProvider !== currentAiProvider) {
+          onRunCommand(formatAgentAiProviderCommand(preferredAiProvider));
+        }
+      }
+
       onRunCommand(`/${mode}\n`);
     },
-    [onRunCommand],
+    [currentAiProvider, onRunCommand],
   );
 
   const { handleStopOrSubmit } = useAgentComposerShortcuts({
@@ -1162,7 +1178,7 @@ function AgentComposerComponent({
       }
 
       if (event.key === 'Enter' && !event.shiftKey) {
-        if (event.nativeEvent.isComposing) {
+        if (event.nativeEvent.isComposing || event.repeat) {
           return;
         }
 
@@ -1197,8 +1213,18 @@ function AgentComposerComponent({
       const body = skillDraft.hasSkill ? skillDraft.body : draft;
       const trimmedBody = body.trimStart();
       const nextValue = trimmedBody ? `${skillCommand} ${trimmedBody}` : `${skillCommand} `;
+      const preferredAiProvider = useAppSettingsStore.getState().preferredAiProvider;
 
       onDraftChange(nextValue);
+
+      if (
+        !isBusy &&
+        !isSubmitting &&
+        !isEditing &&
+        preferredAiProvider !== currentAiProvider
+      ) {
+        onRunCommand(formatAgentAiProviderCommand(preferredAiProvider));
+      }
 
       window.requestAnimationFrame(() => {
         const textarea = inputRef.current;
@@ -1216,7 +1242,19 @@ function AgentComposerComponent({
         resizeComposerInput(textarea);
       });
     },
-    [draft, inputRef, onDraftChange, skillDraft.body, skillDraft.hasSkill, skillHints],
+    [
+      currentAiProvider,
+      draft,
+      inputRef,
+      isBusy,
+      isEditing,
+      isSubmitting,
+      onDraftChange,
+      onRunCommand,
+      skillDraft.body,
+      skillDraft.hasSkill,
+      skillHints,
+    ],
   );
 
   const handleDraftChange = useCallback(
@@ -1479,13 +1517,15 @@ function AgentComposerComponent({
                 onRunCommand={onRunCommand}
                 onRequestComposerFocus={() => inputRef.current?.focus({ preventScroll: true })}
               />
-              <AgentCursorUsageIndicator
-                usage={cursorUsage}
-                isLoading={cursorUsageLoading}
-                visible={isVisible}
-                onRefresh={() => void refreshCursorUsage(true)}
-                onRequestComposerFocus={() => inputRef.current?.focus({ preventScroll: true })}
-              />
+              {showCursorUsage ? (
+                <AgentCursorUsageIndicator
+                  usage={cursorUsage}
+                  isLoading={cursorUsageLoading}
+                  visible={showCursorUsage}
+                  onRefresh={() => void refreshCursorUsage(true)}
+                  onRequestComposerFocus={() => inputRef.current?.focus({ preventScroll: true })}
+                />
+              ) : null}
               {showWaitingStatus ? <AgentLiveStatus label={waitingLabel} /> : null}
             </div>
             <div className='agent-view__composer-bar-actions'>
@@ -1495,6 +1535,11 @@ function AgentComposerComponent({
                 aria-label={canStop ? 'Parar agent' : isEditing ? 'Salvar edição' : 'Enviar prompt'}
                 disabled={isActionDisabled}
                 onMouseDown={(event) => event.preventDefault()}
+                onKeyDown={(event) => {
+                  if (canStop && event.key === 'Enter') {
+                    event.preventDefault();
+                  }
+                }}
                 onClick={handleSubmit}
               >
                 {canStop ? (

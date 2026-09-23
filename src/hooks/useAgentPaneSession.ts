@@ -292,6 +292,7 @@ function resolvePaneAiProvider(paneId: string, tab: AgentTab): Exclude<AiProvide
 
 function resolveAttachmentAwareAiProvider(
   hasAttachments: boolean,
+  currentProvider: Exclude<AiProviderId, 'nexus'>,
   skillAiProvider?: Exclude<AiProviderId, 'nexus'> | null,
 ): Exclude<AiProviderId, 'nexus'> | null {
   if (skillAiProvider) {
@@ -299,8 +300,17 @@ function resolveAttachmentAwareAiProvider(
   }
 
   const settings = useAppSettingsStore.getState();
+
+  if (
+    !hasAttachments ||
+    !settings.noAttachmentAiProvider ||
+    currentProvider !== settings.noAttachmentAiProvider
+  ) {
+    return null;
+  }
+
   return resolveAiProviderForPromptAttachments({
-    hasAttachments,
+    hasAttachments: true,
     preferredAiProvider: settings.preferredAiProvider,
     noAttachmentAiProvider: settings.noAttachmentAiProvider,
     enabledAiProviders: settings.enabledAiProviders,
@@ -1077,7 +1087,9 @@ export function useAgentPaneSession({
           hasPendingAgentQuestion(finalizedActivities) || hasPendingAgentPlan(finalizedActivities);
 
         if (!hasFollowUps || requiresHumanAction) {
-          useTerminalSessionStore.getState().completeTaskIfAwaiting(paneId);
+          useTerminalSessionStore.getState().completeTaskIfAwaiting(paneId, {
+            gitNotify: !requiresHumanAction,
+          });
         } else {
           useTerminalSessionStore.getState().resetAgentWorkload(paneId);
         }
@@ -1203,7 +1215,9 @@ export function useAgentPaneSession({
         hasPendingAgentQuestion(finalizedActivities) || hasPendingAgentPlan(finalizedActivities);
 
       if (!hasFollowUps || requiresHumanAction) {
-        useTerminalSessionStore.getState().completeTaskIfAwaiting(paneId);
+        useTerminalSessionStore.getState().completeTaskIfAwaiting(paneId, {
+          gitNotify: !requiresHumanAction,
+        });
       } else {
         useTerminalSessionStore.getState().resetAgentWorkload(paneId);
       }
@@ -2183,17 +2197,20 @@ export function useAgentPaneSession({
       const commandLine = normalized.replace(/\n$/, '');
       const paneId = paneIdRef.current;
       const session = useTerminalSessionStore.getState();
+      const previousMode = session.activeAgentModeByPane[paneId] ?? 'agent';
       const aiProvider = commandLine ? parseAgentAiProviderCommand(commandLine) : null;
+      const modeCommand = commandLine ? parseAgentModeCommand(commandLine) : null;
 
-      if (aiProvider) {
-        const nextCli = preferredAiProviderToCli(aiProvider);
+      const switchToAiProvider = (provider: Exclude<AiProviderId, 'nexus'>) => {
+        const nextCli = preferredAiProviderToCli(provider);
         const currentCli = resolveLiveCliAgent(paneId, tab);
 
         if (sameCliAgent(currentCli, nextCli)) {
-          return true;
+          return;
         }
 
-        session.clearResumeChatId(paneId);
+        const liveSession = useTerminalSessionStore.getState();
+        liveSession.clearResumeChatId(paneId);
         cursorAgentContinueRef.current = false;
         streamJsonStateRef.current.sessionId = null;
         streamJsonRunCliRef.current = null;
@@ -2207,9 +2224,9 @@ export function useAgentPaneSession({
           turnsRef.current = nextTurns;
           persistTurns(nextTurns, { flush: true });
         }
-        session.setActiveAgent(paneId, nextCli);
+        liveSession.setActiveAgent(paneId, nextCli);
 
-        if (aiProvider === 'opencode') {
+        if (provider === 'opencode') {
           persistPaneAgentModel(paneId, DEFAULT_OPENCODE_MODEL);
         } else {
           useTerminalSessionStore.setState((state) => {
@@ -2232,11 +2249,18 @@ export function useAgentPaneSession({
         if (isStreamJsonAgentCli(nextCli)) {
           setIsAgentReady(true);
         } else {
-          session.setPendingLaunchCommand(paneId, nextCli);
+          liveSession.setPendingLaunchCommand(paneId, nextCli);
           setIsAgentReady(false);
         }
+      };
 
+      if (aiProvider) {
+        switchToAiProvider(aiProvider);
         return true;
+      }
+
+      if (modeCommand && modeCommand !== previousMode && modeCommand !== 'agent') {
+        switchToAiProvider(useAppSettingsStore.getState().preferredAiProvider);
       }
 
       if (commandLine) {
@@ -2842,6 +2866,7 @@ export function useAgentPaneSession({
       const skillAiProvider = resolvePromptSkillAiProvider(trimmed, skillHints);
       const targetAiProvider = resolveAttachmentAwareAiProvider(
         hasAgentPromptAttachments(trimmed, attachments.length),
+        resolvePaneAiProvider(paneIdRef.current, tab),
         skillAiProvider,
       );
       const hasRunningTurn = turnsRef.current.some((turn) => turn.running);
@@ -4013,7 +4038,13 @@ export function useAgentPaneSession({
         const activePaneId = paneIdRef.current;
 
         if (!turnsRef.current.some((turn) => turn.running)) {
-          useTerminalSessionStore.getState().completeTaskIfAwaiting(activePaneId);
+          const latestTurn = turnsRef.current[turnsRef.current.length - 1];
+          const gitNotify = !(
+            latestTurn &&
+            (hasPendingAgentPlan(latestTurn.activities) ||
+              hasPendingAgentQuestion(latestTurn.activities))
+          );
+          useTerminalSessionStore.getState().completeTaskIfAwaiting(activePaneId, { gitNotify });
           finishAgentPrintRun();
           return;
         }

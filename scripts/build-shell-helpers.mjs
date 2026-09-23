@@ -58,6 +58,8 @@ if (existsSync(notificationReaderSourcePath)) {
     'UserNotifications',
     '-framework',
     'AppKit',
+    '-framework',
+    'CoreGraphics',
   ];
 
   if (existsSync(agentFinishNotifierSourcePath)) {
@@ -77,10 +79,54 @@ if (existsSync(notificationReaderSourcePath)) {
     notificationHelperInfoPlistPath,
     path.join(notificationHelperAppPath, 'Contents/Info.plist'),
   );
+  copyNotificationHelperIcon(notificationHelperAppPath);
 
   try {
     execFileSync('codesign', ['--force', '-s', '-', notificationHelperAppPath]);
   } catch {
     // adhoc sign optional during build
+  }
+
+  try {
+    execFileSync(
+      '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister',
+      ['-f', notificationHelperAppPath],
+    );
+  } catch {
+    // Launch Services refresh is best-effort
+  }
+}
+
+function copyNotificationHelperIcon(helperAppPath) {
+  const resourcesDir = path.join(helperAppPath, 'Contents/Resources');
+  mkdirSync(resourcesDir, { recursive: true });
+
+  const icnsPath = path.join(rootDir, 'build/icon.icns');
+  const pngPath = path.join(rootDir, 'build/icon.png');
+  const assetsCarPath = path.join(rootDir, 'build/Assets.car');
+  const fallbackPng = path.join(rootDir, 'src/assets/nexus-logo-icon.png');
+
+  if (existsSync(assetsCarPath)) {
+    copyFileSync(assetsCarPath, path.join(resourcesDir, 'Assets.car'));
+  }
+
+  const iconComposerPath = path.join(rootDir, 'build/Nexus.icon');
+  if (existsSync(iconComposerPath)) {
+    const destIcon = path.join(resourcesDir, 'Nexus.icon');
+    execFileSync('rm', ['-rf', destIcon]);
+    execFileSync('cp', ['-R', iconComposerPath, destIcon]);
+  }
+
+  if (existsSync(icnsPath)) {
+    copyFileSync(icnsPath, path.join(resourcesDir, 'AppIcon.icns'));
+  }
+
+  if (existsSync(pngPath)) {
+    copyFileSync(pngPath, path.join(resourcesDir, 'AppIcon.png'));
+    return;
+  }
+
+  if (existsSync(fallbackPng)) {
+    copyFileSync(fallbackPng, path.join(resourcesDir, 'AppIcon.png'));
   }
 }

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,6 +19,19 @@ if (!existsSync(appPath)) {
 }
 
 run('xattr', ['-cr', appPath]);
+
+const assetsCarSrc = path.join(root, 'build/Assets.car');
+const assetsCarDest = path.join(appPath, 'Contents/Resources/Assets.car');
+if (existsSync(assetsCarSrc)) {
+  copyFileSync(assetsCarSrc, assetsCarDest);
+}
+
+const iconComposerSrc = path.join(root, 'build/Nexus.icon');
+const iconComposerDest = path.join(appPath, 'Contents/Resources/Nexus.icon');
+if (existsSync(iconComposerSrc)) {
+  execFileSync('rm', ['-rf', iconComposerDest]);
+  execFileSync('cp', ['-R', iconComposerSrc, iconComposerDest]);
+}
 
 const calendarHelperAppPath = path.join(appPath, 'Contents/Helpers/CalendarHelper.app');
 const notificationHelperAppPath = path.join(appPath, 'Contents/Helpers/NotificationHelper.app');

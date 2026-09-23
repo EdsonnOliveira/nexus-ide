@@ -4,17 +4,26 @@ import {
   startAgentNotificationSoundLoop,
   stopAgentNotificationSoundLoop,
 } from '@/utils/agentNotificationSound';
-import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
+import {
+  findAgentPaneLatestTurn,
+  findProjectIdByPaneId,
+  resolveAgentFinishProject,
+} from '@/utils/findProjectIdByPaneId';
 import { notifyDesktopAgentWebPush } from '@/utils/notifyDesktopAgentWebPush';
-import { useProjectStore } from '@/stores/useProjectStore';
+import { buildAgentPromptNotify, isAgentGitFinishPrompt } from '@/utils/agentPromptNotify';
 
 interface ProjectNotificationState {
   notifiedAgentPaneByProject: Record<string, string>;
   notifiedAtByProject: Record<string, number>;
-  markProjectReady: (projectId: string, paneId: string) => void;
+  markProjectReady: (projectId: string, paneId: string, options?: { gitNotify?: boolean }) => void;
   restoreProjectNotification: (projectId: string, paneId: string) => void;
   clearProjectNotification: (projectId: string) => void;
   clearNotificationForPane: (paneId: string) => void;
+}
+
+function emitAgentReadyPing(): void {
+  playAgentNotificationSound();
+  startAgentNotificationSoundLoop();
 }
 
 function omitProjectNotification(
@@ -31,6 +40,8 @@ function omitProjectNotification(
     stopAgentNotificationSoundLoop();
   }
 
+  window.nexus?.agentFinish?.dismiss?.(projectId);
+
   return {
     notifiedAgentPaneByProject: nextPanes,
     notifiedAtByProject: nextAt,
@@ -40,42 +51,55 @@ function omitProjectNotification(
 export const useProjectNotificationStore = create<ProjectNotificationState>((set, get) => ({
   notifiedAgentPaneByProject: {},
   notifiedAtByProject: {},
-  markProjectReady: (projectId, paneId) => {
-    if (get().notifiedAgentPaneByProject[projectId] === paneId) {
+  markProjectReady: (projectId, paneId, options) => {
+    const resolved = resolveAgentFinishProject({ projectId, paneId });
+    const resolvedProjectId = resolved.projectId || projectId;
+
+    if (get().notifiedAgentPaneByProject[resolvedProjectId] === paneId) {
       startAgentNotificationSoundLoop();
       return;
     }
 
-    notifyDesktopAgentWebPush(projectId, paneId);
+    emitAgentReadyPing();
+
+    const latestTurn = findAgentPaneLatestTurn(paneId);
+    const prompt = buildAgentPromptNotify(latestTurn?.activities ?? []);
+    const allowGitNotify =
+      options?.gitNotify !== false && !prompt && !isAgentGitFinishPrompt(latestTurn?.user);
     const notify = window.nexus?.agentFinish?.notify;
-    if (notify) {
-      const project = useProjectStore.getState().projects.find((item) => item.id === projectId);
-      const projectName = project?.name?.trim() || 'Projeto';
-      void notify({ projectId, paneId, projectName })
-        .then((shown) => {
-          if (shown) {
-            return;
-          }
-          playAgentNotificationSound();
-          startAgentNotificationSoundLoop();
-        })
-        .catch(() => {
-          playAgentNotificationSound();
-          startAgentNotificationSoundLoop();
-        });
-    } else {
-      playAgentNotificationSound();
-      startAgentNotificationSoundLoop();
+
+    if (prompt && notify) {
+      void notify({
+        projectId: resolvedProjectId,
+        paneId,
+        projectName: resolved.projectName,
+        projectLogo: resolved.projectLogo,
+        kind: prompt.kind,
+        body: prompt.body,
+        activityId: prompt.activityId,
+        questionId: prompt.questionId,
+        actions: prompt.options,
+      }).catch(() => undefined);
+    } else if (allowGitNotify) {
+      notifyDesktopAgentWebPush(resolvedProjectId, paneId);
+      if (notify) {
+        void notify({
+          projectId: resolvedProjectId,
+          paneId,
+          projectName: resolved.projectName,
+          projectLogo: resolved.projectLogo,
+        }).catch(() => undefined);
+      }
     }
 
     set((state) => ({
       notifiedAgentPaneByProject: {
         ...state.notifiedAgentPaneByProject,
-        [projectId]: paneId,
+        [resolvedProjectId]: paneId,
       },
       notifiedAtByProject: {
         ...state.notifiedAtByProject,
-        [projectId]: Date.now(),
+        [resolvedProjectId]: Date.now(),
       },
     }));
   },

@@ -35,6 +35,7 @@ import { groupSearchHits, searchBrainDataset } from '@/components/brain/brainSea
 import type { BrainKnowledgeTabId, BrainSearchHit } from '@/components/brain/brainTypes';
 import { useBrainDataset } from '@/hooks/useBrainDataset';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { isComputerProject } from '@/utils/computerProject';
 import {
   isBrainManualEditableTab,
   type BrainManualEditableTabId,
@@ -130,10 +131,10 @@ const BrainSearchResults = memo(BrainSearchResultsComponent);
 function BrainViewComponent() {
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const projects = useProjectStore((state) => state.projects);
-  const project = useMemo(
-    () => projects.find((item) => item.id === activeProjectId) ?? null,
-    [activeProjectId, projects],
-  );
+  const project = useMemo(() => {
+    const active = projects.find((item) => item.id === activeProjectId) ?? null;
+    return isComputerProject(active) ? null : active;
+  }, [activeProjectId, projects]);
   const { dataset, loading, reload } = useBrainDataset(project);
 
   const [activeTab, setActiveTab] = useState<BrainKnowledgeTabId>('summary');

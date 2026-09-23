@@ -203,6 +203,8 @@ function buildNotificationReader() {
     'UserNotifications',
     '-framework',
     'AppKit',
+    '-framework',
+    'CoreGraphics',
   ];
 
   if (existsSync(agentFinishNotifierSourcePath)) {
@@ -223,11 +225,52 @@ function buildNotificationReader() {
     notificationHelperInfoPlistPath,
     path.join(notificationHelperAppPath, 'Contents/Info.plist'),
   );
+  copyNotificationHelperIcon();
 
   try {
     execFileSync('codesign', ['--force', '-s', '-', notificationHelperAppPath]);
   } catch (error) {
     console.warn('[patch-electron-branding] NotificationHelper codesign skipped:', error.message);
+  }
+
+  try {
+    execFileSync(
+      '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister',
+      ['-f', notificationHelperAppPath],
+    );
+  } catch {
+    // Launch Services refresh is best-effort
+  }
+}
+
+function copyNotificationHelperIcon() {
+  const resourcesDir = path.join(notificationHelperAppPath, 'Contents/Resources');
+  run('mkdir', ['-p', resourcesDir]);
+
+  const fallbackPng = path.join(rootDir, 'src/assets/nexus-logo-icon.png');
+
+  if (existsSync(assetsCarPath)) {
+    copyFileSync(assetsCarPath, path.join(resourcesDir, 'Assets.car'));
+  }
+
+  const iconComposerPath = path.join(rootDir, 'build/Nexus.icon');
+  if (existsSync(iconComposerPath)) {
+    const destIcon = path.join(resourcesDir, 'Nexus.icon');
+    spawnSync('rm', ['-rf', destIcon]);
+    spawnSync('cp', ['-R', iconComposerPath, destIcon]);
+  }
+
+  if (existsSync(builtIconPath)) {
+    copyFileSync(builtIconPath, path.join(resourcesDir, 'AppIcon.icns'));
+  }
+
+  if (existsSync(iconPngPath)) {
+    copyFileSync(iconPngPath, path.join(resourcesDir, 'AppIcon.png'));
+    return;
+  }
+
+  if (existsSync(fallbackPng)) {
+    copyFileSync(fallbackPng, path.join(resourcesDir, 'AppIcon.png'));
   }
 }
 
@@ -292,6 +335,13 @@ function patchNexusAppBundle() {
       'O Nexus IDE usa reconhecimento de fala para entender comandos do Jarvis.',
       nexusInfoPlistPath,
     ]);
+    execFileSync('plutil', [
+      '-replace',
+      'NSUserNotificationAlertStyle',
+      '-string',
+      'alert',
+      nexusInfoPlistPath,
+    ]);
   } catch (error) {
     console.error('[patch-electron-branding] Failed to patch Nexus.app Info.plist', error);
     process.exit(1);
@@ -303,6 +353,12 @@ function patchNexusAppBundle() {
 
   if (existsSync(assetsCarPath) && existsSync(path.dirname(nexusAssetsCarPath))) {
     copyFileSync(assetsCarPath, nexusAssetsCarPath);
+    const nexusIconComposerPath = path.join(path.dirname(nexusAssetsCarPath), 'Nexus.icon');
+    const iconComposerSrc = path.join(rootDir, 'build/Nexus.icon');
+    if (existsSync(iconComposerSrc)) {
+      spawnSync('rm', ['-rf', nexusIconComposerPath]);
+      spawnSync('cp', ['-R', iconComposerSrc, nexusIconComposerPath]);
+    }
     try {
       execFileSync('plutil', ['-replace', 'CFBundleIconName', '-string', dockName, nexusInfoPlistPath]);
     } catch (error) {

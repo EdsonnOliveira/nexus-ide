@@ -217,7 +217,18 @@ function stripAttachmentDataUrls(turn: AgentTurn): AgentTurn {
 }
 
 function stripPersistedAttachments(turns: AgentTurn[]): AgentTurn[] {
-  return turns.map(stripAttachmentDataUrls);
+  let changed = false;
+  const next = turns.map((turn) => {
+    const stripped = stripAttachmentDataUrls(turn);
+
+    if (stripped !== turn) {
+      changed = true;
+    }
+
+    return stripped;
+  });
+
+  return changed ? next : turns;
 }
 
 const trimResultCache = new WeakMap<AgentTurn[], AgentTurn[]>();
@@ -256,31 +267,47 @@ function enforceByteBudget(turns: AgentTurn[], maxBytes: number): AgentTurn[] {
   const trimmedTurn = trimTurnActivities(next[0]!, maxBytes);
 
   if (measureAgentTurnHistoryBytes([trimmedTurn]) > maxBytes) {
-    if (trimmedTurn.running) {
-      return [trimmedTurn];
+    if (trimmedTurn.running || trimmedTurn.activities.length === 0) {
+      return next.length === 1 && next[0] === trimmedTurn ? next : [trimmedTurn];
     }
 
     return [{ ...trimmedTurn, activities: [] }];
+  }
+
+  if (next.length === 1 && next[0] === trimmedTurn) {
+    return next;
   }
 
   return [trimmedTurn];
 }
 
 function computeTrimmedAgentTurnHistory(turns: AgentTurn[]): AgentTurn[] {
-  const compacted = turns.map(compactTurnFields);
-  const hasRunningTurn = compacted.some((turn) => turn.running);
+  let compactedChanged = false;
+  const compacted = turns.map((turn) => {
+    const next = compactTurnFields(turn);
 
-  if (hasRunningTurn && compacted.length <= MAX_AGENT_TURN_HISTORY_COUNT) {
-    return enforceByteBudget(stripPersistedAttachments(compacted), MAX_RUNNING_TURN_HISTORY_BYTES);
+    if (next !== turn) {
+      compactedChanged = true;
+    }
+
+    return next;
+  });
+  const compactedTurns = compactedChanged ? compacted : turns;
+  const hasRunningTurn = compactedTurns.some((turn) => turn.running);
+
+  if (hasRunningTurn && compactedTurns.length <= MAX_AGENT_TURN_HISTORY_COUNT) {
+    return enforceByteBudget(
+      stripPersistedAttachments(compactedTurns),
+      MAX_RUNNING_TURN_HISTORY_BYTES,
+    );
   }
 
-  const next = stripPersistedAttachments(
-    compacted.length > MAX_AGENT_TURN_HISTORY_COUNT
-      ? compacted.slice(-MAX_AGENT_TURN_HISTORY_COUNT)
-      : compacted,
-  );
+  const limitedTurns =
+    compactedTurns.length > MAX_AGENT_TURN_HISTORY_COUNT
+      ? compactedTurns.slice(-MAX_AGENT_TURN_HISTORY_COUNT)
+      : compactedTurns;
 
-  return enforceByteBudget(next, MAX_AGENT_TURN_HISTORY_BYTES);
+  return enforceByteBudget(stripPersistedAttachments(limitedTurns), MAX_AGENT_TURN_HISTORY_BYTES);
 }
 
 export function slimAgentTurnsForPip(turns: AgentTurn[]): AgentTurn[] {

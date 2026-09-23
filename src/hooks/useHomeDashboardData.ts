@@ -8,6 +8,7 @@ import { useProjectStore } from '@/stores/useProjectStore';
 import { getHomeProjectsSurfaceKey, isProjectSurfaceNotification } from '@/utils/homeDashboardAgents';
 import { classifyTaskStatus } from '@/utils/taskLabels';
 import { buildDefaultTaskFilters, filterProjectTasks } from '@/utils/taskFilters';
+import { listUserProjects } from '@/utils/computerProject';
 import { isLocalTaskCompleted } from '@/utils/taskJson';
 
 export const HOME_DASHBOARD_TASK_LIMIT = 12;
@@ -19,11 +20,13 @@ export interface HomeDashboardTaskEntry {
 }
 
 function filterVisibleProjects(projects: Project[], activeWorkspaceId: string | null): Project[] {
+  const userProjects = listUserProjects(projects);
+
   if (activeWorkspaceId === null) {
-    return projects;
+    return userProjects;
   }
 
-  return projects.filter((project) => project.workspaceId === activeWorkspaceId);
+  return userProjects.filter((project) => project.workspaceId === activeWorkspaceId);
 }
 
 function resolvePendingTasksForProject(project: Project): ProjectTask[] {

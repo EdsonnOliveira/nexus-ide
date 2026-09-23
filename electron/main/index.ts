@@ -137,6 +137,7 @@ app.setName(DOCK_APP_NAME);
 app.setPath('userData', path.join(app.getPath('appData'), 'nexus-ide'));
 app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('disk-cache-size', '268435456');
 
 function isBrokenPipeError(error: unknown): boolean {

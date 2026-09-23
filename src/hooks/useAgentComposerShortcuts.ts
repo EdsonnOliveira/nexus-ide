@@ -50,21 +50,8 @@ export function useAgentComposerShortcuts({
 
     if (followUpCount > 0) {
       onFlushNextFollowUp?.();
-      return;
     }
-
-    if (isBusy) {
-      onStop();
-    }
-  }, [
-    draft,
-    followUpCount,
-    hasPendingImages,
-    isBusy,
-    onFlushNextFollowUp,
-    onStop,
-    onSubmit,
-  ]);
+  }, [draft, followUpCount, hasPendingImages, onFlushNextFollowUp, onSubmit]);
 
   useEffect(() => {
     if (!isVisible) {
@@ -99,6 +86,10 @@ export function useAgentComposerShortcuts({
       }
 
       if (mod && event.key === 'Enter') {
+        if (event.repeat) {
+          return;
+        }
+
         event.preventDefault();
         onForceSubmit();
         return;

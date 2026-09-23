@@ -826,6 +826,18 @@ function isListContinuationLine(line: string): boolean {
   return true;
 }
 
+function findNextNonEmptyLine(lines: string[], index: number): string | null {
+  for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+    const candidate = lines[cursor]?.trim() ?? '';
+
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 function normalizeSectionTitle(line: string): string {
   return line.replace(/^\*\*(.+)\*\*$/, '$1').trim();
 }
@@ -1096,12 +1108,17 @@ function renderMarkdownBlocks(source: string, detectImplicitCode: boolean): stri
         break;
       }
 
-      if (isAgentSectionTitle(current, lines[index + 1]?.trim() || null)) {
+      if (isAgentSectionTitle(current, findNextNonEmptyLine(lines, index))) {
         break;
       }
 
       paragraphLines.push(applyInlineMarkdown(escapeHtml(current)));
       index += 1;
+    }
+
+    if (paragraphLines.length === 0) {
+      index += 1;
+      continue;
     }
 
     blocks.push(`<p>${paragraphLines.join('<br />')}</p>`);

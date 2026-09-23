@@ -83,6 +83,7 @@ interface XTermViewProps {
   cwd: string;
   agent: TerminalAgent;
   isAgentSession: boolean;
+  isolationKey?: string | null;
   onPtyCreated: (ptyId: string) => void;
   onPtyLost: () => void;
   onCwdChange: (cwd: string) => void;
@@ -97,7 +98,7 @@ const LAUNCH_COMMAND_DELAY_MS = 350;
 
 function isTerminalAtBottom(terminal: Terminal): boolean {
   const buffer = terminal.buffer.active;
-  return buffer.baseY + terminal.rows >= buffer.length;
+  return buffer.viewportY >= buffer.baseY;
 }
 
 function isLineEditRedraw(data: string): boolean {
@@ -124,6 +125,9 @@ function applyTerminalGeometry(
   if (disposedRef?.current || !terminal.element) {
     return;
   }
+
+  const prevCols = terminal.cols;
+  const prevRows = terminal.rows;
 
   try {
     fitAddon.fit();
@@ -153,7 +157,12 @@ function applyTerminalGeometry(
     return;
   }
 
-  if (ptyId && terminal.cols > 0 && terminal.rows > 0) {
+  if (
+    ptyId &&
+    terminal.cols > 0 &&
+    terminal.rows > 0 &&
+    (terminal.cols !== prevCols || terminal.rows !== prevRows)
+  ) {
     window.nexus.terminal.resize(ptyId, terminal.cols, terminal.rows);
   }
 }
@@ -180,7 +189,9 @@ function fitTerminal(
   }
 
   if (stickToBottom) {
-    terminal.scrollToBottom();
+    if (!isTerminalAtBottom(terminal)) {
+      terminal.scrollToBottom();
+    }
     stickToBottomRef.current = true;
   } else {
     stickToBottomRef.current = isTerminalAtBottom(terminal);
@@ -195,7 +206,9 @@ function writeTerminalOutput(
 ): void {
   terminal.write(data, () => {
     if (stickToBottomRef.current && !isLineEditRedraw(data)) {
-      terminal.scrollToBottom();
+      if (!isTerminalAtBottom(terminal)) {
+        terminal.scrollToBottom();
+      }
     } else if (!stickToBottomRef.current) {
       stickToBottomRef.current = isTerminalAtBottom(terminal);
     }
@@ -430,6 +443,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
     cwd,
     agent,
     isAgentSession,
+    isolationKey = null,
     onPtyCreated,
     onPtyLost,
     onCwdChange,
@@ -446,6 +460,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
   const fitAddonRef = useRef<FitAddon | null>(null);
   const ptyIdRef = useRef<string | null>(ptyId);
   const agentRef = useRef(agent);
+  const isolationKeyRef = useRef(isolationKey);
   const isAgentSessionRef = useRef(isAgentSession);
   const isFocusedRef = useRef(isFocused);
   const hintsKeyboardActiveRef = useRef(hintsKeyboardActive);
@@ -933,6 +948,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
 
   useEffect(() => {
     agentRef.current = agent;
+    isolationKeyRef.current = isolationKey;
     isFocusedRef.current = isFocused;
     hintsKeyboardActiveRef.current = hintsKeyboardActive;
     const terminal = terminalRef.current;
@@ -944,7 +960,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         applyTransparentViewport(containerRef.current);
       }
     }
-  }, [agent, hintsKeyboardActive, isFocused]);
+  }, [agent, hintsKeyboardActive, isolationKey, isFocused]);
 
   useEffect(() => {
     onPtyCreatedRef.current = onPtyCreated;
@@ -975,7 +991,12 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         useTerminalSessionStore.getState().takePendingLaunchCommand(paneIdRef.current) ??
         restoreCommandRef.current?.trim() ??
         null;
-      const createdPtyId = await window.nexus.terminal.create(cwdRef.current, agentRef.current);
+      const isolation = isolationKeyRef.current?.trim();
+      const createdPtyId = await window.nexus.terminal.create(
+        cwdRef.current,
+        agentRef.current,
+        isolation ? { isolationKey: isolation } : undefined,
+      );
       terminalExitedRef.current = false;
       ptyIdRef.current = createdPtyId;
       onPtyCreatedRef.current(createdPtyId);

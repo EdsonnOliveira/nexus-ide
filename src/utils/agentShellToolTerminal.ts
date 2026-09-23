@@ -267,6 +267,7 @@ function registerShellToolStarted(
 
   useAgentShellTerminalStore.getState().addEntry(agentPaneId, {
     paneId,
+    kind: 'tool',
     command: trimmed,
     title: buildShellToolTerminalTitle(trimmed),
     cwd: resolvedCwd,

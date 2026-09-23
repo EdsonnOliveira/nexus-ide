@@ -12,6 +12,7 @@ import { TaskFormModal } from '@/components/tasks/TaskFormModal';
 import { TaskProjectPickerModal } from '@/components/tasks/TaskProjectPickerModal';
 import { useHomeDashboardMacParakeet } from '@/hooks/useHomeDashboardMacParakeet';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { listUserProjects } from '@/utils/computerProject';
 import { useToastStore } from '@/stores/useToastStore';
 import type { MacParakeetTranscriptionDetail, MacParakeetTranscriptionItem } from '@/types';
 import type { ProjectTask } from '@/types/task';
@@ -73,11 +74,13 @@ function HomeDashboardMacParakeetCardComponent() {
   const [taskFormState, setTaskFormState] = useState<MacParakeetTaskFormState | null>(null);
 
   const visibleProjects = useMemo(() => {
+    const userProjects = listUserProjects(projects);
+
     if (activeWorkspaceId === null) {
-      return projects;
+      return userProjects;
     }
 
-    return projects.filter((project) => project.workspaceId === activeWorkspaceId);
+    return userProjects.filter((project) => project.workspaceId === activeWorkspaceId);
   }, [activeWorkspaceId, projects]);
 
   const createTaskDisabled = visibleProjects.length === 0;

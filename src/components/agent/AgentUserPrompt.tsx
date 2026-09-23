@@ -208,7 +208,13 @@ function AgentUserPromptComponent({
                   onClick={() => setPreviewUrl(attachment.dataUrl)}
                 >
                   <AgentPromptImageIndexBadge index={index + 1} />
-                  <img src={attachment.dataUrl} alt='' className='agent-view__attachment-thumb' />
+                  {attachment.dataUrl ? (
+                    <img
+                      src={attachment.dataUrl}
+                      alt=''
+                      className='agent-view__attachment-thumb'
+                    />
+                  ) : null}
                 </button>
               ))}
             </div>

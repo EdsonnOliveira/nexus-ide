@@ -1101,13 +1101,18 @@ export interface NexusAPI {
     setSidebarVideoLastLink: (link: string | null) => Promise<void>;
   };
   terminal: {
-    create: (cwd: string, agent: TerminalAgent) => Promise<string>;
+    create: (
+      cwd: string,
+      agent: TerminalAgent,
+      options?: { isolationKey?: string },
+    ) => Promise<string>;
     has: (ptyId: string) => Promise<boolean>;
     getScrollback: (ptyId: string) => Promise<string>;
     getScrollbackTail: (ptyId: string, maxBytes: number) => Promise<string>;
     write: (ptyId: string, data: string) => void;
     resize: (ptyId: string, cols: number, rows: number) => void;
     kill: (ptyId: string) => void;
+    removeAgentShellHome: (isolationKey: string) => Promise<void>;
     onData: (callback: (ptyId: string, data: string) => void) => () => void;
     onExit: (callback: (ptyId: string, code: number) => void) => () => void;
   };
@@ -1524,9 +1529,25 @@ export interface NexusAPI {
       projectId: string;
       paneId: string;
       projectName: string;
+      projectLogo?: string | null;
+      force?: boolean;
+      kind?: 'git' | 'plan' | 'question';
+      body?: string;
+      activityId?: string;
+      questionId?: string;
+      actions?: Array<{ id: string; label: string; primary?: boolean }>;
     }) => Promise<boolean>;
+    sendBannerAction: (action: string) => void;
+    dismiss: (projectId?: string) => void;
     onAction: (
-      callback: (payload: { action: 'git' | 'open'; projectId: string; paneId: string }) => void,
+      callback: (payload: {
+        action: string;
+        projectId: string;
+        paneId: string;
+        kind?: 'git' | 'plan' | 'question';
+        activityId?: string;
+        questionId?: string;
+      }) => void,
     ) => () => void;
   };
   systemStatus: {

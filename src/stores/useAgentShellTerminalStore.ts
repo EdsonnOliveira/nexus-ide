@@ -2,8 +2,11 @@ import { create } from 'zustand';
 
 export type AgentShellTerminalStatus = 'starting' | 'running' | 'completed' | 'failed';
 
+export type AgentShellTerminalKind = 'interactive' | 'tool';
+
 export interface AgentShellTerminalEntry {
   paneId: string;
+  kind: AgentShellTerminalKind;
   command: string;
   title: string;
   cwd: string;
@@ -34,6 +37,7 @@ interface AgentShellTerminalStoreState {
   addEntry: (agentPaneId: string, entry: AgentShellTerminalEntry) => void;
   updateEntry: (agentPaneId: string, paneId: string, patch: AgentShellTerminalEntryPatch) => void;
   removeEntry: (agentPaneId: string, paneId: string) => void;
+  clearEntries: (agentPaneId: string) => AgentShellTerminalEntry[];
   getEntries: (agentPaneId: string) => AgentShellTerminalEntry[];
 }
 
@@ -102,6 +106,22 @@ export const useAgentShellTerminalStore = create<AgentShellTerminalStoreState>((
 
       return { entriesByAgentPane };
     });
+  },
+
+  clearEntries: (agentPaneId) => {
+    const current = get().entriesByAgentPane[agentPaneId] ?? EMPTY_ENTRIES;
+
+    if (!current.length) {
+      return EMPTY_ENTRIES;
+    }
+
+    set((state) => {
+      const entriesByAgentPane = { ...state.entriesByAgentPane };
+      delete entriesByAgentPane[agentPaneId];
+      return { entriesByAgentPane };
+    });
+
+    return current;
   },
 
   getEntries: (agentPaneId) => get().entriesByAgentPane[agentPaneId] ?? EMPTY_ENTRIES,

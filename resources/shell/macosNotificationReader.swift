@@ -1,3 +1,5 @@
+import AppKit
+import CoreGraphics
 import Foundation
 import SQLite3
 
@@ -450,6 +452,97 @@ func readNotifications(limit: Int) -> NotificationSnapshot {
     return NotificationSnapshot(accessGranted: false, items: [])
 }
 
+struct FocusedWindowPayload: Codable {
+    let x: Double
+    let y: Double
+}
+
+private let skippedFocusedWindowOwners: Set<String> = [
+    "Electron",
+    "Nexus IDE",
+    "Nexus",
+    "Dock",
+    "Window Server",
+    "Control Center",
+    "Notification Center",
+    "NotificationHelper",
+    "Spotlight",
+    "Wallpaper",
+    "SystemUIServer",
+    "WindowManager",
+]
+
+func emitFocusedWindow(outputPath: String?) {
+    let options = CGWindowListOption(arrayLiteral: [.optionOnScreenOnly, .excludeDesktopElements])
+    guard let info = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+        let fallback = "{}"
+        if let outputPath {
+            try? fallback.write(toFile: outputPath, atomically: true, encoding: .utf8)
+        } else {
+            print(fallback)
+        }
+        return
+    }
+
+    func coversDisplay(width: Double, height: Double) -> Bool {
+        NSScreen.screens.contains { screen in
+            abs(screen.frame.width - width) <= 8 && abs(screen.frame.height - height) <= 48
+        }
+    }
+
+    func candidate(from window: [String: Any], allowFullscreen: Bool) -> FocusedWindowPayload? {
+        let layer = window[kCGWindowLayer as String] as? Int ?? 0
+        if layer != 0 {
+            return nil
+        }
+
+        let owner = window[kCGWindowOwnerName as String] as? String ?? ""
+        if skippedFocusedWindowOwners.contains(owner) {
+            return nil
+        }
+
+        let alpha = window[kCGWindowAlpha as String] as? Double ?? 1
+        if alpha < 0.1 {
+            return nil
+        }
+
+        guard let bounds = window[kCGWindowBounds as String] as? [String: Any] else {
+            return nil
+        }
+
+        let x = (bounds["X"] as? NSNumber)?.doubleValue ?? 0
+        let y = (bounds["Y"] as? NSNumber)?.doubleValue ?? 0
+        let width = (bounds["Width"] as? NSNumber)?.doubleValue ?? 0
+        let height = (bounds["Height"] as? NSNumber)?.doubleValue ?? 0
+        if width < 200 || height < 200 {
+            return nil
+        }
+
+        if !allowFullscreen && coversDisplay(width: width, height: height) {
+            return nil
+        }
+
+        return FocusedWindowPayload(x: x + width / 2, y: y + height / 2)
+    }
+
+    var payload = info.compactMap { candidate(from: $0, allowFullscreen: false) }.first
+    if payload == nil {
+        payload = info.compactMap { candidate(from: $0, allowFullscreen: true) }.first
+    }
+
+    let json: String
+    if let payload, let data = try? JSONEncoder().encode(payload), let encoded = String(data: data, encoding: .utf8) {
+        json = encoded
+    } else {
+        json = "{}"
+    }
+
+    if let outputPath, !outputPath.isEmpty {
+        try? json.write(toFile: outputPath, atomically: true, encoding: .utf8)
+    }
+    print(json)
+}
+
 @main
 struct NexusNotificationHelperMain {
     static func main() {
@@ -458,12 +551,71 @@ struct NexusNotificationHelperMain {
         let action = rawArgs.count >= 2 ? rawArgs[1] : "list"
 
         if action == "post-agent-finish" {
-            let name = rawArgs.count >= 3 ? rawArgs[2] : "Projeto"
-            runAgentFinishNotifier(projectName: name, outputPath: outputPath)
+            let env = ProcessInfo.processInfo.environment
+            let envName = env["NEXUS_AGENT_FINISH_PROJECT"] ?? ""
+            let envId = env["NEXUS_AGENT_FINISH_PROJECT_ID"] ?? ""
+            let envLogo = env["NEXUS_AGENT_FINISH_PROJECT_LOGO"] ?? ""
+            var name = rawArgs.count >= 3 ? rawArgs[2] : envName
+            var projectId = rawArgs.count >= 4 ? rawArgs[3] : envId
+            var projectLogo = envLogo
+            var body = ""
+            var actions: [AgentFinishActionSpec] = []
+
+            if name.hasPrefix("{"),
+               let data = name.data(using: .utf8),
+               let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            {
+                if let payloadName = payload["projectName"] as? String {
+                    name = payloadName
+                }
+                if let payloadId = payload["projectId"] as? String {
+                    projectId = payloadId
+                }
+                if let payloadLogo = payload["projectLogo"] as? String {
+                    projectLogo = payloadLogo
+                }
+                if let payloadBody = payload["body"] as? String {
+                    body = payloadBody
+                }
+                if let payloadActions = payload["actions"] as? [[String: Any]] {
+                    for item in payloadActions {
+                        guard let id = item["id"] as? String, !id.isEmpty else {
+                            continue
+                        }
+                        let label = (item["label"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let title = (label?.isEmpty == false) ? label! : id
+                        actions.append(AgentFinishActionSpec(id: id, title: title))
+                    }
+                }
+            }
+
+            if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                name = envName.isEmpty ? "Projeto" : envName
+            }
+            if projectId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                projectId = envId
+            }
+            if projectLogo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                projectLogo = envLogo
+            }
+
+            runAgentFinishNotifier(
+                projectName: name,
+                projectId: projectId,
+                projectLogoPath: projectLogo,
+                body: body,
+                actions: actions,
+                outputPath: outputPath
+            )
             exit(0)
         }
 
         if handleMailHelperAction(action: action, rawArgs: rawArgs, outputPath: outputPath) {
+            exit(0)
+        }
+
+        if action == "focused-window" {
+            emitFocusedWindow(outputPath: outputPath)
             exit(0)
         }
 

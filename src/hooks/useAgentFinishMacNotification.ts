@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useTabActions } from '@/stores/useTabStore';
-import { openAgentFinishPane, runAgentFinishGit } from '@/utils/runAgentFinishGit';
+import { runAgentFinishAction } from '@/utils/runAgentFinishGit';
 
 export function useAgentFinishMacNotification(): void {
   const { selectPane, addAgentTabForProject } = useTabActions();
@@ -11,17 +11,16 @@ export function useAgentFinishMacNotification(): void {
   addAgentTabForProjectRef.current = addAgentTabForProject;
 
   useEffect(() => {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      void Notification.requestPermission();
+    }
+
     if (!window.nexus?.agentFinish?.onAction) {
       return;
     }
 
     return window.nexus.agentFinish.onAction((payload) => {
-      if (payload.action === 'open') {
-        void openAgentFinishPane(payload.projectId, payload.paneId, selectPaneRef.current);
-        return;
-      }
-
-      void runAgentFinishGit(payload.projectId, payload.paneId, {
+      void runAgentFinishAction(payload, {
         selectPane: selectPaneRef.current,
         addAgentTabForProject: addAgentTabForProjectRef.current,
       });

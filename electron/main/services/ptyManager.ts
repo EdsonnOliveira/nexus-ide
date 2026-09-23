@@ -7,8 +7,13 @@ import { app } from 'electron';
 import type { BrowserWindow } from 'electron';
 import * as pty from 'node-pty';
 import type { TerminalAgent } from '../../types';
+import { applyAgentShellHomeEnv, ensureAgentShellHome } from './agentShellHome';
 import { getDevBrowserHookEnv } from './devBrowserHook';
 import { buildCliPathEnv } from '../utils/cliPathEnv';
+
+export interface TerminalCreateOptions {
+  isolationKey?: string;
+}
 
 interface PtySession {
   id: string;
@@ -232,7 +237,12 @@ export function applyDevBrowserEnv(
   return nextEnv;
 }
 
-function buildEnv(agent: TerminalAgent, shell: string, ptyId: string): Record<string, string> {
+function buildEnv(
+  agent: TerminalAgent,
+  shell: string,
+  ptyId: string,
+  options?: TerminalCreateOptions,
+): Record<string, string> {
   const env: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(process.env)) {
@@ -243,7 +253,7 @@ function buildEnv(agent: TerminalAgent, shell: string, ptyId: string): Record<st
     env[key] = value;
   }
 
-  const nextEnv: Record<string, string> = {
+  let nextEnv: Record<string, string> = {
     ...env,
     PATH: buildCliPathEnv(env.PATH),
     TERM: 'xterm-256color',
@@ -269,6 +279,13 @@ function buildEnv(agent: TerminalAgent, shell: string, ptyId: string): Record<st
 
   if (isBashShell(shell)) {
     nextEnv.NEXUS_SHELL_DIR = getShellResources();
+  }
+
+  const isolationKey = options?.isolationKey?.trim();
+
+  if (isolationKey) {
+    const agentHome = ensureAgentShellHome(isolationKey);
+    nextEnv = applyAgentShellHomeEnv(nextEnv, agentHome);
   }
 
   return applyDevBrowserEnv(nextEnv, ptyId);
@@ -372,7 +389,7 @@ class PtyManager {
     session.scrollback = session.scrollback.slice(session.scrollback.length - SCROLLBACK_LIMIT);
   }
 
-  create(cwd: string, agent: TerminalAgent = 'shell'): string {
+  create(cwd: string, agent: TerminalAgent = 'shell', options?: TerminalCreateOptions): string {
     const shell = resolveShell();
     const resolvedCwd = resolveCwd(cwd);
     const id = randomUUID();
@@ -380,7 +397,7 @@ class PtyManager {
     const terminal = pty.spawn(shell, buildShellArgs(shell), {
       name: 'xterm-256color',
       cwd: resolvedCwd,
-      env: buildEnv(agent, shell, id),
+      env: buildEnv(agent, shell, id, options),
       cols: 80,
       rows: 24,
     });

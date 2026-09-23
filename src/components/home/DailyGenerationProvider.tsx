@@ -7,6 +7,7 @@ import { useHomeDashboardDailySkill } from '@/hooks/useHomeDashboardDailySkill';
 import { fetchProjectGitFlatChanges } from '@/hooks/useProjectGitFlatChanges';
 import { useAgentGitChangeStore } from '@/stores/useAgentGitChangeStore';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { listUserProjects } from '@/utils/computerProject';
 import type { Project } from '@/types';
 import type { AgentGitChangeGroup } from '@/types/agentGit';
 import {
@@ -52,7 +53,8 @@ async function resolveDailyProjectContext(projectId: string): Promise<{
 }
 
 function DailyGenerationProviderComponent({ children }: { children: ReactNode }) {
-  const projects = useProjectStore((state) => state.projects);
+  const storedProjects = useProjectStore((state) => state.projects);
+  const projects = useMemo(() => listUserProjects(storedProjects), [storedProjects]);
   const {
     skillOptions,
     selectedSkillId,

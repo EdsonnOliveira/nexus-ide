@@ -17,7 +17,10 @@ import {
 } from '@/constants/aiProviders';
 import { useAppSettingsStore } from '@/stores/useAppSettingsStore';
 import { useToastStore } from '@/stores/useToastStore';
-import { stopAgentNotificationSoundLoop } from '@/utils/agentNotificationSound';
+import {
+  playAgentNotificationSound,
+  stopAgentNotificationSoundLoop,
+} from '@/utils/agentNotificationSound';
 import {
   stopCalendarEventAlertSound,
   stopCalendarEventUrgentSoundLoop,
@@ -127,11 +130,14 @@ function SettingsModalComponent({ onClose }: SettingsModalProps) {
     (enabled: boolean) => {
       setNotificationSoundEnabled(enabled);
 
-      if (!enabled) {
-        stopAgentNotificationSoundLoop();
-        stopCalendarEventAlertSound();
-        stopCalendarEventUrgentSoundLoop();
+      if (enabled) {
+        playAgentNotificationSound();
+        return;
       }
+
+      stopAgentNotificationSoundLoop();
+      stopCalendarEventAlertSound();
+      stopCalendarEventUrgentSoundLoop();
     },
     [setNotificationSoundEnabled],
   );

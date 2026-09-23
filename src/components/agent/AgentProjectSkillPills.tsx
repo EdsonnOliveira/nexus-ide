@@ -11,6 +11,7 @@ import { submitAgentPanePrompt } from '@/utils/agentPaneRegistry';
 import { buildAgentSkillPrompt } from '@/utils/agentCliSession';
 
 const MAX_PROJECT_AGENT_RESPONSE_SKILLS = 3;
+const EMPTY_AGENT_RESPONSE_SKILLS: ProjectAgentResponseSkill[] = [];
 
 interface AgentProjectSkillPillsProps {
   projectId: string;
@@ -98,7 +99,9 @@ function AgentProjectSkillPillsComponent({
 }: AgentProjectSkillPillsProps) {
   const updateProject = useProjectStore((state) => state.updateProject);
   const configuredSkills = useProjectStore(
-    (state) => state.projects.find((project) => project.id === projectId)?.agentResponseSkills ?? [],
+    (state) =>
+      state.projects.find((project) => project.id === projectId)?.agentResponseSkills ??
+      EMPTY_AGENT_RESPONSE_SKILLS,
   );
   const [skillHints, setSkillHints] = useState<TerminalCommandHint[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);

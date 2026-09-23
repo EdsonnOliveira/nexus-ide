@@ -4,6 +4,7 @@ import type { Unsubscribe } from '@nexus/protocol';
 import { cloudBridge, cloudSupabase } from '@/lib/nexusCloud';
 import { useCloudStore } from '@/stores/useCloudStore';
 import { useCloudAgentSessionsStore } from '@/stores/useCloudAgentSessionsStore';
+import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { hydrateCloudAgentSessions } from '@/utils/hydrateCloudAgentSessions';
 import type { CloudAgentSession } from '@/types/cloudAgent';
 import {
@@ -14,21 +15,12 @@ import {
 } from '@/utils/cloudAgentStreamParser';
 
 function notifyCloudAgentFinished(session: CloudAgentSession): void {
-  const notify = window.nexus?.agentFinish?.notify;
-  if (!notify) {
-    return;
-  }
-
   const projectId = session.projectId?.trim() || '';
   if (!projectId) {
     return;
   }
 
-  void notify({
-    projectId,
-    paneId: session.id,
-    projectName: session.projectName.trim() || 'Projeto',
-  }).catch(() => undefined);
+  useProjectNotificationStore.getState().markProjectReady(projectId, session.id);
 }
 
 const ACTIVE_POLL_MS = 4000;

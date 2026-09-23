@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { isComputerProject, listUserProjects } from '@/utils/computerProject';
 import { createBadgeColorIndex } from '@/utils/tabBadge';
 import {
   collectProjectPanes,
@@ -25,12 +26,15 @@ export function useRemoteEmulatorTabSync(): void {
     return window.nexus.emulator.onEnsureRemoteTab((payload) => {
       void (async () => {
         const state = useProjectStore.getState();
+        const userProjects = listUserProjects(state.projects);
+        const requestedProject = payload.localProjectId
+          ? state.projects.find((entry) => entry.id === payload.localProjectId)
+          : null;
+        const activeProject = state.projects.find((entry) => entry.id === state.activeProjectId);
         let project =
-          (payload.localProjectId
-            ? state.projects.find((entry) => entry.id === payload.localProjectId)
-            : null) ??
-          state.projects.find((entry) => entry.id === state.activeProjectId) ??
-          state.projects[0] ??
+          (requestedProject && !isComputerProject(requestedProject) ? requestedProject : null) ??
+          (activeProject && !isComputerProject(activeProject) ? activeProject : null) ??
+          userProjects[0] ??
           null;
 
         if (!project) {

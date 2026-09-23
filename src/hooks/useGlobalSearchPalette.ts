@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { listUserProjects } from '@/utils/computerProject';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
 import { useTabActions } from '@/stores/useTabStore';
@@ -69,7 +70,8 @@ function resolveNextActiveIndex(
 export function useGlobalSearchPalette() {
   const isOpen = useGlobalSearchStore((state) => state.isOpen);
   const close = useGlobalSearchStore((state) => state.close);
-  const projects = useProjectStore((state) => state.projects);
+  const storedProjects = useProjectStore((state) => state.projects);
+  const projects = useMemo(() => listUserProjects(storedProjects), [storedProjects]);
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const lastRestartCommands = useTerminalSessionStore((state) => state.lastRestartCommands);
   const tabActions = useTabActions();

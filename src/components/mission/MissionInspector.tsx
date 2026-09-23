@@ -60,6 +60,7 @@ import { getMissionAutomationCategoryLabel } from '@/constants/missionAutomation
 import { useAppSettingsStore } from '@/stores/useAppSettingsStore';
 import { useMissionStore } from '@/stores/useMissionStore';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { isComputerProject } from '@/utils/computerProject';
 import { useTabActions } from '@/stores/useTabStore';
 import {
   createMissionEdge,
@@ -991,11 +992,13 @@ function MissionInspectorComponent({
 
   const projectOptions = useMemo(
     () =>
-      projects.map((entry) => ({
-        value: entry.id,
-        label: entry.name,
-        icon: <MissionProjectThumb logo={entry.logo} icon={entry.icon} color={entry.color} />,
-      })),
+      projects
+        .filter((entry) => !isComputerProject(entry))
+        .map((entry) => ({
+          value: entry.id,
+          label: entry.name,
+          icon: <MissionProjectThumb logo={entry.logo} icon={entry.icon} color={entry.color} />,
+        })),
     [projects],
   );
 

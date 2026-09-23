@@ -3,6 +3,7 @@ import { useNexusReady } from '@/hooks/useNexusReady';
 import { useTabActions } from '@/stores/useTabStore';
 import { useJarvisStore } from '@/stores/useJarvisStore';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { listUserProjects } from '@/utils/computerProject';
 import { runJarvisIntent } from '@/utils/jarvis/runJarvisIntent';
 import {
   startJarvisMicCapture,
@@ -70,9 +71,8 @@ export function useJarvisController(): {
     let processTimer: number | undefined;
 
     try {
-      const projectNames = useProjectStore
-        .getState()
-        .projects.map((project) => project.name)
+      const projectNames = listUserProjects(useProjectStore.getState().projects)
+        .map((project) => project.name)
         .filter(Boolean);
 
       const result = await Promise.race([

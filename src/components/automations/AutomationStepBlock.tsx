@@ -11,6 +11,7 @@ import type { AutomationAgentMode, AutomationHttpMethod, AutomationStep } from '
 import { HTTP_METHODS } from '@/utils/apiCollectionUtils';
 import { getAutomationStepLabel } from '@/utils/automationLabels';
 import { getSuggestedProjectLocalDevUrl } from '@/utils/projectLocalDevUrl';
+import { listUserProjects } from '@/utils/computerProject';
 
 interface AutomationStepBlockProps {
   step: AutomationStep;
@@ -71,7 +72,8 @@ function AutomationStepBlockComponent({
 
     return state.projects.find((project) => project.id === activeId)?.path ?? null;
   });
-  const projects = useProjectStore((state) => state.projects);
+  const storedProjects = useProjectStore((state) => state.projects);
+  const projects = useMemo(() => listUserProjects(storedProjects), [storedProjects]);
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const activeWorkspaceId = useProjectStore((state) => state.activeWorkspaceId);
   const notifiedAgentPaneByProject = useProjectNotificationStore(

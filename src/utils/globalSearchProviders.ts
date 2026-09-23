@@ -17,6 +17,7 @@ import {
 } from '@/utils/tabGroups';
 import { resolveTabBadgeColor } from '@/utils/tabBadge';
 import { toProjectRelativePath } from '@/utils/explorerRelativePath';
+import { isComputerProject } from '@/utils/computerProject';
 import {
   DEFAULT_EXPLORER_SEARCH_OPTIONS,
   type ExplorerSearchLineMatch,
@@ -296,7 +297,9 @@ export function searchProjects(
   query: string,
   activeProjectId: string | null = null,
 ): GlobalSearchResult[] {
-  const filtered = projects.filter((project) => matchesQuery([project.name], query));
+  const filtered = projects.filter(
+    (project) => !isComputerProject(project) && matchesQuery([project.name], query),
+  );
 
   filtered.sort((left, right) => {
     if (left.id === activeProjectId) {
@@ -425,6 +428,9 @@ export async function searchGitChanges(
   project: Project,
   query: string,
 ): Promise<GlobalSearchResult[]> {
+  if (isComputerProject(project)) {
+    return [];
+  }
   const repos = await window.nexus.git.discoverRepos(project.path);
 
   if (repos.length === 0) {

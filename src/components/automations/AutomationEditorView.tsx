@@ -21,6 +21,7 @@ import {
 } from '@/types/automation';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { listUserProjects } from '@/utils/computerProject';
 import { isAutomationStepEmpty, serializeAutomationPrompt } from '@/utils/automationPrompt';
 import { getAutomationStepLabel } from '@/utils/automationLabels';
 import { canAddAutomationStep } from '@/utils/createDefaultAutomation';
@@ -137,7 +138,8 @@ function AutomationEditorViewComponent({
   const canvasRef = useRef<HTMLDivElement>(null);
   const scrollToBottomRef = useRef(false);
   const prevStepsLengthRef = useRef(draft.steps.length);
-  const projects = useProjectStore((state) => state.projects);
+  const storedProjects = useProjectStore((state) => state.projects);
+  const projects = useMemo(() => listUserProjects(storedProjects), [storedProjects]);
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const activeWorkspaceId = useProjectStore((state) => state.activeWorkspaceId);
   const notifiedAgentPaneByProject = useProjectNotificationStore(

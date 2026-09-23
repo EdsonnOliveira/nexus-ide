@@ -22,6 +22,7 @@ import {
   type AgentShellTerminalEntry,
   type AgentShellTerminalStatus,
 } from '@/stores/useAgentShellTerminalStore';
+import { ensureAgentInteractiveTerminal } from '@/utils/agentInteractiveTerminal';
 import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
 import { retryAgentShellCommandIfNeeded } from '@/utils/agentShellToolTerminal';
 import { registerModalOpen } from '@/utils/overlayBlocking';
@@ -69,7 +70,15 @@ function resolveShellStatusLabel(status: AgentShellTerminalStatus): string {
   return 'Parado';
 }
 
-function resolveDockCountLabel(runningCount: number, stoppedCount: number): string {
+function resolveDockCountLabel(
+  runningCount: number,
+  stoppedCount: number,
+  hasInteractiveOnly: boolean,
+): string {
+  if (hasInteractiveOnly && runningCount === 0 && stoppedCount === 0) {
+    return 'Abrir terminal';
+  }
+
   if (runningCount > 0 && stoppedCount === 0) {
     return runningCount === 1 ? '1 terminal rodando' : `${runningCount} terminais rodando`;
   }
@@ -114,8 +123,14 @@ function AgentShellTerminalPanelComponent({
 
   const handlePtyCreated = useCallback(
     (ptyId: string) => {
+      const current = useAgentShellTerminalStore
+        .getState()
+        .getEntries(agentPaneId)
+        .find((item) => item.paneId === entry.paneId);
+
       updateEntry(agentPaneId, entry.paneId, {
         ptyId,
+        ...(current?.kind === 'interactive' ? { status: 'running' as const } : {}),
       });
     },
     [agentPaneId, entry.paneId, updateEntry],
@@ -127,7 +142,20 @@ function AgentShellTerminalPanelComponent({
       .getEntries(agentPaneId)
       .find((item) => item.paneId === entry.paneId);
 
-    if (current && isLiveShellStatus(current.status)) {
+    if (!current) {
+      return;
+    }
+
+    if (current.kind === 'interactive') {
+      updateEntry(agentPaneId, entry.paneId, {
+        ptyId: null,
+        status: 'completed',
+        exitCode: null,
+      });
+      return;
+    }
+
+    if (isLiveShellStatus(current.status)) {
       updateEntry(agentPaneId, entry.paneId, {
         ptyId: null,
         status: 'failed',
@@ -240,7 +268,9 @@ function AgentShellTerminalPanelComponent({
           <div className='agent-shell-terminal-panel__header'>
             <div className='agent-shell-terminal-panel__heading'>
               <span className='agent-shell-terminal-panel__title'>{entry.title}</span>
-              <span className='agent-shell-terminal-panel__command'>{entry.command}</span>
+              {entry.command ? (
+                <span className='agent-shell-terminal-panel__command'>{entry.command}</span>
+              ) : null}
             </div>
             <div className='agent-shell-terminal-panel__actions'>
               <span
@@ -272,6 +302,7 @@ function AgentShellTerminalPanelComponent({
             cwd={cwd}
             agent='shell'
             isAgentSession={false}
+            isolationKey={agentPaneId}
             onPtyCreated={handlePtyCreated}
             onPtyLost={handlePtyLost}
             onCwdChange={setCwd}
@@ -456,6 +487,9 @@ function AgentShellTerminalDockComponent({
     [entries],
   );
   const stoppedCount = entries.length - runningCount;
+  const interactiveOnly =
+    entries.length === 0 ||
+    (entries.length === 1 && entries[0]?.kind === 'interactive');
 
   const closePanel = useCallback(() => {
     setOpenPaneId(null);
@@ -476,7 +510,18 @@ function AgentShellTerminalDockComponent({
     }
   }, [openPaneId, entries]);
 
+  const openInteractiveTerminal = useCallback(() => {
+    const paneId = ensureAgentInteractiveTerminal(agentPaneId, projectPath);
+    setPopupOpen(false);
+    setOpenPaneId((current) => (current === paneId ? null : paneId));
+  }, [agentPaneId, projectPath]);
+
   const handleOpenPopup = useCallback(() => {
+    if (entries.length === 0) {
+      openInteractiveTerminal();
+      return;
+    }
+
     if (entries.length === 1) {
       const paneId = entries[0].paneId;
       setPopupOpen(false);
@@ -490,7 +535,7 @@ function AgentShellTerminalDockComponent({
     }
     setAnchorRect(rect);
     setPopupOpen((current) => !current);
-  }, [entries]);
+  }, [entries, openInteractiveTerminal]);
 
   useEffect(() => {
     if (runningCount === 0) {
@@ -523,12 +568,9 @@ function AgentShellTerminalDockComponent({
     [agentPaneId, closePanel, disposePaneSession, openPaneId, removeEntry],
   );
 
-  if (entries.length === 0) {
-    return null;
-  }
-
-  const countLabel = resolveDockCountLabel(runningCount, stoppedCount);
+  const countLabel = resolveDockCountLabel(runningCount, stoppedCount, interactiveOnly);
   const isHeader = variant === 'header';
+  const singleEntry = entries.length === 1 ? entries[0] : null;
 
   return (
     <>
@@ -536,39 +578,54 @@ function AgentShellTerminalDockComponent({
         <button
           ref={buttonRef}
           type='button'
-          className={`home-dashboard__agent-card-terminal app-button app-button--enter${runningCount > 0 ? ' home-dashboard__agent-card-terminal--live' : ''}${entries.length === 1 ? ' home-dashboard__agent-card-terminal--chip' : ''}`}
+          className={`home-dashboard__agent-card-terminal app-button app-button--enter${runningCount > 0 ? ' home-dashboard__agent-card-terminal--live' : ''}${singleEntry ? ' home-dashboard__agent-card-terminal--chip' : ''}`}
           aria-label={countLabel}
           aria-expanded={popupOpen}
           onClick={handleOpenPopup}
         >
           <Terminal size={14} strokeWidth={2.25} aria-hidden='true' />
-          {entries.length === 1 ? (
+          {singleEntry ? (
             <>
-              <span className='home-dashboard__agent-card-terminal-title'>{entries[0].title}</span>
-              {isLiveShellStatus(entries[0].status) ? (
+              <span className='home-dashboard__agent-card-terminal-title'>{singleEntry.title}</span>
+              {isLiveShellStatus(singleEntry.status) && singleEntry.kind === 'tool' ? (
                 <span className='home-dashboard__agent-card-terminal-elapsed'>
-                  {formatElapsed(entries[0].startedAt, now)}
+                  {formatElapsed(singleEntry.startedAt, now)}
                 </span>
               ) : null}
             </>
-          ) : (
+          ) : entries.length > 1 ? (
             <span className='home-dashboard__agent-card-terminal-badge'>{entries.length}</span>
-          )}
+          ) : null}
         </button>
       ) : (
         <div className='agent-shell-terminal-dock app-button--enter'>
           <div className='agent-shell-terminal-dock__header'>{countLabel}</div>
           <div className='agent-shell-terminal-dock__list'>
-            {entries.map((entry) => (
-              <AgentShellTerminalDockItem
-                key={entry.paneId}
-                entry={entry}
-                elapsedLabel={formatElapsed(entry.startedAt, now)}
-                isOpen={openPaneId === entry.paneId}
-                onOpen={() => setOpenPaneId(entry.paneId)}
-                onDismiss={() => handleDismiss(entry)}
-              />
-            ))}
+            {entries.length === 0 ? (
+              <button
+                type='button'
+                className='agent-shell-terminal-dock__item-main app-button app-button--enter'
+                onClick={openInteractiveTerminal}
+              >
+                <Terminal
+                  size={14}
+                  strokeWidth={2.25}
+                  className='agent-shell-terminal-dock__item-icon'
+                />
+                <span className='agent-shell-terminal-dock__item-title'>Terminal</span>
+              </button>
+            ) : (
+              entries.map((entry) => (
+                <AgentShellTerminalDockItem
+                  key={entry.paneId}
+                  entry={entry}
+                  elapsedLabel={formatElapsed(entry.startedAt, now)}
+                  isOpen={openPaneId === entry.paneId}
+                  onOpen={() => setOpenPaneId(entry.paneId)}
+                  onDismiss={() => handleDismiss(entry)}
+                />
+              ))
+            )}
           </div>
         </div>
       )}

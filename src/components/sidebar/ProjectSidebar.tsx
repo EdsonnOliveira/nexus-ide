@@ -4,6 +4,7 @@ import { useProjectIndexShortcuts } from '@/hooks/useProjectIndexShortcuts';
 import { useStableLoadingMap } from '@/hooks/useStableLoadingMap';
 import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { listUserProjects } from '@/utils/computerProject';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
@@ -99,7 +100,8 @@ function isEditableKeyboardTarget(target: EventTarget | null): boolean {
 }
 
 function ProjectSidebarComponent() {
-  const projects = useProjectStore((state) => state.projects);
+  const storedProjects = useProjectStore((state) => state.projects);
+  const projects = useMemo(() => listUserProjects(storedProjects), [storedProjects]);
   const workspaces = useProjectStore((state) => state.workspaces);
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const selectingProjectId = useProjectStore((state) => state.selectingProjectId);

@@ -7,6 +7,7 @@ import { EmptyState } from '@/components/overlay/EmptyState';
 import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
 import { useMissionStore } from '@/stores/useMissionStore';
 import { useProjectStore } from '@/stores/useProjectStore';
+import { listUserProjects } from '@/utils/computerProject';
 import type { ContextCapsule, MissionSourceTaskRef } from '@/types/mission';
 import type { ProjectTask } from '@/types/task';
 import { classifyTaskStatus } from '@/utils/taskLabels';
@@ -144,7 +145,8 @@ function CreateMissionDialogComponent({
 }: CreateMissionDialogProps) {
   const createMission = useMissionStore((state) => state.createMission);
   const updateMission = useMissionStore((state) => state.updateMission);
-  const projects = useProjectStore((state) => state.projects);
+  const storedProjects = useProjectStore((state) => state.projects);
+  const projects = useMemo(() => listUserProjects(storedProjects), [storedProjects]);
 
   const [title, setTitle] = useState(initialTitle || 'Nova missão');
   const [description, setDescription] = useState('');

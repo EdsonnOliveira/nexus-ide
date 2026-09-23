@@ -121,11 +121,13 @@ function AgentFollowUpQueueComponent({ items, onEdit, onSendNow, onRemove }: Age
                       {item.attachments.map((attachment, index) => (
                         <div key={attachment.id} className='agent-view__follow-up-attachment-wrap'>
                           <AgentPromptImageIndexBadge index={index + 1} />
-                          <img
-                            src={attachment.dataUrl}
-                            alt=''
-                            className='agent-view__follow-up-attachment'
-                          />
+                          {attachment.dataUrl ? (
+                            <img
+                              src={attachment.dataUrl}
+                              alt=''
+                              className='agent-view__follow-up-attachment'
+                            />
+                          ) : null}
                         </div>
                       ))}
                     </div>

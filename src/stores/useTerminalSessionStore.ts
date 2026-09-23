@@ -5,8 +5,11 @@ import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import { parseAgentModeCommand } from '@/utils/parseAgentModeCommand';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useProjectStore } from '@/stores/useProjectStore';
-import { schedulePersistTerminalPane, persistTerminalCommand } from '@/utils/persistTerminalSession';
-import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
+import {
+  schedulePersistTerminalPane,
+  persistTerminalCommand,
+} from '@/utils/persistTerminalSession';
+import { findProjectIdByPaneId, resolveAgentFinishProject } from '@/utils/findProjectIdByPaneId';
 import { getTerminalHandle } from '@/utils/terminalHandleRegistry';
 import { resolvePaneAgentForGitTurn } from '@/utils/projectAgentStatus';
 import { resetAgentReadyDetectors } from '@/utils/terminalTaskCompletion';
@@ -41,7 +44,7 @@ interface TerminalSessionState {
   markAgentNotifyEligible: (paneId: string) => void;
   markAwaitingResponse: (paneId: string) => void;
   resetAgentWorkload: (paneId: string) => void;
-  completeTaskIfAwaiting: (paneId: string) => void;
+  completeTaskIfAwaiting: (paneId: string, options?: { gitNotify?: boolean }) => void;
   disposePaneSession: (paneId: string) => void;
   setPendingLaunchCommand: (paneId: string, command: string) => void;
   setPendingAgentSetup: (paneId: string, commands: string[]) => void;
@@ -214,7 +217,11 @@ export const useTerminalSessionStore = create<TerminalSessionState>((set, get) =
       return;
     }
 
-    if (state.awaitingResponseByPane[paneId] || state.agentBusyByPane[paneId] || state.agentNotifyEligibleByPane[paneId]) {
+    if (
+      state.awaitingResponseByPane[paneId] ||
+      state.agentBusyByPane[paneId] ||
+      state.agentNotifyEligibleByPane[paneId]
+    ) {
       return;
     }
 
@@ -271,7 +278,7 @@ export const useTerminalSessionStore = create<TerminalSessionState>((set, get) =
       agentBusyByPane: omitPaneRecord(state.agentBusyByPane, paneId),
     }));
   },
-  completeTaskIfAwaiting: (paneId) => {
+  completeTaskIfAwaiting: (paneId, options) => {
     const state = get();
     const shouldNotify = Boolean(state.awaitingResponseByPane[paneId]);
     const isEligible = Boolean(state.agentNotifyEligibleByPane[paneId]);
@@ -282,10 +289,15 @@ export const useTerminalSessionStore = create<TerminalSessionState>((set, get) =
     }
 
     if (shouldNotify) {
-      const projectId = findProjectIdByPaneId(paneId);
+      const resolved = resolveAgentFinishProject({
+        projectId: findProjectIdByPaneId(paneId) ?? '',
+        paneId,
+      });
 
-      if (projectId) {
-        useProjectNotificationStore.getState().markProjectReady(projectId, paneId);
+      if (resolved.projectId) {
+        useProjectNotificationStore
+          .getState()
+          .markProjectReady(resolved.projectId, paneId, options);
       }
     }
 

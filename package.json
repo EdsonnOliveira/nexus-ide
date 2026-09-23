@@ -1,6 +1,6 @@
 {
   "name": "nexus-ide",
-  "version": "1.0.66",
+  "version": "1.0.67",
   "private": true,
   "description": "Nexus IDE — AI-powered desktop IDE",
   "engines": {
@@ -146,7 +146,14 @@
         }
       ],
       "extraResources": [
-        "build/Assets.car",
+        {
+          "from": "build/Assets.car",
+          "to": "Assets.car"
+        },
+        {
+          "from": "build/Nexus.icon",
+          "to": "Nexus.icon"
+        },
         {
           "from": "dist-runtime",
           "to": "runtime"

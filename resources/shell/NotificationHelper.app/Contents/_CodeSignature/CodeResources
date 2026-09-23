@@ -3,9 +3,66 @@
 <plist version="1.0">
 <dict>
 	<key>files</key>
-	<dict/>
+	<dict>
+		<key>Resources/AppIcon.icns</key>
+		<data>
+		uKHGNJC3HWcNqsCfaJ10Q6eW/00=
+		</data>
+		<key>Resources/AppIcon.png</key>
+		<data>
+		s9SHtBY/AHPxy//5sd0hKg5z6KE=
+		</data>
+		<key>Resources/Assets.car</key>
+		<data>
+		6vsNfJAI+j2eCVCrOzHkGc5Yn6M=
+		</data>
+		<key>Resources/Nexus.icon/Assets/Background.png</key>
+		<data>
+		IzSB84GHsUlnQnAQuc6t155tNZM=
+		</data>
+		<key>Resources/Nexus.icon/icon.json</key>
+		<data>
+		4ehZcIIdZfa1mPlUh8vrcqD3fHc=
+		</data>
+	</dict>
 	<key>files2</key>
-	<dict/>
+	<dict>
+		<key>Resources/AppIcon.icns</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			/qT/8vY3uATCsRttixYH2v6N7BG2tftrQZnndfeujIk=
+			</data>
+		</dict>
+		<key>Resources/AppIcon.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			R3iDiAoTu+1FcZPX8T4MxQ9mlfIG02q0BrCK36ykEUE=
+			</data>
+		</dict>
+		<key>Resources/Assets.car</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			5/iYaUlkov45KzhZY8a40WYLjfJqbo7gsQeouyKYaVA=
+			</data>
+		</dict>
+		<key>Resources/Nexus.icon/Assets/Background.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			Fvi3h86vWtriPCqFnKTgNLDsf8Y7fI7eucnXo5+FuoM=
+			</data>
+		</dict>
+		<key>Resources/Nexus.icon/icon.json</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			zyAL1e3N5iSojC7afnGBl84jB++uc51uXQ8S7zuL4wk=
+			</data>
+		</dict>
+	</dict>
 	<key>rules</key>
 	<dict>
 		<key>^Resources/</key>

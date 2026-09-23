@@ -1,5 +1,6 @@
 import type { TerminalCommandHint } from '@/types';
-import { isSelectableAiProviderId, type AiProviderId } from '@/constants/aiProviders';
+import type { AiProviderId } from '@/constants/aiProviders';
+import { useAppSettingsStore } from '@/stores/useAppSettingsStore';
 import { isAgentSetupCommand } from '@/utils/parseAgentModeCommand';
 import { resolvePromptDisplayContent } from '@/utils/agentPromptAttachments';
 
@@ -90,18 +91,8 @@ function extractLeadingSkillToken(prompt: string): string {
   return normalizeSkillToken(match[1]);
 }
 
-function resolveHintSkillAiProvider(
-  hint: TerminalCommandHint | undefined,
-): Exclude<AiProviderId, 'nexus'> | null {
-  if (!hint || hint.hintKind !== 'skill') {
-    return null;
-  }
-
-  if (hint.skillAiProvider && isSelectableAiProviderId(hint.skillAiProvider)) {
-    return hint.skillAiProvider;
-  }
-
-  return 'cursor';
+function resolvePreferredSkillAiProvider(): Exclude<AiProviderId, 'nexus'> {
+  return useAppSettingsStore.getState().preferredAiProvider;
 }
 
 export function resolvePromptSkillAiProvider(
@@ -115,9 +106,12 @@ export function resolvePromptSkillAiProvider(
   }
 
   const parsed = parseComposerSkillDraft(trimmed, skillHints);
-  const skillToken = parsed.hasSkill
-    ? normalizeSkillToken(parsed.skillLabel)
-    : extractLeadingSkillToken(trimmed);
+
+  if (parsed.hasSkill) {
+    return resolvePreferredSkillAiProvider();
+  }
+
+  const skillToken = extractLeadingSkillToken(trimmed);
 
   if (!skillToken) {
     return null;
@@ -127,7 +121,11 @@ export function resolvePromptSkillAiProvider(
     (entry) => entry.hintKind === 'skill' && normalizeSkillToken(entry.label) === skillToken,
   );
 
-  return resolveHintSkillAiProvider(hint);
+  if (!hint) {
+    return null;
+  }
+
+  return resolvePreferredSkillAiProvider();
 }
 
 export function formatSkillChipLabel(value: string): string {

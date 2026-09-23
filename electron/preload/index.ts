@@ -50,8 +50,11 @@ const nexusApi = {
       ipcRenderer.invoke('projects:setSidebarVideoLastLink', link),
   },
   terminal: {
-    create: (cwd: string, agent: TerminalAgent): Promise<string> =>
-      ipcRenderer.invoke('terminal:create', cwd, agent),
+    create: (
+      cwd: string,
+      agent: TerminalAgent,
+      options?: { isolationKey?: string },
+    ): Promise<string> => ipcRenderer.invoke('terminal:create', cwd, agent, options),
     has: (ptyId: string): Promise<boolean> => ipcRenderer.invoke('terminal:has', ptyId),
     getScrollback: (ptyId: string): Promise<string> =>
       ipcRenderer.invoke('terminal:getScrollback', ptyId),
@@ -66,6 +69,8 @@ const nexusApi = {
     kill: (ptyId: string): void => {
       ipcRenderer.send('terminal:kill', ptyId);
     },
+    removeAgentShellHome: (isolationKey: string): Promise<void> =>
+      ipcRenderer.invoke('terminal:removeAgentShellHome', isolationKey),
     onData: (callback: (ptyId: string, data: string) => void): (() => void) => {
       const listener = (_: Electron.IpcRendererEvent, payload: { ptyId: string; data: string }) => {
         callback(payload.ptyId, payload.data);
@@ -398,24 +403,58 @@ const nexusApi = {
       projectId: string;
       paneId: string;
       projectName: string;
+      projectLogo?: string | null;
+      force?: boolean;
+      kind?: 'git' | 'plan' | 'question';
+      body?: string;
+      activityId?: string;
+      questionId?: string;
+      actions?: Array<{ id: string; label: string; primary?: boolean }>;
     }): Promise<boolean> => ipcRenderer.invoke('agentFinish:notify', payload),
+    sendBannerAction: (action: string): void => {
+      ipcRenderer.send('agentFinish:bannerAction', action);
+    },
+    dismiss: (projectId?: string): void => {
+      ipcRenderer.send('agentFinish:dismiss', projectId);
+    },
     onAction: (
-      callback: (payload: { action: 'git' | 'open'; projectId: string; paneId: string }) => void,
+      callback: (payload: {
+        action: string;
+        projectId: string;
+        paneId: string;
+        kind?: 'git' | 'plan' | 'question';
+        activityId?: string;
+        questionId?: string;
+      }) => void,
     ): (() => void) => {
       const listener = (
         _: Electron.IpcRendererEvent,
-        payload: { action?: unknown; projectId?: unknown; paneId?: unknown },
+        payload: {
+          action?: unknown;
+          projectId?: unknown;
+          paneId?: unknown;
+          kind?: unknown;
+          activityId?: unknown;
+          questionId?: unknown;
+        },
       ) => {
-        if (payload?.action !== 'git' && payload?.action !== 'open') {
+        if (typeof payload?.action !== 'string' || !payload.action.trim()) {
           return;
         }
         if (typeof payload.projectId !== 'string' || typeof payload.paneId !== 'string') {
           return;
         }
+        const kind =
+          payload.kind === 'git' || payload.kind === 'plan' || payload.kind === 'question'
+            ? payload.kind
+            : undefined;
         callback({
           action: payload.action,
           projectId: payload.projectId,
           paneId: payload.paneId,
+          kind,
+          activityId: typeof payload.activityId === 'string' ? payload.activityId : undefined,
+          questionId: typeof payload.questionId === 'string' ? payload.questionId : undefined,
         });
       };
 

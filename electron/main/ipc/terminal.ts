@@ -1,16 +1,20 @@
 import { ipcMain } from 'electron';
 import type { TerminalAgent } from '../../types';
-import { ptyManager } from '../services/ptyManager';
+import { removeAgentShellHome } from '../services/agentShellHome';
+import { ptyManager, type TerminalCreateOptions } from '../services/ptyManager';
 
 export function registerTerminalHandlers(): void {
-  ipcMain.handle('terminal:create', (_, cwd: string, agent: TerminalAgent) => {
-    try {
-      return ptyManager.create(cwd, agent);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown terminal error';
-      throw new Error(`Failed to spawn terminal: ${message}`);
-    }
-  });
+  ipcMain.handle(
+    'terminal:create',
+    (_, cwd: string, agent: TerminalAgent, options?: TerminalCreateOptions) => {
+      try {
+        return ptyManager.create(cwd, agent, options);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown terminal error';
+        throw new Error(`Failed to spawn terminal: ${message}`);
+      }
+    },
+  );
 
   ipcMain.handle('terminal:has', (_, ptyId: string) => ptyManager.has(ptyId));
 
@@ -19,6 +23,10 @@ export function registerTerminalHandlers(): void {
   ipcMain.handle('terminal:getScrollbackTail', (_, ptyId: string, maxBytes: number) =>
     ptyManager.getScrollbackTail(ptyId, maxBytes),
   );
+
+  ipcMain.handle('terminal:removeAgentShellHome', (_, isolationKey: string) => {
+    removeAgentShellHome(isolationKey);
+  });
 
   ipcMain.on('terminal:write', (_, ptyId: string, data: string) => {
     ptyManager.write(ptyId, data);

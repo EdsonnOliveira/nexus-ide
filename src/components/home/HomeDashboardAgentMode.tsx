@@ -11,7 +11,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import { Bot, GitBranch, Maximize2, Minimize2, Pin, X } from 'lucide-react';
+import { Bot, GitBranch, Home, Maximize2, Minimize2, Pin, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { AgentShellTerminalDock } from '@/components/agent/AgentShellTerminalDock';
 import { AgentFilesChangedPopup } from '@/components/agent/AgentFilesChangedCard';
@@ -45,6 +45,7 @@ import {
 } from '@/utils/homeDashboardAgents';
 import { setHomeAgentOverlayPaneIds } from '@/utils/homeAgentOverlay';
 import { findPaneTab } from '@/utils/tabGroups';
+import { isComputerProject } from '@/utils/computerProject';
 
 export { bindHomeDashboardProjectAgent } from '@/utils/homeDashboardAgents';
 
@@ -204,6 +205,7 @@ function AgentCardComponent({
   onRemove,
 }: AgentCardProps) {
   const paneId = pane.id;
+  const computerProject = isComputerProject(project);
   const setTabPtyId = useProjectStore((state) => state.setTabPtyId);
   const clearNotificationForPane = useProjectNotificationStore(
     (state) => state.clearNotificationForPane,
@@ -227,7 +229,9 @@ function AgentCardComponent({
   const unpinAgent = useAgentPipStore((state) => state.unpin);
   const isPinned = pinnedPaneId === paneId;
   const agentGitGroups = useAgentGitGroupsForProject(project.id);
-  const { changes: gitFlatChanges, loading: gitLoading } = useProjectGitFlatChanges(project.path);
+  const { changes: gitFlatChanges, loading: gitLoading } = useProjectGitFlatChanges(
+    computerProject ? null : project.path,
+  );
   const agentChangedFiles = useMemo(
     () =>
       listAgentPaneGitChangedFiles(
@@ -350,7 +354,13 @@ function AgentCardComponent({
       >
         <div className='home-dashboard__agent-card-head'>
           <span className='home-dashboard__agent-card-thumb-wrap'>
-            <AgentProjectThumb logo={project.logo} icon={project.icon} color={project.color} />
+            {computerProject ? (
+              <span className='home-dashboard__agent-card-icon' style={{ background: project.color }}>
+                <Home size={14} strokeWidth={2.25} />
+              </span>
+            ) : (
+              <AgentProjectThumb logo={project.logo} icon={project.icon} color={project.color} />
+            )}
             {hasReadyPing ? (
               <span
                 className='project-item__ping project-item__ping--red home-dashboard__project-ping'
@@ -372,7 +382,7 @@ function AgentCardComponent({
               projectPath={project.path}
               variant='header'
             />
-            {gitChangedFileCount > 0 ? (
+            {gitChangedFileCount > 0 && !computerProject ? (
               <button
                 ref={gitButtonRef}
                 type='button'

@@ -36,6 +36,7 @@ import { parseCursorAgentHistoryTranscript } from '@/utils/parseCursorAgentHisto
 import { hydrateAgentTurns } from '@/utils/agentPromptAttachments';
 import { sanitizeAgentFollowUps, sanitizeAgentTurnHistory } from '@/utils/trimAgentTurnHistory';
 import { stopAgentPane } from '@/utils/agentPaneRegistry';
+import { disposeAgentShellTerminals } from '@/utils/agentInteractiveTerminal';
 import { normalizeBrowserUrl } from '@/utils/browserUrl';
 import { isSameLocalDevTarget } from '@/utils/browserSiteStatus';
 import { createBadgeColorIndex } from '@/utils/tabBadge';
@@ -181,6 +182,7 @@ function killTabBarItem(item: TabBarItem): void {
 
       if (pane.type === 'agent') {
         useAgentComposerDraftStore.getState().clearDraft(pane.id);
+        disposeAgentShellTerminals(pane.id);
       }
 
       if (pane.ptyId) {

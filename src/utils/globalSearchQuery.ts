@@ -1,4 +1,5 @@
 import type { Project } from '@/types';
+import { isComputerProject } from '@/utils/computerProject';
 import type {
   ParsedGlobalSearchQuery,
   SlashCommandId,
@@ -294,14 +295,17 @@ export function resolveProjectByToken(projects: Project[], token: string): Proje
     return null;
   }
 
-  const exactMatches = projects.filter((project) => project.name.toLowerCase() === normalizedToken);
+  const exactMatches = projects.filter(
+    (project) => !isComputerProject(project) && project.name.toLowerCase() === normalizedToken,
+  );
 
   if (exactMatches.length === 1) {
     return exactMatches[0];
   }
 
-  const includesMatches = projects.filter((project) =>
-    project.name.toLowerCase().includes(normalizedToken),
+  const includesMatches = projects.filter(
+    (project) =>
+      !isComputerProject(project) && project.name.toLowerCase().includes(normalizedToken),
   );
 
   if (includesMatches.length === 0) {

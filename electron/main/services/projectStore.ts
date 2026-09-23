@@ -1,5 +1,6 @@
 import Store from 'electron-store';
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
 import { basename } from 'node:path';
 import type {
   AppState,
@@ -55,6 +56,8 @@ const PROJECT_COLORS = [
 ];
 
 const DEFAULT_WORKSPACE_NAME = 'Padrão';
+const COMPUTER_PROJECT_ID = 'nexus-computer';
+const COMPUTER_PROJECT_NAME = 'Neste computador';
 
 const defaultState: AppState = {
   projects: [],
@@ -103,6 +106,82 @@ function pruneActiveProjectIdByWorkspace(
   }
 
   return next;
+}
+
+function buildComputerProject(workspaceId: string, homePath: string, existing?: Project): Project {
+  return {
+    id: COMPUTER_PROJECT_ID,
+    name: COMPUTER_PROJECT_NAME,
+    path: homePath,
+    workspaceId: existing?.workspaceId || workspaceId,
+    color: existing?.color ?? '#334155',
+    icon: existing?.icon ?? 'H',
+    iconCustomized: true,
+    logo: null,
+    tabs: existing?.tabs ?? [],
+    activeTabId: existing?.activeTabId ?? null,
+    activePaneId: existing?.activePaneId ?? null,
+    sidebarCollapsed: existing?.sidebarCollapsed ?? false,
+    automations: [],
+    passwordCollections: [],
+    whatsappLink: null,
+    mailInbox: null,
+    tasks: [],
+    taskIntegration: null,
+    testEntries: [],
+    agentGitGroups: [],
+    agentResponseSkills: [],
+    terminalQuickCommands: [],
+    flag: null,
+  };
+}
+
+function withComputerProject(state: AppState): AppState {
+  const workspaceId = state.workspaces[0]?.id;
+
+  if (!workspaceId) {
+    return state;
+  }
+
+  const homePath = homedir();
+  const existing = state.projects.find((project) => project.id === COMPUTER_PROJECT_ID);
+  const userProjects = state.projects.filter((project) => project.id !== COMPUTER_PROJECT_ID);
+  const computer = buildComputerProject(workspaceId, homePath, existing);
+  const projects = [...userProjects, computer];
+  const activeProjectId =
+    state.activeProjectId === COMPUTER_PROJECT_ID ? null : state.activeProjectId;
+  const activeProjectIdByWorkspace = { ...(state.activeProjectIdByWorkspace ?? {}) };
+  let mapChanged = false;
+
+  for (const [key, projectId] of Object.entries(activeProjectIdByWorkspace)) {
+    if (projectId === COMPUTER_PROJECT_ID) {
+      delete activeProjectIdByWorkspace[key];
+      mapChanged = true;
+    }
+  }
+
+  const alreadyLast = state.projects[state.projects.length - 1]?.id === COMPUTER_PROJECT_ID;
+  const singleComputer =
+    state.projects.filter((project) => project.id === COMPUTER_PROJECT_ID).length === 1;
+  const unchanged =
+    Boolean(existing) &&
+    existing?.path === homePath &&
+    existing?.name === COMPUTER_PROJECT_NAME &&
+    state.activeProjectId !== COMPUTER_PROJECT_ID &&
+    !mapChanged &&
+    alreadyLast &&
+    singleComputer;
+
+  if (unchanged) {
+    return state;
+  }
+
+  return {
+    ...state,
+    projects,
+    activeProjectId,
+    activeProjectIdByWorkspace,
+  };
 }
 
 function resolveAgentPaneRootPath(projectPath: string): string {
@@ -407,6 +486,10 @@ class ProjectStoreService {
 
   private ensureNexusGitignoreForProjects(projects: Project[]): void {
     for (const project of projects) {
+      if (project.id === COMPUTER_PROJECT_ID) {
+        continue;
+      }
+
       this.ensureNexusGitignoreForProject(project.path);
     }
   }
@@ -498,7 +581,7 @@ class ProjectStoreService {
   }
 
   list(): AppState {
-    const state = this.readState();
+    const state = this.ensureComputerProject(this.readState());
 
     if (!this.historyTrimChecked) {
       const rawProjects = this.getStore().get('projects');
@@ -515,10 +598,22 @@ class ProjectStoreService {
     return state;
   }
 
+  private ensureComputerProject(state: AppState): AppState {
+    const next = withComputerProject(state);
+
+    if (next === state) {
+      return state;
+    }
+
+    return this.writeState(next);
+  }
+
   add(projectPath: string, workspaceId?: string | null): Project {
     const state = this.readState();
     const projects = state.projects;
-    const existing = projects.find((project) => project.path === projectPath);
+    const existing = projects.find(
+      (project) => project.path === projectPath && project.id !== COMPUTER_PROJECT_ID,
+    );
 
     if (existing) {
       this.writeState({
@@ -578,6 +673,10 @@ class ProjectStoreService {
   }
 
   remove(id: string): void {
+    if (id === COMPUTER_PROJECT_ID) {
+      return;
+    }
+
     const state = this.readState();
     const projects = state.projects.filter((project) => project.id !== id);
     const activeProjectId = state.activeProjectId;
@@ -586,16 +685,24 @@ class ProjectStoreService {
         ([, projectId]) => projectId !== id,
       ),
     );
+    const nextActiveProjectId =
+      activeProjectId === id
+        ? (projects.find((project) => project.id !== COMPUTER_PROJECT_ID)?.id ?? null)
+        : activeProjectId;
 
     this.writeState({
       ...state,
       projects,
-      activeProjectId: activeProjectId === id ? (projects[0]?.id ?? null) : activeProjectId,
+      activeProjectId: nextActiveProjectId,
       activeProjectIdByWorkspace,
     });
   }
 
   select(id: string): void {
+    if (id === COMPUTER_PROJECT_ID) {
+      this.clearActiveProject();
+      return;
+    }
     const state = this.readState();
     const project = state.projects.find((item) => item.id === id);
 
@@ -777,6 +884,15 @@ class ProjectStoreService {
     }
 
     const sanitizedData: ProjectUpdatePayload = { ...data };
+
+    if (id === COMPUTER_PROJECT_ID) {
+      delete sanitizedData.name;
+      delete sanitizedData.workspaceId;
+      delete sanitizedData.color;
+      delete sanitizedData.icon;
+      delete sanitizedData.iconCustomized;
+      delete sanitizedData.logo;
+    }
 
     if (sanitizedData.workspaceId) {
       const workspaceExists = state.workspaces.some(

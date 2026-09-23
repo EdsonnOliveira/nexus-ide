@@ -22,6 +22,7 @@ import {
   File,
   FileText,
   FolderKanban,
+  Home,
   Image,
   Paperclip,
   X,
@@ -73,6 +74,12 @@ import {
 import { readDroppedImageDataUrls, readImagePathAsDataUrl } from '@/utils/attachAgentPromptImage';
 import { cycleAgentMode } from '@/utils/cycleAgentMode';
 import { executeHomeDashboardAgentPrompt } from '@/utils/executeHomeDashboardAgentPrompt';
+import {
+  COMPUTER_PROJECT_ID,
+  COMPUTER_PROJECT_NAME,
+  isComputerProject,
+  listUserProjects,
+} from '@/utils/computerProject';
 import { resolvePromptSkillAiProvider } from '@/utils/agentSkillDisplay';
 import { isExternalFileDrag } from '@/utils/explorerExternalDrop';
 import { HOME_ASK_FOCUS_EVENT } from '@/utils/homeDashboardAgents';
@@ -247,6 +254,14 @@ function AskProjectThumbComponent({ logo, icon, color }: AskProjectThumbProps) {
 }
 
 const AskProjectThumb = memo(AskProjectThumbComponent);
+
+function AskComputerIcon() {
+  return (
+    <span className='home-dashboard__ask-project-icon' aria-hidden='true'>
+      <Home size={12} strokeWidth={2} />
+    </span>
+  );
+}
 
 function AskAttachMenuPanelComponent({
   anchorRect,
@@ -618,10 +633,12 @@ function HomeDashboardAskBarComponent({
   const workspaces = useProjectStore((state) => state.workspaces);
   const selectableProjects = useMemo(() => {
     const source = storeProjects.length > 0 ? storeProjects : projects;
+    const userProjects = listUserProjects(source);
     const workspaceOrderById = new Map(workspaces.map((workspace, index) => [workspace.id, index]));
     const projectOrderById = new Map(storeProjects.map((project, index) => [project.id, index]));
+    const computerProject = source.find((project) => isComputerProject(project)) ?? null;
 
-    return [...source].sort((left, right) => {
+    const sortedUserProjects = [...userProjects].sort((left, right) => {
       const leftWorkspaceOrder =
         workspaceOrderById.get(left.workspaceId) ?? Number.MAX_SAFE_INTEGER;
       const rightWorkspaceOrder =
@@ -634,6 +651,8 @@ function HomeDashboardAskBarComponent({
       const rightProjectOrder = projectOrderById.get(right.id) ?? Number.MAX_SAFE_INTEGER;
       return leftProjectOrder - rightProjectOrder;
     });
+
+    return computerProject ? [computerProject, ...sortedUserProjects] : sortedUserProjects;
   }, [projects, storeProjects, workspaces]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const attachTriggerRef = useRef<HTMLButtonElement>(null);
@@ -643,7 +662,7 @@ function HomeDashboardAskBarComponent({
   const mirrorRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef('');
   const pendingImagesRef = useRef<PendingAskImage[]>([]);
-  const [projectId, setProjectId] = useState('');
+  const [projectId, setProjectId] = useState(COMPUTER_PROJECT_ID);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [caretIndex, setCaretIndex] = useState(0);
@@ -694,15 +713,12 @@ function HomeDashboardAskBarComponent({
   }, [focusPromptInput]);
 
   useEffect(() => {
-    if (selectableProjects.length === 0) {
-      if (projectId) {
-        setProjectId('');
-      }
-      return;
-    }
+    const known =
+      projectId === COMPUTER_PROJECT_ID ||
+      selectableProjects.some((project) => project.id === projectId);
 
-    if (!projectId || !selectableProjects.some((project) => project.id === projectId)) {
-      setProjectId(selectableProjects[0]?.id ?? '');
+    if (!known) {
+      setProjectId(COMPUTER_PROJECT_ID);
     }
   }, [projectId, selectableProjects]);
 
@@ -719,18 +735,19 @@ function HomeDashboardAskBarComponent({
   }, []);
 
   const handleCycleProject = useCallback(() => {
-    if (selectableProjects.length === 0 || submitting) {
+    if (submitting) {
       return;
     }
 
-    const currentIndex = selectableProjects.findIndex((project) => project.id === projectId);
-    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % selectableProjects.length;
-    const nextId = selectableProjects[nextIndex]?.id ?? '';
-
-    if (nextId) {
-      setProjectId(nextId);
-    }
-
+    const cycleIds = [
+      COMPUTER_PROJECT_ID,
+      ...selectableProjects
+        .filter((project) => !isComputerProject(project))
+        .map((project) => project.id),
+    ];
+    const currentIndex = cycleIds.indexOf(projectId);
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % cycleIds.length;
+    setProjectId(cycleIds[nextIndex] ?? COMPUTER_PROJECT_ID);
     setProjectMenuOpen(true);
     focusPromptInput();
   }, [focusPromptInput, projectId, selectableProjects, submitting]);
@@ -745,18 +762,28 @@ function HomeDashboardAskBarComponent({
     const workspaceNameById = new Map(
       workspaces.map((workspace) => [workspace.id, workspace.name]),
     );
+    const userOptions = selectableProjects
+      .filter((project) => !isComputerProject(project))
+      .map((project) => ({
+        value: project.id,
+        label: project.name,
+        subtitle: showWorkspace ? workspaceNameById.get(project.workspaceId) : undefined,
+        icon: <AskProjectThumb logo={project.logo} icon={project.icon} color={project.color} />,
+      }));
 
-    return selectableProjects.map((project) => ({
-      value: project.id,
-      label: project.name,
-      subtitle: showWorkspace ? workspaceNameById.get(project.workspaceId) : undefined,
-      icon: <AskProjectThumb logo={project.logo} icon={project.icon} color={project.color} />,
-    }));
+    return [
+      {
+        value: COMPUTER_PROJECT_ID,
+        label: COMPUTER_PROJECT_NAME,
+        icon: <AskComputerIcon />,
+      },
+      ...userOptions,
+    ];
   }, [selectableProjects, workspaces]);
 
   const triggerLeadingIcon = useMemo(() => {
-    if (!selectedProject) {
-      return <FolderKanban size={14} strokeWidth={2} />;
+    if (isComputerProject({ id: projectId }) || !selectedProject || isComputerProject(selectedProject)) {
+      return <AskComputerIcon />;
     }
 
     return (
@@ -766,7 +793,7 @@ function HomeDashboardAskBarComponent({
         color={selectedProject.color}
       />
     );
-  }, [selectedProject]);
+  }, [projectId, selectedProject]);
 
   const projectPath = selectedProject?.path ?? '';
 
@@ -826,6 +853,10 @@ function HomeDashboardAskBarComponent({
     });
 
     if (!nextProvider || nextProvider === aiProvider) {
+      return;
+    }
+
+    if (noAttachmentAiProvider && aiProvider !== noAttachmentAiProvider) {
       return;
     }
 
@@ -953,13 +984,20 @@ function HomeDashboardAskBarComponent({
 
   const handleClearMode = useCallback(() => {
     setAgentMode('agent');
+    setAiProvider(preferredAiProvider);
     focusPromptInput();
-  }, [focusPromptInput]);
+  }, [focusPromptInput, preferredAiProvider]);
 
   const handleCycleMode = useCallback(() => {
-    setAgentMode((current) => cycleAgentMode(current));
+    const nextMode = cycleAgentMode(agentMode);
+    setAgentMode(nextMode);
+
+    if (nextMode !== 'agent' && aiProvider !== preferredAiProvider) {
+      setAiProvider(preferredAiProvider);
+    }
+
     focusPromptInput();
-  }, [focusPromptInput]);
+  }, [agentMode, aiProvider, focusPromptInput, preferredAiProvider]);
 
   useEffect(() => {
     const mentioned = new Set<number>();
@@ -1108,12 +1146,15 @@ function HomeDashboardAskBarComponent({
     };
     const nextPrompt = trimmed;
     const skillAiProvider = resolvePromptSkillAiProvider(nextPrompt, skillHints);
-    const attachmentAiProvider = resolveAiProviderForPromptAttachments({
-      hasAttachments: hasAgentPromptAttachments(nextPrompt, pendingImages.length),
-      preferredAiProvider,
-      noAttachmentAiProvider,
-      enabledAiProviders,
-    });
+    const attachmentAiProvider =
+      noAttachmentAiProvider && aiProvider !== noAttachmentAiProvider
+        ? null
+        : resolveAiProviderForPromptAttachments({
+            hasAttachments: hasAgentPromptAttachments(nextPrompt, pendingImages.length),
+            preferredAiProvider,
+            noAttachmentAiProvider,
+            enabledAiProviders,
+          });
     const launchAiProvider = skillAiProvider ?? attachmentAiProvider ?? aiProvider;
 
     if (skillAiProvider && skillAiProvider !== aiProvider) {
@@ -1566,7 +1607,7 @@ function HomeDashboardAskBarComponent({
         leadingIcon={triggerLeadingIcon}
         className='home-dashboard__ask-project-wrap'
         triggerClassName='home-dashboard__ask-project'
-        disabled={selectableProjects.length === 0 || submitting}
+        disabled={submitting}
         open={projectMenuOpen}
         onOpenChange={handleProjectMenuOpenChange}
       />

@@ -12,6 +12,7 @@ import type {
   WorkspaceUpdatePayload,
 } from '@/types';
 import { PROJECT_COLORS } from '@/types';
+import { isComputerProjectId } from '@/utils/computerProject';
 import { migrateProjectTestEntry } from '@/utils/testLabels';
 import { migrateLegacyProjectTabs } from '@/utils/migrateTabs';
 import { normalizeAutomation } from '@/utils/normalizeAutomation';
@@ -964,6 +965,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   removeProject: async (id) => {
     const { useTerminalSessionStore } = await import('@/stores/useTerminalSessionStore');
     const { useTerminalPasteImageStore } = await import('@/stores/useTerminalPasteImageStore');
+    const { disposeAgentShellTerminals } = await import('@/utils/agentInteractiveTerminal');
     const project = get().projects.find((item) => item.id === id);
 
     if (project) {
@@ -975,6 +977,19 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
         for (const pane of panes) {
           if (pane.type === 'terminal' || pane.type === 'agent') {
             useTerminalPasteImageStore.getState().clearPaneImages(pane.id);
+          }
+
+          if (pane.type === 'agent') {
+            useProjectNotificationStore.getState().clearNotificationForPane(pane.id);
+            useTerminalSessionStore.getState().disposePaneSession(pane.id);
+            disposeAgentShellTerminals(pane.id);
+
+            if (pane.ptyId) {
+              window.nexus.terminal.kill(pane.ptyId);
+            }
+
+            void window.nexus.session.removePane(pane.id);
+            continue;
           }
 
           if (pane.type === 'terminal') {
@@ -1004,6 +1019,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   stopProject: async (id) => {
     const { useTerminalSessionStore } = await import('@/stores/useTerminalSessionStore');
     const { useTerminalPasteImageStore } = await import('@/stores/useTerminalPasteImageStore');
+    const { disposeAgentShellTerminals } = await import('@/utils/agentInteractiveTerminal');
     const project = get().projects.find((item) => item.id === id);
 
     if (!project || project.tabs.length === 0) {
@@ -1019,6 +1035,19 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
       for (const pane of panes) {
         if (pane.type === 'terminal' || pane.type === 'agent') {
           useTerminalPasteImageStore.getState().clearPaneImages(pane.id);
+        }
+
+        if (pane.type === 'agent') {
+          useProjectNotificationStore.getState().clearNotificationForPane(pane.id);
+          useTerminalSessionStore.getState().disposePaneSession(pane.id);
+          disposeAgentShellTerminals(pane.id);
+
+          if (pane.ptyId) {
+            window.nexus.terminal.kill(pane.ptyId);
+          }
+
+          void window.nexus.session.removePane(pane.id);
+          continue;
         }
 
         if (pane.type === 'terminal') {
@@ -1046,6 +1075,11 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     });
   },
   selectProject: async (id, options) => {
+    if (isComputerProjectId(id)) {
+      await get().leaveActiveProject();
+      return;
+    }
+
     if (id === get().activeProjectId) {
       return;
     }

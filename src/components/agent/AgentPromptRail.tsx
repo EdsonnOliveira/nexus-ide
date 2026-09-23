@@ -360,11 +360,13 @@ function AgentPromptRailComponent({
                       onClick={(event) => handleOpenAttachment(event, attachment.dataUrl)}
                     >
                       <AgentPromptImageIndexBadge index={index + 1} />
-                      <img
-                        src={attachment.dataUrl}
-                        alt=''
-                        className='agent-view__prompt-rail-preview-attachment-thumb'
-                      />
+                      {attachment.dataUrl ? (
+                        <img
+                          src={attachment.dataUrl}
+                          alt=''
+                          className='agent-view__prompt-rail-preview-attachment-thumb'
+                        />
+                      ) : null}
                     </button>
                   ))}
                 </div>
