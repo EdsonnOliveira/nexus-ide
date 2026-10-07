@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, CirclePlay, Mail, Music, PanelLeft, Plus } from 'lucide-react';
+import { ChevronDown, CirclePlay, Home, Mail, Music, PanelLeft, Plus } from 'lucide-react';
 import { useProjectIndexShortcuts } from '@/hooks/useProjectIndexShortcuts';
 import { useStableLoadingMap } from '@/hooks/useStableLoadingMap';
 import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
@@ -932,6 +932,14 @@ function ProjectSidebarComponent() {
     [activeProjectId, leaveActiveProject, projects, selectProject],
   );
 
+  const handleGoHome = useCallback(() => {
+    if (!activeProjectId) {
+      return;
+    }
+
+    void leaveActiveProject();
+  }, [activeProjectId, leaveActiveProject]);
+
   const handleProjectHoverChange = useCallback(
     (projectId: string | null, rect: DOMRect | null, modifierHeld: boolean) => {
       if (hoverLeaveTimerRef.current !== null) {
@@ -1447,6 +1455,22 @@ function ProjectSidebarComponent() {
             ) : null}
           </span>
           <ChevronDown size={14} />
+        </button>
+      </div>
+
+      <div className='sidebar__home-wrap'>
+        <button
+          type='button'
+          className={`sidebar__home app-button app-button--enter${activeProjectId ? '' : ' sidebar__home--active'}`}
+          aria-label='Home'
+          aria-current={activeProjectId ? undefined : 'page'}
+          title='Home'
+          onClick={handleGoHome}
+        >
+          <span className='sidebar__home-icon' aria-hidden='true'>
+            <Home size={12} strokeWidth={2} />
+          </span>
+          <span className='sidebar__home-label app-button__label'>Home</span>
         </button>
       </div>
 

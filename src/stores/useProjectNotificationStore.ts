@@ -56,7 +56,7 @@ export const useProjectNotificationStore = create<ProjectNotificationState>((set
     const resolvedProjectId = resolved.projectId || projectId;
 
     if (get().notifiedAgentPaneByProject[resolvedProjectId] === paneId) {
-      startAgentNotificationSoundLoop();
+      emitAgentReadyPing();
       return;
     }
 

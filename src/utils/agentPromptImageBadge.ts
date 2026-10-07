@@ -208,6 +208,39 @@ export function splitAgentPromptImageMentions(
   return collapseMentionGaps ? collapseMentionGapSegments(segments) : segments;
 }
 
+function collectAgentPromptImageMentionNumbers(text: string): Set<number> {
+  const imageNumbers = new Set<number>();
+  const imagePattern = new RegExp(
+    AGENT_PROMPT_IMAGE_MENTION_REGEX.source,
+    AGENT_PROMPT_IMAGE_MENTION_REGEX.flags,
+  );
+
+  for (const match of text.matchAll(imagePattern)) {
+    const imageNumber = Number.parseInt(match[1] ?? '', 10);
+
+    if (Number.isFinite(imageNumber) && imageNumber > 0) {
+      imageNumbers.add(imageNumber);
+    }
+  }
+
+  return imageNumbers;
+}
+
+export function findRemovedAgentPromptImageMentionNumbers(
+  previousText: string,
+  nextText: string,
+): number[] {
+  const previousNumbers = collectAgentPromptImageMentionNumbers(previousText);
+
+  if (previousNumbers.size === 0) {
+    return [];
+  }
+
+  const nextNumbers = collectAgentPromptImageMentionNumbers(nextText);
+
+  return [...previousNumbers].filter((imageNumber) => !nextNumbers.has(imageNumber));
+}
+
 export function hasAgentPromptImageMentions(text: string): boolean {
   AGENT_PROMPT_IMAGE_MENTION_REGEX.lastIndex = 0;
 

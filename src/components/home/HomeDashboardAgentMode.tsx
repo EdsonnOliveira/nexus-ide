@@ -646,9 +646,11 @@ function HomeDashboardAgentModeComponent({
     [closeTabForProject, missions, slots],
   );
 
+  const gridItemCount = visibleMissions.length + slots.length + cloudSessionIds.length;
+
   return (
     <section className='home-dashboard__agent-mode app-button--enter'>
-      {slots.length === 0 && cloudSessionIds.length === 0 && visibleMissions.length === 0 ? (
+      {gridItemCount === 0 ? (
         <EmptyState
           icon={Bot}
           title='Nenhum agent na área'

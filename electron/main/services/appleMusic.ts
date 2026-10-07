@@ -43,7 +43,18 @@ const TRACK_DELIMITER = '\u001e';
 const GROUP_DELIMITER = '\u001d';
 const MAX_UPCOMING_TRACKS = 6;
 const MAX_PLAYLISTS = 80;
-const EXCLUDED_LIBRARY_PLAYLIST_NAMES = new Set(['Music', 'Music Videos']);
+const MAX_RECENTLY_ADDED_TRACKS = 100;
+const RECENTLY_ADDED_PLAYLIST_ID = 'recently-added';
+const RECENTLY_ADDED_PLAYLIST_NAME = 'Adicionados recentemente';
+const RECENTLY_ADDED_LIBRARY_PLAYLIST_NAME = 'Nexus IDE · Adicionados recentemente';
+const RECENTLY_ADDED_LOOKUP_WINDOWS_DAYS = [14, 60, 180, 365, 1825] as const;
+const RECENTLY_ADDED_LOOKUP_OVERFLOW = 800;
+const RECENTLY_ADDED_CACHE_MS = 15_000;
+const EXCLUDED_LIBRARY_PLAYLIST_NAMES = new Set([
+  'Music',
+  'Music Videos',
+  RECENTLY_ADDED_LIBRARY_PLAYLIST_NAME,
+]);
 const ARTWORK_PATH_PREFIX = path.join(os.tmpdir(), 'nexus-apple-music-artwork');
 
 const artworkCache = new Map<string, string | null>();
@@ -325,12 +336,8 @@ async function enrichPlaylists(
   );
 }
 
-async function exportAppleMusicArtwork(cacheKey: string, playlistIndex?: number): Promise<boolean> {
+async function exportAppleMusicArtwork(cacheKey: string, trackSource: string): Promise<boolean> {
   const artPath = escapeAppleScriptString(getArtworkExportPath(cacheKey));
-  const trackSource =
-    playlistIndex !== undefined
-      ? `track ${playlistIndex} of current playlist`
-      : 'current track';
 
   try {
     const output = await runAppleScript(`
@@ -367,12 +374,32 @@ async function getArtworkDataUrl(trackKey: string, playlistIndex?: number): Prom
 
   const cacheKey =
     playlistIndex !== undefined ? `queue:${playlistIndex}:${trackKey}` : trackKey;
+  const trackSource =
+    playlistIndex !== undefined ? `track ${playlistIndex} of current playlist` : 'current track';
 
+  return loadTrackArtworkDataUrl(cacheKey, trackSource);
+}
+
+async function getLibraryTrackArtworkDataUrl(trackId: string): Promise<string | null> {
+  if (!/^\d+$/.test(trackId)) {
+    return null;
+  }
+
+  return loadTrackArtworkDataUrl(
+    `library:${trackId}`,
+    `(first track of library playlist 1 whose database ID is ${trackId})`,
+  );
+}
+
+async function loadTrackArtworkDataUrl(
+  cacheKey: string,
+  trackSource: string,
+): Promise<string | null> {
   if (artworkCache.has(cacheKey)) {
     return artworkCache.get(cacheKey) ?? null;
   }
 
-  const exported = await exportAppleMusicArtwork(cacheKey, playlistIndex);
+  const exported = await exportAppleMusicArtwork(cacheKey, trackSource);
 
   if (!exported) {
     artworkCache.set(cacheKey, null);
@@ -568,6 +595,167 @@ end tell
   );
 }
 
+function parseRecentlyAddedTrackIds(raw: string): string[] {
+  return raw
+    .split(TRACK_DELIMITER)
+    .map((entry) => {
+      const [id, age] = entry.split(DELIMITER);
+      const trackId = id?.trim() ?? '';
+
+      if (!/^\d+$/.test(trackId)) {
+        return null;
+      }
+
+      return { trackId, ageSeconds: parseNumber(age) };
+    })
+    .filter((entry): entry is { trackId: string; ageSeconds: number } => entry !== null)
+    .sort((left, right) => left.ageSeconds - right.ageSeconds)
+    .slice(0, MAX_RECENTLY_ADDED_TRACKS)
+    .map((entry) => entry.trackId);
+}
+
+let recentlyAddedCache: { at: number; trackIds: string[] } | null = null;
+
+async function queryRecentlyAddedWindow(
+  windowDays: number,
+): Promise<'unavailable' | 'overflow' | string[]> {
+  const output = await runAppleScript(`
+tell application "Music"
+  try
+    set lib to library playlist 1
+    set cutoff to (current date) - (${windowDays} * days)
+    set recentTracks to tracks of lib whose date added > cutoff
+    set trackCount to count of recentTracks
+    if trackCount is 0 then
+      return ""
+    end if
+    if trackCount > ${RECENTLY_ADDED_LOOKUP_OVERFLOW} then
+      return "overflow"
+    end if
+    set trackIds to database ID of recentTracks
+    if class of trackIds is not list then
+      set trackIds to {trackIds}
+    end if
+    set trackDates to date added of recentTracks
+    if class of trackDates is not list then
+      set trackDates to {trackDates}
+    end if
+    set referenceDate to current date
+    set outputBlock to ""
+    repeat with i from 1 to trackCount
+      try
+        set outputBlock to outputBlock & (item i of trackIds as string) & "${DELIMITER}" & ((referenceDate - (item i of trackDates)) as string) & "${TRACK_DELIMITER}"
+      end try
+    end repeat
+    return outputBlock
+  on error
+    return "unavailable"
+  end try
+end tell
+`);
+
+  if (output === 'unavailable') {
+    return 'unavailable';
+  }
+
+  if (output === 'overflow') {
+    return 'overflow';
+  }
+
+  return parseRecentlyAddedTrackIds(output);
+}
+
+async function loadRecentlyAddedTrackIds(): Promise<string[]> {
+  let fallback: string[] = [];
+
+  for (const windowDays of RECENTLY_ADDED_LOOKUP_WINDOWS_DAYS) {
+    const result = await queryRecentlyAddedWindow(windowDays);
+
+    if (result === 'unavailable') {
+      return fallback;
+    }
+
+    if (result === 'overflow') {
+      if (fallback.length > 0) {
+        return fallback;
+      }
+
+      const narrower = await queryRecentlyAddedWindow(Math.max(1, Math.floor(windowDays / 4)));
+
+      if (narrower === 'unavailable' || narrower === 'overflow') {
+        return [];
+      }
+
+      return narrower;
+    }
+
+    fallback = result;
+
+    if (result.length >= MAX_RECENTLY_ADDED_TRACKS) {
+      return result;
+    }
+  }
+
+  return fallback;
+}
+
+async function getRecentlyAddedTrackIds(force = false): Promise<string[]> {
+  const now = Date.now();
+
+  if (!force && recentlyAddedCache && now - recentlyAddedCache.at < RECENTLY_ADDED_CACHE_MS) {
+    return recentlyAddedCache.trackIds;
+  }
+
+  try {
+    const trackIds = await loadRecentlyAddedTrackIds();
+    recentlyAddedCache = { at: now, trackIds };
+    return trackIds;
+  } catch {
+    return recentlyAddedCache?.trackIds ?? [];
+  }
+}
+
+async function getRecentlyAddedPlaylist(): Promise<AppleMusicPlaylist | null> {
+  const [latestTrackId] = await getRecentlyAddedTrackIds();
+
+  if (!latestTrackId) {
+    return null;
+  }
+
+  return {
+    id: RECENTLY_ADDED_PLAYLIST_ID,
+    name: RECENTLY_ADDED_PLAYLIST_NAME,
+    artworkUrl: await getLibraryTrackArtworkDataUrl(latestTrackId),
+  };
+}
+
+async function playRecentlyAddedPlaylist(): Promise<void> {
+  const trackIds = await getRecentlyAddedTrackIds(true);
+
+  if (trackIds.length === 0) {
+    return;
+  }
+
+  const playlistName = escapeAppleScriptString(RECENTLY_ADDED_LIBRARY_PLAYLIST_NAME);
+
+  await runAppleScript(`
+tell application "Music"
+  set lib to library playlist 1
+  set userSource to (first source whose kind is library)
+  if exists (user playlist "${playlistName}" of userSource) then
+    delete (user playlist "${playlistName}" of userSource)
+  end if
+  set targetPlaylist to make new user playlist with properties {name:"${playlistName}"}
+  repeat with trackId in {${trackIds.join(', ')}}
+    try
+      duplicate (first track of lib whose database ID is trackId) to targetPlaylist
+    end try
+  end repeat
+  play targetPlaylist
+end tell
+`);
+}
+
 export async function getAppleMusicPlaylists(): Promise<AppleMusicPlaylist[]> {
   if (process.platform !== 'darwin') {
     return [];
@@ -607,7 +795,10 @@ end tell
       return [];
     }
 
-    return enrichPlaylists(parsePlaylists(output));
+    const playlists = await enrichPlaylists(parsePlaylists(output));
+    const recentlyAddedPlaylist = await getRecentlyAddedPlaylist();
+
+    return recentlyAddedPlaylist ? [recentlyAddedPlaylist, ...playlists] : playlists;
   } catch {
     return [];
   }
@@ -615,6 +806,12 @@ end tell
 
 export async function playAppleMusicPlaylist(playlistId: string): Promise<void> {
   const safePlaylistId = playlistId.trim();
+
+  if (safePlaylistId === RECENTLY_ADDED_PLAYLIST_ID) {
+    clearArtworkCache();
+    await withMusicAppReady(playRecentlyAddedPlaylist);
+    return;
+  }
 
   if (!/^\d+$/.test(safePlaylistId)) {
     return;

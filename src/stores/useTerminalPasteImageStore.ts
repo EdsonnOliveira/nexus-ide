@@ -28,6 +28,10 @@ function normalizeRelativePath(value: string): string {
   return value.replace(/\\/g, '/').replace(/^\/+/, '');
 }
 
+export function getNextTerminalPasteImageId(images: TerminalPasteImage[] | undefined): number {
+  return (images ?? []).reduce((maxId, image) => Math.max(maxId, image.id), 0) + 1;
+}
+
 export const useTerminalPasteImageStore = create<TerminalPasteImageState>((set) => ({
   imagesByPane: {},
   confirmedInPromptByPane: {},
@@ -36,9 +40,10 @@ export const useTerminalPasteImageStore = create<TerminalPasteImageState>((set) 
 
     set((state) => {
       const current = state.imagesByPane[paneId] ?? [];
+      const nextId = getNextTerminalPasteImageId(current);
       const nextImage: TerminalPasteImage = {
-        id: current.length + 1,
-        label: `Image #${current.length + 1}`,
+        id: nextId,
+        label: `Image #${nextId}`,
         dataUrl,
         relativePath: normalizeRelativePath(saved.relativePath),
         absolutePath: saved.absolutePath,

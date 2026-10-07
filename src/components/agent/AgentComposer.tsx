@@ -68,6 +68,7 @@ import {
   buildAgentPromptImageMention,
   buildAgentPromptImageMentionAppendFragment,
   buildAgentPromptImageMentionInsertion,
+  findRemovedAgentPromptImageMentionNumbers,
   hasAgentPromptAttachments,
 } from '@/utils/agentPromptImageBadge';
 import { isExternalFileDrag } from '@/utils/explorerExternalDrop';
@@ -1264,6 +1265,10 @@ function AgentComposerComponent({
       }
 
       const nextValue = event.target.value;
+      const removedImageNumbers = findRemovedAgentPromptImageMentionNumbers(
+        composerInputValue,
+        nextValue,
+      );
 
       if (skillDraft.hasSkill) {
         onDraftChange(
@@ -1273,11 +1278,26 @@ function AgentComposerComponent({
         onDraftChange(nextValue);
       }
 
+      for (const imageNumber of removedImageNumbers) {
+        if (images.some((image) => image.id === imageNumber)) {
+          removeImage(paneId, imageNumber);
+        }
+      }
+
       setCaretIndex(event.target.selectionStart ?? 0);
       resizeComposerInput(event.target);
       syncComposerInputScroll();
     },
-    [onDraftChange, resetPromptHistoryNavigation, skillDraft, syncComposerInputScroll],
+    [
+      composerInputValue,
+      images,
+      onDraftChange,
+      paneId,
+      removeImage,
+      resetPromptHistoryNavigation,
+      skillDraft,
+      syncComposerInputScroll,
+    ],
   );
 
   const handleAttachImage = useCallback(async () => {
@@ -1387,9 +1407,9 @@ function AgentComposerComponent({
 
   const pendingImages = useMemo(
     () =>
-      images.map((image, index) => (
+      images.map((image) => (
         <div key={image.id} className='agent-view__paste-image'>
-          <AgentPromptImageIndexBadge index={index + 1} />
+          <AgentPromptImageIndexBadge index={image.id} />
           <button
             type='button'
             className='agent-view__paste-image-thumb-btn app-button'

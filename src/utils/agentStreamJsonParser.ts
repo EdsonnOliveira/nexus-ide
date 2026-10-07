@@ -1089,6 +1089,8 @@ function preserveAssistantImages(previousLabel: string, nextLabel: string): stri
   return `${nextLabel.replace(/\s+$/u, '')}\n\n${missing.join('\n\n')}\n`;
 }
 
+const RESPONSE_DELTA_MIN_OVERLAP = 24;
+
 function appendResponseDelta(currentLabel: string, delta: string): string {
   if (!delta) {
     return currentLabel;
@@ -1102,7 +1104,7 @@ function appendResponseDelta(currentLabel: string, delta: string): string {
     return delta;
   }
 
-  if (currentLabel.endsWith(delta)) {
+  if (delta.length >= RESPONSE_DELTA_MIN_OVERLAP && currentLabel.endsWith(delta)) {
     return currentLabel;
   }
 
@@ -1115,7 +1117,7 @@ function appendResponseDelta(currentLabel: string, delta: string): string {
 
   const maxOverlap = Math.min(currentLabel.length, delta.length);
 
-  for (let size = maxOverlap; size >= 1; size -= 1) {
+  for (let size = maxOverlap; size >= RESPONSE_DELTA_MIN_OVERLAP; size -= 1) {
     if (currentLabel.endsWith(delta.slice(0, size))) {
       return `${currentLabel}${delta.slice(size)}`;
     }
@@ -1188,7 +1190,7 @@ function upsertResponse(
   text: string,
   mode: 'delta' | 'snapshot' | 'final',
 ): void {
-  if (!text || !/\S/u.test(text)) {
+  if (!text || (!/\S/u.test(text) && (mode !== 'delta' || !state.responseId))) {
     return;
   }
 

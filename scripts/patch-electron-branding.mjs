@@ -106,7 +106,9 @@ function generateMacAppIcons() {
 
   run('iconutil', ['-c', 'icns', iconsetDir, '-o', builtIconPath]);
   run('rm', ['-rf', iconsetDir]);
-  run('bash', ['-lc', 'npx --yes png-to-ico build/icon.png > build/icon.ico']);
+  const icoTempPath = path.join(rootDir, 'build/icon.ico.tmp');
+  run('bash', ['-lc', 'npx --yes png-to-ico build/icon.png > build/icon.ico.tmp']);
+  run('mv', [icoTempPath, path.join(rootDir, 'build/icon.ico')]);
 }
 
 function buildLiquidGlassIcon() {

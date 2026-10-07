@@ -1,4 +1,7 @@
-import { useTerminalPasteImageStore } from '@/stores/useTerminalPasteImageStore';
+import {
+  getNextTerminalPasteImageId,
+  useTerminalPasteImageStore,
+} from '@/stores/useTerminalPasteImageStore';
 import { isImageFileName } from '@/utils/fileViewMode';
 import { getTerminalHandle } from '@/utils/terminalHandleRegistry';
 import { buildImagePathReference } from '@/utils/terminalPasteImageTokens';
@@ -18,7 +21,7 @@ export async function saveAgentPromptImage(
   dataUrl: string,
 ): Promise<AttachedAgentPromptImage | null> {
   const store = useTerminalPasteImageStore.getState();
-  const nextIndex = (store.imagesByPane[paneId]?.length ?? 0) + 1;
+  const nextIndex = getNextTerminalPasteImageId(store.imagesByPane[paneId]);
 
   try {
     const saved = await window.nexus.files.saveTerminalPasteImage(
@@ -27,7 +30,7 @@ export async function saveAgentPromptImage(
       nextIndex,
       dataUrl,
     );
-    store.addImage(paneId, dataUrl, saved);
+    const added = store.addImage(paneId, dataUrl, saved);
     const reference = buildImagePathReference(saved.relativePath);
 
     return {
@@ -35,7 +38,7 @@ export async function saveAgentPromptImage(
       absolutePath: saved.absolutePath,
       dataUrl,
       reference,
-      imageNumber: nextIndex,
+      imageNumber: added.id,
     };
   } catch {
     return null;

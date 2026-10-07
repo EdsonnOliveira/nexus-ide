@@ -3,6 +3,7 @@ import { isNotificationSoundEnabled } from '@/stores/useAppSettingsStore';
 let audioContext: AudioContext | null = null;
 let repeatTimer: ReturnType<typeof setInterval> | null = null;
 let escalateTimer: ReturnType<typeof setTimeout> | null = null;
+let unlockBound = false;
 
 const NORMAL_REPEAT_MS = 3_000;
 const URGENT_REPEAT_MS = 1_000;
@@ -13,11 +14,36 @@ function getAudioContext(): AudioContext | null {
     return null;
   }
 
-  if (!audioContext) {
-    audioContext = new AudioContext();
+  if (!audioContext || audioContext.state === 'closed') {
+    try {
+      audioContext = new AudioContext();
+    } catch {
+      audioContext = null;
+      return null;
+    }
   }
 
+  bindAudioUnlock();
   return audioContext;
+}
+
+function bindAudioUnlock(): void {
+  if (unlockBound || typeof window === 'undefined') {
+    return;
+  }
+
+  unlockBound = true;
+
+  const unlock = () => {
+    if (!audioContext || audioContext.state === 'closed') {
+      return;
+    }
+
+    void audioContext.resume().catch(() => undefined);
+  };
+
+  window.addEventListener('pointerdown', unlock, { passive: true });
+  window.addEventListener('keydown', unlock);
 }
 
 function playTone(
@@ -84,6 +110,10 @@ export function playAgentNotificationSound(): void {
   void ctx
     .resume()
     .then(() => {
+      if (ctx.state !== 'running') {
+        return;
+      }
+
       const now = ctx.currentTime;
       playTone(ctx, 587.33, now, 0.12, 1);
       playTone(ctx, 880, now + 0.1, 0.2, 1);

@@ -92,7 +92,13 @@ def apply_mark(img: Image.Image, full_bleed: bool):
     return img
 
 
-apply_mark(build_gradient_image(True), True).save(root / 'build/icon.png')
+def save_atomic(img, dest):
+    temp = dest.with_name(f'.{dest.name}.tmp')
+    img.save(temp, format='PNG')
+    temp.replace(dest)
+
+
+save_atomic(apply_mark(build_gradient_image(True), True), root / 'build/icon.png')
 ui_img = apply_mark(build_gradient_image(False), False)
 for rel in ['public/nexus-logo.png', 'src/assets/nexus-logo.png']:
-    ui_img.save(root / rel)
+    save_atomic(ui_img, root / rel)

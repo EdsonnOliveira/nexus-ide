@@ -170,7 +170,7 @@ export function extendTerminalUrlAcrossLines(
 
     const continuation = trimmedNext.match(TERMINAL_URL_CONTINUE_REGEX)?.[0];
 
-    if (!continuation) {
+    if (!continuation || !/[a-z0-9/%]/i.test(continuation)) {
       break;
     }
 

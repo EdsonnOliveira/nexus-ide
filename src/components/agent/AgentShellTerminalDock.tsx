@@ -14,6 +14,7 @@ import {
   positionDropdownBelowAnchor,
   useAnchoredDropdownMenu,
 } from '@/hooks/useAnchoredDropdownMenu';
+import { useProjectStore } from '@/stores/useProjectStore';
 import { useTabActions } from '@/stores/useTabStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import {
@@ -97,6 +98,7 @@ interface AgentShellTerminalPanelProps {
   agentPaneId: string;
   projectPath: string;
   isOpen: boolean;
+  openLinksExternally: boolean;
   onClose: () => void;
 }
 
@@ -105,10 +107,12 @@ function AgentShellTerminalPanelComponent({
   agentPaneId,
   projectPath,
   isOpen,
+  openLinksExternally,
   onClose,
 }: AgentShellTerminalPanelProps) {
   const updateEntry = useAgentShellTerminalStore((state) => state.updateEntry);
   const { openBrowserTab } = useTabActions();
+  const selectProject = useProjectStore((state) => state.selectProject);
   const terminalHandleRef = useRef<XTermViewHandle | null>(null);
   const sawCommandStartRef = useRef(entry.status === 'running');
   const [cwd, setCwd] = useState(entry.cwd);
@@ -208,9 +212,29 @@ function AgentShellTerminalPanelComponent({
 
   const handleOpenLinkInBrowser = useCallback(
     (url: string) => {
-      void openBrowserTab(url, findProjectIdByPaneId(agentPaneId));
+      const projectId = openLinksExternally ? null : findProjectIdByPaneId(agentPaneId);
+
+      if (!projectId) {
+        void window.nexus.tasks.openExternalUrl(url);
+        return;
+      }
+
+      onClose();
+
+      void (async () => {
+        if (useProjectStore.getState().activeProjectId !== projectId) {
+          await selectProject(projectId);
+        }
+
+        if (useProjectStore.getState().activeProjectId !== projectId) {
+          void window.nexus.tasks.openExternalUrl(url);
+          return;
+        }
+
+        await openBrowserTab(url, projectId);
+      })();
     },
-    [agentPaneId, openBrowserTab],
+    [agentPaneId, onClose, openBrowserTab, openLinksExternally, selectProject],
   );
 
   useEffect(() => {
@@ -651,6 +675,7 @@ function AgentShellTerminalDockComponent({
           agentPaneId={agentPaneId}
           projectPath={projectPath}
           isOpen={openPaneId === entry.paneId}
+          openLinksExternally={isHeader}
           onClose={closePanel}
         />
       ))}

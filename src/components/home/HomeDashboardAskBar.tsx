@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
   type ClipboardEvent as ReactClipboardEvent,
   type CSSProperties,
   type DragEvent as ReactDragEvent,
@@ -68,6 +69,7 @@ import {
   AGENT_PROMPT_IMAGE_MENTION_REGEX,
   buildAgentPromptImageMention,
   buildAgentPromptImageMentionInsertion,
+  findRemovedAgentPromptImageMentionNumbers,
   getAgentPromptImageBadgeColor,
   hasAgentPromptAttachments,
 } from '@/utils/agentPromptImageBadge';
@@ -1081,7 +1083,7 @@ function HomeDashboardAskBarComponent({
   );
 
   const removePendingImage = useCallback(
-    (imageId: string) => {
+    (imageId: string, nextCaret?: number) => {
       if (imageActionsDisabled) {
         return;
       }
@@ -1122,9 +1124,37 @@ function HomeDashboardAskBarComponent({
       pendingImagesRef.current = kept;
       promptRef.current = nextPrompt;
       setPendingImages(kept);
-      setPromptWithCaret(nextPrompt, Math.min(caretIndex, nextPrompt.length));
+      setPromptWithCaret(nextPrompt, Math.min(nextCaret ?? caretIndex, nextPrompt.length));
     },
     [caretIndex, imageActionsDisabled, setPromptWithCaret],
+  );
+
+  const handlePromptChange = useCallback(
+    (event: ChangeEvent<HTMLTextAreaElement>) => {
+      const nextValue = event.target.value;
+      const nextCaret = event.target.selectionStart ?? nextValue.length;
+      const removedImageIds = imageActionsDisabled
+        ? []
+        : findRemovedAgentPromptImageMentionNumbers(promptRef.current, nextValue)
+            .sort((left, right) => right - left)
+            .map((imageNumber) => pendingImagesRef.current[imageNumber - 1]?.id)
+            .filter((imageId): imageId is string => Boolean(imageId));
+
+      if (removedImageIds.length === 0) {
+        setPrompt(nextValue);
+        setCaretIndex(nextCaret);
+        resizeAskInput(event.target);
+        syncInputScroll();
+        return;
+      }
+
+      promptRef.current = nextValue;
+
+      for (const imageId of removedImageIds) {
+        removePendingImage(imageId, nextCaret);
+      }
+    },
+    [imageActionsDisabled, removePendingImage, syncInputScroll],
   );
 
   const handleSubmit = useCallback(async () => {
@@ -1666,12 +1696,7 @@ function HomeDashboardAskBarComponent({
             className='home-dashboard__ask-input home-dashboard__ask-input--mirrored'
             value={prompt}
             rows={1}
-            onChange={(event) => {
-              setPrompt(event.target.value);
-              setCaretIndex(event.target.selectionStart ?? event.target.value.length);
-              resizeAskInput(event.target);
-              syncInputScroll();
-            }}
+            onChange={handlePromptChange}
             onClick={syncCaretIndex}
             onKeyUp={syncCaretIndex}
             onSelect={syncCaretIndex}
