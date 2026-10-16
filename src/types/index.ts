@@ -3,7 +3,13 @@ import type { Automation } from '@/types/automation';
 import type { ProjectTestEntry } from '@/types/test';
 import type { PasswordCollection } from '@/types/password';
 import type { AgentGitChangeGroup } from '@/types/agentGit';
-import type { AgentPipSnapshot, AgentPipCommand, AgentPipHostRequest } from '@/types/agentPip';
+import type {
+  AgentPipSnapshot,
+  AgentPipCommand,
+  AgentPipDisplayInfo,
+  AgentPipHostRequest,
+  AgentPipPinOptions,
+} from '@/types/agentPip';
 import type {
   ProjectTask,
   TaskAttachment,
@@ -36,7 +42,13 @@ import type {
   MissionInboxItem,
 } from '@/types/mission';
 
-export type { AgentPipSnapshot, AgentPipCommand, AgentPipHostRequest } from '@/types/agentPip';
+export type {
+  AgentPipSnapshot,
+  AgentPipCommand,
+  AgentPipDisplayInfo,
+  AgentPipHostRequest,
+  AgentPipPinOptions,
+} from '@/types/agentPip';
 
 export type {
   AgentRole,
@@ -1775,9 +1787,10 @@ export interface NexusAPI {
     writeMobileReleaseSnapshot: (payload: unknown) => Promise<{ ok: boolean; path: string }>;
   };
   agentPip: {
-    pin: (snapshot: AgentPipSnapshot) => Promise<void>;
+    pin: (snapshot: AgentPipSnapshot, options?: AgentPipPinOptions) => Promise<void>;
     update: (snapshot: AgentPipSnapshot) => Promise<boolean>;
     unpin: () => Promise<void>;
+    listDisplays: () => Promise<AgentPipDisplayInfo[]>;
     getSnapshot: () => Promise<AgentPipSnapshot | null>;
     focusMain: () => Promise<void>;
     command: (payload: AgentPipCommand) => Promise<boolean>;

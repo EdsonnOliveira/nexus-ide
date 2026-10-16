@@ -4,6 +4,7 @@ import {
   focusAgentPipMainWindow,
   getAgentPipMainWindow,
   getAgentPipSnapshot,
+  listAgentPipDisplays,
   pinAgentPip,
   unpinAgentPip,
   updateAgentPip,
@@ -19,6 +20,34 @@ function isAgentPipSnapshot(value: unknown): value is AgentPipSnapshot {
 
   const snapshot = value as AgentPipSnapshot;
   return typeof snapshot.paneId === 'string' && typeof snapshot.projectName === 'string';
+}
+
+function parsePinPayload(
+  value: unknown,
+): { snapshot: AgentPipSnapshot; displayId?: number } | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const payload = value as {
+    snapshot?: unknown;
+    displayId?: unknown;
+    paneId?: unknown;
+    projectName?: unknown;
+  };
+
+  if (isAgentPipSnapshot(payload.snapshot)) {
+    return {
+      snapshot: payload.snapshot,
+      displayId: typeof payload.displayId === 'number' ? payload.displayId : undefined,
+    };
+  }
+
+  if (isAgentPipSnapshot(payload)) {
+    return { snapshot: payload };
+  }
+
+  return null;
 }
 
 function isAgentPipCommand(value: unknown): value is AgentPipCommand {
@@ -67,11 +96,12 @@ function forwardCommandToMain(command: AgentPipCommand): Promise<boolean> {
 
 export function registerAgentPipHandlers(): void {
   ipcMain.handle('agentPip:pin', async (_, payload: unknown) => {
-    if (!isAgentPipSnapshot(payload)) {
+    const parsed = parsePinPayload(payload);
+    if (!parsed) {
       return;
     }
 
-    await pinAgentPip(payload);
+    await pinAgentPip(parsed.snapshot, parsed.displayId);
   });
 
   ipcMain.handle('agentPip:update', (_, payload: unknown) => {
@@ -85,6 +115,8 @@ export function registerAgentPipHandlers(): void {
   ipcMain.handle('agentPip:unpin', () => {
     unpinAgentPip(true);
   });
+
+  ipcMain.handle('agentPip:listDisplays', () => listAgentPipDisplays());
 
   ipcMain.handle('agentPip:getSnapshot', () => getAgentPipSnapshot());
 

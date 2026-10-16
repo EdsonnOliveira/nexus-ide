@@ -24,6 +24,7 @@ import {
 import { HomeDashboardCloudAgentCard } from '@/components/home/HomeDashboardCloudAgentCard';
 import { MissionCard } from '@/components/mission/MissionCard';
 import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
+import { useAgentPipPin } from '@/hooks/useAgentPipPin';
 import { useAgentPipSync } from '@/hooks/useAgentPipSync';
 import { useProjectGitFlatChanges } from '@/hooks/useProjectGitFlatChanges';
 import { useHomeSurfaceProjects } from '@/hooks/useHomeDashboardData';
@@ -224,10 +225,7 @@ function AgentCardComponent({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [closeAllProjectAgents, setCloseAllProjectAgents] = useState(false);
   const fullscreen = useAgentCardFullscreen();
-  const pinnedPaneId = useAgentPipStore((state) => state.paneId);
-  const pinAgent = useAgentPipStore((state) => state.pin);
-  const unpinAgent = useAgentPipStore((state) => state.unpin);
-  const isPinned = pinnedPaneId === paneId;
+  const { isPinned, handleTogglePin, displayPicker } = useAgentPipPin(paneId);
   const agentGitGroups = useAgentGitGroupsForProject(project.id);
   const { changes: gitFlatChanges, loading: gitLoading } = useProjectGitFlatChanges(
     computerProject ? null : project.path,
@@ -308,15 +306,6 @@ function AgentCardComponent({
     handleFocus();
     fullscreen.openFullscreen();
   }, [fullscreen.closeFullscreen, fullscreen.open, fullscreen.openFullscreen, handleFocus]);
-
-  const handleTogglePin = useCallback(() => {
-    if (isPinned) {
-      unpinAgent();
-      return;
-    }
-
-    pinAgent(paneId);
-  }, [isPinned, paneId, pinAgent, unpinAgent]);
 
   const handleOpenGit = useCallback((event: ReactMouseEvent) => {
     event.stopPropagation();
@@ -486,6 +475,7 @@ function AgentCardComponent({
           onClose={handleCloseConfirm}
         />
       ) : null}
+      {displayPicker}
     </>
   );
 }

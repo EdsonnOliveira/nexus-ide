@@ -44,6 +44,18 @@ export interface AgentPipSnapshot {
   project: AgentPipProjectSlice | null;
 }
 
+export interface AgentPipDisplayInfo {
+  id: number;
+  label: string;
+  width: number;
+  height: number;
+  primary: boolean;
+}
+
+export interface AgentPipPinOptions {
+  displayId?: number;
+}
+
 export type AgentPipCommand =
   | { type: 'submit'; paneId: string; prompt: string; options?: AgentPipSubmitOptions }
   | { type: 'stop'; paneId: string }

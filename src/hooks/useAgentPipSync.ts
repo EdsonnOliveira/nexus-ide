@@ -336,12 +336,15 @@ export function useAgentPipSync(slots: DesktopAgentSlot[]) {
         }
 
         try {
+          const displayId = useAgentPipStore.getState().displayId ?? undefined;
+          const pinOptions = displayId != null ? { displayId } : undefined;
+
           if (lastPaneIdRef.current !== snapshot.payload.paneId) {
-            await window.nexus.agentPip.pin(snapshot.payload);
+            await window.nexus.agentPip.pin(snapshot.payload, pinOptions);
           } else {
             const applied = await Promise.resolve(window.nexus.agentPip.update(snapshot.payload));
             if (applied === false) {
-              await window.nexus.agentPip.pin(snapshot.payload);
+              await window.nexus.agentPip.pin(snapshot.payload, pinOptions);
             }
           }
 

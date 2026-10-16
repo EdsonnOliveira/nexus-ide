@@ -9,6 +9,7 @@ import {
 import { cloudSupabase } from '@/lib/nexusCloud';
 import { useCloudAgentSessionsStore } from '@/stores/useCloudAgentSessionsStore';
 import { useAgentPipStore } from '@/stores/useAgentPipStore';
+import { useAgentPipPin } from '@/hooks/useAgentPipPin';
 import { CLOUD_AGENT_PIP_PREFIX } from '@/utils/agentPipSnapshot';
 import {
   useDeferredMarkdownHtml,
@@ -239,11 +240,8 @@ function HomeDashboardCloudAgentCardComponent({
   );
   const [confirmOpen, setConfirmOpen] = useState(false);
   const fullscreen = useAgentCardFullscreen();
-  const pinnedPaneId = useAgentPipStore((state) => state.paneId);
-  const pinAgent = useAgentPipStore((state) => state.pin);
-  const unpinAgent = useAgentPipStore((state) => state.unpin);
   const pipPaneId = `${CLOUD_AGENT_PIP_PREFIX}${sessionId}`;
-  const isPinned = pinnedPaneId === pipPaneId;
+  const { isPinned, handleTogglePin, displayPicker } = useAgentPipPin(pipPaneId);
   const removeSession = useCloudAgentSessionsStore((state) => state.removeSession);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const turns = useMemo(() => session?.turns ?? [], [session?.turns]);
@@ -281,15 +279,6 @@ function HomeDashboardCloudAgentCardComponent({
       void closeAgentSession(cloudSupabase, session.id).catch(() => {});
     }
   }, [removeSession, session]);
-
-  const handleTogglePin = useCallback(() => {
-    if (isPinned) {
-      unpinAgent();
-      return;
-    }
-
-    pinAgent(pipPaneId);
-  }, [isPinned, pinAgent, pipPaneId, unpinAgent]);
 
   const handleToggleFullscreen = useCallback(() => {
     if (fullscreen.open) {
@@ -384,6 +373,7 @@ function HomeDashboardCloudAgentCardComponent({
           onClose={handleCloseConfirm}
         />
       ) : null}
+      {displayPicker}
     </>
   );
 }

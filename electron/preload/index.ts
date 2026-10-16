@@ -1053,11 +1053,26 @@ const nexusApi = {
     },
   },
   agentPip: {
-    pin: (snapshot: import('../types/agentPip').AgentPipSnapshot): Promise<void> =>
-      ipcRenderer.invoke('agentPip:pin', snapshot),
+    pin: (
+      snapshot: import('../types/agentPip').AgentPipSnapshot,
+      options?: { displayId?: number },
+    ): Promise<void> =>
+      ipcRenderer.invoke('agentPip:pin', {
+        snapshot,
+        displayId: options?.displayId,
+      }),
     update: (snapshot: import('../types/agentPip').AgentPipSnapshot): Promise<boolean> =>
       ipcRenderer.invoke('agentPip:update', snapshot),
     unpin: (): Promise<void> => ipcRenderer.invoke('agentPip:unpin'),
+    listDisplays: (): Promise<
+      Array<{
+        id: number;
+        label: string;
+        width: number;
+        height: number;
+        primary: boolean;
+      }>
+    > => ipcRenderer.invoke('agentPip:listDisplays'),
     getSnapshot: (): Promise<import('../types/agentPip').AgentPipSnapshot | null> =>
       ipcRenderer.invoke('agentPip:getSnapshot'),
     focusMain: (): Promise<void> => ipcRenderer.invoke('agentPip:focusMain'),

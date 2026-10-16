@@ -13,12 +13,45 @@ let preloadPath = '';
 let loadPipUrl: ((window: BrowserWindow) => Promise<void>) | null = null;
 let snapshot: AgentPipSnapshot | null = null;
 let snapshotRevision = 0;
+let pinnedDisplayId: number | null = null;
 let moveSnapTimer: ReturnType<typeof setTimeout> | null = null;
 let visibilityTimer: ReturnType<typeof setTimeout> | null = null;
 let visibilityWatch: ReturnType<typeof setInterval> | null = null;
 let detachMain: (() => void) | null = null;
 let detachApp: (() => void) | null = null;
 let pipReady = false;
+
+export interface AgentPipDisplayInfo {
+  id: number;
+  label: string;
+  width: number;
+  height: number;
+  primary: boolean;
+}
+
+export function listAgentPipDisplays(): AgentPipDisplayInfo[] {
+  const primaryId = screen.getPrimaryDisplay().id;
+
+  return screen.getAllDisplays().map((display, index) => ({
+    id: display.id,
+    label: `Tela ${index + 1}`,
+    width: display.bounds.width,
+    height: display.bounds.height,
+    primary: display.id === primaryId,
+  }));
+}
+
+function resolvePinnedDisplay(): Electron.Display {
+  const displays = screen.getAllDisplays();
+  if (pinnedDisplayId != null) {
+    const match = displays.find((display) => display.id === pinnedDisplayId);
+    if (match) {
+      return match;
+    }
+  }
+
+  return screen.getPrimaryDisplay();
+}
 
 function applyPipOverlay(window: BrowserWindow) {
   window.setAlwaysOnTop(true, 'screen-saver');
@@ -99,8 +132,7 @@ function snapToNearestCorner(window: BrowserWindow) {
   }
 
   const [cx, cy] = window.getPosition();
-  const display = screen.getDisplayNearestPoint({ x: cx, y: cy });
-  const corners = resolveCorners(display);
+  const corners = resolveCorners(resolvePinnedDisplay());
   const nearest = corners.reduce(
     (best, corner) => {
       const distance = Math.hypot(corner.x - cx, corner.y - cy);
@@ -116,15 +148,54 @@ function snapToNearestCorner(window: BrowserWindow) {
   window.setPosition(nearest.corner.x, nearest.corner.y);
 }
 
-function placeAtDefaultCorner(window: BrowserWindow) {
-  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-  const corners = resolveCorners(display);
+function placeOnPinnedDisplay(window: BrowserWindow) {
+  const corners = resolveCorners(resolvePinnedDisplay());
   window.setBounds({
     x: corners[3].x,
     y: corners[3].y,
     width: PIP_WIDTH,
     height: PIP_HEIGHT,
   });
+}
+
+function ensureOnPinnedDisplay(window: BrowserWindow) {
+  if (window.isDestroyed()) {
+    return;
+  }
+
+  const [cx, cy] = window.getPosition();
+  const windowDisplay = screen.getDisplayNearestPoint({ x: cx, y: cy });
+  const pinnedDisplay = resolvePinnedDisplay();
+
+  if (windowDisplay.id !== pinnedDisplay.id) {
+    placeOnPinnedDisplay(window);
+  }
+}
+
+function resolveMainDisplayId(): number | null {
+  const main = getMainWindow();
+  if (!main || main.isDestroyed()) {
+    return null;
+  }
+
+  const bounds = main.getBounds();
+  return screen.getDisplayNearestPoint({
+    x: bounds.x + Math.floor(bounds.width / 2),
+    y: bounds.y + Math.floor(bounds.height / 2),
+  }).id;
+}
+
+function isPinnedAwayFromMain(): boolean {
+  if (pinnedDisplayId == null) {
+    return false;
+  }
+
+  const mainDisplayId = resolveMainDisplayId();
+  if (mainDisplayId == null) {
+    return true;
+  }
+
+  return resolvePinnedDisplay().id !== mainDisplayId;
 }
 
 function notifyMainUnpinned() {
@@ -147,21 +218,11 @@ function shouldShowPip() {
     return false;
   }
 
+  if (isPinnedAwayFromMain()) {
+    return true;
+  }
+
   return !isNexusInForeground();
-}
-
-function movePipToCursorDisplayIfNeeded(window: BrowserWindow) {
-  if (window.isDestroyed()) {
-    return;
-  }
-
-  const [cx, cy] = window.getPosition();
-  const windowDisplay = screen.getDisplayNearestPoint({ x: cx, y: cy });
-  const cursorDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-
-  if (windowDisplay.id !== cursorDisplay.id) {
-    placeAtDefaultCorner(window);
-  }
 }
 
 function revealPipWindow(window: BrowserWindow) {
@@ -172,15 +233,25 @@ function revealPipWindow(window: BrowserWindow) {
     app.show();
   }
 
-  movePipToCursorDisplayIfNeeded(window);
+  ensureOnPinnedDisplay(window);
   if (window.isVisible()) {
-    window.moveTop();
+    if (isPinnedAwayFromMain()) {
+      window.setAlwaysOnTop(true, 'screen-saver');
+      window.moveTop();
+    } else {
+      window.moveTop();
+    }
     return;
   }
 
   const main = getMainWindow();
-  if (main && !main.isDestroyed() && main.isFullScreen()) {
+  const keepMainFocus =
+    isPinnedAwayFromMain() ||
+    Boolean(main && !main.isDestroyed() && (main.isFullScreen() || main.isFocused()));
+
+  if (keepMainFocus) {
     window.showInactive();
+    window.setAlwaysOnTop(true, 'screen-saver');
     return;
   }
 
@@ -303,7 +374,7 @@ async function ensurePipWindow() {
   });
 
   window.setWindowButtonVisibility(false);
-  placeAtDefaultCorner(window);
+  placeOnPinnedDisplay(window);
   attachPipWindowEvents(window);
   pipWindow = window;
 
@@ -407,10 +478,13 @@ export function bindAgentPipMainWindow(window: BrowserWindow) {
   };
 }
 
-export async function pinAgentPip(next: AgentPipSnapshot) {
+export async function pinAgentPip(next: AgentPipSnapshot, displayId?: number) {
   snapshotRevision = typeof next.revision === 'number' ? next.revision : 0;
   snapshot = next;
+  pinnedDisplayId =
+    typeof displayId === 'number' ? displayId : screen.getPrimaryDisplay().id;
   const window = await ensurePipWindow();
+  placeOnPinnedDisplay(window);
   if (pipReady) {
     sendSnapshot(window.webContents);
   }
@@ -440,6 +514,7 @@ export function updateAgentPip(next: AgentPipSnapshot): boolean {
 export function unpinAgentPip(notifyMain = false) {
   snapshot = null;
   snapshotRevision = 0;
+  pinnedDisplayId = null;
   pipReady = false;
   stopVisibilityWatch();
 
@@ -483,6 +558,7 @@ export function focusAgentPipMainWindow() {
 
 export function destroyAgentPipWindow() {
   snapshot = null;
+  pinnedDisplayId = null;
   pipReady = false;
   stopVisibilityWatch();
 
