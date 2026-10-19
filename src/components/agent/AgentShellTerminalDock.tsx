@@ -196,15 +196,26 @@ function AgentShellTerminalPanelComponent({
         return;
       }
 
-      if (retryAgentShellCommandIfNeeded(agentPaneId, entry.paneId)) {
-        sawCommandStartRef.current = false;
-        return;
-      }
+      void retryAgentShellCommandIfNeeded(agentPaneId, entry.paneId).then((retried) => {
+        const latest = useAgentShellTerminalStore
+          .getState()
+          .getEntries(agentPaneId)
+          .find((item) => item.paneId === entry.paneId);
 
-      sawCommandStartRef.current = false;
-      updateEntry(agentPaneId, entry.paneId, {
-        status: event.exitCode === 0 ? 'completed' : 'failed',
-        exitCode: event.exitCode,
+        if (!latest || !isLiveShellStatus(latest.status)) {
+          return;
+        }
+
+        if (retried) {
+          sawCommandStartRef.current = false;
+          return;
+        }
+
+        sawCommandStartRef.current = false;
+        updateEntry(agentPaneId, entry.paneId, {
+          status: event.exitCode === 0 ? 'completed' : 'failed',
+          exitCode: event.exitCode,
+        });
       });
     },
     [agentPaneId, entry.paneId, updateEntry],
@@ -320,13 +331,13 @@ function AgentShellTerminalPanelComponent({
             paneId={entry.paneId}
             projectPath={projectPath}
             ptyId={entry.ptyId}
-            isVisible={isOpen}
+            isVisible={isOpen || entry.kind === 'tool'}
             isRuntimeActive
             isFocused={isOpen}
             cwd={cwd}
             agent='shell'
             isAgentSession={false}
-            isolationKey={agentPaneId}
+            isolationKey={entry.kind === 'interactive' ? agentPaneId : null}
             onPtyCreated={handlePtyCreated}
             onPtyLost={handlePtyLost}
             onCwdChange={setCwd}

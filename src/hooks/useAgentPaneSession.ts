@@ -47,6 +47,7 @@ import {
   handleAgentShellToolTerminalEvents,
   hasBlockingAgentToolWork,
   hasStreamingDevServerShell,
+  prepareAgentShellHandoffRelaunch,
   scheduleAgentShellCommandHandoff,
   shouldKeepAgentShellsAlive,
   shouldOpenAgentShellToolTerminal,
@@ -128,8 +129,10 @@ import {
 } from '@/utils/agentPlanPrompt';
 import {
   buildAgentQuestionAnswerPrompt,
+  hasActionablePendingAgentQuestion,
   hasPendingAgentQuestion,
   isAgentQuestionAnswerComplete,
+  markAbandonedPendingQuestionsSkipped,
 } from '@/utils/agentQuestionPrompt';
 import { waitForActiveAgent, waitForAgentPaneReady } from '@/utils/waitForAgentPaneReady';
 import { resolveAgentPaneRootPath } from '@/utils/agentTabHelpers';
@@ -439,16 +442,11 @@ export function useAgentPaneSession({
   const resolvePreserveAgentPrintChildren = (force = false): boolean => {
     const flagged = preserveAgentShellChildrenRef.current;
     preserveAgentShellChildrenRef.current = false;
-    const preserve =
+    return (
       force ||
       flagged ||
-      shouldKeepAgentShellsAlive(paneIdRef.current, streamJsonStateRef.current.activities);
-
-    if (preserve) {
-      scheduleAgentShellCommandHandoff(paneIdRef.current);
-    }
-
-    return preserve;
+      shouldKeepAgentShellsAlive(paneIdRef.current, streamJsonStateRef.current.activities)
+    );
   };
   const hasStreamJsonChunkRef = useRef(false);
   const lastStreamJsonChunkAtRef = useRef(Date.now());
@@ -607,13 +605,17 @@ export function useAgentPaneSession({
       return false;
     }
 
-    return hasPendingAgentQuestion(latestTurn.activities);
+    return hasActionablePendingAgentQuestion(latestTurn.activities);
   }, [turnsRevision, tab.turns]);
   const hasPendingPlan = useMemo(() => {
     const turns = turnsRef.current;
     const latestTurn = turns[turns.length - 1];
 
-    if (!latestTurn || latestTurn.running || hasPendingAgentQuestion(latestTurn.activities)) {
+    if (
+      !latestTurn ||
+      latestTurn.running ||
+      hasActionablePendingAgentQuestion(latestTurn.activities)
+    ) {
       return false;
     }
 
@@ -922,6 +924,39 @@ export function useAgentPaneSession({
     },
     [flushPersistTurns, schedulePersistTurns, scheduleStreamingTurnsUi],
   );
+
+  useEffect(() => {
+    if (isTurnRunning || isSubmitting) {
+      return;
+    }
+
+    const turns = turnsRef.current;
+    const latestTurn = turns[turns.length - 1];
+
+    if (!latestTurn || latestTurn.running) {
+      return;
+    }
+
+    if (
+      !hasPendingAgentQuestion(latestTurn.activities) ||
+      hasActionablePendingAgentQuestion(latestTurn.activities)
+    ) {
+      return;
+    }
+
+    const nextActivities = markAbandonedPendingQuestionsSkipped(latestTurn.activities);
+
+    if (nextActivities === latestTurn.activities) {
+      return;
+    }
+
+    persistTurns(
+      turns.map((turn, index) =>
+        index === turns.length - 1 ? { ...turn, activities: nextActivities } : turn,
+      ),
+      { flush: true },
+    );
+  }, [isSubmitting, isTurnRunning, persistTurns, turnsRevision, tab.turns]);
 
   useEffect(() => {
     return () => {
@@ -1470,7 +1505,8 @@ export function useAgentPaneSession({
       return false;
     }
 
-    preserveAgentShellChildrenRef.current = true;
+    preserveAgentShellChildrenRef.current = false;
+    prepareAgentShellHandoffRelaunch(paneIdRef.current);
     scheduleAgentShellCommandHandoff(paneIdRef.current);
     state.handoffComplete = true;
     state.shouldFinalize = true;
@@ -1553,7 +1589,7 @@ export function useAgentPaneSession({
           if (tryHandoffLongRunningDevShell(idleMs)) {
             agentPrintRunActiveRef.current = false;
             window.nexus.agentPrint.stop(paneIdRef.current, {
-              preserveChildren: resolvePreserveAgentPrintChildren(),
+              preserveChildren: false,
             });
             clearAgentPrintRunToken(paneIdRef.current);
             finalizeStreamJsonTurnFromEvent('settleTimer-handoff');
@@ -4277,7 +4313,7 @@ export function useAgentPaneSession({
           if (tryHandoffLongRunningDevShell(idleMs)) {
             agentPrintRunActiveRef.current = false;
             window.nexus.agentPrint.stop(paneId, {
-              preserveChildren: resolvePreserveAgentPrintChildren(),
+              preserveChildren: false,
             });
             clearAgentPrintRunToken(paneId);
             finalizeStreamJsonTurnFromEvent('longShell-handoff');

@@ -948,7 +948,14 @@ async function runAgentPrompt(
   const fileRefs = projectRoot
     ? saveAgentPromptFileAttachments(projectRoot, session!.id, fileAttachments)
     : [];
-  const fullPrompt = [cliPrompt, ...imageRefs, ...fileRefs].filter(Boolean).join(' ').trim();
+  const NEXUS_DEV_SHELL_GUARD =
+    '[Nexus IDE] Nunca use pkill, killall ou kill -9 em next/vite/node/npm/electron-vite/dev servers. Deixe npm run dev/start rodando — o Nexus mantém no dock de terminais do agent. Não suba outra porta se o dock já tiver o server. Para reiniciar: Ctrl+C só naquele terminal, ou peça ao usuário. Não mate processos de outros projetos.';
+  const joinedPrompt = [cliPrompt, ...imageRefs, ...fileRefs].filter(Boolean).join(' ').trim();
+  const fullPrompt = joinedPrompt.includes('[Nexus IDE] Nunca use pkill')
+    ? joinedPrompt
+    : joinedPrompt
+      ? `${NEXUS_DEV_SHELL_GUARD}\n\n${joinedPrompt}`
+      : joinedPrompt;
   const args = buildAgentPromptArgs(agentCommand, {
     cwd,
     fullPrompt,

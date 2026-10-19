@@ -5,7 +5,17 @@ import { app } from 'electron';
 
 const AGENT_HOMES_DIR = 'agent-homes';
 
-const SHARED_HOME_LINKS = ['.ssh', '.gitconfig', '.npmrc'] as const;
+const SHARED_HOME_LINKS = [
+  '.ssh',
+  '.gitconfig',
+  '.npmrc',
+  '.nvm',
+  '.local',
+  '.volta',
+  '.fnm',
+  '.asdf',
+  '.bun',
+] as const;
 
 function sanitizeIsolationKey(isolationKey: string): string {
   const trimmed = isolationKey.trim();

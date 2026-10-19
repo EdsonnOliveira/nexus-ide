@@ -111,19 +111,86 @@ export function isAgentQuestionAnswerComplete(
   });
 }
 
-export function hasPendingAgentQuestion(activities: { kind: string; questionStatus?: string }[]): boolean {
+type AgentQuestionActivityLike = {
+  kind: string;
+  questionStatus?: string;
+  questions?: unknown[];
+  label?: string;
+};
+
+export function hasPendingAgentQuestion(activities: AgentQuestionActivityLike[]): boolean {
   return activities.some(
-    (entry) => entry.kind === 'question' && entry.questionStatus === 'pending',
+    (entry) =>
+      entry.kind === 'question' &&
+      entry.questionStatus === 'pending' &&
+      Boolean(entry.questions && entry.questions.length > 0),
   );
 }
 
-export function findPendingAgentQuestionActivity<T extends { kind: string; questionStatus?: string }>(
+export function hasActionablePendingAgentQuestion(
+  activities: AgentQuestionActivityLike[],
+): boolean {
+  if (!hasPendingAgentQuestion(activities)) {
+    return false;
+  }
+
+  let lastPendingQuestionIndex = -1;
+  let lastThoughtIndex = -1;
+
+  for (let index = 0; index < activities.length; index += 1) {
+    const entry = activities[index];
+
+    if (!entry) {
+      continue;
+    }
+
+    if (
+      entry.kind === 'question' &&
+      entry.questionStatus === 'pending' &&
+      entry.questions &&
+      entry.questions.length > 0
+    ) {
+      lastPendingQuestionIndex = index;
+    }
+
+    if (entry.kind === 'thought' && entry.label?.trim()) {
+      lastThoughtIndex = index;
+    }
+  }
+
+  if (lastThoughtIndex > lastPendingQuestionIndex) {
+    return false;
+  }
+
+  return true;
+}
+
+export function markAbandonedPendingQuestionsSkipped<T extends AgentQuestionActivityLike>(
+  activities: T[],
+): T[] {
+  if (hasActionablePendingAgentQuestion(activities) || !hasPendingAgentQuestion(activities)) {
+    return activities;
+  }
+
+  return activities.map((entry) =>
+    entry.kind === 'question' && entry.questionStatus === 'pending'
+      ? { ...entry, questionStatus: 'skipped' as const }
+      : entry,
+  );
+}
+
+export function findPendingAgentQuestionActivity<T extends AgentQuestionActivityLike>(
   activities: T[],
 ): T | undefined {
   for (let index = activities.length - 1; index >= 0; index -= 1) {
     const entry = activities[index];
 
-    if (entry?.kind === 'question' && entry.questionStatus === 'pending') {
+    if (
+      entry?.kind === 'question' &&
+      entry.questionStatus === 'pending' &&
+      entry.questions &&
+      entry.questions.length > 0
+    ) {
       return entry;
     }
   }

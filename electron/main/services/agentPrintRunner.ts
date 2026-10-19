@@ -828,6 +828,8 @@ class AgentPrintRunner {
 
     if (preserveChildren) {
       this.signalChild(child, 'SIGKILL', true);
+      this.processes.delete(paneId);
+      syncAgentRunningMarker(this.processes.size > 0);
       return;
     }
 

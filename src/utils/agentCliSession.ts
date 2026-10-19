@@ -266,6 +266,23 @@ export function buildAgentPrintPromptCommand(options: AgentPrintPromptOptions): 
   return `${parts.join(' ')} 2>&1 | cat`;
 }
 
+const NEXUS_DEV_SHELL_GUARD =
+  '[Nexus IDE] Nunca use pkill, killall ou kill -9 em next/vite/node/npm/electron-vite/dev servers. Deixe npm run dev/start rodando — o Nexus mantém no dock de terminais do agent. Não suba outra porta (5174→5175) se o dock já tiver o server. Para reiniciar: Ctrl+C só naquele terminal, ou peça ao usuário. Não mate processos de outros projetos.';
+
+function withNexusDevShellGuard(prompt: string): string {
+  const trimmed = prompt.trim();
+
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  if (trimmed.includes('[Nexus IDE] Nunca use pkill')) {
+    return trimmed;
+  }
+
+  return `${NEXUS_DEV_SHELL_GUARD}\n\n${trimmed}`;
+}
+
 export function resolveStreamJsonPromptPayload(
   cliAgent: string,
   prompt: string,
@@ -288,7 +305,7 @@ export function resolveStreamJsonPromptPayload(
       })
       .filter(Boolean);
 
-    return { prompt: prompt.trim(), attachmentPaths };
+    return { prompt: withNexusDevShellGuard(prompt), attachmentPaths };
   }
 
   const resolvedImageRefs = imageRefs.map((ref) => {
@@ -302,7 +319,7 @@ export function resolveStreamJsonPromptPayload(
   });
   const fullPrompt = [prompt, ...resolvedImageRefs].filter(Boolean).join(' ').trim();
 
-  return { prompt: fullPrompt, attachmentPaths: [] };
+  return { prompt: withNexusDevShellGuard(fullPrompt), attachmentPaths: [] };
 }
 
 export function buildAgentPaneLaunchCommand(command: string): string {

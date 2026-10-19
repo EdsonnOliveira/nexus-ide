@@ -144,6 +144,49 @@ function AgentCardCloseConfirmComponent({
   onClose,
 }: AgentCardCloseConfirmProps) {
   const isBulk = agentCount > 1;
+  const confirmedRef = useRef(false);
+
+  const handleConfirm = useCallback(() => {
+    if (confirmedRef.current) {
+      return;
+    }
+
+    confirmedRef.current = true;
+    onConfirm();
+  }, [onConfirm]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Enter' || event.defaultPrevented) {
+        return;
+      }
+
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+        return;
+      }
+
+      const target = event.target;
+
+      if (target instanceof HTMLElement) {
+        if (target.closest('textarea, input, select, [contenteditable="true"]')) {
+          return;
+        }
+
+        const button = target.closest('button');
+
+        if (button) {
+          return;
+        }
+      }
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      handleConfirm();
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [handleConfirm]);
 
   return (
     <AnimatedModal panelClassName='project-dialog' onClose={onClose}>
@@ -169,7 +212,7 @@ function AgentCardCloseConfirmComponent({
             <button
               type='button'
               className='project-dialog__btn project-dialog__btn--danger app-button'
-              onClick={onConfirm}
+              onClick={handleConfirm}
             >
               {isBulk ? 'Fechar todos' : 'Fechar'}
             </button>

@@ -71,6 +71,8 @@ const nexusApi = {
     },
     removeAgentShellHome: (isolationKey: string): Promise<void> =>
       ipcRenderer.invoke('terminal:removeAgentShellHome', isolationKey),
+    cleanupProjectDevProcesses: (projectPath: string): Promise<number> =>
+      ipcRenderer.invoke('terminal:cleanupProjectDevProcesses', projectPath),
     onData: (callback: (ptyId: string, data: string) => void): (() => void) => {
       const listener = (_: Electron.IpcRendererEvent, payload: { ptyId: string; data: string }) => {
         callback(payload.ptyId, payload.data);

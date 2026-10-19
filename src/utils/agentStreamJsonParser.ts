@@ -12,7 +12,10 @@ import { isAgentTurnSummaryVisible } from '@/utils/agentTurnSummary';
 import { writeDebugSessionLog } from '@/utils/debugSessionLog';
 import { sanitizeResponseText } from '@/utils/agentTranscriptParser';
 import { shouldOpenAgentShellToolTerminal } from '@/utils/agentShellToolTerminal';
-import { ensureOtherOption } from '@/utils/agentQuestionPrompt';
+import {
+  ensureOtherOption,
+  markAbandonedPendingQuestionsSkipped,
+} from '@/utils/agentQuestionPrompt';
 import {
   deduplicatePlanResponseActivities,
   normalizePlanTodos,
@@ -1779,7 +1782,10 @@ export function hydrateAgentStreamJsonSessionFromTurn(
   state.receivedTerminalResult = false;
   state.handoffComplete = false;
   state.pendingQuestion = state.activities.some(
-    (entry) => entry.kind === 'question' && entry.questionStatus === 'pending',
+    (entry) =>
+      entry.kind === 'question' &&
+      entry.questionStatus === 'pending' &&
+      Boolean(entry.questions && entry.questions.length > 0),
   );
   state.pendingPlan = state.activities.some(
     (entry) => entry.kind === 'plan' && entry.planStatus === 'pending',
@@ -1797,7 +1803,9 @@ export function hasMeaningfulStreamJsonTurnOutput(state: AgentStreamJsonParserSt
     (entry) =>
       (entry.kind === 'response' && entry.label.trim().length > 0) ||
       entry.kind === 'file_edit' ||
-      (entry.kind === 'question' && entry.questionStatus === 'pending') ||
+      (entry.kind === 'question' &&
+        entry.questionStatus === 'pending' &&
+        Boolean(entry.questions && entry.questions.length > 0)) ||
       (entry.kind === 'plan' && entry.planStatus === 'pending'),
   );
 }
@@ -1861,7 +1869,10 @@ export function hasPendingAgentPlanFromActivities(activities: AgentActivity[]): 
 
 export function hasPendingAgentQuestionFromActivities(activities: AgentActivity[]): boolean {
   return activities.some(
-    (entry) => entry.kind === 'question' && entry.questionStatus === 'pending',
+    (entry) =>
+      entry.kind === 'question' &&
+      entry.questionStatus === 'pending' &&
+      Boolean(entry.questions && entry.questions.length > 0),
   );
 }
 
@@ -4324,6 +4335,7 @@ export function finalizeStreamJsonTurn(
   activities = mergeStatusActivitiesFromTurn(activities, turn);
   activities = activities.filter((entry) => isRenderableStreamJsonActivity(entry));
   activities = deduplicatePlanResponseActivities(activities);
+  activities = markAbandonedPendingQuestionsSkipped(activities);
 
   const summary = buildAgentTurnSummaryFromStreamJsonState(state);
   const incompleteFallback = resolveIncompleteStreamJsonResponseFallback(state, activities, {

@@ -3427,6 +3427,8 @@ html.nexus-power-save * {
   gap: 16px;
   min-height: 0;
   overflow: visible;
+  container-type: inline-size;
+  container-name: maestro-agents;
 }
 
 .home-dashboard__agent-mode:has(.home-dashboard__agent-grid) {
@@ -3544,12 +3546,39 @@ html.nexus-power-save * {
 }
 
 .home-dashboard--maestro .home-dashboard__agent-grid {
-  grid-template-columns: repeat(
-    auto-fit,
-    minmax(min(100%, var(--maestro-card-min)), min(720px, 100%))
-  );
+  grid-template-columns: minmax(0, 720px);
   gap: var(--maestro-grid-gap);
   justify-content: center;
+}
+
+.home-dashboard--maestro .home-dashboard__agent-grid:has(> :nth-child(2)) {
+  grid-template-columns: repeat(2, minmax(0, 720px));
+}
+
+@container maestro-agents (min-width: 1468px) {
+  .home-dashboard--maestro:not(.home-dashboard--maestro-dense)
+    .home-dashboard__agent-grid:has(> :nth-child(3)) {
+    grid-template-columns: repeat(3, minmax(0, 720px));
+  }
+}
+
+@container maestro-agents (min-width: 1962px) {
+  .home-dashboard--maestro:not(.home-dashboard--maestro-dense)
+    .home-dashboard__agent-grid:has(> :nth-child(4)) {
+    grid-template-columns: repeat(4, minmax(0, 720px));
+  }
+}
+
+@container maestro-agents (min-width: 980px) {
+  .home-dashboard--maestro-dense .home-dashboard__agent-grid:has(> :nth-child(3)) {
+    grid-template-columns: repeat(3, minmax(0, 720px));
+  }
+}
+
+@container maestro-agents (min-width: 1310px) {
+  .home-dashboard--maestro-dense .home-dashboard__agent-grid:has(> :nth-child(4)) {
+    grid-template-columns: repeat(4, minmax(0, 720px));
+  }
 }
 
 .home-dashboard__agent-card-host {

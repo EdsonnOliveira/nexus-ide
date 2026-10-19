@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import type { TerminalAgent } from '../../types';
 import { removeAgentShellHome } from '../services/agentShellHome';
+import { cleanupProjectDevProcesses } from '../services/projectDevProcessCleanup';
 import { ptyManager, type TerminalCreateOptions } from '../services/ptyManager';
 
 export function registerTerminalHandlers(): void {
@@ -27,6 +28,10 @@ export function registerTerminalHandlers(): void {
   ipcMain.handle('terminal:removeAgentShellHome', (_, isolationKey: string) => {
     removeAgentShellHome(isolationKey);
   });
+
+  ipcMain.handle('terminal:cleanupProjectDevProcesses', (_, projectPath: string) =>
+    cleanupProjectDevProcesses(projectPath),
+  );
 
   ipcMain.on('terminal:write', (_, ptyId: string, data: string) => {
     ptyManager.write(ptyId, data);

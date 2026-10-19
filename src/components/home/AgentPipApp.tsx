@@ -26,7 +26,7 @@ import type {
 } from '@/types';
 import { registerAgentPaneHandlers } from '@/utils/agentPaneRegistry';
 import { findPendingAgentPlanActivity } from '@/utils/agentPlanPrompt';
-import { hasPendingAgentQuestion } from '@/utils/agentQuestionPrompt';
+import { hasActionablePendingAgentQuestion } from '@/utils/agentQuestionPrompt';
 import { buildAgentPromptHistory } from '@/utils/agentPromptAttachments';
 import { resolveFollowUpAgentPrompt } from '@/utils/agentSkillDisplay';
 import { cliAgentToAiProvider } from '@/constants/aiProviders';
@@ -309,7 +309,9 @@ function AgentPipAppComponent() {
     return undefined;
   }, [turns]);
   const hasPendingPlan = Boolean(pendingPlanActivity);
-  const hasPendingQuestion = turns.some((turn) => hasPendingAgentQuestion(turn.activities));
+  const hasPendingQuestion = turns.some((turn) =>
+    hasActionablePendingAgentQuestion(turn.activities),
+  );
   const showScrollToBottom = turns.length > 0 && !isTranscriptAtBottom;
 
   const runCommand = useCallback(

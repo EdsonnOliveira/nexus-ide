@@ -1125,6 +1125,7 @@ export interface NexusAPI {
     resize: (ptyId: string, cols: number, rows: number) => void;
     kill: (ptyId: string) => void;
     removeAgentShellHome: (isolationKey: string) => Promise<void>;
+    cleanupProjectDevProcesses: (projectPath: string) => Promise<number>;
     onData: (callback: (ptyId: string, data: string) => void) => () => void;
     onExit: (callback: (ptyId: string, code: number) => void) => () => void;
   };

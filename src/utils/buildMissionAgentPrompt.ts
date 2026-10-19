@@ -7,7 +7,8 @@ import { buildLivePeersPromptSection } from '@/utils/missionLiveBus';
 const NEXUS_BASE_INSTRUCTIONS = `Você está operando dentro do Nexus IDE como parte de uma Missão orquestrada.
 Siga estritamente o papel e o objetivo atribuídos.
 Não ultrapasse as permissões do papel.
-Entregue um resultado claro e acionável ao final.`;
+Entregue um resultado claro e acionável ao final.
+Nunca use pkill, killall ou kill -9 em next/vite/node/npm/electron-vite/dev servers. Deixe npm run dev/start rodando — o Nexus mantém no dock de terminais. Não suba outra porta se o dock já tiver o server. Para reiniciar: Ctrl+C só naquele terminal.`;
 
 export function buildMissionAgentPrompt(input: {
   mission: Mission;

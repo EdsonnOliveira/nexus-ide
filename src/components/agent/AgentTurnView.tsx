@@ -4,6 +4,8 @@ import { AgentActivityList } from '@/components/agent/AgentActivityList';
 import { AgentUserPrompt } from '@/components/agent/AgentUserPrompt';
 import { useStickyPromptState } from '@/hooks/useStickyPromptState';
 import { isAgentTurnSummaryVisible } from '@/utils/agentTurnSummary';
+import { hasActionablePendingAgentQuestion } from '@/utils/agentQuestionPrompt';
+import { hasPendingAgentPlan } from '@/utils/agentPlanPrompt';
 import type { AiProviderId } from '@/constants/aiProviders';
 
 interface AgentTurnViewProps {
@@ -47,11 +49,8 @@ function AgentTurnViewComponent({
   const stickySentinelRef = useRef<HTMLDivElement>(null);
   const hasPendingInteractive = useMemo(
     () =>
-      turn.activities.some(
-        (entry) =>
-          (entry.kind === 'question' && entry.questionStatus === 'pending') ||
-          (entry.kind === 'plan' && entry.planStatus === 'pending'),
-      ),
+      hasActionablePendingAgentQuestion(turn.activities) ||
+      hasPendingAgentPlan(turn.activities),
     [turn.activities],
   );
   const stickyPromptActive = !disableStickyPrompt && !hasPendingInteractive;
