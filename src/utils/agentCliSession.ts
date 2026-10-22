@@ -391,11 +391,7 @@ export function isAgentShellNoiseLine(line: string): boolean {
     return true;
   }
 
-  if (/^Error:\s/i.test(trimmed)) {
-    return true;
-  }
-
-  if (/~\/.*%\s+\S/.test(trimmed)) {
+  if (/^~\/.*%\s+\S/.test(trimmed)) {
     return true;
   }
 
@@ -481,6 +477,10 @@ export function sanitizeAgentTranscriptLine(line: string): string | null {
     return null;
   }
 
+  if (/^```/.test(trimmed)) {
+    return trimmed;
+  }
+
   if (isAgentShellNoiseLine(trimmed) || isAgentTuiNoiseLine(trimmed)) {
     return null;
   }
@@ -498,7 +498,29 @@ export function detectSmartModeApprovalInTail(tail: string): boolean {
 }
 
 export function sanitizeAgentCliError(text: string): string {
-  return cleanAgentPtyChunk(text).replace(/\s+/g, ' ').trim();
+  const cleaned = cleanAgentPtyChunk(text)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !isAgentShellNoiseLine(line) && !isAgentTuiNoiseLine(line))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return cleaned;
+}
+
+export function isAgentCliNoiseOnlyError(text: string | null | undefined): boolean {
+  const raw = text?.trim() ?? '';
+
+  if (!raw) {
+    return true;
+  }
+
+  if (/^Agent encerrou sem emitir eventos\.?$/i.test(raw)) {
+    return true;
+  }
+
+  return sanitizeAgentCliError(raw).length === 0;
 }
 
 const UUID_CHAT_ID =

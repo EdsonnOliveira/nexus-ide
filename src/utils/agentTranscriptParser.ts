@@ -386,6 +386,10 @@ function shouldStartNewResponseBlock(activities: AgentActivity[]): boolean {
 }
 
 function isResponseNoiseLine(line: string): boolean {
+  if (isMarkdownFenceLine(line)) {
+    return false;
+  }
+
   return (
     isAgentLiveStatusLine(line) ||
     isAgentLiveStatusFragment(line) ||
@@ -408,8 +412,16 @@ function repairBrokenMarkdownImages(text: string): string {
 function sanitizeResponseText(text: string): string {
   const seen = new Set<string>();
   const lines: string[] = [];
+  const normalized = text.replace(/\r/g, '\n');
 
-  for (const rawLine of text.split('\n')) {
+  for (const rawLine of normalized.split('\n')) {
+    if (!rawLine.trim()) {
+      if (lines.length > 0 && lines[lines.length - 1] !== '') {
+        lines.push('');
+      }
+      continue;
+    }
+
     if (isResponseNoiseLine(rawLine)) {
       continue;
     }
@@ -433,7 +445,11 @@ function sanitizeResponseText(text: string): string {
     lines.push(sanitized);
   }
 
-  return repairBrokenMarkdownImages(lines.join('\n').trim());
+  while (lines.length > 0 && lines[lines.length - 1] === '') {
+    lines.pop();
+  }
+
+  return repairBrokenMarkdownImages(lines.join('\n'));
 }
 
 function appendNarrative(

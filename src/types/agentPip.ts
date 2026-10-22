@@ -24,6 +24,14 @@ export interface AgentPipProjectSlice {
   }>;
 }
 
+export interface AgentPipShellTerminal {
+  paneId: string;
+  title: string;
+  command: string;
+  status: 'starting' | 'running' | 'completed' | 'failed';
+  startedAt: number;
+}
+
 export interface AgentPipSnapshot {
   kind: 'desktop' | 'cloud';
   paneId: string;
@@ -42,6 +50,7 @@ export interface AgentPipSnapshot {
   followUps: AgentFollowUp[];
   cloudTurns: CloudAgentTurn[];
   project: AgentPipProjectSlice | null;
+  shellTerminals?: AgentPipShellTerminal[];
 }
 
 export interface AgentPipDisplayInfo {

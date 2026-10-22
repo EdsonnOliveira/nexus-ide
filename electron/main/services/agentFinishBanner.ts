@@ -54,6 +54,7 @@ function bindBannerIpc(): void {
     }
 
     if (actionId === 'dismiss' || actionId === 'ignore') {
+      currentOnAction?.(actionId);
       closeAgentFinishBanner();
       return;
     }

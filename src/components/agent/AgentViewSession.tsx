@@ -16,10 +16,11 @@ import { useAgentComposerDraftStore } from '@/stores/useAgentComposerDraftStore'
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { TERMINAL_AGENTS } from '@/constants/terminalAgents';
-import type { AgentTurn, AgentFollowUp } from '@/types';
+import type { AgentTurn, AgentFollowUp, AgentWhatsAppNotify } from '@/types';
 import { cliAgentToTerminalAgent, resolveAgentTabCli } from '@/utils/agentTabHelpers';
 import { cliAgentToAiProvider } from '@/constants/aiProviders';
 import { buildAgentPromptHistory } from '@/utils/agentPromptAttachments';
+import { openAgentWhatsAppFinishForTurn } from '@/utils/agentWhatsAppNotify';
 import { isHomeBoundAgentPane } from '@/utils/homeDashboardAgents';
 import {
   isPaneAgentSessionLive,
@@ -256,6 +257,7 @@ function AgentViewSessionComponent({
     sendFollowUpNow,
     removeFollowUp,
     flushNextFollowUp,
+    setTurnWhatsAppNotify,
     submitQuestionAnswers,
     hasPendingQuestion,
     acceptPlan,
@@ -281,13 +283,34 @@ function AgentViewSessionComponent({
     onRestoreDraft: restoreDraft,
   });
 
+  const handleWhatsAppNotifyChange = useCallback(
+    (turnId: string, notify: AgentWhatsAppNotify | null) => {
+      const turn = setTurnWhatsAppNotify(turnId, notify);
+
+      if (notify?.link) {
+        onUpdateTab({ whatsappLink: notify.link });
+      }
+
+      if (!notify || !turn || turn.running) {
+        return;
+      }
+
+      openAgentWhatsAppFinishForTurn({
+        turn,
+        paneId: tab.id,
+        projectId,
+        agentLabel: resolveAgentTabCli(sessionTab),
+      });
+    },
+    [onUpdateTab, projectId, sessionTab, setTurnWhatsAppNotify, tab.id],
+  );
+
   const clearNotificationForPane = useProjectNotificationStore(
     (state) => state.clearNotificationForPane,
   );
   const restoreProjectNotification = useProjectNotificationStore(
     (state) => state.restoreProjectNotification,
   );
-
   useEffect(() => {
     if (isHomeBoundAgentPane(projectId, tab.id)) {
       if (isFocused && isVisible) {
@@ -458,12 +481,14 @@ function AgentViewSessionComponent({
               projectId={projectId}
               projectPath={projectPath}
               paneId={tab.id}
+              agentWhatsAppLink={tab.whatsappLink ?? ''}
               fallbackAiProvider={fallbackAiProvider}
               disableStickyPrompt={disableStickyPrompt}
               onAtBottomChange={handleTranscriptAtBottomChange}
               onActiveTurnChange={handleActiveTurnChange}
               onEdit={editAgentTurn}
               onRedo={redoAgentTurn}
+              onWhatsAppNotifyChange={handleWhatsAppNotifyChange}
               onSubmitQuestion={submitQuestionAnswers}
             />
           )}

@@ -49,6 +49,7 @@ import {
   sanitizeResponseText,
   isValidReadFileTarget,
 } from '@/utils/agentTranscriptParser';
+import { isAgentShellNoiseLine } from '@/utils/agentCliSession';
 import {
   isInjectedDevServerHandoffReply,
   looksLikeTruncatedAgentResponse,
@@ -136,7 +137,7 @@ function isRenderableActivity(
   }
 
   if (activity.kind === 'status') {
-    return Boolean(activity.label.trim());
+    return Boolean(activity.label.trim()) && !isAgentShellNoiseLine(activity.label);
   }
 
   if (activity.kind === 'file_read') {
@@ -588,7 +589,7 @@ function AgentActivityListComponent({
     }
 
     if (activity.kind === 'status') {
-      if (/^Ran\b/i.test(activity.label.trim())) {
+      if (/^Ran\b/i.test(activity.label.trim()) || isAgentShellNoiseLine(activity.label)) {
         return null;
       }
 

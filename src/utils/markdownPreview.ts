@@ -171,7 +171,7 @@ function applyInlineMarkdown(value: string): string {
   );
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  html = html.replace(/`([^`]+)`/g, (_, code: string) => wrapInlineCodeHtml(code));
+  html = html.replace(/(?<!`)`([^`\n]+)`(?!`)/g, (_, code: string) => wrapInlineCodeHtml(code));
   html = autolinkMarkdownUrls(html);
   return html;
 }
@@ -636,10 +636,26 @@ function looksLikeProseLine(trimmed: string): boolean {
   return wordCount >= 5 && letterCount / Math.max(trimmed.length, 1) > 0.62;
 }
 
+function looksLikeShellCommandLine(trimmed: string): boolean {
+  if (
+    /^(?:cd|npm|npx|yarn|pnpm|bun|node|env|export|source|bash|sh|zsh|fish|git|curl|wget|docker|kubectl|python|pip|cargo|go|make|brew|sudo)\b/.test(
+      trimmed,
+    )
+  ) {
+    return true;
+  }
+
+  return /(?:&&|\|\||;)/.test(trimmed) && /(?:npm|npx|yarn|pnpm|bun|cd|env|node)\b/.test(trimmed);
+}
+
 function shouldAutoCloseMarkdownFence(line: string, codeLineCount: number): boolean {
   const trimmed = line.trim();
 
   if (!trimmed) {
+    return false;
+  }
+
+  if (looksLikeShellCommandLine(trimmed) || looksLikeCodeLine(trimmed)) {
     return false;
   }
 

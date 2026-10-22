@@ -5,11 +5,13 @@ import iconModeAgent from '@/assets/icon-mode-agent.svg';
 import iconModeDebug from '@/assets/icon-mode-debug.svg';
 import iconModeMultitask from '@/assets/icon-mode-multitask.svg';
 import iconModePlan from '@/assets/icon-mode-plan.svg';
+import { AgentWhatsAppMarkModal } from '@/components/agent/AgentWhatsAppMarkModal';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import {
   AgentPromptImageIndexBadge,
   AgentPromptImageMentionText,
 } from '@/components/agent/AgentPromptImageBadges';
+import { SidebarWhatsAppIcon } from '@/components/sidebar/SidebarWhatsAppIcon';
 import {
   aiProviderLabel,
   isSelectableAiProviderId,
@@ -17,7 +19,7 @@ import {
 } from '@/constants/aiProviders';
 import { getAgentModeOption, type AgentModeBadgeIcon } from '@/constants/agentModes';
 import { useFlipMotion } from '@/hooks/useFlipMotion';
-import type { AgentTurn } from '@/types';
+import type { AgentTurn, AgentWhatsAppNotify } from '@/types';
 import {
   hydrateAgentUserMessage,
   resolvePromptDisplayContent,
@@ -40,23 +42,28 @@ const MODE_ICON_SRC: Record<AgentModeBadgeIcon, string> = {
 interface AgentUserPromptProps {
   turn: AgentTurn;
   projectPath: string;
+  agentWhatsAppLink?: string;
   isEditing?: boolean;
   isStickyLayout?: boolean;
   fallbackAiProvider?: Exclude<AiProviderId, 'nexus'>;
   onEdit?: (turnId: string) => void;
   onRedo?: (turnId: string) => void;
+  onWhatsAppNotifyChange?: (turnId: string, notify: AgentWhatsAppNotify | null) => void;
 }
 
 function AgentUserPromptComponent({
   turn,
   projectPath,
+  agentWhatsAppLink = '',
   isEditing = false,
   isStickyLayout = false,
   fallbackAiProvider,
   onEdit,
   onRedo,
+  onWhatsAppNotifyChange,
 }: AgentUserPromptProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [whatsappMarkOpen, setWhatsappMarkOpen] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
   const [attachments, setAttachments] = useState(turn.user.attachments ?? []);
   const [hydratedContent, setHydratedContent] = useState(
@@ -129,7 +136,34 @@ function AgentUserPromptComponent({
     onRedo?.(turn.id);
   }, [onRedo, turn.id]);
 
-  const showActions = !turn.running && !turn.pendingFollowUp && Boolean(onEdit || onRedo);
+  const handleWhatsAppClick = useCallback(() => {
+    setWhatsappMarkOpen(true);
+  }, []);
+
+  const handleWhatsAppMarkClose = useCallback(() => {
+    setWhatsappMarkOpen(false);
+  }, []);
+
+  const handleWhatsAppMarkSave = useCallback(
+    (notify: AgentWhatsAppNotify) => {
+      onWhatsAppNotifyChange?.(turn.id, notify);
+      setWhatsappMarkOpen(false);
+    },
+    [onWhatsAppNotifyChange, turn.id],
+  );
+
+  const handleWhatsAppMarkRemove = useCallback(() => {
+    onWhatsAppNotifyChange?.(turn.id, null);
+    setWhatsappMarkOpen(false);
+  }, [onWhatsAppNotifyChange, turn.id]);
+
+  const isWhatsAppMarked = Boolean(turn.whatsappNotify);
+  const showWhatsAppAction =
+    !isEditing &&
+    Boolean(onWhatsAppNotifyChange) &&
+    (turn.running || turn.pendingFollowUp || isWhatsAppMarked);
+  const showEditActions = !turn.running && !turn.pendingFollowUp && Boolean(onEdit || onRedo);
+  const showActions = showWhatsAppAction || showEditActions;
 
   useFlipMotion(isStickyLayout, actionsRef, showActions);
 
@@ -221,7 +255,20 @@ function AgentUserPromptComponent({
           ) : null}
           {showActions ? (
             <div ref={actionsRef} className='agent-view__user-prompt-actions'>
-              {onEdit ? (
+              {showWhatsAppAction ? (
+                <button
+                  type='button'
+                  className={`agent-view__whatsapp app-button app-button--enter${isWhatsAppMarked ? ' agent-view__whatsapp--active' : ''}`}
+                  aria-label={
+                    isWhatsAppMarked ? 'Editar aviso no WhatsApp' : 'Avisar no WhatsApp'
+                  }
+                  title={isWhatsAppMarked ? 'Editar aviso no WhatsApp' : 'Avisar no WhatsApp'}
+                  onClick={handleWhatsAppClick}
+                >
+                  <SidebarWhatsAppIcon size={13} />
+                </button>
+              ) : null}
+              {showEditActions && onEdit ? (
                 <button
                   type='button'
                   className='agent-view__edit app-button app-button--enter'
@@ -231,7 +278,7 @@ function AgentUserPromptComponent({
                   <Pencil size={13} />
                 </button>
               ) : null}
-              {onRedo ? (
+              {showEditActions && onRedo ? (
                 <button
                   type='button'
                   className='agent-view__redo app-button app-button--enter'
@@ -245,6 +292,16 @@ function AgentUserPromptComponent({
           ) : null}
         </div>
       </div>
+      {whatsappMarkOpen ? (
+        <AgentWhatsAppMarkModal
+          initialMessage={turn.whatsappNotify?.message ?? ''}
+          initialLink={turn.whatsappNotify?.link ?? agentWhatsAppLink}
+          isMarked={isWhatsAppMarked}
+          onClose={handleWhatsAppMarkClose}
+          onSave={handleWhatsAppMarkSave}
+          onRemove={isWhatsAppMarked ? handleWhatsAppMarkRemove : undefined}
+        />
+      ) : null}
       {previewUrl ? (
         <AnimatedModal
           panelClassName='terminal-paste-image-lightbox'

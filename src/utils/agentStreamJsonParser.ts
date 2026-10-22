@@ -10,6 +10,7 @@ import type {
 } from '@/types';
 import { isAgentTurnSummaryVisible } from '@/utils/agentTurnSummary';
 import { writeDebugSessionLog } from '@/utils/debugSessionLog';
+import { isAgentShellNoiseLine } from '@/utils/agentCliSession';
 import { sanitizeResponseText } from '@/utils/agentTranscriptParser';
 import { shouldOpenAgentShellToolTerminal } from '@/utils/agentShellToolTerminal';
 import {
@@ -799,10 +800,24 @@ function sealActiveResponseSegment(state: AgentStreamJsonParserState): void {
   state.responseId = null;
 }
 
+function isAgentAssistantNoiseText(text: string): boolean {
+  const trimmed = text.trim();
+
+  if (!trimmed) {
+    return true;
+  }
+
+  if (!trimmed.includes('\n') && isAgentShellNoiseLine(trimmed)) {
+    return true;
+  }
+
+  return sanitizeResponseText(trimmed).trim().length === 0;
+}
+
 function extractWorkingCommentHeadline(text: string): string {
   const collapsed = text.replace(/\s+/g, ' ').trim();
 
-  if (!collapsed) {
+  if (!collapsed || isAgentAssistantNoiseText(collapsed)) {
     return '';
   }
 
@@ -910,9 +925,20 @@ function promoteResponseToWorkingComment(state: AgentStreamJsonParserState): voi
   const current = state.activities.find((entry) => entry.id === state.responseId);
   const text = current?.label.trim() ?? '';
 
+  if (current?.kind === 'response' && isAgentAssistantNoiseText(text)) {
+    clearNoiseOnlyResponse(state);
+    return;
+  }
+
   if (current?.kind === 'response' && isShortWorkingComment(text)) {
     const headline = extractWorkingCommentHeadline(text);
     const responseId = state.responseId;
+
+    if (!headline) {
+      clearNoiseOnlyResponse(state);
+      return;
+    }
+
     const duplicate = state.activities.some(
       (entry) =>
         entry.id !== responseId && isWorkingCommentStatus(entry) && entry.label === headline,
@@ -1188,12 +1214,29 @@ function resolveAssistantEventMode(
   return 'snapshot';
 }
 
+function clearNoiseOnlyResponse(state: AgentStreamJsonParserState): void {
+  const responseId = state.responseId;
+
+  if (!responseId) {
+    state.pendingResponseText = '';
+    return;
+  }
+
+  state.activities = state.activities.filter((entry) => entry.id !== responseId);
+  state.responseId = null;
+  state.pendingResponseText = '';
+}
+
 function upsertResponse(
   state: AgentStreamJsonParserState,
   text: string,
   mode: 'delta' | 'snapshot' | 'final',
 ): void {
   if (!text || (!/\S/u.test(text) && (mode !== 'delta' || !state.responseId))) {
+    return;
+  }
+
+  if (mode !== 'delta' && isAgentAssistantNoiseText(text)) {
     return;
   }
 
@@ -1221,6 +1264,16 @@ function upsertResponse(
       mode === 'delta'
         ? appendResponseDelta(currentLabel, text)
         : mergeAssistantSnapshot(currentLabel, text);
+
+    if (mode !== 'delta' && isAgentAssistantNoiseText(nextLabel)) {
+      if (currentLabel.trim()) {
+        return;
+      }
+
+      clearNoiseOnlyResponse(state);
+      return;
+    }
+
     state.pendingResponseText = nextLabel;
     state.activities = state.activities.map((entry) =>
       entry.id === state.responseId
@@ -1231,6 +1284,11 @@ function upsertResponse(
   }
 
   const initialLabel = mode === 'delta' ? text.replace(/^\s+/u, '') : text.trim();
+
+  if (mode !== 'delta' && isAgentAssistantNoiseText(initialLabel)) {
+    return;
+  }
+
   state.pendingResponseText = initialLabel;
   const response = createActivity('response', initialLabel, {
     streaming: mode === 'final' ? undefined : true,
@@ -1857,7 +1915,7 @@ function isRenderableStreamJsonActivity(entry: AgentActivity): boolean {
   }
 
   if (entry.kind === 'status') {
-    return Boolean(entry.label.trim());
+    return Boolean(entry.label.trim()) && !isAgentAssistantNoiseText(entry.label);
   }
 
   return false;
@@ -4263,7 +4321,16 @@ function resolveFinalResponseLabel(raw: string): string {
   }
 
   const sanitized = sanitizeResponseText(trimmed).trim();
-  return sanitized || trimmed;
+
+  if (sanitized) {
+    return sanitized;
+  }
+
+  if (!trimmed.includes('\n') && isAgentShellNoiseLine(trimmed)) {
+    return '';
+  }
+
+  return trimmed;
 }
 
 export function finalizeStreamJsonTurn(

@@ -66,6 +66,33 @@ export function parseSidebarWhatsAppLink(raw: string): string | null {
   }
 }
 
+export function buildWhatsAppSendUrl(link: string, message: string): string | null {
+  const parsed = parseSidebarWhatsAppLink(link);
+
+  if (!parsed) {
+    return null;
+  }
+
+  try {
+    const url = new URL(parsed);
+    const text = message.trim();
+
+    if (text) {
+      url.searchParams.set('text', text);
+    }
+
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 export async function openSidebarWhatsAppLink(url: string): Promise<void> {
-  await window.nexus.whatsapp.openLink(url);
+  const parsed = parseSidebarWhatsAppLink(url);
+
+  if (!parsed) {
+    throw new Error('Invalid WhatsApp URL');
+  }
+
+  await window.nexus.whatsapp.openLink(parsed);
 }

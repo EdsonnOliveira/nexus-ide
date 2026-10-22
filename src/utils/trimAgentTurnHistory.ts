@@ -420,7 +420,8 @@ export function reuseStableAgentTurns(previous: AgentTurn[], next: AgentTurn[]):
       prev.user === turn.user &&
       prev.usage === turn.usage &&
       prev.pendingFollowUp === turn.pendingFollowUp &&
-      prev.resumeChatId === turn.resumeChatId
+      prev.resumeChatId === turn.resumeChatId &&
+      prev.whatsappNotify === turn.whatsappNotify
     ) {
       return prev;
     }

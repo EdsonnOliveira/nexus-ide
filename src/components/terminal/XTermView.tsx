@@ -105,13 +105,12 @@ function isLineEditRedraw(data: string): boolean {
   return data.includes('\r') && !data.includes('\n');
 }
 
+const MIN_TERMINAL_MOUNT_WIDTH = 80;
+const MIN_TERMINAL_MOUNT_HEIGHT = 40;
+const MIN_TERMINAL_COLS = 20;
+const MIN_TERMINAL_ROWS = 5;
+
 function readTerminalViewportWidth(mount: HTMLElement): number {
-  const screen = mount.querySelector('.xterm-screen');
-
-  if (screen instanceof HTMLElement && screen.clientWidth > 0) {
-    return screen.clientWidth;
-  }
-
   return mount.clientWidth;
 }
 
@@ -123,6 +122,13 @@ function applyTerminalGeometry(
   disposedRef?: { current: boolean },
 ): void {
   if (disposedRef?.current || !terminal.element) {
+    return;
+  }
+
+  if (
+    mount.clientWidth < MIN_TERMINAL_MOUNT_WIDTH ||
+    mount.clientHeight < MIN_TERMINAL_MOUNT_HEIGHT
+  ) {
     return;
   }
 
@@ -142,12 +148,12 @@ function applyTerminalGeometry(
   const cell = readTerminalCellDimensions(terminal, mount);
   const viewportWidth = readTerminalViewportWidth(mount);
 
-  if (!cell || viewportWidth <= 0 || mount.clientHeight <= 0) {
+  if (!cell || viewportWidth < MIN_TERMINAL_MOUNT_WIDTH || mount.clientHeight < MIN_TERMINAL_MOUNT_HEIGHT) {
     return;
   }
 
-  const cols = Math.max(2, Math.floor(viewportWidth / cell.width));
-  const rows = Math.max(1, Math.floor(mount.clientHeight / cell.height));
+  const cols = Math.max(MIN_TERMINAL_COLS, Math.floor(viewportWidth / cell.width));
+  const rows = Math.max(MIN_TERMINAL_ROWS, Math.floor(mount.clientHeight / cell.height));
 
   try {
     if (cols !== terminal.cols || rows !== terminal.rows) {
@@ -872,6 +878,25 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         }
 
         window.nexus.terminal.write(activePtyId, sequence);
+      },
+      refreshLayout: () => {
+        const terminal = terminalRef.current;
+        const fitAddon = fitAddonRef.current;
+        const mount = containerRef.current;
+
+        if (!terminal || !fitAddon || !mount || !canUseTerminal(terminal, disposedRef)) {
+          return;
+        }
+
+        scheduleTerminalGeometrySync(
+          fitAddon,
+          terminal,
+          mount,
+          ptyIdRef.current,
+          stickToBottomRef,
+          isVisibleRef.current,
+          disposedRef,
+        );
       },
     }),
     [],

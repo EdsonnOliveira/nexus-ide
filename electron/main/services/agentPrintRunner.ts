@@ -710,15 +710,32 @@ class AgentPrintRunner {
         return;
       }
 
-      const stderr = stderrBuffer.trim();
+      const stderrRaw = stderrBuffer.trim();
+      const stderr = stderrRaw
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(
+          (line) =>
+            line &&
+            !/^cursor-retrieval:/i.test(line) &&
+            !/^(?:c+)?cursor-agent(?:\s|$)/i.test(line) &&
+            !/^NEXUS_CWD=/i.test(line),
+        )
+        .join('\n')
+        .trim();
+      const hasResumeOrContinue = Boolean(
+        options.resumeChatId?.trim() || options.continueSession,
+      );
       const canRetryStaleSession =
         !stdoutSeen &&
         /session not found|conversation not found|thread not found|unknown session|chat id must be a uuid|failed to claim persistent session|invalid (?:chat|session) id/i.test(
-          stderr,
+          stderrRaw,
         ) &&
-        Boolean(options.resumeChatId?.trim() || options.continueSession);
+        hasResumeOrContinue;
+      const canRetryNoiseOnlyExit =
+        !stdoutSeen && !stderr && hasResumeOrContinue && (Boolean(stderrRaw) || (code ?? 0) !== 0);
 
-      if (canRetryStaleSession) {
+      if (canRetryStaleSession || canRetryNoiseOnlyExit) {
         closed = true;
         this.clearWatchdog(options.paneId);
         this.flushStdoutBatch(options.paneId);
@@ -730,11 +747,13 @@ class AgentPrintRunner {
 
         writeDebugSessionLog({
           location: 'agentPrintRunner.ts:close',
-          message: 'Retrying agent print without stale session',
+          message: canRetryNoiseOnlyExit
+            ? 'Retrying agent print after noise-only exit'
+            : 'Retrying agent print without stale session',
           data: {
             paneId: options.paneId,
             runToken,
-            stderrPreview: stderr.slice(0, 200),
+            stderrPreview: stderrRaw.slice(0, 200),
           },
           hypothesisId: 'A',
         });
@@ -778,8 +797,8 @@ class AgentPrintRunner {
           code: code ?? 1,
           durationMs,
           stdoutSeen,
-          hasStderr: Boolean(stderr),
-          stderrPreview: stderr.slice(0, 200),
+          hasStderr: Boolean(stderrRaw),
+          stderrPreview: (stderr || stderrRaw).slice(0, 200),
         },
         hypothesisId: 'A',
       });

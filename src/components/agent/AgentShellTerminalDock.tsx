@@ -254,6 +254,7 @@ function AgentShellTerminalPanelComponent({
     }
 
     window.requestAnimationFrame(() => {
+      terminalHandleRef.current?.refreshLayout();
       terminalHandleRef.current?.focus();
     });
   }, [isOpen]);
@@ -510,9 +511,10 @@ function AgentShellTerminalDockComponent({
 }: AgentShellTerminalDockProps) {
   const entries = useAgentShellTerminalEntries(agentPaneId);
   const removeEntry = useAgentShellTerminalStore((state) => state.removeEntry);
+  const openPaneId = useAgentShellTerminalStore((state) => state.openPaneId);
+  const setOpenPaneId = useAgentShellTerminalStore((state) => state.setOpenPaneId);
   const disposePaneSession = useTerminalSessionStore((state) => state.disposePaneSession);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const [openPaneId, setOpenPaneId] = useState<string | null>(null);
   const [popupOpen, setPopupOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -531,25 +533,27 @@ function AgentShellTerminalDockComponent({
     window.requestAnimationFrame(() => {
       onComposerFocus?.();
     });
-  }, [onComposerFocus]);
+  }, [onComposerFocus, setOpenPaneId]);
 
   useEffect(() => {
     if (entries.length === 0) {
-      setOpenPaneId(null);
       setPopupOpen(false);
-      return;
     }
+  }, [entries.length]);
 
-    if (openPaneId && !entries.some((entry) => entry.paneId === openPaneId)) {
-      setOpenPaneId(null);
-    }
-  }, [openPaneId, entries]);
+  const toggleOpenPane = useCallback(
+    (paneId: string) => {
+      const current = useAgentShellTerminalStore.getState().openPaneId;
+      setOpenPaneId(current === paneId ? null : paneId);
+    },
+    [setOpenPaneId],
+  );
 
   const openInteractiveTerminal = useCallback(() => {
     const paneId = ensureAgentInteractiveTerminal(agentPaneId, projectPath);
     setPopupOpen(false);
-    setOpenPaneId((current) => (current === paneId ? null : paneId));
-  }, [agentPaneId, projectPath]);
+    toggleOpenPane(paneId);
+  }, [agentPaneId, projectPath, toggleOpenPane]);
 
   const handleOpenPopup = useCallback(() => {
     if (entries.length === 0) {
@@ -560,7 +564,7 @@ function AgentShellTerminalDockComponent({
     if (entries.length === 1) {
       const paneId = entries[0].paneId;
       setPopupOpen(false);
-      setOpenPaneId((current) => (current === paneId ? null : paneId));
+      toggleOpenPane(paneId);
       return;
     }
 
@@ -570,7 +574,7 @@ function AgentShellTerminalDockComponent({
     }
     setAnchorRect(rect);
     setPopupOpen((current) => !current);
-  }, [entries, openInteractiveTerminal]);
+  }, [entries, openInteractiveTerminal, toggleOpenPane]);
 
   useEffect(() => {
     if (runningCount === 0) {
@@ -678,20 +682,58 @@ function AgentShellTerminalDockComponent({
           onDismiss={handleDismiss}
         />
       ) : null}
+    </>
+  );
+}
 
-      {entries.map((entry) => (
+export const AgentShellTerminalDock = memo(AgentShellTerminalDockComponent);
+
+function AgentShellTerminalHostComponent() {
+  const entriesByAgentPane = useAgentShellTerminalStore((state) => state.entriesByAgentPane);
+  const openPaneId = useAgentShellTerminalStore((state) => state.openPaneId);
+  const setOpenPaneId = useAgentShellTerminalStore((state) => state.setOpenPaneId);
+  const projects = useProjectStore((state) => state.projects);
+
+  const panels = useMemo(() => {
+    const next: Array<{ agentPaneId: string; entry: AgentShellTerminalEntry; projectPath: string }> =
+      [];
+
+    for (const [agentPaneId, entries] of Object.entries(entriesByAgentPane)) {
+      const projectId = findProjectIdByPaneId(agentPaneId);
+      const projectPath =
+        projects.find((project) => project.id === projectId)?.path || entries[0]?.cwd || '';
+
+      for (const entry of entries) {
+        next.push({
+          agentPaneId,
+          entry,
+          projectPath: entry.cwd || projectPath,
+        });
+      }
+    }
+
+    return next;
+  }, [entriesByAgentPane, projects]);
+
+  if (panels.length === 0) {
+    return null;
+  }
+
+  return (
+    <>
+      {panels.map(({ agentPaneId, entry, projectPath }) => (
         <AgentShellTerminalPanel
           key={entry.paneId}
           entry={entry}
           agentPaneId={agentPaneId}
           projectPath={projectPath}
           isOpen={openPaneId === entry.paneId}
-          openLinksExternally={isHeader}
-          onClose={closePanel}
+          openLinksExternally={false}
+          onClose={() => setOpenPaneId(null)}
         />
       ))}
     </>
   );
 }
 
-export const AgentShellTerminalDock = memo(AgentShellTerminalDockComponent);
+export const AgentShellTerminalHost = memo(AgentShellTerminalHostComponent);

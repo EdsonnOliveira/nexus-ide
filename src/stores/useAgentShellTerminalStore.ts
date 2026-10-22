@@ -34,6 +34,8 @@ type AgentShellTerminalEntryPatch = Partial<
 
 interface AgentShellTerminalStoreState {
   entriesByAgentPane: Record<string, AgentShellTerminalEntry[]>;
+  openPaneId: string | null;
+  setOpenPaneId: (paneId: string | null) => void;
   addEntry: (agentPaneId: string, entry: AgentShellTerminalEntry) => void;
   updateEntry: (agentPaneId: string, paneId: string, patch: AgentShellTerminalEntryPatch) => void;
   removeEntry: (agentPaneId: string, paneId: string) => void;
@@ -45,6 +47,10 @@ const EMPTY_ENTRIES: AgentShellTerminalEntry[] = [];
 
 export const useAgentShellTerminalStore = create<AgentShellTerminalStoreState>((set, get) => ({
   entriesByAgentPane: {},
+  openPaneId: null,
+  setOpenPaneId: (paneId) => {
+    set({ openPaneId: paneId });
+  },
 
   addEntry: (agentPaneId, entry) => {
     set((state) => {
@@ -104,7 +110,10 @@ export const useAgentShellTerminalStore = create<AgentShellTerminalStoreState>((
         entriesByAgentPane[agentPaneId] = next;
       }
 
-      return { entriesByAgentPane };
+      return {
+        entriesByAgentPane,
+        ...(state.openPaneId === paneId ? { openPaneId: null } : {}),
+      };
     });
   },
 
@@ -118,7 +127,12 @@ export const useAgentShellTerminalStore = create<AgentShellTerminalStoreState>((
     set((state) => {
       const entriesByAgentPane = { ...state.entriesByAgentPane };
       delete entriesByAgentPane[agentPaneId];
-      return { entriesByAgentPane };
+      const openWasCleared = current.some((entry) => entry.paneId === state.openPaneId);
+
+      return {
+        entriesByAgentPane,
+        ...(openWasCleared ? { openPaneId: null } : {}),
+      };
     });
 
     return current;

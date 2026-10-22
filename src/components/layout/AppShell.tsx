@@ -35,6 +35,8 @@ import { useProjectNotificationStore } from '@/stores/useProjectNotificationStor
 import { stopAgentNotificationSoundLoop } from '@/utils/agentNotificationSound';
 import { useCloudAgentSessionsSync } from '@/hooks/useCloudAgentSessionsSync';
 import { useDesktopAgentViewedAck } from '@/hooks/useDesktopAgentViewedAck';
+import { AgentShellTerminalHost } from '@/components/agent/AgentShellTerminalDock';
+import { AgentWhatsAppFinishHost } from '@/components/agent/AgentWhatsAppFinishHost';
 import { useAgentFinishMacNotification } from '@/hooks/useAgentFinishMacNotification';
 import { useRemoteEmulatorTabSync } from '@/hooks/useRemoteEmulatorTabSync';
 import { useCloudStore } from '@/stores/useCloudStore';
@@ -617,6 +619,8 @@ function AppShellComponent() {
         <GlobalSearchPalette />
         <CalendarEventAlertHost />
         <AppToastHost />
+        <AgentWhatsAppFinishHost />
+        <AgentShellTerminalHost />
         <CliSetupModal />
       </div>
     </DailyGenerationProvider>

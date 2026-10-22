@@ -112,11 +112,6 @@ function resolveNotifyPresentation(
 }
 
 function deliverAction(action: string, payload: AgentFinishNotifyPayload): void {
-  if (action === 'dismiss' || action === 'ignore') {
-    return;
-  }
-
-  focusAgentPipMainWindow();
   const win = getAgentPipMainWindow();
   if (!win || win.isDestroyed()) {
     return;
@@ -130,6 +125,13 @@ function deliverAction(action: string, payload: AgentFinishNotifyPayload): void 
     activityId: payload.activityId,
     questionId: payload.questionId,
   };
+
+  if (action === 'dismiss' || action === 'ignore') {
+    win.webContents.send('agentFinish:action', message);
+    return;
+  }
+
+  focusAgentPipMainWindow();
   win.webContents.send('agentFinish:action', message);
 }
 
@@ -496,6 +498,7 @@ function showHelperAgentFinishNotification(
       }
 
       if (parsed.action === 'dismiss' || parsed.action === 'ignore') {
+        deliverAction(parsed.action, payload);
         stopHelper(key);
         return;
       }

@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { ArrowDown, Bot, Maximize2, Pin } from 'lucide-react';
+import { ArrowDown, Bot, Maximize2, Pin, Terminal } from 'lucide-react';
 import { AgentComposer } from '@/components/agent/AgentComposer';
 import { AgentFollowUpQueue } from '@/components/agent/AgentFollowUpQueue';
 import { AgentPlanReviewDock } from '@/components/agent/AgentPlanReviewDock';
@@ -16,7 +16,7 @@ import { useMarkdownPreviewCmdLinks } from '@/hooks/useMarkdownPreviewCmdLinks';
 import { useAgentComposerDraftStore } from '@/stores/useAgentComposerDraftStore';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { useTerminalPasteImageStore } from '@/stores/useTerminalPasteImageStore';
-import type { AgentPipSnapshot } from '@/types/agentPip';
+import type { AgentPipShellTerminal, AgentPipSnapshot } from '@/types/agentPip';
 import type {
   AgentFollowUp,
   AgentPromptAttachment,
@@ -75,6 +75,116 @@ function createOptimisticPipTurn(
     running: true,
     startedAt: Date.now(),
   };
+}
+
+function formatShellElapsed(startedAt: number, now: number): string {
+  const totalSeconds = Math.max(0, Math.floor((now - startedAt) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+
+  return `${seconds}s`;
+}
+
+function shellStatusLabel(status: AgentPipShellTerminal['status']): string {
+  if (status === 'starting') {
+    return 'Iniciando';
+  }
+
+  if (status === 'running') {
+    return 'Rodando';
+  }
+
+  return 'Parado';
+}
+
+function isLiveShellStatus(status: AgentPipShellTerminal['status']): boolean {
+  return status === 'starting' || status === 'running';
+}
+
+function AgentPipShellTerminalDock({ entries }: { entries: AgentPipShellTerminal[] }) {
+  const [now, setNow] = useState(() => Date.now());
+  const runningCount = entries.filter((entry) => isLiveShellStatus(entry.status)).length;
+
+  useEffect(() => {
+    if (runningCount === 0) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [runningCount]);
+
+  if (entries.length === 0) {
+    return null;
+  }
+
+  const stoppedCount = entries.length - runningCount;
+  const countLabel =
+    runningCount > 0
+      ? runningCount === 1
+        ? '1 terminal rodando'
+        : `${runningCount} terminais rodando`
+      : stoppedCount === 1
+        ? '1 terminal parado'
+        : `${stoppedCount} terminais parados`;
+
+  return (
+    <div className='agent-shell-terminal-dock'>
+      <div className='agent-shell-terminal-dock__header'>{countLabel}</div>
+      <div className='agent-shell-terminal-dock__list'>
+        {entries.map((entry) => {
+          const live = isLiveShellStatus(entry.status);
+
+          return (
+            <div
+              key={entry.paneId}
+              className={`agent-shell-terminal-dock__item${live ? '' : ' agent-shell-terminal-dock__item--stopped'}`}
+            >
+              <button
+                type='button'
+                className='agent-shell-terminal-dock__item-main app-button app-button--enter'
+                onClick={() => {
+                  void window.nexus.agentPip.focusMain();
+                }}
+              >
+                <Terminal
+                  size={14}
+                  strokeWidth={2.25}
+                  className='agent-shell-terminal-dock__item-icon'
+                />
+                <span className='agent-shell-terminal-dock__item-title'>{entry.title}</span>
+                <span
+                  className={`agent-shell-terminal-dock__item-status agent-shell-terminal-dock__item-status--${entry.status}`}
+                >
+                  <span className='agent-shell-terminal-dock__item-status-dot' />
+                  {shellStatusLabel(entry.status)}
+                </span>
+                {live ? (
+                  <span className='agent-shell-terminal-dock__item-elapsed'>
+                    {formatShellElapsed(entry.startedAt, now)}
+                  </span>
+                ) : null}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function mergePipTurns(snapshotTurns: AgentTurn[], optimisticTurn: AgentTurn | null): AgentTurn[] {
@@ -629,6 +739,7 @@ function AgentPipAppComponent() {
                   }}
                 />
               ) : null}
+              <AgentPipShellTerminalDock entries={snapshot?.shellTerminals ?? []} />
               <AgentComposer
                 paneId={tab.id}
                 projectPath={projectPath}

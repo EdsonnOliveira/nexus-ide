@@ -265,6 +265,11 @@ export interface AgentTurnUsage {
   cacheWriteTokens: number;
 }
 
+export interface AgentWhatsAppNotify {
+  message: string;
+  link: string;
+}
+
 export interface AgentTurn {
   id: string;
   user: AgentUserMessage;
@@ -276,6 +281,7 @@ export interface AgentTurn {
   summary?: AgentTurnSummary;
   usage?: AgentTurnUsage;
   resumeChatId?: string | null;
+  whatsappNotify?: AgentWhatsAppNotify;
 }
 
 export interface AgentTab {
@@ -291,6 +297,7 @@ export interface AgentTab {
   workingDirectory?: string | null;
   pinned?: boolean;
   badgeColorIndex?: number;
+  whatsappLink?: string | null;
 }
 
 export type EmulatorPlatform = 'android' | 'ios';
@@ -1069,6 +1076,7 @@ export interface XTermViewHandle {
   isWritable: () => boolean;
   interruptAndRun: (command: string) => Promise<void>;
   removeImageFromPrompt: (imageId: number) => void;
+  refreshLayout: () => void;
 }
 
 export interface TerminalPasteImageSaved {

@@ -8832,6 +8832,273 @@ html.agent-pip #root {
   color: #fff;
 }
 
+.project-dialog.agent-whatsapp-notify-modal {
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(86vh, 720px);
+  overflow: auto;
+}
+
+.agent-whatsapp-notify__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.agent-whatsapp-notify__heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.agent-whatsapp-notify__badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: rgba(37, 211, 102, 0.16);
+  color: #25d366;
+  flex-shrink: 0;
+}
+
+.agent-whatsapp-notify__project-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-3) 80%, rgba(255, 255, 255, 0.06));
+  color: #fff;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.agent-whatsapp-notify__project-mark--logo {
+  background: transparent;
+}
+
+.agent-whatsapp-notify__project-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+.agent-whatsapp-notify__intro {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agent-whatsapp-notify__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agent-whatsapp-notify__title {
+  margin-bottom: 0;
+}
+
+.agent-whatsapp-notify__whatsapp-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: rgba(37, 211, 102, 0.16);
+  color: #25d366;
+  flex-shrink: 0;
+}
+
+.agent-whatsapp-notify__subtitle {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.agent-whatsapp-notify__prompt-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-3) 70%, transparent);
+}
+
+.agent-whatsapp-notify__prompt-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.agent-whatsapp-notify__prompt-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.agent-whatsapp-preview {
+  position: relative;
+  margin: 0 0 14px;
+  min-height: 118px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: #0b141a;
+}
+
+.agent-whatsapp-preview__wallpaper {
+  position: absolute;
+  inset: 0;
+  opacity: 0.22;
+  background-color: #0b141a;
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(255, 255, 255, 0.14) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 78% 22%, rgba(255, 255, 255, 0.1) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 34% 62%, rgba(255, 255, 255, 0.12) 0 1.2px, transparent 1.8px),
+    radial-gradient(circle at 86% 70%, rgba(255, 255, 255, 0.1) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 52% 38%, rgba(255, 255, 255, 0.08) 0 1.4px, transparent 2px),
+    radial-gradient(circle at 18% 82%, rgba(255, 255, 255, 0.1) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 64% 88%, rgba(255, 255, 255, 0.09) 0 1.2px, transparent 1.8px);
+  background-size: 96px 96px;
+  pointer-events: none;
+}
+
+.agent-whatsapp-preview__row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: flex-end;
+  padding: 18px 14px 16px;
+}
+
+.agent-whatsapp-preview__bubble {
+  position: relative;
+  max-width: min(86%, 320px);
+  padding: 8px 10px 6px 12px;
+  border-radius: 10px 10px 2px 10px;
+  background: #005c4b;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.18);
+}
+
+.agent-whatsapp-preview__bubble::after {
+  content: '';
+  position: absolute;
+  right: -6px;
+  bottom: 0;
+  width: 10px;
+  height: 14px;
+  background: #005c4b;
+  clip-path: polygon(0 0, 0 100%, 100% 100%);
+}
+
+.agent-whatsapp-preview__bubble--empty {
+  opacity: 0.72;
+}
+
+.agent-whatsapp-preview__text {
+  margin: 0 52px 2px 0;
+  font-size: 14px;
+  line-height: 1.35;
+  color: #e9edef;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.agent-whatsapp-preview__bubble--empty .agent-whatsapp-preview__text {
+  color: rgba(233, 237, 239, 0.55);
+  font-style: italic;
+}
+
+.agent-whatsapp-preview__meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  float: right;
+  margin: 6px 0 0 10px;
+  color: rgba(233, 237, 239, 0.65);
+}
+
+.agent-whatsapp-preview__time {
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+}
+
+.agent-whatsapp-preview__checks {
+  flex-shrink: 0;
+  color: #53bdeb;
+}
+
+.agent-whatsapp-notify__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-whatsapp-notify__field {
+  margin: 0;
+}
+
+.agent-whatsapp-notify__textarea {
+  width: 100%;
+  min-height: 96px;
+  max-height: min(30vh, 220px);
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.agent-whatsapp-notify__textarea:focus {
+  outline: none;
+  border-color: rgba(37, 211, 102, 0.45);
+}
+
+.agent-whatsapp-notify__error {
+  font-size: 12px;
+  line-height: 1.4;
+  color: #fca5a5;
+}
+
+.project-dialog__close {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.project-dialog__close:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-tab-hover);
+}
+
 .sidebar-mail-popup {
   width: min(320px, calc(100vw - 16px));
   padding: 14px;
@@ -22693,7 +22960,8 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   .agent-view__user-prompt,
   .agent-view__user-prompt-actions,
   .agent-view__edit,
-  .agent-view__redo {
+  .agent-view__redo,
+  .agent-view__whatsapp {
     transition: none !important;
   }
 
@@ -23050,7 +23318,8 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 }
 
 .agent-view__edit,
-.agent-view__redo {
+.agent-view__redo,
+.agent-view__whatsapp {
   width: 24px;
   height: 24px;
   border-radius: 999px;
@@ -23074,19 +23343,38 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 
 .agent-view__user-prompt:hover .agent-view__edit,
 .agent-view__user-prompt:hover .agent-view__redo,
+.agent-view__user-prompt:hover .agent-view__whatsapp,
 .agent-view__user-prompt:focus-within .agent-view__edit,
 .agent-view__user-prompt:focus-within .agent-view__redo,
+.agent-view__user-prompt:focus-within .agent-view__whatsapp,
 .agent-view__user-prompt--editing .agent-view__edit,
-.agent-view__user-prompt--editing .agent-view__redo {
+.agent-view__user-prompt--editing .agent-view__redo,
+.agent-view__user-prompt--editing .agent-view__whatsapp {
   opacity: 1;
   color: var(--text-primary);
 }
 
+.agent-view__whatsapp--active,
+.agent-view__user-prompt:hover .agent-view__whatsapp--active,
+.agent-view__user-prompt:focus-within .agent-view__whatsapp--active {
+  opacity: 1;
+  color: #25d366;
+  background: rgba(37, 211, 102, 0.16);
+  border-color: rgba(37, 211, 102, 0.35);
+}
+
 .agent-view__edit:hover:not(:disabled),
-.agent-view__redo:hover:not(:disabled) {
+.agent-view__redo:hover:not(:disabled),
+.agent-view__whatsapp:hover:not(:disabled) {
   color: var(--text-primary);
   background: color-mix(in srgb, var(--surface-3) 88%, rgba(255, 255, 255, 0.06));
   border-color: color-mix(in srgb, var(--border-strong) 100%, transparent);
+}
+
+.agent-view__whatsapp--active:hover:not(:disabled) {
+  color: #bbf7d0;
+  background: rgba(37, 211, 102, 0.24);
+  border-color: rgba(37, 211, 102, 0.45);
 }
 
 .agent-view__user-prompt-sticky--stuck:not(.agent-view__user-prompt-sticky--exit)
@@ -23222,13 +23510,22 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 
 .agent-view__user-prompt-sticky--stuck:not(.agent-view__user-prompt-sticky--exit) .agent-view__edit,
 .agent-view__user-prompt-sticky--stuck:not(.agent-view__user-prompt-sticky--exit)
-  .agent-view__redo {
+  .agent-view__redo,
+.agent-view__user-prompt-sticky--stuck:not(.agent-view__user-prompt-sticky--exit)
+  .agent-view__whatsapp {
   width: 26px;
   height: 26px;
   opacity: 1;
   color: var(--text-primary);
   background: color-mix(in srgb, var(--surface-3) 90%, rgba(255, 255, 255, 0.06));
   border-color: rgba(255, 255, 255, 0.16);
+}
+
+.agent-view__user-prompt-sticky--stuck:not(.agent-view__user-prompt-sticky--exit)
+  .agent-view__whatsapp--active {
+  color: #25d366;
+  background: rgba(37, 211, 102, 0.16);
+  border-color: rgba(37, 211, 102, 0.35);
 }
 
 .agent-view__user-prompt--editing .agent-view__user-bubble {

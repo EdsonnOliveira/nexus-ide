@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, type MutableRefObject, type RefObject } from 'react';
-import type { AgentQuestionAnswers, AgentTurn } from '@/types';
+import type { AgentQuestionAnswers, AgentTurn, AgentWhatsAppNotify } from '@/types';
 import { AgentTurnView } from '@/components/agent/AgentTurnView';
 import { resolveActiveAgentTurnId } from '@/utils/agentPromptRail';
 import type { AiProviderId } from '@/constants/aiProviders';
@@ -18,12 +18,14 @@ interface AgentTranscriptProps {
   projectId: string;
   projectPath: string;
   paneId: string;
+  agentWhatsAppLink?: string;
   fallbackAiProvider?: Exclude<AiProviderId, 'nexus'>;
   disableStickyPrompt?: boolean;
   onAtBottomChange?: (atBottom: boolean) => void;
   onActiveTurnChange?: (turnId: string | null) => void;
   onEdit?: (turnId: string) => void;
   onRedo?: (turnId: string) => void;
+  onWhatsAppNotifyChange?: (turnId: string, notify: AgentWhatsAppNotify | null) => void;
   onSubmitQuestion?: (
     activityId: string,
     answers: AgentQuestionAnswers,
@@ -126,12 +128,14 @@ function AgentTranscriptComponent({
   projectId,
   projectPath,
   paneId,
+  agentWhatsAppLink,
   fallbackAiProvider,
   disableStickyPrompt = false,
   onAtBottomChange,
   onActiveTurnChange,
   onEdit,
   onRedo,
+  onWhatsAppNotifyChange,
   onSubmitQuestion,
 }: AgentTranscriptProps) {
   const contentRef = useRef<HTMLDivElement>(null);
@@ -572,11 +576,13 @@ function AgentTranscriptComponent({
           projectId={projectId}
           projectPath={projectPath}
           paneId={paneId}
+          agentWhatsAppLink={agentWhatsAppLink}
           fallbackAiProvider={fallbackAiProvider}
           disableStickyPrompt={disableStickyPrompt}
           onTurnElementChange={handleTurnElementChange}
           onEdit={onEdit}
           onRedo={onRedo}
+          onWhatsAppNotifyChange={onWhatsAppNotifyChange}
           onSubmitQuestion={onSubmitQuestion}
         />
       ))}

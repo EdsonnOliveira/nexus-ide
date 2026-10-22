@@ -18,6 +18,7 @@ import type {
   AgentTab,
   AgentTurn,
   AgentUserMessage,
+  AgentWhatsAppNotify,
   TerminalCommandHint,
 } from '@/types';
 import { registerAgentPaneHandlers, setAgentPaneLiveTranscript } from '@/utils/agentPaneRegistry';
@@ -31,6 +32,11 @@ import {
   clearAgentStreamJsonIncompleteContinue,
 } from '@/utils/agentStreamJsonSession';
 import { recordHomeDashboardActivity } from '@/utils/recordHomeDashboardActivity';
+import {
+  openAgentWhatsAppFinishForTurn,
+  patchTurnWhatsAppNotify,
+} from '@/utils/agentWhatsAppNotify';
+import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
 import { cliAgentToTerminalAgent, resolveAgentTabCli } from '@/utils/agentTabHelpers';
 import {
   completeAgentGitTurn,
@@ -96,6 +102,7 @@ import {
   resolveCompatibleResumeChatId,
   resolveCursorAgentPrintMode,
   sanitizeAgentCliError,
+  isAgentCliNoiseOnlyError,
   sendAgentInterruptSequence,
 } from '@/utils/agentCliSession';
 import {
@@ -377,15 +384,33 @@ function resolveStreamJsonModel(paneId: string, cliAgent: string): string | null
   return stored;
 }
 
-function createFailedPromptActivity(message?: string): AgentActivity {
-  const label = message
-    ? sanitizeAgentCliError(message) || 'Não foi possível enviar o prompt — tente novamente'
-    : 'Não foi possível enviar o prompt — tente novamente';
+function resolveFailedAgentPromptLabel(message?: string): string {
+  const raw = message?.trim() ?? '';
+  const sanitized = raw ? sanitizeAgentCliError(raw) : '';
 
+  if (sanitized) {
+    if (
+      /ENOENT|not found|No such file|command not found|spawn .* ENOENT/i.test(sanitized) ||
+      /CLI do provedor|não (?:está|foi) instalado/i.test(sanitized)
+    ) {
+      return 'Não foi possível executar o agent. Verifique se o CLI do provedor está instalado.';
+    }
+
+    return sanitized;
+  }
+
+  if (raw && !isAgentCliNoiseOnlyError(raw)) {
+    return raw;
+  }
+
+  return 'O agente encerrou sem responder. Envie novamente para continuar.';
+}
+
+function createFailedPromptActivity(message?: string): AgentActivity {
   return {
     id: crypto.randomUUID(),
-    kind: 'status',
-    label,
+    kind: 'response',
+    label: resolveFailedAgentPromptLabel(message),
     createdAt: Date.now(),
   };
 }
@@ -1115,8 +1140,19 @@ export function useAgentPaneSession({
         ),
       );
 
+      const finalizedTurn = nextTurns[resolvedIndex];
+
+      if (finalizedTurn?.whatsappNotify) {
+        openAgentWhatsAppFinishForTurn({
+          turn: finalizedTurn,
+          paneId,
+          projectId: findProjectIdByPaneId(paneId),
+          agentLabel: resolveAgentTabCli(tab),
+        });
+      }
+
       if (notifyOnComplete) {
-        const finalizedActivities = nextTurns[resolvedIndex]?.activities ?? [];
+        const finalizedActivities = finalizedTurn?.activities ?? [];
         const hasFollowUps = followUpsRef.current.length > 0;
         const requiresHumanAction =
           hasPendingAgentQuestion(finalizedActivities) || hasPendingAgentPlan(finalizedActivities);
@@ -1136,7 +1172,7 @@ export function useAgentPaneSession({
 
       if (
         !suppressFollowUpFlushRef.current &&
-        shouldAutoFlushFollowUpsAfterTurn(nextTurns[resolvedIndex]?.activities ?? [])
+        shouldAutoFlushFollowUpsAfterTurn(finalizedTurn?.activities ?? [])
       ) {
         tryFlushFollowUpQueueRef.current();
       }
@@ -1148,6 +1184,7 @@ export function useAgentPaneSession({
       clearStreamJsonDeferredStart,
       clearStreamJsonSettleTimer,
       persistTurns,
+      tab,
       usesStreamJson,
     ],
   );
@@ -1244,10 +1281,20 @@ export function useAgentPaneSession({
       persistTurns(nextTurns, { flush: true });
       recordHomeDashboardActivity('agentExecutions');
 
-      const finalizedActivities = nextTurns[resolvedIndex]?.activities ?? [];
+      const finalizedTurn = nextTurns[resolvedIndex];
+      const finalizedActivities = finalizedTurn?.activities ?? [];
       const hasFollowUps = followUpsRef.current.length > 0;
       const requiresHumanAction =
         hasPendingAgentQuestion(finalizedActivities) || hasPendingAgentPlan(finalizedActivities);
+
+      if (finalizedTurn?.whatsappNotify) {
+        openAgentWhatsAppFinishForTurn({
+          turn: finalizedTurn,
+          paneId,
+          projectId: findProjectIdByPaneId(paneId),
+          agentLabel: resolveAgentTabCli(tab),
+        });
+      }
 
       if (!hasFollowUps || requiresHumanAction) {
         useTerminalSessionStore.getState().completeTaskIfAwaiting(paneId, {
@@ -1505,7 +1552,7 @@ export function useAgentPaneSession({
       return false;
     }
 
-    preserveAgentShellChildrenRef.current = false;
+    preserveAgentShellChildrenRef.current = true;
     prepareAgentShellHandoffRelaunch(paneIdRef.current);
     scheduleAgentShellCommandHandoff(paneIdRef.current);
     state.handoffComplete = true;
@@ -1589,7 +1636,7 @@ export function useAgentPaneSession({
           if (tryHandoffLongRunningDevShell(idleMs)) {
             agentPrintRunActiveRef.current = false;
             window.nexus.agentPrint.stop(paneIdRef.current, {
-              preserveChildren: false,
+              preserveChildren: true,
             });
             clearAgentPrintRunToken(paneIdRef.current);
             finalizeStreamJsonTurnFromEvent('settleTimer-handoff');
@@ -1707,6 +1754,18 @@ export function useAgentPaneSession({
 
       if (chunk && hasMeaningfulProgress) {
         scheduleStreamJsonSettleCheck();
+      }
+
+      if (
+        streamUpdate.shouldFinalize &&
+        (shouldKeepAgentShellsAlive(paneIdRef.current, streamJsonStateRef.current.activities) ||
+          streamJsonStateRef.current.activities.some(
+            (entry) =>
+              entry.kind === 'tool_run' &&
+              shouldOpenAgentShellToolTerminal(entry.toolCommand ?? ''),
+          ))
+      ) {
+        preserveAgentShellChildrenRef.current = true;
       }
 
       return streamUpdate.shouldFinalize;
@@ -4031,7 +4090,9 @@ export function useAgentPaneSession({
 
         if (streamJsonStateRef.current.shouldFinalize) {
           if (!hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current)) {
-            if (tryScheduleStreamJsonAutoRetry(finishAgentPrintRun)) {
+            if (
+              tryScheduleStreamJsonAutoRetry(finishAgentPrintRun, { forceFreshSession: true })
+            ) {
               return;
             }
 
@@ -4085,13 +4146,22 @@ export function useAgentPaneSession({
           return;
         }
 
-        if (payload.error && !streamJsonStateRef.current.shouldFinalize) {
-          if (!hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current)) {
-            if (tryScheduleStreamJsonAutoRetry(finishAgentPrintRun)) {
-              return;
-            }
-          }
+        const noiseOnlyError = isAgentCliNoiseOnlyError(payload.error);
+        const effectivePrintError = noiseOnlyError ? undefined : payload.error;
 
+        if (
+          (effectivePrintError || noiseOnlyError || payload.code !== 0) &&
+          !streamJsonStateRef.current.shouldFinalize &&
+          !hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current)
+        ) {
+          if (
+            tryScheduleStreamJsonAutoRetry(finishAgentPrintRun, { forceFreshSession: true })
+          ) {
+            return;
+          }
+        }
+
+        if (effectivePrintError && !streamJsonStateRef.current.shouldFinalize) {
           const runningTurn = turnsRef.current.find((turn) => turn.running);
           const hasProgress =
             hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current) ||
@@ -4109,7 +4179,7 @@ export function useAgentPaneSession({
                     entry.kind !== 'live_status' &&
                     entry.kind !== 'tool_run',
                 ),
-                createFailedPromptActivity(payload.error),
+                createFailedPromptActivity(effectivePrintError),
               ],
             }));
             finalizeActiveTurn(true);
@@ -4141,8 +4211,8 @@ export function useAgentPaneSession({
                     entry.kind !== 'tool_run',
                 ),
                 createFailedPromptActivity(
-                  payload.error ??
-                    'Não foi possível executar o agent. Verifique se o CLI do provedor está instalado.',
+                  effectivePrintError ??
+                    'O agente encerrou sem responder. Envie novamente para continuar.',
                 ),
               ],
             }));
@@ -4155,9 +4225,7 @@ export function useAgentPaneSession({
         if (streamJsonStateRef.current.shouldFinalize) {
           if (
             !hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current) &&
-            payload.code === 0 &&
-            !payload.error &&
-            tryScheduleStreamJsonAutoRetry(finishAgentPrintRun)
+            tryScheduleStreamJsonAutoRetry(finishAgentPrintRun, { forceFreshSession: true })
           ) {
             return;
           }
@@ -4201,16 +4269,16 @@ export function useAgentPaneSession({
 
         if (
           payload.code === 0 &&
-          !payload.error &&
+          !effectivePrintError &&
           !hasMeaningfulStreamJsonTurnOutput(streamJsonStateRef.current) &&
-          tryScheduleStreamJsonAutoRetry(finishAgentPrintRun)
+          tryScheduleStreamJsonAutoRetry(finishAgentPrintRun, { forceFreshSession: true })
         ) {
           return;
         }
 
         if (
           payload.code === 0 &&
-          !payload.error &&
+          !effectivePrintError &&
           !streamJsonStateRef.current.shouldFinalize &&
           turnsRef.current.some((turn) => turn.running)
         ) {
@@ -4313,7 +4381,7 @@ export function useAgentPaneSession({
           if (tryHandoffLongRunningDevShell(idleMs)) {
             agentPrintRunActiveRef.current = false;
             window.nexus.agentPrint.stop(paneId, {
-              preserveChildren: false,
+              preserveChildren: true,
             });
             clearAgentPrintRunToken(paneId);
             finalizeStreamJsonTurnFromEvent('longShell-handoff');
@@ -4657,6 +4725,24 @@ export function useAgentPaneSession({
     return tryFlushFollowUpQueue({ force: true });
   }, [tryFlushFollowUpQueue]);
 
+  const setTurnWhatsAppNotify = useCallback(
+    (turnId: string, notify: AgentWhatsAppNotify | null) => {
+      const previous = turnsRef.current;
+      const nextTurns = patchTurnWhatsAppNotify(previous, turnId, notify);
+      const changed = nextTurns.some((turn, index) => turn !== previous[index]);
+
+      if (!changed) {
+        return nextTurns.find((turn) => turn.id === turnId) ?? null;
+      }
+
+      turnsRef.current = nextTurns;
+      persistTurns(nextTurns, { flush: true });
+      setTurnsRevision((revision) => revision + 1);
+      return nextTurns.find((turn) => turn.id === turnId) ?? null;
+    },
+    [persistTurns],
+  );
+
   return {
     submitPrompt,
     stopAgent,
@@ -4670,6 +4756,7 @@ export function useAgentPaneSession({
     sendFollowUpNow,
     removeFollowUp,
     flushNextFollowUp,
+    setTurnWhatsAppNotify,
     submitQuestionAnswers,
     hasPendingQuestion,
     acceptPlan,

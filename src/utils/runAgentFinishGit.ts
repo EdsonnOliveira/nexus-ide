@@ -128,6 +128,11 @@ export async function runAgentFinishAction(
   payload: AgentFinishActionInput,
   deps: AgentFinishGitDeps,
 ): Promise<void> {
+  if (payload.action === 'dismiss' || payload.action === 'ignore') {
+    useProjectNotificationStore.getState().clearProjectNotification(payload.projectId);
+    return;
+  }
+
   if (payload.action === 'git') {
     await runAgentFinishGit(payload.projectId, payload.paneId, deps);
     return;

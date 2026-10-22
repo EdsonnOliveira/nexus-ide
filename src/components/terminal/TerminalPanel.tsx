@@ -147,7 +147,13 @@ interface TabPaneProps {
     patch: Partial<
       Pick<
         AgentTab,
-        'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'
+        | 'turns'
+        | 'followUps'
+        | 'workingDirectory'
+        | 'restoreCommand'
+        | 'cliAgent'
+        | 'title'
+        | 'whatsappLink'
       >
     >,
   ) => void;
@@ -868,7 +874,13 @@ interface ProjectWorkspaceProps {
     patch: Partial<
       Pick<
         AgentTab,
-        'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'
+        | 'turns'
+        | 'followUps'
+        | 'workingDirectory'
+        | 'restoreCommand'
+        | 'cliAgent'
+        | 'title'
+        | 'whatsappLink'
       >
     >,
   ) => void;
@@ -1306,7 +1318,13 @@ function TerminalPanelComponent() {
       patch: Partial<
         Pick<
           AgentTab,
-          'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'
+          | 'turns'
+          | 'followUps'
+          | 'workingDirectory'
+          | 'restoreCommand'
+          | 'cliAgent'
+          | 'title'
+          | 'whatsappLink'
         >
       >,
     ) => {

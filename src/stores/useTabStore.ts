@@ -154,6 +154,7 @@ export interface TabStoreActions {
         | 'cliAgent'
         | 'title'
         | 'messages'
+        | 'whatsappLink'
       >
     >,
   ) => Promise<void>;

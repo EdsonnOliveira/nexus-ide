@@ -182,12 +182,36 @@ async function openInWhatsAppDesktop(targetUrl: string): Promise<void> {
   await shell.openExternal(targetUrl);
 }
 
+function assertWhatsAppHttpUrl(raw: string): string {
+  let url: URL;
+
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error('Invalid WhatsApp URL');
+  }
+
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new Error('Invalid WhatsApp URL');
+  }
+
+  const host = url.hostname.replace(/^www\./i, '').toLowerCase();
+
+  if (!WHATSAPP_HOSTS.has(host)) {
+    throw new Error('Invalid WhatsApp URL');
+  }
+
+  return url.toString();
+}
+
 export async function openWhatsAppLink(httpsUrl: string): Promise<void> {
+  const safeUrl = assertWhatsAppHttpUrl(httpsUrl);
+
   if (!isWhatsAppDesktopInstalled()) {
-    await shell.openExternal(httpsUrl);
+    await shell.openExternal(safeUrl);
     return;
   }
 
-  const targetUrl = toWhatsAppDeepLink(httpsUrl) ?? httpsUrl;
+  const targetUrl = toWhatsAppDeepLink(safeUrl) ?? safeUrl;
   await openInWhatsAppDesktop(targetUrl);
 }

@@ -122,6 +122,11 @@ export interface AgentTurnSummary {
   commands?: AgentTurnSummaryCommandRef[];
 }
 
+export interface AgentWhatsAppNotify {
+  message: string;
+  link: string;
+}
+
 export interface AgentTurn {
   id: string;
   user: AgentUserMessage;
@@ -130,6 +135,7 @@ export interface AgentTurn {
   startedAt: number;
   completedAt?: number;
   summary?: AgentTurnSummary;
+  whatsappNotify?: AgentWhatsAppNotify;
 }
 
 export interface AgentTab {
@@ -144,6 +150,7 @@ export interface AgentTab {
   workingDirectory?: string | null;
   pinned?: boolean;
   badgeColorIndex?: number;
+  whatsappLink?: string | null;
 }
 
 export type {

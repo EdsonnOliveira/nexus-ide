@@ -1,6 +1,6 @@
 import type { AgentTab, Project } from '@/types';
 import type { CloudAgentSession } from '@/types/cloudAgent';
-import type { AgentPipSnapshot } from '@/types/agentPip';
+import type { AgentPipShellTerminal, AgentPipSnapshot } from '@/types/agentPip';
 import type { AgentContextUsageSnapshot } from '@/utils/agentContextUsageParser';
 import { useAgentComposerDraftStore } from '@/stores/useAgentComposerDraftStore';
 
@@ -15,6 +15,7 @@ export function buildDesktopAgentPipSnapshot(input: {
   revision: number;
   contextUsage?: AgentContextUsageSnapshot | null;
   pinging?: boolean;
+  shellTerminals?: AgentPipShellTerminal[];
 }): AgentPipSnapshot {
   return {
     kind: 'desktop',
@@ -42,6 +43,7 @@ export function buildDesktopAgentPipSnapshot(input: {
       logo: input.project.logo,
       agentResponseSkills: input.project.agentResponseSkills ?? [],
     },
+    shellTerminals: input.shellTerminals ?? [],
   };
 }
 
@@ -67,6 +69,7 @@ export function buildCloudAgentPipSnapshot(
     followUps: [],
     cloudTurns: session.turns,
     project: null,
+    shellTerminals: [],
   };
 }
 

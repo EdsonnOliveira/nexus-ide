@@ -27,7 +27,18 @@ export interface WorkspacePaneContextValue {
   ) => void;
   onUpdateAgentTab: (
     tabId: string,
-    patch: Partial<Pick<AgentTab, 'turns' | 'followUps' | 'workingDirectory' | 'restoreCommand' | 'cliAgent' | 'title'>>,
+    patch: Partial<
+      Pick<
+        AgentTab,
+        | 'turns'
+        | 'followUps'
+        | 'workingDirectory'
+        | 'restoreCommand'
+        | 'cliAgent'
+        | 'title'
+        | 'whatsappLink'
+      >
+    >,
   ) => void;
   isPaneVisible: (paneId: string) => boolean;
   isPaneFocused: (paneId: string) => boolean;

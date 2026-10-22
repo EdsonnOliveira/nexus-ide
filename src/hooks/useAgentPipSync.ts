@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useCloudAgentSessionsStore } from '@/stores/useCloudAgentSessionsStore';
+import { useAgentShellTerminalStore } from '@/stores/useAgentShellTerminalStore';
 import { useAgentPipStore } from '@/stores/useAgentPipStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
@@ -120,12 +121,21 @@ function cloneAgentTab(
   }
 }
 
+function shellTerminalFingerprint(paneId: string): string {
+  const entries = useAgentShellTerminalStore.getState().entriesByAgentPane[paneId] ?? [];
+
+  return entries
+    .map((entry) => `${entry.paneId}:${entry.status}:${entry.title}:${entry.startedAt}`)
+    .join(',');
+}
+
 function transcriptFingerprint(
   turns: AgentTab['turns'],
   followUps: NonNullable<AgentTab['followUps']>,
   busy: boolean,
   contextPercent = 0,
   pinging = false,
+  shellKey = '',
 ): string {
   const list = turns ?? [];
   const lastTurn = list[list.length - 1];
@@ -150,6 +160,7 @@ function transcriptFingerprint(
     followUps[followUps.length - 1]?.content.length ?? 0,
     contextPercent,
     pinging ? '1' : '0',
+    shellKey,
   ].join('|');
 }
 
@@ -269,12 +280,22 @@ export function useAgentPipSync(slots: DesktopAgentSlot[]) {
               const busy = resolveDesktopPipBusy(desktop.pane, turns);
               const pinging =
                 notifiedPaneByProjectRef.current[desktop.project.id] === desktop.pane.id;
+              const shellTerminals = (
+                useAgentShellTerminalStore.getState().entriesByAgentPane[desktop.pane.id] ?? []
+              ).map((entry) => ({
+                paneId: entry.paneId,
+                title: entry.title,
+                command: entry.command,
+                status: entry.status,
+                startedAt: entry.startedAt,
+              }));
               const fingerprint = transcriptFingerprint(
                 turns,
                 followUps,
                 busy,
                 contextUsage?.percent ?? 0,
                 pinging,
+                shellTerminalFingerprint(desktop.pane.id),
               );
 
               if (lastPaneIdRef.current === paneId && lastFingerprintRef.current === fingerprint) {
@@ -302,6 +323,7 @@ export function useAgentPipSync(slots: DesktopAgentSlot[]) {
                   revision: snapshotRevisionRef.current,
                   contextUsage,
                   pinging,
+                  shellTerminals,
                   tab: cloneAgentTab(desktop.pane, turns, followUps),
                 }),
               };

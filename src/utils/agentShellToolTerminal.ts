@@ -20,6 +20,49 @@ function normalizeShellCommand(command: string): string {
   return command.replace(/\s+/g, ' ').trim();
 }
 
+function unwrapShellInvocation(segment: string): string {
+  let rest = segment.trim();
+
+  const stripAssignments = (): void => {
+    while (/^[A-Za-z_][A-Za-z0-9_]*=\S*\s+/.test(rest)) {
+      rest = rest.replace(/^[A-Za-z_][A-Za-z0-9_]*=\S*\s+/, '');
+    }
+  };
+
+  stripAssignments();
+
+  if (!/^env(?:\s|$)/.test(rest)) {
+    return rest.trim();
+  }
+
+  const tokens = rest.split(/\s+/);
+  let index = 1;
+
+  while (index < tokens.length) {
+    const token = tokens[index] ?? '';
+
+    if (!token.startsWith('-')) {
+      break;
+    }
+
+    if (token.includes('=') || token.startsWith('--')) {
+      index += 1;
+      continue;
+    }
+
+    if (/^-[uCSiP]$/.test(token)) {
+      index += 2;
+      continue;
+    }
+
+    index += 1;
+  }
+
+  rest = tokens.slice(index).join(' ');
+  stripAssignments();
+  return rest.trim();
+}
+
 function matchesNativeRunCommand(segment: string): boolean {
   return (
     /^(?:npx\s+)?expo\s+run:(?:ios|android)(?:\s|$)/.test(segment) ||
@@ -29,7 +72,7 @@ function matchesNativeRunCommand(segment: string): boolean {
 }
 
 function matchesDevTerminalScript(segment: string): boolean {
-  const trimmed = segment.trim();
+  const trimmed = unwrapShellInvocation(segment);
 
   if (!trimmed) {
     return false;
@@ -120,7 +163,7 @@ export function shouldOpenAgentShellToolTerminal(command: string): boolean {
 }
 
 function resolveSegmentScriptName(segment: string): string | null {
-  const trimmed = segment.trim();
+  const trimmed = unwrapShellInvocation(segment);
 
   if (!trimmed) {
     return null;
@@ -470,6 +513,17 @@ async function launchUndispatchedShellCommands(agentPaneId: string, paneId?: str
     }
 
     if (entry.commandDispatched || !isLongRunningScript(entry.command)) {
+      continue;
+    }
+
+    if (await isDevServerAlreadyUp(entry.command, { afterFailedLaunch: true, viteOnly: true })) {
+      store.updateEntry(agentPaneId, entry.paneId, {
+        commandDispatched: true,
+        dispatchedAt: Date.now(),
+        status: 'running',
+        exitCode: null,
+      });
+      ensureAgentShellKeepAlive(agentPaneId, entry.paneId);
       continue;
     }
 

@@ -1,5 +1,5 @@
 import { memo, useMemo, useRef, type RefObject } from 'react';
-import type { AgentQuestionAnswers, AgentTurn } from '@/types';
+import type { AgentQuestionAnswers, AgentTurn, AgentWhatsAppNotify } from '@/types';
 import { AgentActivityList } from '@/components/agent/AgentActivityList';
 import { AgentUserPrompt } from '@/components/agent/AgentUserPrompt';
 import { useStickyPromptState } from '@/hooks/useStickyPromptState';
@@ -17,11 +17,13 @@ interface AgentTurnViewProps {
   projectId: string;
   projectPath: string;
   paneId: string;
+  agentWhatsAppLink?: string;
   fallbackAiProvider?: Exclude<AiProviderId, 'nexus'>;
   disableStickyPrompt?: boolean;
   onTurnElementChange?: (turnId: string, element: HTMLElement | null) => void;
   onEdit?: (turnId: string) => void;
   onRedo?: (turnId: string) => void;
+  onWhatsAppNotifyChange?: (turnId: string, notify: AgentWhatsAppNotify | null) => void;
   onSubmitQuestion?: (
     activityId: string,
     answers: AgentQuestionAnswers,
@@ -37,11 +39,13 @@ function AgentTurnViewComponent({
   projectId,
   projectPath,
   paneId,
+  agentWhatsAppLink,
   fallbackAiProvider,
   disableStickyPrompt = false,
   onTurnElementChange,
   onEdit,
   onRedo,
+  onWhatsAppNotifyChange,
   onSubmitQuestion,
 }: AgentTurnViewProps) {
   const hasActivities =
@@ -83,11 +87,13 @@ function AgentTurnViewComponent({
         <AgentUserPrompt
           turn={turn}
           projectPath={projectPath}
+          agentWhatsAppLink={agentWhatsAppLink}
           isEditing={isEditing}
           isStickyLayout={isPromptStuck && stickyPhase !== 'out'}
           fallbackAiProvider={fallbackAiProvider}
           onEdit={onEdit}
           onRedo={onRedo}
+          onWhatsAppNotifyChange={onWhatsAppNotifyChange}
         />
       </div>
       {hasActivities ? (
