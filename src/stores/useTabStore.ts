@@ -155,6 +155,7 @@ export interface TabStoreActions {
         | 'title'
         | 'messages'
         | 'whatsappLink'
+        | 'maestroTag'
       >
     >,
   ) => Promise<void>;

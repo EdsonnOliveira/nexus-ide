@@ -215,11 +215,15 @@ if (!app.requestSingleInstanceLock()) {
 const SESSION_FLUSH_TIMEOUT_MS = 5000;
 const CRASH_QUIT_GRACE_MS = 12_000;
 const MEMORY_CHECK_INTERVAL_MS = 60_000;
-const MEMORY_RELOAD_THRESHOLD_KB = 1536 * 1024;
-const MEMORY_RELOAD_COOLDOWN_MS = 5 * 60_000;
+const MEMORY_RELOAD_THRESHOLD_KB = 4096 * 1024;
+const MEMORY_RELOAD_COOLDOWN_MS = 45 * 60_000;
+const MEMORY_RELOAD_STREAK_REQUIRED = 4;
+const BLANK_RENDERER_CHECK_MS = 5000;
+const BLANK_RENDERER_RELOAD_COOLDOWN_MS = 30_000;
 const RECOVERY_TOAST_DELAY_MS = 900;
 const DEV_LOAD_RETRY_MS = 1500;
-const DEV_HEARTBEAT_MS = 3000;
+const DEV_HEARTBEAT_MS = 5000;
+const DEV_LOST_LOG_COOLDOWN_MS = 30_000;
 const DEV_LOAD_FAIL_CODES = new Set([-2, -101, -102, -103, -106, -118, -324]);
 const DEV_RECONNECT_MARKER = 'nexus-dev-reconnect';
 
@@ -236,6 +240,9 @@ let isSessionFlushing = false;
 let sessionFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let lastRendererFailureAt = 0;
 let lastMemoryReloadAt = 0;
+let lastBlankRendererReloadAt = 0;
+let blankRendererCheckTimer: ReturnType<typeof setTimeout> | null = null;
+let memoryHighStreak = 0;
 let lastQuitAttemptAt = 0;
 let quitFlushAttempts = 0;
 let pendingRecoveryMessage: string | null = null;
@@ -243,6 +250,9 @@ let memoryWatchTimer: ReturnType<typeof setInterval> | null = null;
 let isRecreatingWindow = false;
 let blockSignalQuit = false;
 let userQuitRequested = false;
+let probeDevServerInFlight: Promise<boolean> | null = null;
+let lastDevServerLostLogAt = 0;
+let rendererRecoveryInFlight = false;
 
 function markUserQuitRequested(source: string): void {
   userQuitRequested = true;
@@ -368,6 +378,10 @@ function probeDevServer(): Promise<boolean> {
     return Promise.resolve(false);
   }
 
+  if (probeDevServerInFlight) {
+    return probeDevServerInFlight;
+  }
+
   let parsed: URL;
 
   try {
@@ -378,12 +392,24 @@ function probeDevServer(): Promise<boolean> {
 
   const port = Number(parsed.port || (parsed.protocol === 'https:' ? 443 : 80));
   const host = parsed.hostname || '127.0.0.1';
-  const hosts = host === 'localhost' ? ['127.0.0.1', '::1'] : [host];
+  const hosts =
+    host === 'localhost' || host === '::1' || host === '0.0.0.0' ? ['127.0.0.1'] : [host];
 
-  return new Promise((resolve) => {
+  probeDevServerInFlight = new Promise<boolean>((resolve) => {
+    let settled = false;
+
+    const finish = (ok: boolean) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      resolve(ok);
+    };
+
     const tryHost = (index: number) => {
       if (index >= hosts.length) {
-        resolve(false);
+        finish(false);
         return;
       }
 
@@ -393,7 +419,7 @@ function probeDevServer(): Promise<boolean> {
         socket.destroy();
 
         if (ok) {
-          resolve(true);
+          finish(true);
           return;
         }
 
@@ -407,7 +433,11 @@ function probeDevServer(): Promise<boolean> {
     };
 
     tryHost(0);
+  }).finally(() => {
+    probeDevServerInFlight = null;
   });
+
+  return probeDevServerInFlight;
 }
 
 function buildDevReconnectHtml(): string {
@@ -521,7 +551,7 @@ function startDevServerHeartbeat(): void {
   }
 
   const beat = () => {
-    if (isQuitting) {
+    if (isQuitting || rendererRecoveryInFlight) {
       return;
     }
 
@@ -541,7 +571,13 @@ function startDevServerHeartbeat(): void {
         return;
       }
 
-      logLifecycle('dev server lost');
+      const now = Date.now();
+
+      if (now - lastDevServerLostLogAt >= DEV_LOST_LOG_COOLDOWN_MS) {
+        lastDevServerLostLogAt = now;
+        logLifecycle('dev server lost');
+      }
+
       ensureDevServerRunning(process.env.APP_ROOT ?? '', logLifecycle);
 
       if (onReconnect || lastMainFrameLoadFailed) {
@@ -554,8 +590,62 @@ function startDevServerHeartbeat(): void {
   devServerHeartbeatTimer = setInterval(beat, DEV_HEARTBEAT_MS);
 }
 
+function scheduleBlankRendererCheck(source: string): void {
+  if (blankRendererCheckTimer) {
+    clearTimeout(blankRendererCheckTimer);
+  }
+
+  blankRendererCheckTimer = setTimeout(() => {
+    blankRendererCheckTimer = null;
+
+    if (isQuitting || rendererRecoveryInFlight || watchingDevServer) {
+      return;
+    }
+
+    if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
+      return;
+    }
+
+    if (Date.now() - lastBlankRendererReloadAt < BLANK_RENDERER_RELOAD_COOLDOWN_MS) {
+      return;
+    }
+
+    void win.webContents
+      .executeJavaScript(
+        `(() => {
+          const root = document.getElementById('root');
+          if (!root) return false;
+          if (root.querySelector('.app-shell, .agent-pip, .app-loading, .empty-state')) return true;
+          if (root.querySelector('.nexus-boot') && root.childElementCount === 1) return false;
+          return root.childElementCount > 0 && !root.querySelector('.nexus-boot');
+        })()`,
+      )
+      .then((mounted) => {
+        if (mounted || isQuitting || !win || win.isDestroyed() || win.webContents.isDestroyed()) {
+          return;
+        }
+
+        lastBlankRendererReloadAt = Date.now();
+        logLifecycle(`blank renderer after ${source} — reloading`);
+        void win.webContents
+          .executeJavaScript(`document.documentElement.classList.remove('nexus-window-hidden')`)
+          .catch(() => undefined);
+        win.show();
+        win.focus();
+
+        if (VITE_DEV_SERVER_URL && DEV_SERVER_URL) {
+          void win.loadURL(DEV_SERVER_URL).catch(() => undefined);
+          return;
+        }
+
+        win.webContents.reload();
+      })
+      .catch(() => undefined);
+  }, BLANK_RENDERER_CHECK_MS);
+}
+
 function scheduleRendererRecovery(webContents: Electron.WebContents | null, source: string): void {
-  if (isQuitting || isRecreatingWindow) {
+  if (isQuitting || isRecreatingWindow || rendererRecoveryInFlight) {
     return;
   }
 
@@ -572,6 +662,7 @@ function scheduleRendererRecovery(webContents: Electron.WebContents | null, sour
 
   noteRendererFailure();
   pendingRecoveryMessage = recoveryMessageFor(source);
+  rendererRecoveryInFlight = true;
 
   if (rendererReloadTimer) {
     clearTimeout(rendererReloadTimer);
@@ -581,10 +672,12 @@ function scheduleRendererRecovery(webContents: Electron.WebContents | null, sour
     rendererReloadTimer = null;
 
     if (isQuitting || isRecreatingWindow) {
+      rendererRecoveryInFlight = false;
       return;
     }
 
     if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
+      rendererRecoveryInFlight = false;
       recreateMainWindow(source);
       return;
     }
@@ -592,29 +685,47 @@ function scheduleRendererRecovery(webContents: Electron.WebContents | null, sour
     logLifecycle(`recovering renderer after ${source}`);
     win.show();
     win.focus();
+    void win.webContents
+      .executeJavaScript(`document.documentElement.classList.remove('nexus-window-hidden')`)
+      .catch(() => undefined);
+
+    const finishRecovery = () => {
+      rendererRecoveryInFlight = false;
+      scheduleBlankRendererCheck(source);
+    };
 
     if (VITE_DEV_SERVER_URL) {
-      void probeDevServer().then((up) => {
-        if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
-          return;
-        }
+      void probeDevServer()
+        .then((up) => {
+          if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
+            return;
+          }
 
-        if (up && DEV_SERVER_URL) {
-          void win.loadURL(DEV_SERVER_URL);
-          return;
-        }
+          if (up && DEV_SERVER_URL) {
+            return win.loadURL(DEV_SERVER_URL);
+          }
 
-        watchDevServer(source);
-      });
+          watchDevServer(source);
+        })
+        .catch(() => undefined)
+        .finally(finishRecovery);
       return;
     }
 
-    win.webContents.reload();
+    try {
+      win.webContents.reload();
+    } finally {
+      finishRecovery();
+    }
   }, 300);
 }
 
 function checkRendererMemory(): void {
   if (isQuitting || !win || win.isDestroyed() || win.webContents.isDestroyed()) {
+    return;
+  }
+
+  if (rendererRecoveryInFlight || watchingDevServer) {
     return;
   }
 
@@ -627,9 +738,20 @@ function checkRendererMemory(): void {
   const workingSetKb = metric?.memory.workingSetSize ?? 0;
 
   if (workingSetKb < MEMORY_RELOAD_THRESHOLD_KB) {
+    memoryHighStreak = 0;
     return;
   }
 
+  memoryHighStreak += 1;
+
+  if (memoryHighStreak < MEMORY_RELOAD_STREAK_REQUIRED) {
+    logLifecycle(
+      `renderer memory ${workingSetKb} KB — streak ${memoryHighStreak}/${MEMORY_RELOAD_STREAK_REQUIRED}`,
+    );
+    return;
+  }
+
+  memoryHighStreak = 0;
   lastMemoryReloadAt = Date.now();
   logLifecycle(`renderer memory ${workingSetKb} KB — scheduling reload`);
   scheduleRendererRecovery(win.webContents, 'memory-pressure');
@@ -960,6 +1082,7 @@ async function createWindow(appIcon?: NativeImage) {
     lastMainFrameLoadFailed = false;
     stopDevServerWatch();
     deliverPendingRecoveryMessage();
+    scheduleBlankRendererCheck('did-finish-load');
   });
 
   win.on('blur', () => {

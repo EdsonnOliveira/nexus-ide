@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useProjectStore } from '@/stores/useProjectStore';
 import {
   HOME_AGENT_CHANGE_EVENT,
+  pruneStaleHomeAgentBindings,
   readHomeAgentQueue,
   type HomeAgentQueue,
 } from '@/utils/homeDashboardAgents';
@@ -8,6 +10,7 @@ import {
 const EMPTY_HOME_BOUND_PANE_IDS: ReadonlySet<string> = new Set();
 
 export function useHomeAgentQueue(): HomeAgentQueue {
+  const projects = useProjectStore((state) => state.projects);
   const [queue, setQueue] = useState(readHomeAgentQueue);
 
   useEffect(() => {
@@ -20,6 +23,10 @@ export function useHomeAgentQueue(): HomeAgentQueue {
       window.removeEventListener(HOME_AGENT_CHANGE_EVENT, refresh);
     };
   }, []);
+
+  useEffect(() => {
+    setQueue(pruneStaleHomeAgentBindings(projects));
+  }, [projects]);
 
   return queue;
 }

@@ -11,10 +11,10 @@ import { registerModalOpen } from '@/utils/overlayBlocking';
 import { parseCdCommandLine } from '@/utils/terminalCwd';
 import { registerTerminalHandle } from '@/utils/terminalHandleRegistry';
 import { shortenPath } from '@/utils/shortenPath';
+import { STANDALONE_TERMINAL_PROJECT_ID } from '@/utils/standaloneTerminalHints';
 import type { TerminalTab, XTermViewHandle } from '@/types';
 
 const STANDALONE_TERMINAL_PANE_ID = 'standalone-global-terminal';
-const STANDALONE_TERMINAL_PROJECT_ID = 'standalone-global-terminal';
 
 interface StandaloneTerminalPopupProps {
   ptyId: string | null;

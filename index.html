@@ -12,9 +12,63 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <title>Nexus IDE</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        background: #08080c;
+        color: #9ca3af;
+        font-family: 'Lexend Deca', system-ui, sans-serif;
+      }
+      #root {
+        width: 100%;
+        height: 100%;
+      }
+      .nexus-boot {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="nexus-boot">Carregando Nexus…</div>
+    </div>
+    <script>
+      (function () {
+        var KEY = 'nexus.boot.retry';
+        var MAX = 2;
+        var DELAY_MS = 6000;
+        window.setTimeout(function () {
+          var root = document.getElementById('root');
+          if (!root || root.childElementCount === 0) {
+            var n = Number(sessionStorage.getItem(KEY) || '0');
+            if (n < MAX) {
+              sessionStorage.setItem(KEY, String(n + 1));
+              location.reload();
+            }
+            return;
+          }
+          if (root.querySelector('.app-shell, .agent-pip, .app-loading, .empty-state')) {
+            sessionStorage.removeItem(KEY);
+            return;
+          }
+          if (root.querySelector('.nexus-boot') && root.childElementCount === 1) {
+            var n2 = Number(sessionStorage.getItem(KEY) || '0');
+            if (n2 < MAX) {
+              sessionStorage.setItem(KEY, String(n2 + 1));
+              location.reload();
+            }
+          }
+        }, DELAY_MS);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

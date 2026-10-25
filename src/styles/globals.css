@@ -4004,6 +4004,13 @@ html.nexus-power-save * {
   gap: 2px;
 }
 
+.home-dashboard__agent-card-project-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .home-dashboard__agent-card-project {
   font-size: 13px;
   font-weight: 700;
@@ -4011,6 +4018,22 @@ html.nexus-power-save * {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.home-dashboard__agent-card-tag {
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+
+.home-dashboard__agent-tag-color-field {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.home-dashboard__agent-tag-color-grid {
+  margin: 0;
 }
 
 .home-dashboard__agent-card-title {
@@ -9453,6 +9476,35 @@ html.agent-pip #root {
 .sidebar-render-popup__remove:hover:not(:disabled) {
   background: var(--bg-tab-hover);
   color: #fca5a5;
+}
+
+.sidebar-deploy-dock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.sidebar-deploy-dock .sidebar-vercel-deploy-card {
+  margin-bottom: 0;
+}
+
+.sidebar-deploy-dock--floating {
+  position: fixed;
+  top: calc(var(--titlebar-height) + 12px);
+  right: 16px;
+  left: auto;
+  bottom: auto;
+  z-index: 1100;
+  width: min(280px, calc(100vw - 32px));
+  max-width: 280px;
+  margin-bottom: 0;
+  pointer-events: none;
+}
+
+.sidebar-deploy-dock--floating > * {
+  pointer-events: auto;
 }
 
 .sidebar-vercel-deploy-card {
@@ -15539,11 +15591,26 @@ body.workspace-split--resizing-row * {
   align-items: center;
   gap: 6px;
   width: 100%;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-secondary) 45%, transparent) transparent;
+}
+
+.terminal-footer__hint-row::-webkit-scrollbar {
+  height: 4px;
+}
+
+.terminal-footer__hint-row::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-footer__hint-row::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-secondary) 45%, transparent);
+  border-radius: 999px;
 }
 
 .terminal-footer__hint-row--mode {
-  overflow-x: auto;
   scrollbar-width: none;
 }
 
@@ -15712,6 +15779,14 @@ body.workspace-split--resizing-row * {
 .terminal-footer__hint-badge--icon {
   width: 18px;
   padding: 0;
+  color: #fff;
+}
+
+.terminal-footer__hint-badge--logo {
+  background: transparent;
+  box-shadow: none;
+  overflow: hidden;
+  color: inherit;
 }
 
 .terminal-footer__hint-badge-icon {
@@ -15719,6 +15794,14 @@ body.workspace-split--resizing-row * {
   height: 12px;
   display: block;
   filter: brightness(0) invert(1);
+}
+
+.terminal-footer__hint-badge-logo {
+  width: 18px;
+  height: 18px;
+  display: block;
+  object-fit: cover;
+  border-radius: 5px;
 }
 
 .terminal-footer__hint-badge--skill {
@@ -15986,6 +16069,88 @@ body.workspace-split--resizing-row * {
   background: color-mix(in srgb, #ae81ff 9%, #272822);
 }
 
+.markdown-preview__code-block {
+  position: relative;
+  margin: 0 0 12px;
+  max-width: 100%;
+}
+
+.markdown-preview__code-block:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-preview__code-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, #75715e 42%, transparent);
+  background: color-mix(in srgb, #272822 82%, rgba(0, 0, 0, 0.35));
+  color: #cfcfc2;
+  cursor: pointer;
+  opacity: 0.72;
+}
+
+.markdown-preview__code-copy:hover:not(:disabled) {
+  opacity: 1;
+  color: #f8f8f2;
+  background: color-mix(in srgb, #3e3d32 88%, rgba(255, 255, 255, 0.08));
+  border-color: color-mix(in srgb, #a6a08a 55%, transparent);
+}
+
+.markdown-preview__code-copy--copied {
+  opacity: 1;
+  color: #86efac;
+  border-color: color-mix(in srgb, #22c55e 28%, transparent);
+  background: color-mix(in srgb, #22c55e 12%, #272822);
+}
+
+.markdown-preview__code-copy-icon {
+  position: relative;
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.markdown-preview__code-copy-icon-copy,
+.markdown-preview__code-copy-icon-check {
+  position: absolute;
+  inset: 0;
+  transition:
+    opacity var(--motion-out) var(--motion-ease-out),
+    transform var(--motion-out) var(--motion-ease-out);
+}
+
+.markdown-preview__code-copy-icon-check {
+  opacity: 0;
+  transform: scale(0.72) rotate(-12deg);
+}
+
+.markdown-preview__code-copy--copied .markdown-preview__code-copy-icon-copy {
+  opacity: 0;
+  transform: scale(0.72) rotate(12deg);
+}
+
+.markdown-preview__code-copy--copied .markdown-preview__code-copy-icon-check {
+  opacity: 1;
+  transform: scale(1) rotate(0deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .markdown-preview__code-copy-icon-copy,
+  .markdown-preview__code-copy-icon-check {
+    transition: none;
+  }
+}
+
 .markdown-preview pre {
   margin: 0 0 12px;
   padding: 12px 14px;
@@ -15993,6 +16158,11 @@ body.workspace-split--resizing-row * {
   background: #272822;
   border: 1px solid color-mix(in srgb, #75715e 42%, transparent);
   overflow-x: auto;
+}
+
+.markdown-preview__code-block > pre {
+  margin: 0;
+  padding-right: 44px;
 }
 
 .markdown-preview pre:last-child {
@@ -24800,12 +24970,25 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   color: var(--text-primary);
 }
 
+.agent-view__response-body.markdown-preview .markdown-preview__code-block {
+  margin: 10px 0 14px;
+}
+
+.agent-view__response-body.markdown-preview .markdown-preview__code-block:last-child {
+  margin-bottom: 0;
+}
+
 .agent-view__response-body.markdown-preview pre.hljs {
   max-width: 100%;
   margin: 10px 0 14px;
   padding: 12px 14px;
   border-radius: 8px;
   overflow-x: auto;
+}
+
+.agent-view__response-body.markdown-preview .markdown-preview__code-block > pre.hljs {
+  margin: 0;
+  padding-right: 44px;
 }
 
 .agent-view__response-body.markdown-preview pre.hljs:last-child {
@@ -25391,6 +25574,10 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   color: var(--text-primary);
 }
 
+.agent-view__plan-review-body.markdown-preview .markdown-preview__code-block {
+  margin: 8px 0;
+}
+
 .agent-view__plan-review-body.markdown-preview pre.hljs {
   margin: 8px 0;
   padding: 10px 12px;
@@ -25398,6 +25585,11 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   overflow: auto;
   background: #272822;
   color: #f8f8f2;
+}
+
+.agent-view__plan-review-body.markdown-preview .markdown-preview__code-block > pre.hljs {
+  margin: 0;
+  padding-right: 44px;
 }
 
 .agent-view__plan-review-body.markdown-preview pre.hljs code.hljs {

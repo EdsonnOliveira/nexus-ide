@@ -21,6 +21,8 @@ export interface TerminalCommandHint {
     | 'mode-debug'
     | 'mode-multitask';
   badgeColor?: string;
+  badgeLogo?: string | null;
+  badgeProjectIcon?: string;
   label: string;
   command: string;
   hintKind?: 'skill' | 'mode' | 'model';

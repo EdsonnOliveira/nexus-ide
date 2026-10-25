@@ -13,11 +13,21 @@ import iconModeAsk from '@/assets/icon-mode-ask.svg';
 import iconModeDebug from '@/assets/icon-mode-debug.svg';
 import iconModeMultitask from '@/assets/icon-mode-multitask.svg';
 import iconModePlan from '@/assets/icon-mode-plan.svg';
+import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
 import { TerminalQuickCommandPills } from '@/components/terminal/TerminalQuickCommandPills';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
+import { useHomeAgentQueue } from '@/hooks/useHomeAgentBindings';
+import { useProjectStore } from '@/stores/useProjectStore';
 import { useTerminalSessionStore } from '@/stores/useTerminalSessionStore';
+import { readLogoDataUrl } from '@/utils/agentPipSnapshot';
+import { listOpenMaestroAgentProjects } from '@/utils/homeDashboardAgents';
 import { isOverlayBlockingTerminalHints } from '@/utils/overlayBlocking';
 import { shouldShowAgentSkillHints } from '@/utils/parseAgentModeCommand';
+import {
+  buildMaestroQuickCommandHints,
+  isStandaloneTerminalProjectId,
+  mergeStandaloneTerminalHints,
+} from '@/utils/standaloneTerminalHints';
 import { PROJECT_COLORS, type TerminalCommandHint, type TerminalTab } from '@/types';
 
 interface TerminalFooterProps {
@@ -69,6 +79,8 @@ type HintBadgeItem = {
   hintKind: 'skill' | 'mode' | 'model' | undefined;
   backgroundColor: string;
   iconSrc: string | null;
+  logoSrc: string | null;
+  projectIcon: string | null;
   globalIndex: number;
 };
 
@@ -177,11 +189,27 @@ function TerminalFooterHintRowComponent({
     };
   }, [isVisible, measureVisibleCount]);
 
+  const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    const row = rowRef.current;
+
+    if (!row || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) {
+      return;
+    }
+
+    if (row.scrollWidth <= row.clientWidth) {
+      return;
+    }
+
+    event.preventDefault();
+    row.scrollLeft += event.deltaY;
+  }, []);
+
   return (
     <div
       ref={rowRef}
       className={`terminal-footer__hint-row${preserveAllItems ? ' terminal-footer__hint-row--mode' : ''}`}
       role='group'
+      onWheel={handleWheel}
     >
       {items.map((item, index) => (
         <div
@@ -211,6 +239,7 @@ function TerminalFooterComponent({
   onRunCommand,
 }: TerminalFooterProps) {
   const [hints, setHints] = useState<TerminalCommandHint[]>([]);
+  const [logoSrcByPath, setLogoSrcByPath] = useState<Record<string, string>>({});
   const hintRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const hintsRef = useRef<TerminalCommandHint[]>([]);
   const visibleHintIndicesRef = useRef<number[]>([]);
@@ -218,6 +247,16 @@ function TerminalFooterComponent({
   const footerRef = useRef<HTMLElement>(null);
   const rowVisibleCountsRef = useRef<Record<string, number>>({});
   const [visibleCountsVersion, setVisibleCountsVersion] = useState(0);
+  const projects = useProjectStore((state) => state.projects);
+  const homeAgentQueue = useHomeAgentQueue();
+  const isStandaloneTerminal = isStandaloneTerminalProjectId(projectId);
+  const maestroHintProjects = useMemo(() => {
+    if (!isStandaloneTerminal) {
+      return [];
+    }
+
+    return listOpenMaestroAgentProjects(projects, homeAgentQueue);
+  }, [homeAgentQueue, isStandaloneTerminal, projects]);
   const activeAgentCommand = useTerminalSessionStore(
     (state) => state.activeAgentByPane[tab.id] ?? null,
   );
@@ -264,12 +303,43 @@ function TerminalFooterComponent({
     let cancelled = false;
 
     const loadHints = async () => {
-      const entries = useAgentHints
-        ? await window.nexus.files.getAgentSkillHints(cwd)
-        : await window.nexus.files.getTerminalHints(cwd);
+      if (useAgentHints) {
+        const entries = await window.nexus.files.getAgentSkillHints(cwd);
+
+        if (!cancelled) {
+          setHints(entries);
+        }
+
+        return;
+      }
+
+      const cwdEntries = await window.nexus.files.getTerminalHints(cwd);
+
+      if (!isStandaloneTerminal || maestroHintProjects.length === 0) {
+        if (!cancelled) {
+          setHints(cwdEntries);
+        }
+
+        return;
+      }
+
+      const projectHintGroups = await Promise.all(
+        maestroHintProjects.map(async (project) => {
+          try {
+            const hintsForProject = await window.nexus.files.getTerminalHints(project.path);
+
+            return { project, hints: hintsForProject };
+          } catch {
+            return { project, hints: [] as TerminalCommandHint[] };
+          }
+        }),
+      );
+      const quickCommandHints = buildMaestroQuickCommandHints(maestroHintProjects, cwd);
 
       if (!cancelled) {
-        setHints(entries);
+        setHints(
+          mergeStandaloneTerminalHints(cwdEntries, projectHintGroups, cwd, quickCommandHints),
+        );
       }
     };
 
@@ -278,7 +348,7 @@ function TerminalFooterComponent({
     return () => {
       cancelled = true;
     };
-  }, [cwd, isVisible, tab.id, useAgentHints]);
+  }, [cwd, isStandaloneTerminal, isVisible, maestroHintProjects, tab.id, useAgentHints]);
 
   useEffect(() => {
     if (!isVisible || !tab.restoreCommand) {
@@ -427,26 +497,80 @@ function TerminalFooterComponent({
     setVisibleCountsVersion((version) => version + 1);
   }, [hints, isVisible, useAgentHints, showSkillHints]);
 
+  const badgeLogoPathsKey = useMemo(() => {
+    const paths = new Set<string>();
+
+    for (const hint of visibleHints) {
+      const logo = hint.badgeLogo?.trim();
+
+      if (logo) {
+        paths.add(logo);
+      }
+    }
+
+    return Array.from(paths).sort().join('\0');
+  }, [visibleHints]);
+
+  useEffect(() => {
+    if (!badgeLogoPathsKey) {
+      setLogoSrcByPath({});
+      return;
+    }
+
+    let cancelled = false;
+    const paths = badgeLogoPathsKey.split('\0').filter(Boolean);
+
+    void Promise.all(
+      paths.map(async (logoPath) => {
+        const dataUrl = await readLogoDataUrl(logoPath);
+        return [logoPath, dataUrl] as const;
+      }),
+    ).then((entries) => {
+      if (cancelled) {
+        return;
+      }
+
+      const next: Record<string, string> = {};
+
+      for (const [logoPath, dataUrl] of entries) {
+        if (dataUrl) {
+          next[logoPath] = dataUrl;
+        }
+      }
+
+      setLogoSrcByPath(next);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [badgeLogoPathsKey]);
+
   const hintBadges = useMemo(
     () =>
       visibleHints.map((hint, index) => {
         const badgeIcon = hint.badgeIcon;
         const hintKind = hint.hintKind ?? (hint.id.startsWith('skill-') ? 'skill' : undefined);
-        const backgroundColor =
-          hint.badgeColor ??
-          (badgeIcon && badgeIcon in HINT_BADGE_COLORS
-            ? HINT_BADGE_COLORS[badgeIcon as keyof typeof HINT_BADGE_COLORS]
-            : PROJECT_COLORS[index % PROJECT_COLORS.length]);
+        const logoPath = hint.badgeLogo?.trim() || '';
+        const hasProjectBadge = Boolean(logoPath || hint.badgeProjectIcon);
+        const backgroundColor = hasProjectBadge
+          ? (hint.badgeColor ?? PROJECT_COLORS[index % PROJECT_COLORS.length])
+          : (hint.badgeColor ??
+            (badgeIcon && badgeIcon in HINT_BADGE_COLORS
+              ? HINT_BADGE_COLORS[badgeIcon as keyof typeof HINT_BADGE_COLORS]
+              : PROJECT_COLORS[index % PROJECT_COLORS.length]));
 
         return {
           hint,
           hintKind,
           backgroundColor,
           iconSrc: badgeIcon ? HINT_BADGE_ICON_SRC[badgeIcon] : null,
+          logoSrc: logoPath ? (logoSrcByPath[logoPath] ?? null) : null,
+          projectIcon: hint.badgeProjectIcon ?? null,
           globalIndex: index,
         };
       }),
-    [visibleHints],
+    [logoSrcByPath, visibleHints],
   );
 
   const hintRows = useMemo((): HintRow[] => {
@@ -507,36 +631,52 @@ function TerminalFooterComponent({
   }, [activeIndex, onActiveIndexChange, visibleHintIndices]);
 
   const renderHintButton = useCallback(
-    ({ hint, hintKind, backgroundColor, iconSrc, globalIndex }: HintBadgeItem) => (
-      <button
-        key={hint.id}
-        ref={(element) => {
-          hintRefs.current[globalIndex] = element;
-        }}
-        type='button'
-        className={`terminal-footer__hint app-button${hintKind ? ` terminal-footer__hint--${hintKind}` : ''}${keyboardActive && globalIndex === activeIndex ? ' terminal-footer__hint--active' : ''}`}
-        role='option'
-        aria-selected={keyboardActive && globalIndex === activeIndex}
-        onMouseEnter={() => {
-          if (keyboardActive) {
-            onActiveIndexChange(globalIndex);
-          }
-        }}
-        onClick={() => handleHintClick(hint.command)}
-      >
-        <span
-          className={`terminal-footer__hint-badge${iconSrc ? ' terminal-footer__hint-badge--icon' : ''}${hintKind ? ` terminal-footer__hint-badge--${hintKind}` : ''}`}
-          style={{ backgroundColor }}
+    ({ hint, hintKind, backgroundColor, iconSrc, logoSrc, projectIcon, globalIndex }: HintBadgeItem) => {
+      const hasProjectLogo = Boolean(logoSrc);
+      const hasProjectIcon = Boolean(projectIcon) && !hasProjectLogo;
+      const hasBuiltinIcon = Boolean(iconSrc) && !hasProjectLogo && !hasProjectIcon;
+
+      return (
+        <button
+          key={hint.id}
+          ref={(element) => {
+            hintRefs.current[globalIndex] = element;
+          }}
+          type='button'
+          className={`terminal-footer__hint app-button${hintKind ? ` terminal-footer__hint--${hintKind}` : ''}${keyboardActive && globalIndex === activeIndex ? ' terminal-footer__hint--active' : ''}`}
+          role='option'
+          aria-selected={keyboardActive && globalIndex === activeIndex}
+          aria-label={`${hint.badge} ${hint.label}`}
+          onMouseEnter={() => {
+            if (keyboardActive) {
+              onActiveIndexChange(globalIndex);
+            }
+          }}
+          onClick={() => handleHintClick(hint.command)}
         >
-          {iconSrc ? (
-            <img src={iconSrc} alt='' className='terminal-footer__hint-badge-icon' draggable={false} />
-          ) : (
-            hint.badge
-          )}
-        </span>
-        <span className='terminal-footer__hint-label'>{hint.label}</span>
-      </button>
-    ),
+          <span
+            className={`terminal-footer__hint-badge${hasProjectLogo || hasProjectIcon || hasBuiltinIcon ? ' terminal-footer__hint-badge--icon' : ''}${hasProjectLogo ? ' terminal-footer__hint-badge--logo' : ''}${hintKind ? ` terminal-footer__hint-badge--${hintKind}` : ''}`}
+            style={hasProjectLogo ? undefined : { backgroundColor }}
+          >
+            {hasProjectLogo ? (
+              <img
+                src={logoSrc!}
+                alt=''
+                className='terminal-footer__hint-badge-logo'
+                draggable={false}
+              />
+            ) : hasProjectIcon ? (
+              <ProjectIconMark icon={projectIcon!} size={11} strokeWidth={2.25} />
+            ) : hasBuiltinIcon ? (
+              <img src={iconSrc!} alt='' className='terminal-footer__hint-badge-icon' draggable={false} />
+            ) : (
+              hint.badge
+            )}
+          </span>
+          <span className='terminal-footer__hint-label'>{hint.label}</span>
+        </button>
+      );
+    },
     [activeIndex, handleHintClick, keyboardActive, onActiveIndexChange],
   );
 
@@ -562,7 +702,7 @@ function TerminalFooterComponent({
             isVisible={isVisible}
             renderHintButton={renderHintButton}
             onVisibleCountChange={(count) => handleRowVisibleCountChange(row.kind, count)}
-            preserveAllItems={row.kind === 'mode'}
+            preserveAllItems
           />
         ))}
       </div>

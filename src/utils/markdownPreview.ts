@@ -767,6 +767,8 @@ function inferMarkdownCodeLanguage(code: string): string {
   return 'typescript';
 }
 
+const MARKDOWN_CODE_COPY_ICON = `<span class="markdown-preview__code-copy-icon" aria-hidden="true"><svg class="markdown-preview__code-copy-icon-copy" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg><svg class="markdown-preview__code-copy-icon-check" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>`;
+
 function renderHighlightedCodeBlock(rawCode: string, language: string): string {
   const resolvedLanguage = language === 'mermaid' ? 'mermaid' : language;
   const sourceCode = resolvedLanguage === 'mermaid' ? stripMermaidFenceContent(rawCode) : rawCode;
@@ -776,7 +778,7 @@ function renderHighlightedCodeBlock(rawCode: string, language: string): string {
       : highlightMarkdownCodeBlock(sourceCode, resolvedLanguage);
   const langClass = resolvedLanguage ? ` language-${resolvedLanguage}` : '';
 
-  return `<pre class="hljs"><code class="hljs${langClass}">${highlightedCode}</code></pre>`;
+  return `<div class="markdown-preview__code-block"><button type="button" class="markdown-preview__code-copy app-button app-button--enter" aria-label="Copiar código" title="Copiar">${MARKDOWN_CODE_COPY_ICON}</button><pre class="hljs"><code class="hljs${langClass}">${highlightedCode}</code></pre></div>`;
 }
 
 function collectMermaidBlock(
@@ -927,11 +929,7 @@ function renderMarkdownBlocks(source: string, detectImplicitCode: boolean): stri
         continue;
       }
 
-      const highlightedCode = highlightMarkdownCodeBlock(rawCode, resolvedLanguage);
-      const langClass = resolvedLanguage ? ` language-${resolvedLanguage}` : '';
-      blocks.push(
-        `<pre class="hljs"><code class="hljs${langClass}">${highlightedCode}</code></pre>`,
-      );
+      blocks.push(renderHighlightedCodeBlock(rawCode, resolvedLanguage));
       continue;
     }
 

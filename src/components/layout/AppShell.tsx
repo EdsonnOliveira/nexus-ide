@@ -50,11 +50,18 @@ import { useMissionHydration } from '@/hooks/useMissionHydration';
 import { useMissionOrchestration } from '@/hooks/useMissionOrchestration';
 import { useMissionLiveBridge } from '@/hooks/useMissionLiveBridge';
 
-const LazyHomeDashboard = lazy(() =>
-  import('@/components/home/HomeDashboard').then((module) => ({
-    default: module.HomeDashboard,
-  })),
-);
+const LazyHomeDashboard = lazy(async () => {
+  try {
+    const module = await import('@/components/home/HomeDashboard');
+    return { default: module.HomeDashboard };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('Failed to fetch dynamically imported module')) {
+      window.location.reload();
+    }
+    throw error;
+  }
+});
 
 const LazyTerminalPanel = lazy(async () => {
   try {

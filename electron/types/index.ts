@@ -138,6 +138,11 @@ export interface AgentTurn {
   whatsappNotify?: AgentWhatsAppNotify;
 }
 
+export interface AgentMaestroTag {
+  text: string;
+  color: string;
+}
+
 export interface AgentTab {
   id: string;
   title: string;
@@ -151,6 +156,7 @@ export interface AgentTab {
   pinned?: boolean;
   badgeColorIndex?: number;
   whatsappLink?: string | null;
+  maestroTag?: AgentMaestroTag | null;
 }
 
 export type {

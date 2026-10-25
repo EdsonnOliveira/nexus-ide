@@ -1,11 +1,10 @@
 import { app, type BrowserWindow } from 'electron';
 
 const SAMPLE_MS = 2000;
-const SPIKE_SAMPLES = 1;
+const SPIKE_SAMPLES = 3;
 const RECOVER_SAMPLES = 5;
 const GPU_SPIKE_PERCENT = 35;
 const RENDERER_SPIKE_PERCENT = 45;
-const PEAK_SPIKE_PERCENT = 70;
 const RECOVER_PERCENT = 20;
 
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -14,20 +13,23 @@ let spikeCount = 0;
 let recoverCount = 0;
 let powerSave = false;
 
-function readHotCpu(): { gpu: number; renderer: number; peak: number } {
+function readHotCpu(): { gpu: number; renderer: number } {
   const win = getWindow();
   const rendererPid = win && !win.isDestroyed() ? win.webContents.getOSProcessId() : 0;
   let gpu = 0;
   let renderer = 0;
-  let peak = 0;
 
   for (const metric of app.getAppMetrics()) {
     const cpu = metric.cpu?.percentCPUUsage ?? 0;
     const type = String(metric.type ?? '').toLowerCase();
-    peak = Math.max(peak, cpu);
+
+    if (type === 'browser' || type === 'utility') {
+      continue;
+    }
 
     if (type === 'gpu' || type.includes('gpu')) {
       gpu = Math.max(gpu, cpu);
+      continue;
     }
 
     if (metric.pid === rendererPid || type === 'tab') {
@@ -35,7 +37,7 @@ function readHotCpu(): { gpu: number; renderer: number; peak: number } {
     }
   }
 
-  return { gpu, renderer, peak };
+  return { gpu, renderer };
 }
 
 function publish(enabled: boolean): void {
@@ -54,9 +56,8 @@ function publish(enabled: boolean): void {
 }
 
 function tick(): void {
-  const { gpu, renderer, peak } = readHotCpu();
-  const hot =
-    gpu >= GPU_SPIKE_PERCENT || renderer >= RENDERER_SPIKE_PERCENT || peak >= PEAK_SPIKE_PERCENT;
+  const { gpu, renderer } = readHotCpu();
+  const hot = gpu >= GPU_SPIKE_PERCENT || renderer >= RENDERER_SPIKE_PERCENT;
 
   if (hot) {
     spikeCount += 1;
@@ -77,7 +78,6 @@ function tick(): void {
     powerSave &&
     gpu < RECOVER_PERCENT &&
     renderer < RECOVER_PERCENT &&
-    peak < RECOVER_PERCENT &&
     recoverCount >= RECOVER_SAMPLES
   ) {
     powerSave = false;

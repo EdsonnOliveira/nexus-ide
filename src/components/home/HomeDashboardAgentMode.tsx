@@ -11,7 +11,8 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import { Bot, GitBranch, Home, Maximize2, Minimize2, Pin, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Bot, GitBranch, Home, Maximize2, Minimize2, Pin, Tag, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { AgentShellTerminalDock } from '@/components/agent/AgentShellTerminalDock';
 import { AgentFilesChangedPopup } from '@/components/agent/AgentFilesChangedCard';
@@ -24,6 +25,10 @@ import {
 import { HomeDashboardCloudAgentCard } from '@/components/home/HomeDashboardCloudAgentCard';
 import { MissionCard } from '@/components/mission/MissionCard';
 import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
+import {
+  positionDropdownAtPointer,
+  useAnchoredDropdownMenu,
+} from '@/hooks/useAnchoredDropdownMenu';
 import { useAgentPipPin } from '@/hooks/useAgentPipPin';
 import { useAgentPipSync } from '@/hooks/useAgentPipSync';
 import { useProjectGitFlatChanges } from '@/hooks/useProjectGitFlatChanges';
@@ -36,7 +41,7 @@ import { useAgentGitGroupsForProject } from '@/stores/useAgentGitChangeStore';
 import { useCloudAgentSessionsStore } from '@/stores/useCloudAgentSessionsStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useTabActions } from '@/stores/useTabStore';
-import type { AgentTab, Project } from '@/types';
+import type { AgentMaestroTag, AgentTab, Project } from '@/types';
 import { listAgentPaneGitChangedFiles } from '@/utils/agentGitPromptGroups';
 import {
   forgetHomeDashboardProjectAgent,
@@ -47,6 +52,21 @@ import {
 import { setHomeAgentOverlayPaneIds } from '@/utils/homeAgentOverlay';
 import { findPaneTab } from '@/utils/tabGroups';
 import { isComputerProject } from '@/utils/computerProject';
+
+const AGENT_MAESTRO_TAG_COLORS = [
+  '#f9a8d4',
+  '#6ee7b7',
+  '#93c5fd',
+  '#fcd34d',
+  '#c4b5fd',
+  '#fdba74',
+  '#a5f3fc',
+  '#fca5a5',
+  '#d9f99d',
+  '#fbcfe8',
+  '#bae6fd',
+  '#ddd6fe',
+] as const;
 
 export { bindHomeDashboardProjectAgent } from '@/utils/homeDashboardAgents';
 
@@ -225,6 +245,197 @@ function AgentCardCloseConfirmComponent({
 
 const AgentCardCloseConfirm = memo(AgentCardCloseConfirmComponent);
 
+interface AgentCardHeaderMenuProps {
+  x: number;
+  y: number;
+  hasTag: boolean;
+  onTag: () => void;
+  onRemoveTag: () => void;
+  onClose: () => void;
+}
+
+function AgentCardHeaderMenuComponent({
+  x,
+  y,
+  hasTag,
+  onTag,
+  onRemoveTag,
+  onClose,
+}: AgentCardHeaderMenuProps) {
+  const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
+    onClose,
+    (menu) => positionDropdownAtPointer(menu, x, y),
+    [x, y],
+  );
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        requestClose();
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        requestClose();
+      }
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      window.addEventListener('mousedown', handlePointerDown);
+    }, 0);
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [menuRef, requestClose]);
+
+  const runAction = useCallback(
+    (action: () => void) => (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      action();
+      requestClose();
+    },
+    [requestClose],
+  );
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className={`context-menu overlay-popup--anchor-pointer ${animationClass}`}
+      role='menu'
+      onContextMenu={(event) => event.preventDefault()}
+    >
+      <button
+        type='button'
+        className='context-menu__item app-button app-button--enter'
+        role='menuitem'
+        onMouseDown={runAction(onTag)}
+      >
+        <Tag size={14} strokeWidth={2} aria-hidden />
+        <span>{hasTag ? 'Editar tag' : 'Taguear'}</span>
+      </button>
+      {hasTag ? (
+        <button
+          type='button'
+          className='context-menu__item context-menu__item--danger app-button app-button--enter'
+          role='menuitem'
+          onMouseDown={runAction(onRemoveTag)}
+        >
+          <X size={14} strokeWidth={2} aria-hidden />
+          <span>Remover Tag</span>
+        </button>
+      ) : null}
+    </div>,
+    document.body,
+  );
+}
+
+const AgentCardHeaderMenu = memo(AgentCardHeaderMenuComponent);
+
+interface AgentMaestroTagDialogProps {
+  initialTag: AgentMaestroTag | null;
+  onConfirm: (tag: AgentMaestroTag) => void;
+  onClose: () => void;
+}
+
+function AgentMaestroTagDialogComponent({
+  initialTag,
+  onConfirm,
+  onClose,
+}: AgentMaestroTagDialogProps) {
+  const [text, setText] = useState(initialTag?.text ?? '');
+  const [color, setColor] = useState(initialTag?.color ?? AGENT_MAESTRO_TAG_COLORS[0]);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  const handleSubmit = useCallback(
+    (requestClose: () => void) => (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const trimmed = text.trim();
+
+      if (!trimmed) {
+        return;
+      }
+
+      onConfirm({ text: trimmed, color });
+      requestClose();
+    },
+    [color, onConfirm, text],
+  );
+
+  return (
+    <AnimatedModal onClose={onClose} panelClassName='project-dialog'>
+      {(requestClose) => (
+        <form onSubmit={handleSubmit(requestClose)}>
+          <span className='project-dialog__title'>Taguear agent</span>
+          <label className='project-dialog__label'>
+            Texto
+            <input
+              ref={inputRef}
+              className='project-dialog__input'
+              value={text}
+              maxLength={24}
+              onChange={(event) => setText(event.target.value)}
+            />
+          </label>
+          <div className='project-dialog__label home-dashboard__agent-tag-color-field'>
+            <span>Cor</span>
+            <div className='project-color-picker__grid home-dashboard__agent-tag-color-grid'>
+              {AGENT_MAESTRO_TAG_COLORS.map((swatch) => (
+                <button
+                  key={swatch}
+                  type='button'
+                  className={`project-color-picker__swatch app-button${
+                    color === swatch ? ' project-color-picker__swatch--active' : ''
+                  }`}
+                  style={{ backgroundColor: swatch }}
+                  aria-label={swatch}
+                  aria-pressed={color === swatch}
+                  onClick={() => setColor(swatch)}
+                />
+              ))}
+            </div>
+            <span
+              className='project-explorer__kind-badge home-dashboard__agent-card-tag'
+              style={{ backgroundColor: color }}
+              aria-hidden='true'
+            >
+              {(text.trim() || 'TAG').toUpperCase()}
+            </span>
+          </div>
+          <div className='project-dialog__actions'>
+            <button
+              type='button'
+              className='project-dialog__btn project-dialog__btn--ghost app-button'
+              onClick={requestClose}
+            >
+              Cancelar
+            </button>
+            <button
+              type='submit'
+              className='project-dialog__btn project-dialog__btn--primary app-button app-button--enter'
+            >
+              OK
+            </button>
+          </div>
+        </form>
+      )}
+    </AnimatedModal>
+  );
+}
+
+const AgentMaestroTagDialog = memo(AgentMaestroTagDialogComponent);
+
 interface AgentCardProps {
   project: Project;
   pane: AgentTab;
@@ -267,6 +478,8 @@ function AgentCardComponent({
   const { updateAgentTab } = useTabActions();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [closeAllProjectAgents, setCloseAllProjectAgents] = useState(false);
+  const [headerMenu, setHeaderMenu] = useState<{ x: number; y: number } | null>(null);
+  const [tagDialogOpen, setTagDialogOpen] = useState(false);
   const fullscreen = useAgentCardFullscreen();
   const { isPinned, handleTogglePin, displayPicker } = useAgentPipPin(paneId);
   const agentGitGroups = useAgentGitGroupsForProject(project.id);
@@ -287,6 +500,7 @@ function AgentCardComponent({
   const gitButtonRef = useRef<HTMLButtonElement>(null);
   const [gitPopupOpen, setGitPopupOpen] = useState(false);
   const [gitPopupAnchor, setGitPopupAnchor] = useState<DOMRect | null>(null);
+  const maestroTag = pane.maestroTag ?? null;
 
   const handleFocus = useCallback(
     (event?: ReactMouseEvent) => {
@@ -362,6 +576,35 @@ function AgentCardComponent({
     setGitPopupOpen((current) => !current);
   }, []);
 
+  const handleHeaderContextMenu = useCallback((event: ReactMouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setHeaderMenu({ x: event.clientX, y: event.clientY });
+  }, []);
+
+  const handleCloseHeaderMenu = useCallback(() => {
+    setHeaderMenu(null);
+  }, []);
+
+  const handleOpenTagDialog = useCallback(() => {
+    setTagDialogOpen(true);
+  }, []);
+
+  const handleCloseTagDialog = useCallback(() => {
+    setTagDialogOpen(false);
+  }, []);
+
+  const handleConfirmTag = useCallback(
+    (tag: AgentMaestroTag) => {
+      void updateAgentTab(paneId, { maestroTag: tag });
+    },
+    [paneId, updateAgentTab],
+  );
+
+  const handleRemoveTag = useCallback(() => {
+    void updateAgentTab(paneId, { maestroTag: null });
+  }, [paneId, updateAgentTab]);
+
   useEffect(() => {
     if (gitChangedFileCount > 0) {
       return;
@@ -384,7 +627,7 @@ function AgentCardComponent({
         dataHomeAgentPane={pane.id}
         onMouseDown={(event) => handleFocus(event)}
       >
-        <div className='home-dashboard__agent-card-head'>
+        <div className='home-dashboard__agent-card-head' onContextMenu={handleHeaderContextMenu}>
           <span className='home-dashboard__agent-card-thumb-wrap'>
             {computerProject ? (
               <span className='home-dashboard__agent-card-icon' style={{ background: project.color }}>
@@ -401,13 +644,25 @@ function AgentCardComponent({
             ) : null}
           </span>
           <div className='home-dashboard__agent-card-copy'>
-            <span className='home-dashboard__agent-card-project'>{project.name}</span>
+            <div className='home-dashboard__agent-card-project-row'>
+              <span className='home-dashboard__agent-card-project'>{project.name}</span>
+              {maestroTag ? (
+                <span
+                  className='project-explorer__kind-badge home-dashboard__agent-card-tag'
+                  style={{ backgroundColor: maestroTag.color }}
+                  title={maestroTag.text}
+                >
+                  {maestroTag.text.toUpperCase()}
+                </span>
+              ) : null}
+            </div>
           </div>
           <div
             className='home-dashboard__agent-card-aside'
             onClick={stopCardFocusSteal}
             onPointerDown={stopCardFocusSteal}
             onMouseDown={stopCardFocusSteal}
+            onContextMenu={stopCardFocusSteal}
           >
             <AgentShellTerminalDock
               agentPaneId={pane.id}
@@ -516,6 +771,23 @@ function AgentCardComponent({
           agentCount={closeAllProjectAgents ? projectAgentCount : 1}
           onConfirm={handleConfirmClose}
           onClose={handleCloseConfirm}
+        />
+      ) : null}
+      {headerMenu ? (
+        <AgentCardHeaderMenu
+          x={headerMenu.x}
+          y={headerMenu.y}
+          hasTag={Boolean(maestroTag)}
+          onTag={handleOpenTagDialog}
+          onRemoveTag={handleRemoveTag}
+          onClose={handleCloseHeaderMenu}
+        />
+      ) : null}
+      {tagDialogOpen ? (
+        <AgentMaestroTagDialog
+          initialTag={maestroTag}
+          onConfirm={handleConfirmTag}
+          onClose={handleCloseTagDialog}
         />
       ) : null}
       {displayPicker}

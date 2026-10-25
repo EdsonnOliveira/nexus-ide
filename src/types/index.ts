@@ -284,6 +284,11 @@ export interface AgentTurn {
   whatsappNotify?: AgentWhatsAppNotify;
 }
 
+export interface AgentMaestroTag {
+  text: string;
+  color: string;
+}
+
 export interface AgentTab {
   id: string;
   title: string;
@@ -298,6 +303,7 @@ export interface AgentTab {
   pinned?: boolean;
   badgeColorIndex?: number;
   whatsappLink?: string | null;
+  maestroTag?: AgentMaestroTag | null;
 }
 
 export type EmulatorPlatform = 'android' | 'ios';
@@ -588,6 +594,8 @@ export interface TerminalCommandHint {
     | 'mode-debug'
     | 'mode-multitask';
   badgeColor?: string;
+  badgeLogo?: string | null;
+  badgeProjectIcon?: string;
   label: string;
   command: string;
   hintKind?: 'skill' | 'mode' | 'model';

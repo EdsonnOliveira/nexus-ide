@@ -88,6 +88,7 @@ export function useMarkdownCodeHighlight<T extends HTMLElement>(
   imageBaseDir?: string,
 ) {
   const ref = useRef<T>(null);
+  const copiedTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!ref.current || !html) {
@@ -140,11 +141,76 @@ export function useMarkdownCodeHighlight<T extends HTMLElement>(
       });
     };
 
+    const handleCodeCopyClick = (event: MouseEvent) => {
+      const target =
+        event.target instanceof HTMLElement
+          ? event.target
+          : event.target instanceof Node
+            ? event.target.parentElement
+            : null;
+
+      if (!target) {
+        return;
+      }
+
+      const button = target.closest('.markdown-preview__code-copy');
+
+      if (!(button instanceof HTMLButtonElement) || !node.contains(button)) {
+        return;
+      }
+
+      const block = button.closest('.markdown-preview__code-block');
+      const code = block?.querySelector('pre code');
+      const value = code?.textContent ?? '';
+
+      if (!value) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      void navigator.clipboard.writeText(value).then(
+        () => {
+          if (copiedTimeoutRef.current !== null) {
+            window.clearTimeout(copiedTimeoutRef.current);
+          }
+
+          node
+            .querySelectorAll('.markdown-preview__code-copy--copied')
+            .forEach((el) => el.classList.remove('markdown-preview__code-copy--copied'));
+
+          button.classList.add('markdown-preview__code-copy--copied');
+          button.setAttribute('aria-label', 'Código copiado');
+          button.setAttribute('title', 'Copiado');
+
+          copiedTimeoutRef.current = window.setTimeout(() => {
+            button.classList.remove('markdown-preview__code-copy--copied');
+            button.setAttribute('aria-label', 'Copiar código');
+            button.setAttribute('title', 'Copiar');
+            copiedTimeoutRef.current = null;
+          }, 1600);
+        },
+        () => {
+          button.classList.remove('markdown-preview__code-copy--copied');
+          button.setAttribute('aria-label', 'Copiar código');
+          button.setAttribute('title', 'Copiar');
+        },
+      );
+    };
+
     node.addEventListener('error', handleImageError, true);
+    node.addEventListener('click', handleCodeCopyClick);
 
     return () => {
       window.cancelIdleCallback(idleId);
       node.removeEventListener('error', handleImageError, true);
+      node.removeEventListener('click', handleCodeCopyClick);
+
+      if (copiedTimeoutRef.current !== null) {
+        window.clearTimeout(copiedTimeoutRef.current);
+        copiedTimeoutRef.current = null;
+      }
     };
   }, [html, imageBaseDir]);
 

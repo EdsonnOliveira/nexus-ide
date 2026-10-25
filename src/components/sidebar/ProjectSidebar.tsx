@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown, CirclePlay, Home, Mail, Music, PanelLeft, Plus } from 'lucide-react';
 import { useProjectIndexShortcuts } from '@/hooks/useProjectIndexShortcuts';
 import { useStableLoadingMap } from '@/hooks/useStableLoadingMap';
@@ -1416,6 +1417,26 @@ function ProjectSidebarComponent() {
     [colorProjectId, updateProject],
   );
 
+  const hasDeployDock = Boolean(vercelActiveDeployment || renderActiveDeployment);
+  const deployDockContent = hasDeployDock ? (
+    <>
+      {vercelActiveDeployment ? (
+        <SidebarVercelDeployCard
+          deployment={vercelActiveDeployment}
+          onDismiss={dismissVercelDeployCard}
+          onConfigure={handleVercelConfigure}
+        />
+      ) : null}
+      {renderActiveDeployment ? (
+        <SidebarRenderDeployCard
+          deployment={renderActiveDeployment}
+          onDismiss={dismissRenderDeployCard}
+          onConfigure={handleRenderConfigure}
+        />
+      ) : null}
+    </>
+  ) : null;
+
   return (
     <aside className={`sidebar${sidebarCollapsed ? ' sidebar--collapsed' : ''}`}>
       <div className='sidebar__header'>
@@ -1526,20 +1547,8 @@ function ProjectSidebarComponent() {
           />
         ))}
 
-        {vercelActiveDeployment ? (
-          <SidebarVercelDeployCard
-            deployment={vercelActiveDeployment}
-            onDismiss={dismissVercelDeployCard}
-            onConfigure={handleVercelConfigure}
-          />
-        ) : null}
-
-        {renderActiveDeployment ? (
-          <SidebarRenderDeployCard
-            deployment={renderActiveDeployment}
-            onDismiss={dismissRenderDeployCard}
-            onConfigure={handleRenderConfigure}
-          />
+        {!sidebarCollapsed && deployDockContent ? (
+          <div className='sidebar-deploy-dock'>{deployDockContent}</div>
         ) : null}
 
         <SidebarCalendarEvents />
@@ -1672,6 +1681,15 @@ function ProjectSidebarComponent() {
           onSave={(mailbox) => void handleSaveMailInbox(mailbox)}
         />
       ) : null}
+
+      {sidebarCollapsed && deployDockContent
+        ? createPortal(
+            <div className='sidebar-deploy-dock sidebar-deploy-dock--floating'>
+              {deployDockContent}
+            </div>,
+            document.body,
+          )
+        : null}
 
       {vercelPopupMode === 'deploys' && vercelPopupAnchor ? (
         <SidebarVercelDeploysPopup

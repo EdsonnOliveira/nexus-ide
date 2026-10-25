@@ -118,6 +118,28 @@ type AgentQuestionActivityLike = {
   label?: string;
 };
 
+function isContinuationPastPendingQuestion(entry: AgentQuestionActivityLike): boolean {
+  if (
+    entry.kind === 'thought' ||
+    entry.kind === 'live_status' ||
+    entry.kind === 'question'
+  ) {
+    return false;
+  }
+
+  if (entry.kind === 'response') {
+    return Boolean(entry.label?.trim());
+  }
+
+  return (
+    entry.kind === 'file_edit' ||
+    entry.kind === 'file_read' ||
+    entry.kind === 'tool_run' ||
+    entry.kind === 'task' ||
+    entry.kind === 'status'
+  );
+}
+
 export function hasPendingAgentQuestion(activities: AgentQuestionActivityLike[]): boolean {
   return activities.some(
     (entry) =>
@@ -135,31 +157,30 @@ export function hasActionablePendingAgentQuestion(
   }
 
   let lastPendingQuestionIndex = -1;
-  let lastThoughtIndex = -1;
 
   for (let index = 0; index < activities.length; index += 1) {
     const entry = activities[index];
 
-    if (!entry) {
-      continue;
-    }
-
     if (
-      entry.kind === 'question' &&
+      entry?.kind === 'question' &&
       entry.questionStatus === 'pending' &&
       entry.questions &&
       entry.questions.length > 0
     ) {
       lastPendingQuestionIndex = index;
     }
-
-    if (entry.kind === 'thought' && entry.label?.trim()) {
-      lastThoughtIndex = index;
-    }
   }
 
-  if (lastThoughtIndex > lastPendingQuestionIndex) {
+  if (lastPendingQuestionIndex < 0) {
     return false;
+  }
+
+  for (let index = lastPendingQuestionIndex + 1; index < activities.length; index += 1) {
+    const entry = activities[index];
+
+    if (entry && isContinuationPastPendingQuestion(entry)) {
+      return false;
+    }
   }
 
   return true;

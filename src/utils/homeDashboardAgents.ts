@@ -1,5 +1,6 @@
 import type { Project, TabBarItem } from '@/types';
 import {
+  findPaneTab,
   getPanesFromItem,
   resolveActiveTabBarItem,
   resolveFallbackActiveTabId,
@@ -197,6 +198,66 @@ export function readHomeAgentPaneIds(projectId: string): string[] {
   return readHomeAgentMap()[projectId] ?? [];
 }
 
+function hasLiveMaestroAgentPane(project: Project, paneId: string): boolean {
+  const pane = findPaneTab(project.tabs, paneId);
+
+  return pane?.type === 'agent';
+}
+
+export function pruneStaleHomeAgentBindings(projects: Project[]): HomeAgentQueue {
+  const queue = readHomeAgentQueue();
+
+  if (projects.length === 0 || queue.length === 0) {
+    return queue;
+  }
+
+  const projectsById = new Map(projects.map((project) => [project.id, project]));
+  const filtered = queue.filter((binding) => {
+    const project = projectsById.get(binding.projectId);
+
+    if (!project) {
+      return false;
+    }
+
+    return hasLiveMaestroAgentPane(project, binding.paneId);
+  });
+
+  if (filtered.length === queue.length) {
+    return filtered;
+  }
+
+  writeHomeAgentQueue(filtered);
+  window.dispatchEvent(new Event(HOME_AGENT_CHANGE_EVENT));
+
+  return filtered;
+}
+
+export function listOpenMaestroAgentProjects(
+  projects: Project[],
+  queue: HomeAgentQueue = readHomeAgentQueue(),
+): Project[] {
+  const projectsById = new Map(projects.map((project) => [project.id, project]));
+  const seen = new Set<string>();
+  const result: Project[] = [];
+
+  for (const binding of queue) {
+    if (seen.has(binding.projectId)) {
+      continue;
+    }
+
+    const project = projectsById.get(binding.projectId);
+
+    if (!project || !hasLiveMaestroAgentPane(project, binding.paneId)) {
+      continue;
+    }
+
+    seen.add(binding.projectId);
+    result.push(project);
+  }
+
+  return result;
+}
+
 export function readHomeAgentPaneId(projectId: string): string | null {
   const paneIds = readHomeAgentPaneIds(projectId);
   return paneIds[paneIds.length - 1] ?? null;
@@ -309,9 +370,15 @@ export function bindHomeDashboardProjectAgent(projectId: string, paneId: string)
 export function moveAgentPaneToMaestro(projectId: string, paneId: string): void {
   setHomeDashboardViewMode('agent');
 
-  const queue = readHomeAgentQueue().filter(
-    (binding) => !(binding.projectId === projectId && binding.paneId === paneId),
+  const queue = readHomeAgentQueue();
+  const alreadyBound = queue.some(
+    (binding) => binding.projectId === projectId && binding.paneId === paneId,
   );
+
+  if (alreadyBound) {
+    window.dispatchEvent(new CustomEvent(HOME_AGENT_FOCUS_EVENT, { detail: { paneId } }));
+    return;
+  }
 
   writeHomeAgentQueue([...queue, { projectId, paneId }]);
   window.dispatchEvent(new Event(HOME_AGENT_CHANGE_EVENT));
@@ -326,6 +393,7 @@ function projectAgentSurfaceKey(project: Project): string {
       if (pane.type === 'agent') {
         const turns = pane.turns ?? [];
         const lastTurn = turns[turns.length - 1];
+        const maestroTag = pane.maestroTag;
         paneKeys.push(
           [
             pane.id,
@@ -335,6 +403,7 @@ function projectAgentSurfaceKey(project: Project): string {
             lastTurn?.running ? 1 : 0,
             lastTurn?.completedAt ?? 0,
             pane.followUps?.length ?? 0,
+            maestroTag ? `${maestroTag.text}:${maestroTag.color}` : '',
           ].join(':'),
         );
       }

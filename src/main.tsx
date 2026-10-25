@@ -15,6 +15,11 @@ if (isAgentPip) {
   document.body.classList.add('agent-pip');
 }
 
+try {
+  sessionStorage.removeItem('nexus.boot.retry');
+} catch {
+}
+
 createRoot(document.getElementById('root')!).render(
   <PaneErrorBoundary>{isAgentPip ? <AgentPipApp /> : <App />}</PaneErrorBoundary>,
 );

@@ -252,6 +252,17 @@ function normalizePane(tab: Tab, projectPath?: string): Tab {
 
   if (tab.type === 'agent') {
     const turns = sanitizeAgentTurnHistory(Array.isArray(tab.turns) ? tab.turns : []);
+    const maestroTag =
+      tab.maestroTag &&
+      typeof tab.maestroTag.text === 'string' &&
+      tab.maestroTag.text.trim() &&
+      typeof tab.maestroTag.color === 'string' &&
+      tab.maestroTag.color.trim()
+        ? {
+            text: tab.maestroTag.text.trim(),
+            color: tab.maestroTag.color.trim(),
+          }
+        : null;
 
     return {
       id: tab.id,
@@ -263,6 +274,7 @@ function normalizePane(tab: Tab, projectPath?: string): Tab {
       ...(tab.restoreCommand !== undefined ? { restoreCommand: tab.restoreCommand } : {}),
       workingDirectory: projectPath ? resolveAgentPaneRootPath(projectPath) : tab.workingDirectory,
       ...(Array.isArray(tab.messages) && tab.messages.length > 0 ? { messages: tab.messages } : {}),
+      ...(maestroTag ? { maestroTag } : tab.maestroTag === null ? { maestroTag: null } : {}),
       ...shared,
     };
   }

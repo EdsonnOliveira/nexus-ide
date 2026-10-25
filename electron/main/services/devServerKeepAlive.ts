@@ -5,11 +5,13 @@ import path from 'node:path';
 import { buildCliPathEnv } from '../utils/cliPathEnv';
 
 const SPAWN_COOLDOWN_MS = 45_000;
+const SUPERVISOR_CHECK_CACHE_MS = 8_000;
 const SUPERVISOR_PATTERN = 'scripts/dev-supervisor.mjs';
 
 let child: ChildProcess | null = null;
 let lastSpawnAt = 0;
 let stopping = false;
+let supervisorCheckCache: { at: number; running: boolean } | null = null;
 
 function isChildAlive(current: ChildProcess | null): boolean {
   return Boolean(current && current.exitCode === null && current.signalCode === null);
@@ -66,12 +68,21 @@ function isSupervisorRunning(): boolean {
     return false;
   }
 
+  const now = Date.now();
+
+  if (supervisorCheckCache && now - supervisorCheckCache.at < SUPERVISOR_CHECK_CACHE_MS) {
+    return supervisorCheckCache.running;
+  }
+
   try {
     const result = execFileSync('/usr/bin/pgrep', ['-f', SUPERVISOR_PATTERN], {
       encoding: 'utf8',
     }).trim();
-    return Boolean(result);
+    const running = Boolean(result);
+    supervisorCheckCache = { at: now, running };
+    return running;
   } catch {
+    supervisorCheckCache = { at: now, running: false };
     return false;
   }
 }
