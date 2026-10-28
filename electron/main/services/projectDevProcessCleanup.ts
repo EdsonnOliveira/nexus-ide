@@ -89,11 +89,28 @@ function matchesProject(command: string, cwd: string | null, projectPath: string
   return false;
 }
 
+function isAgentCliProcess(command: string): boolean {
+  return (
+    command.includes('[Nexus IDE]') ||
+    command.includes('/cursor-agent/') ||
+    command.includes('cursor-agent/versions') ||
+    /(?:^|\s)cursor-agent(?:\s|$)/.test(command) ||
+    command.includes('/opencode/') ||
+    /(?:^|\s)opencode(?:\s|$)/.test(command) ||
+    /(?:^|\s)(?:codex|agy)(?:\s|$)/.test(command)
+  );
+}
+
 function isDevCandidate(command: string): boolean {
+  if (isAgentCliProcess(command)) {
+    return false;
+  }
+
   return (
     /\.app\/Contents\/MacOS\/Electron\b/.test(command) ||
     /\/Contents\/MacOS\/Electron\b/.test(command) ||
-    command.includes('electron-vite') ||
+    /\/node_modules\/(?:\.bin\/)?electron-vite(?:\/|\s|$)/.test(command) ||
+    /(?:^|\s)(?:npx\s+)?electron-vite(?:\s|$)/.test(command) ||
     /\/node_modules\/\.bin\/(vite|next|electron-vite)\b/.test(command)
   );
 }

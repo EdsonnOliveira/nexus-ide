@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RESTART_DELAY_MS = 1000;
+const ALREADY_RUNNING_CODE = 75;
 
 let child = null;
 let stopping = false;
@@ -69,6 +70,12 @@ function startVite() {
     }
 
     if (signal === 'SIGINT') {
+      process.exit(0);
+      return;
+    }
+
+    if (code === ALREADY_RUNNING_CODE) {
+      console.warn('[dev-supervisor] vite already running — stopping');
       process.exit(0);
       return;
     }

@@ -418,10 +418,10 @@ function AgentPipAppComponent() {
 
     return undefined;
   }, [turns]);
-  const hasPendingPlan = Boolean(pendingPlanActivity);
   const hasPendingQuestion = turns.some((turn) =>
     hasActionablePendingAgentQuestion(turn.activities),
   );
+  const hasPendingPlan = Boolean(pendingPlanActivity) && !hasPendingQuestion;
   const showScrollToBottom = turns.length > 0 && !isTranscriptAtBottom;
 
   const runCommand = useCallback(

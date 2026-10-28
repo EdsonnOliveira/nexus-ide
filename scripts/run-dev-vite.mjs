@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -7,6 +7,24 @@ delete process.env.NODE_OPTIONS;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const patchScript = path.join(root, 'scripts/patch-electron-branding.mjs');
 const viteCli = path.join(root, 'node_modules/vite/bin/vite.js');
+const DEV_PORT = 5260;
+const ALREADY_RUNNING_CODE = 75;
+
+function isDevServerListening() {
+  try {
+    execFileSync('/usr/sbin/lsof', ['-nP', `-iTCP:${DEV_PORT}`, '-sTCP:LISTEN'], {
+      stdio: 'ignore',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+if (isDevServerListening()) {
+  console.warn(`[run-dev-vite] port ${DEV_PORT} already in use — not replacing Nexus.app`);
+  process.exit(ALREADY_RUNNING_CODE);
+}
 
 const patch = spawn(process.execPath, [patchScript], {
   cwd: root,

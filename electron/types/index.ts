@@ -414,6 +414,7 @@ export interface ProjectTerminalQuickCommand {
   id: string;
   label: string;
   command: string;
+  name?: string;
 }
 
 export interface Project {

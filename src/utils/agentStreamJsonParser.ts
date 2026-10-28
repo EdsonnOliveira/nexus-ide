@@ -13,10 +13,7 @@ import { writeDebugSessionLog } from '@/utils/debugSessionLog';
 import { isAgentShellNoiseLine } from '@/utils/agentCliSession';
 import { sanitizeResponseText } from '@/utils/agentTranscriptParser';
 import { shouldOpenAgentShellToolTerminal } from '@/utils/agentShellToolTerminal';
-import {
-  ensureOtherOption,
-  markAbandonedPendingQuestionsSkipped,
-} from '@/utils/agentQuestionPrompt';
+import { ensureOtherOption } from '@/utils/agentQuestionPrompt';
 import {
   deduplicatePlanResponseActivities,
   normalizePlanTodos,
@@ -61,6 +58,7 @@ export interface AgentStreamJsonParserState {
   pendingUsage: AgentStreamJsonUsage | null;
   shouldFinalize: boolean;
   pendingQuestion: boolean;
+  questionHold: boolean;
   questionActivityId: string | null;
   pendingPlan: boolean;
   planActivityId: string | null;
@@ -75,6 +73,7 @@ export interface AgentStreamJsonParserState {
 export interface StreamJsonTurnUpdate {
   hasUpdate: boolean;
   shouldFinalize: boolean;
+  holdForQuestion: boolean;
   sessionId: string | null;
   responseText: string | null;
   usage: AgentStreamJsonUsage | null;
@@ -118,6 +117,7 @@ export function createAgentStreamJsonParserState(): AgentStreamJsonParserState {
     pendingUsage: null,
     shouldFinalize: false,
     pendingQuestion: false,
+    questionHold: false,
     questionActivityId: null,
     pendingPlan: false,
     planActivityId: null,
@@ -1506,6 +1506,8 @@ function upsertQuestionActivity(
 ): void {
   settleThought(state);
   state.pendingQuestion = true;
+  state.questionHold = true;
+  state.shouldFinalize = true;
 
   const label = payload.title?.trim() || payload.questions[0]?.prompt.trim() || 'Pergunta';
 
@@ -3596,6 +3598,11 @@ function findJsonObjectEnd(value: string): number {
 
 function consumeJsonObjects(state: AgentStreamJsonParserState): void {
   while (state.jsonBuffer.length > 0) {
+    if (state.questionHold) {
+      state.jsonBuffer = '';
+      return;
+    }
+
     const start = state.jsonBuffer.indexOf('{');
 
     if (start === -1) {
@@ -3765,6 +3772,7 @@ export function feedAgentStreamJsonChunk(
   chunk: string,
 ): StreamJsonTurnUpdate {
   const previousFinalize = state.shouldFinalize;
+  const heldBefore = state.questionHold;
   const previousActivityCount = state.activities.length;
   const previousResponseText = state.pendingResponseText;
   const previousActivitySignature = getStreamActivitySignature(state.activities);
@@ -3783,12 +3791,14 @@ export function feedAgentStreamJsonChunk(
     state.pendingResponseText !== previousResponseText ||
     nextActivitySignature !== previousActivitySignature;
   const shouldFinalize = state.shouldFinalize && !previousFinalize;
+  const holdForQuestion = state.questionHold && !heldBefore;
   const shellToolEvents = [...state.shellToolEvents];
   state.shellToolEvents = [];
 
   return {
     hasUpdate,
     shouldFinalize,
+    holdForQuestion,
     sessionId: state.sessionId,
     responseText: state.pendingResponseText || null,
     usage: state.pendingUsage,
@@ -4402,7 +4412,6 @@ export function finalizeStreamJsonTurn(
   activities = mergeStatusActivitiesFromTurn(activities, turn);
   activities = activities.filter((entry) => isRenderableStreamJsonActivity(entry));
   activities = deduplicatePlanResponseActivities(activities);
-  activities = markAbandonedPendingQuestionsSkipped(activities);
 
   const summary = buildAgentTurnSummaryFromStreamJsonState(state);
   const incompleteFallback = resolveIncompleteStreamJsonResponseFallback(state, activities, {
@@ -4547,6 +4556,7 @@ export function resetAgentStreamJsonTurn(state: AgentStreamJsonParserState): voi
   state.pendingUsage = null;
   state.shouldFinalize = false;
   state.pendingQuestion = false;
+  state.questionHold = false;
   state.questionActivityId = null;
   state.pendingPlan = false;
   state.planActivityId = null;

@@ -139,7 +139,7 @@ import {
   hasActionablePendingAgentQuestion,
   hasPendingAgentQuestion,
   isAgentQuestionAnswerComplete,
-  markAbandonedPendingQuestionsSkipped,
+  restoreUnansweredSkippedQuestions,
 } from '@/utils/agentQuestionPrompt';
 import { waitForActiveAgent, waitForAgentPaneReady } from '@/utils/waitForAgentPaneReady';
 import { resolveAgentPaneRootPath } from '@/utils/agentTabHelpers';
@@ -962,14 +962,7 @@ export function useAgentPaneSession({
       return;
     }
 
-    if (
-      !hasPendingAgentQuestion(latestTurn.activities) ||
-      hasActionablePendingAgentQuestion(latestTurn.activities)
-    ) {
-      return;
-    }
-
-    const nextActivities = markAbandonedPendingQuestionsSkipped(latestTurn.activities);
+    const nextActivities = restoreUnansweredSkippedQuestions(latestTurn.activities);
 
     if (nextActivities === latestTurn.activities) {
       return;
@@ -1703,6 +1696,16 @@ export function useAgentPaneSession({
         }
       }
 
+      if (streamUpdate.holdForQuestion) {
+        agentPrintRunActiveRef.current = false;
+        window.nexus.agentPrint.stop(paneIdRef.current, {
+          preserveChildren: resolvePreserveAgentPrintChildren(),
+        });
+        clearAgentPrintRunToken(paneIdRef.current);
+        finalizeStreamJsonTurnFromEvent('question-hold');
+        return false;
+      }
+
       if (streamUpdate.sessionId) {
         cursorAgentContinueRef.current = true;
 
@@ -1772,7 +1775,9 @@ export function useAgentPaneSession({
     },
     [
       agentRootPath,
+      clearAgentPrintRunToken,
       clearStreamJsonSettleTimer,
+      finalizeStreamJsonTurnFromEvent,
       scheduleStreamJsonSettleCheck,
       syncContextUsageFromStreamJson,
       tab,
@@ -3172,15 +3177,24 @@ export function useAgentPaneSession({
 
         return {
           ...turn,
-          activities: turn.activities.map((entry) =>
-            entry.id === activityId
-              ? {
-                  ...entry,
-                  questionStatus: 'answered' as const,
-                  questionAnswers: answers,
-                }
-              : entry,
-          ),
+          activities: turn.activities.map((entry) => {
+            if (entry.id === activityId) {
+              return {
+                ...entry,
+                questionStatus: 'answered' as const,
+                questionAnswers: answers,
+              };
+            }
+
+            if (entry.kind === 'plan' && entry.planStatus === 'pending') {
+              return {
+                ...entry,
+                planStatus: 'rejected' as const,
+              };
+            }
+
+            return entry;
+          }),
         };
       });
 

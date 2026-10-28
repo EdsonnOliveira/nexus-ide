@@ -276,9 +276,27 @@ function copyNotificationHelperIcon() {
   }
 }
 
+function isNexusElectronRunning() {
+  try {
+    const output = execFileSync('/usr/bin/pgrep', ['-fl', 'Nexus.app/Contents/MacOS/Electron'], {
+      encoding: 'utf8',
+    });
+    return output
+      .split('\n')
+      .some((line) => line.includes(`${nexusBinaryPath} `) || line.endsWith(nexusBinaryPath));
+  } catch {
+    return false;
+  }
+}
+
 function patchNexusAppBundle() {
   if (process.platform !== 'darwin') {
     return null;
+  }
+
+  if (existsSync(nexusAppPath) && isNexusElectronRunning()) {
+    console.warn('[patch-electron-branding] Nexus.app is running — not replacing the bundle.');
+    return nexusBinaryPath;
   }
 
   if (!existsSync(electronSourceAppPath)) {

@@ -3,7 +3,6 @@ import { existsSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { app, nativeImage } from 'electron';
-import { closeAgentFinishBanner, showAgentFinishBanner } from './agentFinishBanner';
 import {
   focusAgentPipMainWindow,
   getAgentPipMainWindow,
@@ -48,7 +47,6 @@ const recentShownAt = new Map<string, number>();
 const activeHelpers = new Map<string, ChildProcess>();
 const activeNotifications = new Set<Notification>();
 let currentNotifyProjectId: string | null = null;
-let notifyShowToken = 0;
 
 app.on('before-quit', () => {
   for (const key of Array.from(activeHelpers.keys())) {
@@ -215,10 +213,6 @@ function closeElectronNotifications(): void {
   }
 }
 
-function isCurrentNotifyShow(token: number, projectId: string): boolean {
-  return token === notifyShowToken && currentNotifyProjectId === projectId;
-}
-
 export function dismissAgentFinishNotification(projectId?: string): void {
   const target = projectId?.trim() ?? '';
   if (target && currentNotifyProjectId && currentNotifyProjectId !== target) {
@@ -226,7 +220,6 @@ export function dismissAgentFinishNotification(projectId?: string): void {
   }
 
   currentNotifyProjectId = null;
-  closeAgentFinishBanner();
   stopAllHelpers();
   closeElectronNotifications();
 }
@@ -363,19 +356,6 @@ function showElectronAgentFinishNotification(
   });
 }
 
-function thumbnailToDataUrl(thumbnailPath: string | null): string | null {
-  if (!thumbnailPath || !existsSync(thumbnailPath)) {
-    return null;
-  }
-
-  const image = nativeImage.createFromPath(thumbnailPath);
-  if (image.isEmpty()) {
-    return null;
-  }
-
-  return image.toDataURL();
-}
-
 export function showAgentFinishNotification(payload: AgentFinishNotifyPayload): Promise<boolean> {
   if (!payload.force && isNexusInForeground()) {
     return Promise.resolve(false);
@@ -395,37 +375,15 @@ export function showAgentFinishNotification(payload: AgentFinishNotifyPayload): 
   const thumbnailPath = prepareProjectLogoThumbnail(payload.projectLogo);
   const presentation = resolveNotifyPresentation(payload, projectName);
   currentNotifyProjectId = projectId;
-  const showToken = ++notifyShowToken;
 
-  return showAgentFinishBanner({
+  return showHelperAgentFinishNotification(
+    payload,
+    presentation,
     projectName,
-    body: presentation.body,
-    projectLogoDataUrl: thumbnailToDataUrl(thumbnailPath),
-    actions: presentation.actions,
-    onAction: (actionId) => deliverAction(actionId, payload),
-    onOpen: () => deliverAction('open', payload),
-  }).then((shown) => {
-    if (!isCurrentNotifyShow(showToken, projectId)) {
-      if (showToken === notifyShowToken) {
-        closeAgentFinishBanner();
-      }
-      return false;
-    }
-
-    if (shown) {
-      recentShownAt.set(key, Date.now());
-      return true;
-    }
-
-    return showHelperAgentFinishNotification(
-      payload,
-      presentation,
-      projectName,
-      projectId,
-      key,
-      thumbnailPath,
-    );
-  });
+    projectId,
+    key,
+    thumbnailPath,
+  );
 }
 
 function showHelperAgentFinishNotification(

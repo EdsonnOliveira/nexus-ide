@@ -115,29 +115,21 @@ type AgentQuestionActivityLike = {
   kind: string;
   questionStatus?: string;
   questions?: unknown[];
-  label?: string;
+  questionAnswers?: Record<string, string | string[]>;
 };
 
-function isContinuationPastPendingQuestion(entry: AgentQuestionActivityLike): boolean {
-  if (
-    entry.kind === 'thought' ||
-    entry.kind === 'live_status' ||
-    entry.kind === 'question'
-  ) {
+function hasQuestionAnswers(answers: AgentQuestionActivityLike['questionAnswers']): boolean {
+  if (!answers) {
     return false;
   }
 
-  if (entry.kind === 'response') {
-    return Boolean(entry.label?.trim());
-  }
+  return Object.values(answers).some((value) => {
+    if (Array.isArray(value)) {
+      return value.length > 0;
+    }
 
-  return (
-    entry.kind === 'file_edit' ||
-    entry.kind === 'file_read' ||
-    entry.kind === 'tool_run' ||
-    entry.kind === 'task' ||
-    entry.kind === 'status'
-  );
+    return typeof value === 'string' && value.trim().length > 0;
+  });
 }
 
 export function hasPendingAgentQuestion(activities: AgentQuestionActivityLike[]): boolean {
@@ -152,52 +144,30 @@ export function hasPendingAgentQuestion(activities: AgentQuestionActivityLike[])
 export function hasActionablePendingAgentQuestion(
   activities: AgentQuestionActivityLike[],
 ): boolean {
-  if (!hasPendingAgentQuestion(activities)) {
-    return false;
-  }
-
-  let lastPendingQuestionIndex = -1;
-
-  for (let index = 0; index < activities.length; index += 1) {
-    const entry = activities[index];
-
-    if (
-      entry?.kind === 'question' &&
-      entry.questionStatus === 'pending' &&
-      entry.questions &&
-      entry.questions.length > 0
-    ) {
-      lastPendingQuestionIndex = index;
-    }
-  }
-
-  if (lastPendingQuestionIndex < 0) {
-    return false;
-  }
-
-  for (let index = lastPendingQuestionIndex + 1; index < activities.length; index += 1) {
-    const entry = activities[index];
-
-    if (entry && isContinuationPastPendingQuestion(entry)) {
-      return false;
-    }
-  }
-
-  return true;
+  return hasPendingAgentQuestion(activities);
 }
 
-export function markAbandonedPendingQuestionsSkipped<T extends AgentQuestionActivityLike>(
+export function restoreUnansweredSkippedQuestions<T extends AgentQuestionActivityLike>(
   activities: T[],
 ): T[] {
-  if (hasActionablePendingAgentQuestion(activities) || !hasPendingAgentQuestion(activities)) {
-    return activities;
-  }
+  let changed = false;
 
-  return activities.map((entry) =>
-    entry.kind === 'question' && entry.questionStatus === 'pending'
-      ? { ...entry, questionStatus: 'skipped' as const }
-      : entry,
-  );
+  const next = activities.map((entry) => {
+    if (
+      entry.kind !== 'question' ||
+      entry.questionStatus !== 'skipped' ||
+      hasQuestionAnswers(entry.questionAnswers) ||
+      !entry.questions ||
+      entry.questions.length === 0
+    ) {
+      return entry;
+    }
+
+    changed = true;
+    return { ...entry, questionStatus: 'pending' as const };
+  });
+
+  return changed ? next : activities;
 }
 
 export function findPendingAgentQuestionActivity<T extends AgentQuestionActivityLike>(

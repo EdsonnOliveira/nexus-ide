@@ -1246,7 +1246,7 @@ function buildTerminalQuickCommandResults(project: Project, query: string): Glob
       continue;
     }
 
-    if (!matchesQuery([entry.label, command], query)) {
+    if (!matchesQuery([entry.label, entry.name, command], query)) {
       continue;
     }
 

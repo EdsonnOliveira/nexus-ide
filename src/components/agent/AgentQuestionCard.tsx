@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp } from 'lucide-react';
 import { AppCheckbox } from '@/components/overlay/AppCheckbox';
 import type { AgentActivity, AgentQuestionAnswers, AgentQuestionItem } from '@/types';
@@ -40,6 +40,7 @@ function AgentQuestionCardComponent({ activity, interactive, onSubmit }: AgentQu
   const questions = activity.questions ?? [];
   const isAnswered = activity.questionStatus === 'answered';
   const isSkipped = activity.questionStatus === 'skipped';
+  const cardRef = useRef<HTMLDivElement>(null);
   const [answers, setAnswers] = useState<AgentQuestionAnswers>(activity.questionAnswers ?? {});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -88,6 +89,14 @@ function AgentQuestionCardComponent({ activity, interactive, onSubmit }: AgentQu
     }));
   }, []);
 
+  useEffect(() => {
+    if (!interactive) {
+      return;
+    }
+
+    cardRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+  }, [interactive]);
+
   const handleSubmit = useCallback(() => {
     if (!canSubmit || isSubmitting) {
       return;
@@ -110,6 +119,7 @@ function AgentQuestionCardComponent({ activity, interactive, onSubmit }: AgentQu
 
   return (
     <div
+      ref={cardRef}
       className={`agent-view__question-card app-button--enter${isAnswered ? ' agent-view__question-card--answered' : ''}${isSkipped ? ' agent-view__question-card--skipped' : ''}`}
     >
       {activity.questionTitle ? (

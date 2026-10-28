@@ -19159,6 +19159,10 @@ html.nexus-packaged .titlebar-battery-alert__panel {
     color var(--motion-out) var(--motion-ease-out);
 }
 
+.terminal-quick-command-dialog__name {
+  margin-top: 12px;
+}
+
 .project-dialog__preset-command span {
   min-width: 0;
   overflow: hidden;
@@ -19166,6 +19170,10 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   white-space: nowrap;
   font-size: 12px;
   font-family: var(--font-mono);
+}
+
+.project-dialog__preset-command--named span {
+  font-family: inherit;
 }
 
 .project-dialog__preset-command:hover:not(:disabled) {
@@ -25311,6 +25319,7 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, #22c55e 28%, var(--border-subtle));
   background: color-mix(in srgb, #22c55e 6%, var(--surface-2));
+  scroll-margin-bottom: 16px;
 }
 
 .agent-view__question-card--answered,
@@ -25358,6 +25367,8 @@ html.nexus-packaged .titlebar-battery-alert__panel {
 
 .agent-view__question-option {
   min-height: 32px;
+  max-width: 100%;
+  height: auto;
   padding: 6px 12px;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--border-subtle) 100%, transparent);
@@ -25366,6 +25377,7 @@ html.nexus-packaged .titlebar-battery-alert__panel {
   font-size: 12px;
   line-height: 1.35;
   text-align: left;
+  white-space: normal;
 }
 
 .agent-view__question-option:hover:not(:disabled) {

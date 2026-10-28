@@ -80,7 +80,7 @@ export function useGlobalSearchPalette() {
       projects
         .map((project) =>
           (project.terminalQuickCommands ?? [])
-            .map((entry) => `${entry.id}:${entry.command}`)
+            .map((entry) => `${entry.id}:${entry.name ?? ''}:${entry.label}:${entry.command}`)
             .join(','),
         )
         .join('|'),
