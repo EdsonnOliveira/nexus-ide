@@ -1,4 +1,14 @@
-import { memo, useCallback, useEffect, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+  type ReactNode,
+  type TouchEvent,
+  type WheelEvent,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { OVERLAY_MODAL_DURATION_MS, useAnimatedUnmount } from '@/hooks/useAnimatedUnmount';
 import { registerModalOpen } from '@/utils/overlayBlocking';
@@ -65,6 +75,8 @@ interface AgentCardFrameProps {
   fullscreen: ReturnType<typeof useAgentCardFullscreen>;
   children: ReactNode;
   onMouseDown?: (event: MouseEvent) => void;
+  onWheel?: (event: WheelEvent<HTMLElement>) => void;
+  onTouchMove?: (event: TouchEvent<HTMLElement>) => void;
   dataHomeAgentPane?: string;
 }
 
@@ -74,6 +86,8 @@ function AgentCardFrameComponent({
   fullscreen,
   children,
   onMouseDown,
+  onWheel,
+  onTouchMove,
   dataHomeAgentPane,
 }: AgentCardFrameProps) {
   const card = (
@@ -81,6 +95,8 @@ function AgentCardFrameComponent({
       className={`${className}${fullscreen.open ? ' home-dashboard__agent-card--modal' : ''}`}
       style={style}
       onMouseDown={onMouseDown}
+      onWheel={onWheel}
+      onTouchMove={onTouchMove}
     >
       {children}
     </article>

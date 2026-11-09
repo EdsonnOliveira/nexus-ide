@@ -259,9 +259,7 @@ function buildAgentPromptArgs(
     args.push('--continue');
   }
 
-  if (model && model.toLowerCase() !== 'auto') {
-    args.push('--model', model);
-  }
+  args.push('--model', !model || model.toLowerCase() === 'auto' ? 'auto' : model);
 
   if (options.mode === 'plan' || options.mode === 'ask') {
     args.push('--mode', options.mode);

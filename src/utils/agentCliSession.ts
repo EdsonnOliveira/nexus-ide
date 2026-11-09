@@ -255,11 +255,8 @@ export function buildAgentPrintPromptCommand(options: AgentPrintPromptOptions): 
     parts.push('--mode', options.mode);
   }
 
-  const model = options.model?.trim();
-
-  if (model && model !== 'auto') {
-    parts.push('--model', shellEscapeSingleQuotes(model));
-  }
+  const model = options.model?.trim() || 'auto';
+  parts.push('--model', shellEscapeSingleQuotes(model));
 
   parts.push('--', shellEscapeSingleQuotes(prompt));
 

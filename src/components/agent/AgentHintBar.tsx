@@ -737,6 +737,21 @@ function AgentComposerModelSelectComponent({
       }
     }
 
+    if (currentProvider === 'cursor') {
+      const autoHint = modelHints.find((hint) => hint.id === 'model-auto');
+
+      if (autoHint) {
+        const label = shortenMenuLabel(autoHint.label);
+
+        if (selectedHintId !== autoHint.id || selectedLabel !== label) {
+          setSelectedLabel(label);
+          setSelectedHintId(autoHint.id);
+        }
+
+        return;
+      }
+    }
+
     const stillValid = modelHints.some(
       (hint) => hint.id === selectedHintId || shortenMenuLabel(hint.label) === selectedLabel,
     );
@@ -745,14 +760,17 @@ function AgentComposerModelSelectComponent({
       return;
     }
 
-    const next = modelHints[0];
+    const next =
+      currentProvider === 'cursor'
+        ? (modelHints.find((hint) => hint.id === 'model-auto') ?? modelHints[0])
+        : modelHints[0];
     if (!next) {
       return;
     }
 
     setSelectedLabel(shortenMenuLabel(next.label));
     setSelectedHintId(next.id);
-  }, [modelHints, selectedHintId, selectedLabel, storedModelId]);
+  }, [currentProvider, modelHints, selectedHintId, selectedLabel, storedModelId]);
 
   const selectedHint = useMemo(() => {
     if (selectedHintId) {

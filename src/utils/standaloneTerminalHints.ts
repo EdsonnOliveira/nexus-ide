@@ -102,6 +102,31 @@ export function buildMaestroQuickCommandHints(
   return hints;
 }
 
+export function parseMaestroQuickCommandHintId(
+  hintId: string,
+): { projectId: string; commandId: string } | null {
+  if (!hintId.startsWith('maestro-')) {
+    return null;
+  }
+
+  const rest = hintId.slice('maestro-'.length);
+  const separator = '-quick-';
+  const index = rest.indexOf(separator);
+
+  if (index <= 0) {
+    return null;
+  }
+
+  const projectId = rest.slice(0, index);
+  const commandId = rest.slice(index + separator.length);
+
+  if (!projectId || !commandId) {
+    return null;
+  }
+
+  return { projectId, commandId };
+}
+
 export function mergeStandaloneTerminalHints(
   cwdHints: TerminalCommandHint[],
   projectHintGroups: Array<{ project: Project; hints: TerminalCommandHint[] }>,

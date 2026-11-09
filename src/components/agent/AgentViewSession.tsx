@@ -1,4 +1,14 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type TouchEvent,
+  type WheelEvent,
+} from 'react';
 import { ArrowDown, Bot } from 'lucide-react';
 import { AgentComposer } from '@/components/agent/AgentComposer';
 import { AgentFollowUpQueue } from '@/components/agent/AgentFollowUpQueue';
@@ -179,6 +189,25 @@ function AgentViewSessionComponent({
       onFocusPane();
     }
   }, [isFocused, onFocusPane, tab.id]);
+
+  const stopPingOnUserScroll = useCallback(
+    (event: WheelEvent<HTMLDivElement> | TouchEvent<HTMLDivElement>) => {
+      if ('deltaY' in event && Math.abs(event.deltaY) < 1 && Math.abs(event.deltaX) < 1) {
+        return;
+      }
+
+      const isPinging = Object.values(
+        useProjectNotificationStore.getState().notifiedAgentPaneByProject,
+      ).includes(tab.id);
+
+      if (!isPinging) {
+        return;
+      }
+
+      useProjectNotificationStore.getState().clearNotificationForPane(tab.id);
+    },
+    [tab.id],
+  );
 
   const handleDraftChange = useCallback(
     (value: string) => {
@@ -458,6 +487,8 @@ function AgentViewSessionComponent({
       className={`agent-view workspace-pane workspace-pane--agent agent-view--${terminalAgent}`}
       style={{ '--agent-accent': agentConfig.promptColor } as CSSProperties}
       onMouseDown={handleMouseDown}
+      onWheel={stopPingOnUserScroll}
+      onTouchMove={stopPingOnUserScroll}
     >
       <div className='agent-view__transcript-shell'>
         {turns.length > 1 ? (

@@ -10,6 +10,8 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type TouchEvent as ReactTouchEvent,
+  type WheelEvent as ReactWheelEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { Bot, GitBranch, Home, Maximize2, Minimize2, Pin, Tag, X } from 'lucide-react';
@@ -483,8 +485,13 @@ function AgentCardComponent({
   const fullscreen = useAgentCardFullscreen();
   const { isPinned, handleTogglePin, displayPicker } = useAgentPipPin(paneId);
   const agentGitGroups = useAgentGitGroupsForProject(project.id);
+  const gitButtonRef = useRef<HTMLButtonElement>(null);
+  const [gitPopupOpen, setGitPopupOpen] = useState(false);
+  const [gitPopupAnchor, setGitPopupAnchor] = useState<DOMRect | null>(null);
+  const trackLiveGit = !computerProject && (isFocused || gitPopupOpen || fullscreen.open);
   const { changes: gitFlatChanges, loading: gitLoading } = useProjectGitFlatChanges(
-    computerProject ? null : project.path,
+    trackLiveGit ? project.path : null,
+    { watch: trackLiveGit },
   );
   const agentChangedFiles = useMemo(
     () =>
@@ -492,14 +499,11 @@ function AgentCardComponent({
         paneId,
         pane.turns,
         agentGitGroups,
-        gitLoading ? null : gitFlatChanges,
+        gitLoading || !trackLiveGit ? null : gitFlatChanges,
       ),
-    [agentGitGroups, gitFlatChanges, gitLoading, pane.turns, paneId],
+    [agentGitGroups, gitFlatChanges, gitLoading, pane.turns, paneId, trackLiveGit],
   );
   const gitChangedFileCount = agentChangedFiles.length;
-  const gitButtonRef = useRef<HTMLButtonElement>(null);
-  const [gitPopupOpen, setGitPopupOpen] = useState(false);
-  const [gitPopupAnchor, setGitPopupAnchor] = useState<DOMRect | null>(null);
   const maestroTag = pane.maestroTag ?? null;
 
   const handleFocus = useCallback(
@@ -509,6 +513,21 @@ function AgentCardComponent({
       clearNotificationForPane(paneId);
     },
     [clearNotificationForPane, onFocus, paneId],
+  );
+
+  const stopPingOnUserScroll = useCallback(
+    (event: ReactWheelEvent<HTMLElement> | ReactTouchEvent<HTMLElement>) => {
+      if (!hasReadyPing) {
+        return;
+      }
+
+      if ('deltaY' in event && Math.abs(event.deltaY) < 1 && Math.abs(event.deltaX) < 1) {
+        return;
+      }
+
+      clearNotificationForPane(paneId);
+    },
+    [clearNotificationForPane, hasReadyPing, paneId],
   );
 
   const handlePtyCreated = useCallback(
@@ -626,6 +645,8 @@ function AgentCardComponent({
         fullscreen={fullscreen}
         dataHomeAgentPane={pane.id}
         onMouseDown={(event) => handleFocus(event)}
+        onWheel={stopPingOnUserScroll}
+        onTouchMove={stopPingOnUserScroll}
       >
         <div className='home-dashboard__agent-card-head' onContextMenu={handleHeaderContextMenu}>
           <span className='home-dashboard__agent-card-thumb-wrap'>
@@ -741,7 +762,7 @@ function AgentCardComponent({
               tab={pane}
               projectId={project.id}
               projectPath={project.path}
-              isVisible
+              isVisible={isFocused || fullscreen.open}
               isRuntimeActive
               eagerSession
               isFocused={isFocused}

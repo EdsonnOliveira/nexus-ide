@@ -227,7 +227,7 @@ function GitDiffViewComponent({
   }, [after, changeCount, changeLineNumbers]);
 
   useEffect(() => {
-    if (!isImageDiff) {
+    if (!isImageDiff || !isVisible) {
       setImageBeforeSrc(null);
       setImageAfterSrc(null);
       setImageLoading(false);
@@ -284,7 +284,7 @@ function GitDiffViewComponent({
     return () => {
       cancelled = true;
     };
-  }, [diffRepoPath, diffStaged, diffUntracked, filePath, isImageDiff]);
+  }, [diffRepoPath, diffStaged, diffUntracked, filePath, isImageDiff, isVisible]);
 
   const showImageBefore = Boolean(imageBeforeSrc);
   const showImageAfter = Boolean(imageAfterSrc);

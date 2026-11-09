@@ -25,6 +25,7 @@ import { resolveAgentActivityFilePath } from '@/utils/agentTranscriptParser';
 import { formatAgentContextTokens } from '@/utils/agentContextUsageParser';
 import { loadAgentFileDiffPreview, type AgentFileDiffPreview } from '@/utils/agentGitDiff';
 import { highlightCodeLines } from '@/utils/codeHighlight';
+import { toProjectDisplayPath } from '@/utils/explorerRelativePath';
 import { buildFlatChanges } from '@/utils/gitFlatChanges';
 import type { GitDiffPreviewHunk } from '@/utils/gitDiffLines';
 import {
@@ -269,7 +270,7 @@ function AgentFilesChangedDiffPreviewComponent({
     return { icon: FileCode2, message: 'Nenhuma alteração neste arquivo' };
   }, [loading, result]);
 
-  const displayPath = result?.displayPath || preview.path;
+  const displayPath = toProjectDisplayPath(projectPath, result?.displayPath || preview.path);
   const additions = preview.additions;
   const deletions = preview.deletions;
 
@@ -533,6 +534,7 @@ function AgentFilesChangedCardComponent({
       <div className='agent-view__files-changed-list'>
         {visibleFiles.map((file) => {
           const fileName = getFileName(file.path);
+          const displayPath = toProjectDisplayPath(projectPath, file.path);
           const additions = file.additions ?? 0;
           const deletions = file.deletions ?? 0;
 
@@ -541,8 +543,8 @@ function AgentFilesChangedCardComponent({
               key={file.path}
               type='button'
               className='agent-view__files-changed-row app-button'
-              title={file.path}
-              aria-label={file.path}
+              title={displayPath}
+              aria-label={displayPath}
               onMouseEnter={(event) => {
                 handleRowEnter(file, event);
               }}
@@ -566,7 +568,7 @@ function AgentFilesChangedCardComponent({
               <span className='agent-view__files-changed-icon' aria-hidden='true'>
                 <ExplorerFileIcon name={fileName} />
               </span>
-              <span className='agent-view__files-changed-name'>{fileName}</span>
+              <span className='agent-view__files-changed-name'>{displayPath}</span>
               <span className='agent-view__files-changed-diff'>
                 {additions > 0 ? (
                   <span className='agent-view__files-changed-add'>+{additions}</span>

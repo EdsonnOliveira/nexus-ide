@@ -8,7 +8,7 @@ import { applyDevBrowserEnv } from './ptyManager';
 import { buildCliPathEnv } from '../utils/cliPathEnv';
 import { writeDebugSessionLog } from '../utils/debugSessionLog';
 import { killProcessTree } from '../utils/killProcessTree';
-import { DEFAULT_OPENCODE_MODEL_ID } from './agentModels';
+import { DEFAULT_CURSOR_MODEL_ID, DEFAULT_OPENCODE_MODEL_ID } from './agentModels';
 import { setIdleWakeLockEnabled } from './idleWakeLock';
 
 export interface AgentPrintStopOptions {
@@ -195,11 +195,8 @@ function buildCursorAgentArgs(options: AgentPrintRunOptions, resolvedCwd: string
     args.push('--mode', options.mode);
   }
 
-  const model = options.model?.trim();
-
-  if (model && model !== 'auto') {
-    args.push('--model', model);
-  }
+  const model = options.model?.trim() || DEFAULT_CURSOR_MODEL_ID;
+  args.push('--model', model);
 
   if (options.prompt.trim()) {
     args.push('--', options.prompt);

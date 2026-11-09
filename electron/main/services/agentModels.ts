@@ -36,9 +36,11 @@ export interface AgentModelOption {
   label: string;
 }
 
+export const DEFAULT_CURSOR_MODEL_ID = 'auto';
+
 const CURSOR_FALLBACK_MODELS: AgentModelEntry[] = [
-  { id: 'auto', label: 'Auto', isCurrent: false },
-  { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isCurrent: true },
+  { id: DEFAULT_CURSOR_MODEL_ID, label: 'Auto', isCurrent: true },
+  { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isCurrent: false },
   { id: 'claude-opus-4-8-thinking-high', label: 'Opus 4.8 Thinking', isCurrent: false },
   { id: 'gpt-5.3-codex', label: 'Codex 5.3', isCurrent: false },
   { id: 'gpt-5.4-high', label: 'GPT-5.4 High', isCurrent: false },
@@ -54,7 +56,7 @@ export const DEFAULT_OPENCODE_MODEL_ID = 'opencode/big-pickle';
 
 const OPENCODE_FALLBACK_MODELS: AgentModelOption[] = [
   { id: DEFAULT_OPENCODE_MODEL_ID, label: 'Big Pickle' },
-  { id: 'opencode/mimo-v2.5-free', label: 'MiMo v2.5 Free' },
+  { id: 'opencode/mimo-v2.6-flash-free', label: 'MiMo v2.6 Flash Free' },
 ];
 
 const ANTIGRAVITY_FALLBACK_MODELS: AgentModelOption[] = [
@@ -127,8 +129,8 @@ function parseCursorModelsOutput(output: string): AgentModelEntry[] {
 
     const id = match[1];
     const rawLabel = match[2];
-    const isCurrent = /\(current/i.test(rawLabel);
-    const label = rawLabel.replace(/\s*\((current[^)]*)\)\s*$/i, '').trim();
+    const isCurrent = id === DEFAULT_CURSOR_MODEL_ID || /\(default\)/i.test(rawLabel);
+    const label = rawLabel.replace(/\s*\((current|default)[^)]*\)\s*$/i, '').trim();
 
     models.push({ id, label, isCurrent });
   }
@@ -230,7 +232,7 @@ function prioritizeModels(models: AgentModelEntry[]): AgentModelEntry[] {
     picked.push(model);
   };
 
-  pushModel(models.find((model) => model.isCurrent));
+  pushModel(models.find((model) => model.id === DEFAULT_CURSOR_MODEL_ID));
 
   for (const pattern of MODEL_PRIORITY_PATTERNS) {
     pushModel(models.find((model) => !seen.has(model.id) && pattern.test(model.id)));
@@ -253,6 +255,7 @@ function prioritizeModels(models: AgentModelEntry[]): AgentModelEntry[] {
 
 function shortenModelLabel(label: string): string {
   return label
+    .replace(/\s*\((current|default)[^)]*\)\s*$/i, '')
     .replace(/\s*\(NO ZDR\)\s*$/i, '')
     .replace(/\s*1M\s+/i, ' ')
     .replace(/\s+Thinking\s+Fast$/i, ' Fast')

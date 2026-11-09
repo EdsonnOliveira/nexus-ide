@@ -136,7 +136,9 @@ function AgentCursorUsagePanelComponent({
         ) : (
           <>
             <div className='agent-cursor-usage__summary'>
-              <span className='agent-cursor-usage__summary-percent'>{Math.round(usage.percent)}%</span>
+              <span className='agent-cursor-usage__summary-percent'>
+                {Math.round(usage.totalPercentUsed)}%
+              </span>
               {usage.membershipType ? (
                 <span className='agent-cursor-usage__summary-plan'>{usage.membershipType}</span>
               ) : null}
@@ -206,7 +208,7 @@ function AgentCursorUsageIndicatorComponent({
   const [open, setOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
 
-  const percent = usage?.percent ?? 0;
+  const percent = usage?.totalPercentUsed ?? usage?.percent ?? 0;
   const percentText = `${Math.round(percent)}%`;
   const tone = useMemo(() => resolveUsageTone(percent), [percent]);
 

@@ -24,14 +24,15 @@ function resolveSwiftScriptPath(): string {
   throw new Error('macosWifiControl.swift not found.');
 }
 
+const WIFI_SCRIPT_TIMEOUT_MS = 8_000;
+
 async function runWifiScript(args: string[]): Promise<string> {
   const scriptPath = resolveSwiftScriptPath();
-  const { stdout } = await execFileAsync('/usr/bin/swift', [
-    '-framework',
-    'CoreWLAN',
-    scriptPath,
-    ...args,
-  ]);
+  const { stdout } = await execFileAsync(
+    '/usr/bin/swift',
+    ['-framework', 'CoreWLAN', scriptPath, ...args],
+    { timeout: WIFI_SCRIPT_TIMEOUT_MS, killSignal: 'SIGKILL' },
+  );
   return stdout.trim();
 }
 

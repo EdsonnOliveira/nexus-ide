@@ -65,8 +65,13 @@ function assertDarwinSupported(): void {
   }
 }
 
+const COMMAND_TIMEOUT_MS = 8_000;
+
 async function runCommand(command: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync(command, args);
+  const { stdout } = await execFileAsync(command, args, {
+    timeout: COMMAND_TIMEOUT_MS,
+    killSignal: 'SIGKILL',
+  });
   return stdout.trim();
 }
 

@@ -13,8 +13,12 @@ import iconModeAsk from '@/assets/icon-mode-ask.svg';
 import iconModeDebug from '@/assets/icon-mode-debug.svg';
 import iconModeMultitask from '@/assets/icon-mode-multitask.svg';
 import iconModePlan from '@/assets/icon-mode-plan.svg';
+import { AnimatedModal } from '@/components/overlay/AnimatedModal';
 import { ProjectIconMark } from '@/components/sidebar/ProjectIconMark';
-import { TerminalQuickCommandPills } from '@/components/terminal/TerminalQuickCommandPills';
+import {
+  QuickCommandContextMenu,
+  TerminalQuickCommandPills,
+} from '@/components/terminal/TerminalQuickCommandPills';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import { useHomeAgentQueue } from '@/hooks/useHomeAgentBindings';
 import { useProjectStore } from '@/stores/useProjectStore';
@@ -27,8 +31,71 @@ import {
   buildMaestroQuickCommandHints,
   isStandaloneTerminalProjectId,
   mergeStandaloneTerminalHints,
+  parseMaestroQuickCommandHintId,
 } from '@/utils/standaloneTerminalHints';
-import { PROJECT_COLORS, type TerminalCommandHint, type TerminalTab } from '@/types';
+import {
+  PROJECT_COLORS,
+  type ProjectTerminalQuickCommand,
+  type TerminalCommandHint,
+  type TerminalTab,
+} from '@/types';
+
+const MAX_TERMINAL_QUICK_COMMAND_NAME = 48;
+
+interface HintQuickCommandContextMenuState {
+  projectId: string;
+  commandId: string;
+  x: number;
+  y: number;
+}
+
+interface HintQuickCommandEditState {
+  projectId: string;
+  commandId: string;
+  draftCommand: string;
+  draftName: string;
+}
+
+function normalizeHintQuickCommand(command: string): string {
+  return command.trim().replace(/\n$/, '');
+}
+
+function shortenHintQuickCommandLabel(command: string): string {
+  const trimmed = normalizeHintQuickCommand(command);
+
+  if (trimmed.length <= 28) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, 27)}…`;
+}
+
+function ensureHintQuickCommandNewline(command: string): string {
+  const trimmed = normalizeHintQuickCommand(command);
+
+  return trimmed ? `${trimmed}\n` : '';
+}
+
+function buildHintQuickCommandEntry(
+  id: string,
+  draftCommand: string,
+  draftName: string,
+): ProjectTerminalQuickCommand | null {
+  const command = ensureHintQuickCommandNewline(draftCommand);
+  const normalized = normalizeHintQuickCommand(command);
+  const name = normalizeHintQuickCommand(draftName);
+
+  if (!normalized) {
+    return null;
+  }
+
+  return {
+    id,
+    label: name || shortenHintQuickCommandLabel(command),
+    command,
+    ...(name ? { name } : {}),
+  };
+}
 
 interface TerminalFooterProps {
   tab: TerminalTab;
@@ -240,14 +307,20 @@ function TerminalFooterComponent({
 }: TerminalFooterProps) {
   const [hints, setHints] = useState<TerminalCommandHint[]>([]);
   const [logoSrcByPath, setLogoSrcByPath] = useState<Record<string, string>>({});
+  const [hintContextMenu, setHintContextMenu] = useState<HintQuickCommandContextMenuState | null>(
+    null,
+  );
+  const [hintEditState, setHintEditState] = useState<HintQuickCommandEditState | null>(null);
   const hintRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const hintsRef = useRef<TerminalCommandHint[]>([]);
   const visibleHintIndicesRef = useRef<number[]>([]);
   const activeIndexRef = useRef(activeIndex);
   const footerRef = useRef<HTMLElement>(null);
+  const hintEditInputRef = useRef<HTMLInputElement>(null);
   const rowVisibleCountsRef = useRef<Record<string, number>>({});
   const [visibleCountsVersion, setVisibleCountsVersion] = useState(0);
   const projects = useProjectStore((state) => state.projects);
+  const updateProject = useProjectStore((state) => state.updateProject);
   const homeAgentQueue = useHomeAgentQueue();
   const isStandaloneTerminal = isStandaloneTerminalProjectId(projectId);
   const maestroHintProjects = useMemo(() => {
@@ -492,6 +565,128 @@ function TerminalFooterComponent({
     [onDismissKeyboard, onRunCommand],
   );
 
+  const hintEditProjectCommands = useMemo(() => {
+    if (!hintEditState) {
+      return [] as ProjectTerminalQuickCommand[];
+    }
+
+    return (
+      projects.find((project) => project.id === hintEditState.projectId)?.terminalQuickCommands ?? []
+    );
+  }, [hintEditState, projects]);
+
+  const hintEditOriginalCommand = useMemo(() => {
+    if (!hintEditState) {
+      return '';
+    }
+
+    const entry = hintEditProjectCommands.find((item) => item.id === hintEditState.commandId);
+
+    return entry ? normalizeHintQuickCommand(entry.command) : '';
+  }, [hintEditProjectCommands, hintEditState]);
+
+  const hintEditNormalizedCommand = hintEditState
+    ? normalizeHintQuickCommand(hintEditState.draftCommand)
+    : '';
+  const hintEditCommandTaken =
+    Boolean(hintEditNormalizedCommand) &&
+    hintEditNormalizedCommand !== hintEditOriginalCommand &&
+    hintEditProjectCommands.some(
+      (entry) => normalizeHintQuickCommand(entry.command) === hintEditNormalizedCommand,
+    );
+  const canSaveHintEdit = Boolean(hintEditNormalizedCommand) && !hintEditCommandTaken;
+
+  const hintEditTargetKey = hintEditState
+    ? `${hintEditState.projectId}:${hintEditState.commandId}`
+    : null;
+
+  useEffect(() => {
+    if (!hintEditTargetKey) {
+      return;
+    }
+
+    hintEditInputRef.current?.focus();
+    hintEditInputRef.current?.select();
+  }, [hintEditTargetKey]);
+
+  const handleHintContextMenu = useCallback(
+    (hintId: string, event: React.MouseEvent<HTMLButtonElement>) => {
+      const parsed = parseMaestroQuickCommandHintId(hintId);
+
+      if (!parsed) {
+        return;
+      }
+
+      const project = projects.find((entry) => entry.id === parsed.projectId);
+      const command = project?.terminalQuickCommands?.find((entry) => entry.id === parsed.commandId);
+
+      if (!command) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      setHintContextMenu({
+        projectId: parsed.projectId,
+        commandId: parsed.commandId,
+        x: event.clientX,
+        y: event.clientY,
+      });
+    },
+    [projects],
+  );
+
+  const handleOpenHintEdit = useCallback(
+    (projectId: string, commandId: string) => {
+      const project = projects.find((entry) => entry.id === projectId);
+      const command = project?.terminalQuickCommands?.find((entry) => entry.id === commandId);
+
+      if (!command) {
+        return;
+      }
+
+      setHintEditState({
+        projectId,
+        commandId,
+        draftCommand: normalizeHintQuickCommand(command.command),
+        draftName: normalizeHintQuickCommand(command.name ?? '') || '',
+      });
+    },
+    [projects],
+  );
+
+  const handleCloseHintEdit = useCallback(() => {
+    setHintEditState(null);
+  }, []);
+
+  const handleSaveHintEdit = useCallback(
+    (requestClose: () => void) => (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+
+      if (!hintEditState || !canSaveHintEdit) {
+        return;
+      }
+
+      const nextCommand = buildHintQuickCommandEntry(
+        hintEditState.commandId,
+        hintEditState.draftCommand,
+        hintEditState.draftName,
+      );
+
+      if (!nextCommand) {
+        return;
+      }
+
+      void updateProject(hintEditState.projectId, {
+        terminalQuickCommands: hintEditProjectCommands.map((entry) =>
+          entry.id === hintEditState.commandId ? nextCommand : entry,
+        ),
+      });
+      requestClose();
+    },
+    [canSaveHintEdit, hintEditProjectCommands, hintEditState, updateProject],
+  );
+
   useEffect(() => {
     rowVisibleCountsRef.current = {};
     setVisibleCountsVersion((version) => version + 1);
@@ -635,6 +830,7 @@ function TerminalFooterComponent({
       const hasProjectLogo = Boolean(logoSrc);
       const hasProjectIcon = Boolean(projectIcon) && !hasProjectLogo;
       const hasBuiltinIcon = Boolean(iconSrc) && !hasProjectLogo && !hasProjectIcon;
+      const editableQuickCommand = Boolean(parseMaestroQuickCommandHintId(hint.id));
 
       return (
         <button
@@ -653,6 +849,11 @@ function TerminalFooterComponent({
             }
           }}
           onClick={() => handleHintClick(hint.command)}
+          onContextMenu={
+            editableQuickCommand
+              ? (event) => handleHintContextMenu(hint.id, event)
+              : undefined
+          }
         >
           <span
             className={`terminal-footer__hint-badge${hasProjectLogo || hasProjectIcon || hasBuiltinIcon ? ' terminal-footer__hint-badge--icon' : ''}${hasProjectLogo ? ' terminal-footer__hint-badge--logo' : ''}${hintKind ? ` terminal-footer__hint-badge--${hintKind}` : ''}`}
@@ -677,36 +878,115 @@ function TerminalFooterComponent({
         </button>
       );
     },
-    [activeIndex, handleHintClick, keyboardActive, onActiveIndexChange],
+    [
+      activeIndex,
+      handleHintClick,
+      handleHintContextMenu,
+      keyboardActive,
+      onActiveIndexChange,
+    ],
   );
+
+  const hintEditDialog =
+    hintEditState ? (
+      <AnimatedModal panelClassName='project-dialog' onClose={handleCloseHintEdit}>
+        {(requestClose) => (
+          <form onSubmit={handleSaveHintEdit(requestClose)}>
+            <span className='project-dialog__title'>Editar comando</span>
+            <label className='project-dialog__label'>
+              Comando
+              <input
+                ref={hintEditInputRef}
+                className='project-dialog__input'
+                value={hintEditState.draftCommand}
+                maxLength={200}
+                placeholder='ex.: npm run dev'
+                onChange={(event) =>
+                  setHintEditState((current) =>
+                    current ? { ...current, draftCommand: event.target.value } : current,
+                  )
+                }
+              />
+            </label>
+            <label className='project-dialog__label terminal-quick-command-dialog__name'>
+              Nomear comando
+              <input
+                className='project-dialog__input'
+                value={hintEditState.draftName}
+                maxLength={MAX_TERMINAL_QUICK_COMMAND_NAME}
+                placeholder='opcional'
+                onChange={(event) =>
+                  setHintEditState((current) =>
+                    current ? { ...current, draftName: event.target.value } : current,
+                  )
+                }
+              />
+            </label>
+            <div className='project-dialog__actions'>
+              <button
+                type='button'
+                className='project-dialog__btn project-dialog__btn--ghost'
+                onClick={requestClose}
+              >
+                Cancelar
+              </button>
+              <button
+                type='submit'
+                className='project-dialog__btn project-dialog__btn--primary'
+                disabled={!canSaveHintEdit}
+              >
+                Salvar
+              </button>
+            </div>
+          </form>
+        )}
+      </AnimatedModal>
+    ) : null;
+
+  const hintContextMenuNode = hintContextMenu ? (
+    <QuickCommandContextMenu
+      x={hintContextMenu.x}
+      y={hintContextMenu.y}
+      onClose={() => setHintContextMenu(null)}
+      onEdit={() => handleOpenHintEdit(hintContextMenu.projectId, hintContextMenu.commandId)}
+    />
+  ) : null;
 
   if (visibleHints.length === 0) {
     return (
-      <footer ref={footerRef} className={`terminal-footer terminal-footer--${tab.agent}`}>
-        <TerminalQuickCommandPills projectId={projectId} onRunCommand={onRunCommand} />
-      </footer>
+      <>
+        <footer ref={footerRef} className={`terminal-footer terminal-footer--${tab.agent}`}>
+          <TerminalQuickCommandPills projectId={projectId} onRunCommand={onRunCommand} />
+        </footer>
+        {hintContextMenuNode}
+        {hintEditDialog}
+      </>
     );
   }
 
   return (
-    <footer
-      ref={footerRef}
-      className={`terminal-footer terminal-footer--${tab.agent}`}
-    >
-      <TerminalQuickCommandPills projectId={projectId} onRunCommand={onRunCommand} />
-      <div className='terminal-footer__hints' role='listbox' aria-label='Sugestões do terminal'>
-        {hintRows.map((row) => (
-          <TerminalFooterHintRow
-            key={row.kind}
-            items={row.items}
-            isVisible={isVisible}
-            renderHintButton={renderHintButton}
-            onVisibleCountChange={(count) => handleRowVisibleCountChange(row.kind, count)}
-            preserveAllItems
-          />
-        ))}
-      </div>
-    </footer>
+    <>
+      <footer
+        ref={footerRef}
+        className={`terminal-footer terminal-footer--${tab.agent}`}
+      >
+        <TerminalQuickCommandPills projectId={projectId} onRunCommand={onRunCommand} />
+        <div className='terminal-footer__hints' role='listbox' aria-label='Sugestões do terminal'>
+          {hintRows.map((row) => (
+            <TerminalFooterHintRow
+              key={row.kind}
+              items={row.items}
+              isVisible={isVisible}
+              renderHintButton={renderHintButton}
+              onVisibleCountChange={(count) => handleRowVisibleCountChange(row.kind, count)}
+              preserveAllItems
+            />
+          ))}
+        </div>
+      </footer>
+      {hintContextMenuNode}
+      {hintEditDialog}
+    </>
   );
 }
 

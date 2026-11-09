@@ -19,6 +19,7 @@ interface FileViewProps {
 
 function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
   const [content, setContent] = useState('');
+  const [diffBeforeContent, setDiffBeforeContent] = useState(tab.diffBefore ?? '');
   const [mediaSrc, setMediaSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -178,6 +179,67 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
   }, [loadFile]);
 
   useEffect(() => {
+    if (tab.viewMode !== 'diff' || isDiffImage) {
+      setDiffBeforeContent(tab.diffBefore ?? '');
+      return;
+    }
+
+    if (typeof tab.diffBefore === 'string') {
+      setDiffBeforeContent(tab.diffBefore);
+      return;
+    }
+
+    if (!tab.diffRepoPath) {
+      setDiffBeforeContent('');
+      return;
+    }
+
+    let cancelled = false;
+    const relativePath = tab.filePath.startsWith(tab.diffRepoPath)
+      ? tab.filePath.slice(tab.diffRepoPath.length).replace(/^[/\\]+/, '')
+      : tab.filePath;
+
+    void window.nexus.git
+      .getFileDiffSides(tab.diffRepoPath, relativePath, {
+        staged: tab.diffStaged ?? false,
+        untracked: tab.diffUntracked ?? false,
+      })
+      .then((sides) => {
+        if (cancelled) {
+          return;
+        }
+
+        setDiffBeforeContent(sides.before);
+
+        if (typeof tab.diffAfter !== 'string') {
+          setContent(sides.after);
+          savedContentRef.current = sides.after;
+          useFileDirtyStore.getState().setDirty(tab.id, false);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDiffBeforeContent('');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isDiffImage,
+    tab.diffAfter,
+    tab.diffBefore,
+    tab.diffRepoPath,
+    tab.diffStaged,
+    tab.diffUntracked,
+    tab.filePath,
+    tab.id,
+    tab.viewMode,
+  ]);
+
+  useEffect(() => {
     if (fileExternalRevision === 0) {
       return;
     }
@@ -296,7 +358,7 @@ function FileViewComponent({ tab, isVisible, projectId }: FileViewProps) {
     return (
       <GitDiffView
         filePath={tab.filePath}
-        before={tab.diffBefore ?? ''}
+        before={diffBeforeContent}
         after={content}
         isVisible={isVisible}
         agentPromptTurns={diffAgentPromptTurns}

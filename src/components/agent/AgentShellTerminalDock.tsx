@@ -332,7 +332,7 @@ function AgentShellTerminalPanelComponent({
             paneId={entry.paneId}
             projectPath={projectPath}
             ptyId={entry.ptyId}
-            isVisible={isOpen || entry.kind === 'tool'}
+            isVisible={isOpen}
             isRuntimeActive
             isFocused={isOpen}
             cwd={cwd}

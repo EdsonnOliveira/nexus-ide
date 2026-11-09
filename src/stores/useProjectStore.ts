@@ -20,6 +20,7 @@ import {
   rawAgentTurnHistoryNeedsTrim,
   trimAgentTurnsInTabBarItems,
 } from '@/utils/trimAgentTurnHistory';
+import { stripHeavyDiffPayloadsFromTabBarItems } from '@/utils/persistFileDiff';
 import { useAutomationExecutionStore } from '@/stores/useAutomationExecutionStore';
 import { useProjectNotificationStore } from '@/stores/useProjectNotificationStore';
 import { useToastStore } from '@/stores/useToastStore';
@@ -141,7 +142,9 @@ function migrateProject(project: Project, fallbackWorkspaceId: string): Project 
     projectWithoutLegacyLayout.activeTabId,
     projectWithoutLegacyLayout.path,
   );
-  const tabs = trimAgentTurnsInTabBarItems(migrated.tabs);
+  const tabs = stripHeavyDiffPayloadsFromTabBarItems(
+    trimAgentTurnsInTabBarItems(migrated.tabs),
+  );
   const activeTabId = resolveProjectSurfaceActiveTabId(
     { ...projectWithoutLegacyLayout, tabs },
     migrated.activeTabId,

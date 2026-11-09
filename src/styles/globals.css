@@ -115,7 +115,7 @@ button:disabled {
 }
 
 .app-button--enter {
-  animation: app-button-in var(--motion-in) var(--motion-ease-in) forwards;
+  animation: app-button-in var(--motion-in) var(--motion-ease-in);
 }
 
 .app-button--exit {
@@ -213,6 +213,25 @@ html.nexus-power-save,
 html.nexus-power-save * {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+}
+
+html.nexus-window-hidden .agent-view__live-status-spinner,
+html.nexus-window-hidden .agent-view__live-status-label,
+html.nexus-window-hidden .agent-view__status-shimmer-text,
+html.nexus-window-hidden .agent-view__thought-title--streaming,
+html.nexus-window-hidden [class*='ping'],
+html.nexus-power-save .agent-view__live-status-spinner,
+html.nexus-power-save .agent-view__live-status-label,
+html.nexus-power-save .agent-view__status-shimmer-text,
+html.nexus-power-save .agent-view__thought-title--streaming,
+html.nexus-power-save [class*='ping'],
+html.nexus-power-save [class*='shimmer'],
+html.nexus-power-save [class*='spin'],
+.app-shell__hidden-agent-host *,
+.app-shell__hidden-agent-host *::before,
+.app-shell__hidden-agent-host *::after {
+  animation: none !important;
+  animation-play-state: paused !important;
 }
 
 .app-loading {
@@ -9486,7 +9505,8 @@ html.agent-pip #root {
   margin-bottom: 8px;
 }
 
-.sidebar-deploy-dock .sidebar-vercel-deploy-card {
+.sidebar-deploy-dock .sidebar-vercel-deploy-card,
+.sidebar-deploy-dock .sidebar-mobile-release-card {
   margin-bottom: 0;
 }
 

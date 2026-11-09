@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
-const POLL_INTERVAL_MS = 3000;
+const POLL_INTERVAL_MS = 15_000;
+const POLL_INTERVAL_HIDDEN_MS = 60_000;
 
 export function useInternetPing(enabled: boolean): number | null {
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
@@ -27,9 +28,12 @@ export function useInternetPing(enabled: boolean): number | null {
       }
 
       if (!cancelled) {
-        timeoutId = window.setTimeout(() => {
-          void poll();
-        }, POLL_INTERVAL_MS);
+        timeoutId = window.setTimeout(
+          () => {
+            void poll();
+          },
+          document.hidden ? POLL_INTERVAL_HIDDEN_MS : POLL_INTERVAL_MS,
+        );
       }
     };
 

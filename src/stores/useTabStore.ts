@@ -19,6 +19,7 @@ import type {
 } from '@/types';
 import { extractCliAgentCommand } from '@/constants/cliAgentCommands';
 import {
+  DEFAULT_CURSOR_MODEL,
   DEFAULT_OPENCODE_MODEL,
   preferredAiProviderToCli,
   resolveAiProviderForPromptAttachments,
@@ -59,7 +60,7 @@ import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
 import { findDiffTabByPath, findFilePreviewTabByPath, findFileTabByPath } from '@/utils/fileTabs';
 import { resolveGitDiffContext } from '@/utils/gitPaths';
 import { resolveAgentGitPromptForFile } from '@/utils/resolveAgentGitPromptForFile';
-import { resolveFileViewMode } from '@/utils/fileViewMode';
+import { isImageFileName, resolveFileViewMode } from '@/utils/fileViewMode';
 import { isTabPinned, reorderTabBarItems, toggleTabPinned } from '@/utils/tabOrder';
 import {
   HOME_AGENT_FOCUS_EVENT,
@@ -70,15 +71,22 @@ import {
 } from '@/utils/homeDashboardAgents';
 import { rebalanceMonoChainsToGrid, updateSplitRatioAtPath } from '@/utils/splitLayout';
 
-function persistOpenCodePaneModel(tabId: string, cliAgent: string): void {
-  if (cliAgent !== 'opencode') {
+function persistInitialPaneModel(tabId: string, cliAgent: string): void {
+  const modelId =
+    cliAgent === 'opencode'
+      ? DEFAULT_OPENCODE_MODEL
+      : cliAgent === 'cursor-agent'
+        ? DEFAULT_CURSOR_MODEL
+        : null;
+
+  if (!modelId) {
     return;
   }
 
   useTerminalSessionStore.setState((state) => ({
     agentModelByPane: {
       ...state.agentModelByPane,
-      [tabId]: DEFAULT_OPENCODE_MODEL,
+      [tabId]: modelId,
     },
   }));
 }
@@ -442,7 +450,7 @@ export function useTabActions(): TabStoreActions {
       };
 
       useTerminalSessionStore.getState().setPendingLaunchCommand(tabId, trimmed || cliAgent);
-      persistOpenCodePaneModel(tabId, cliAgent);
+      persistInitialPaneModel(tabId, cliAgent);
 
       await updateProject(project.id, {
         tabs: [...project.tabs, nextTab],
@@ -476,7 +484,7 @@ export function useTabActions(): TabStoreActions {
       };
 
       useTerminalSessionStore.getState().setPendingLaunchCommand(tabId, trimmed || cliAgent);
-      persistOpenCodePaneModel(tabId, cliAgent);
+      persistInitialPaneModel(tabId, cliAgent);
 
       await updateProject(project.id, {
         tabs: [...project.tabs, nextTab],
@@ -972,20 +980,34 @@ export function useTabActions(): TabStoreActions {
         findDiffTabByPath(project.tabs, absoluteFilePath, { staged, untracked }) ??
         findDiffTabByPath(project.tabs, resolvedContext.absoluteFilePath, { staged, untracked });
 
+      const isImageDiff = isImageFileName(
+        (gitRelativePath.split('/').pop() ?? gitRelativePath).toLowerCase(),
+      );
+
       if (existing) {
-        const refreshedTabs = updatePaneInTabs(project.tabs, existing.id, (entry) =>
-          entry.type === 'file' && entry.viewMode === 'diff'
-            ? {
-                ...entry,
-                filePath: absoluteFilePath,
-                title: `${gitRelativePath.split('/').pop() ?? gitRelativePath} (diff)`,
-                diffBefore: sides.before,
-                diffAfter: sides.after,
-                diffRepoPath: repoPath,
-                diffAgentPrompt: agentPrompt,
-              }
-            : entry,
-        );
+        const refreshedTabs = updatePaneInTabs(project.tabs, existing.id, (entry) => {
+          if (entry.type !== 'file' || entry.viewMode !== 'diff') {
+            return entry;
+          }
+
+          const nextEntry: FileTab = {
+            ...entry,
+            filePath: absoluteFilePath,
+            title: `${gitRelativePath.split('/').pop() ?? gitRelativePath} (diff)`,
+            diffRepoPath: repoPath,
+            diffAgentPrompt: agentPrompt,
+          };
+
+          if (isImageDiff) {
+            delete nextEntry.diffBefore;
+            delete nextEntry.diffAfter;
+          } else {
+            nextEntry.diffBefore = sides.before;
+            nextEntry.diffAfter = sides.after;
+          }
+
+          return nextEntry;
+        });
         const splitTab = findSplitTabByPaneId(refreshedTabs, existing.id);
 
         if (splitTab) {
@@ -1017,8 +1039,12 @@ export function useTabActions(): TabStoreActions {
         type: 'file',
         filePath: absoluteFilePath,
         viewMode: 'diff',
-        diffBefore: sides.before,
-        diffAfter: sides.after,
+        ...(isImageDiff
+          ? {}
+          : {
+              diffBefore: sides.before,
+              diffAfter: sides.after,
+            }),
         diffStaged: staged,
         diffUntracked: untracked,
         diffRepoPath: repoPath,

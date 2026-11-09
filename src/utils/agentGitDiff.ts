@@ -5,6 +5,7 @@ import { resolveAgentPaneRootPath } from '@/utils/agentTabHelpers';
 import { findPaneTab } from '@/utils/tabGroups';
 import { findProjectIdByPaneId } from '@/utils/findProjectIdByPaneId';
 import { resolveAgentActivityFilePath } from '@/utils/agentTranscriptParser';
+import { toProjectDisplayPath } from '@/utils/explorerRelativePath';
 import { isImageFileName } from '@/utils/fileViewMode';
 import { expandUserPath, findGitFlatChangeByPath, resolveGitDiffContext } from '@/utils/gitPaths';
 import {
@@ -198,8 +199,8 @@ export async function loadAgentFileDiffPreview(
   filePath: string,
 ): Promise<AgentFileDiffPreview> {
   const trimmed = filePath.trim();
-  const displayPath = trimmed.replace(/\\/g, '/');
-  const fileName = getFileNameFromPath(displayPath);
+  const displayPath = toProjectDisplayPath(projectPath, trimmed);
+  const fileName = getFileNameFromPath(trimmed.replace(/\\/g, '/'));
 
   if (!trimmed) {
     return { kind: 'error', displayPath, hunks: [] };

@@ -48,6 +48,7 @@ import { requestHomeAskFocus, getHomeDashboardViewMode } from '@/utils/homeDashb
 import { useToastStore } from '@/stores/useToastStore';
 import { useMissionHydration } from '@/hooks/useMissionHydration';
 import { useMissionOrchestration } from '@/hooks/useMissionOrchestration';
+import { startFinishedCssAnimationWatch } from '@/utils/releaseFinishedCssAnimations';
 import { useMissionLiveBridge } from '@/hooks/useMissionLiveBridge';
 
 const LazyHomeDashboard = lazy(async () => {
@@ -289,6 +290,10 @@ function AppShellComponent() {
     ) {
       stopAgentNotificationSoundLoop();
     }
+  }, []);
+
+  useEffect(() => {
+    return startFinishedCssAnimationWatch();
   }, []);
 
   useEffect(() => {

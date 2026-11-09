@@ -79,10 +79,19 @@ export interface GitDailyStats {
 export type GitCommandResult = { ok: true } | { ok: false; error: string };
 
 const statusCache = new Map<string, { expiresAt: number; result: GitStatusResult }>();
+const statusInFlight = new Map<string, Promise<GitStatusResult>>();
 const discoveryCache = new Map<string, { expiresAt: number; repos: GitRepoDiscovery[] }>();
-const CACHE_TTL_MS = 5_000;
+const CACHE_TTL_MS = 15_000;
 const DISCOVERY_CACHE_TTL_MS = 30_000;
-const WATCH_DEBOUNCE_MS = 1_500;
+const WATCH_DEBOUNCE_MS = 3_000;
+const WATCH_DEBOUNCE_POWER_SAVE_MS = 12_000;
+const GIT_STATUS_TIMEOUT_MS = 20_000;
+const GIT_COMMAND_TIMEOUT_MS = 60_000;
+const MAX_GIT_CONCURRENCY = 3;
+
+let gitPowerSave = false;
+let gitActiveCount = 0;
+const gitWaitQueue: Array<() => void> = [];
 const MAX_GIT_DISCOVERY_DEPTH = 3;
 const MAX_NESTED_GIT_REPOS = 24;
 const MAX_UNTRACKED_LINE_COUNT_BYTES = 128 * 1024;
@@ -1158,19 +1167,53 @@ async function enrichStatusWithStats(
   };
 }
 
+function acquireGitSlot(): Promise<void> {
+  if (gitActiveCount < MAX_GIT_CONCURRENCY) {
+    gitActiveCount += 1;
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    gitWaitQueue.push(() => {
+      gitActiveCount += 1;
+      resolve();
+    });
+  });
+}
+
+function releaseGitSlot(): void {
+  gitActiveCount = Math.max(0, gitActiveCount - 1);
+  const next = gitWaitQueue.shift();
+
+  if (next) {
+    next();
+  }
+}
+
+export function setGitPowerSave(enabled: boolean): void {
+  gitPowerSave = enabled;
+}
+
 async function runGit(
   dirPath: string,
   args: string[],
-  options?: { maxBuffer?: number },
+  options?: { maxBuffer?: number; timeoutMs?: number },
 ): Promise<string> {
   const resolved = resolveRepo(dirPath);
-  const { stdout } = await execFileAsync('git', ['-C', resolved, ...args], {
-    encoding: 'utf8',
-    maxBuffer: options?.maxBuffer ?? 10 * 1024 * 1024,
-    timeout: 120_000,
-  });
+  await acquireGitSlot();
 
-  return stdout;
+  try {
+    const { stdout } = await execFileAsync('git', ['-C', resolved, ...args], {
+      encoding: 'utf8',
+      maxBuffer: options?.maxBuffer ?? 10 * 1024 * 1024,
+      timeout: options?.timeoutMs ?? GIT_COMMAND_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
+    });
+
+    return stdout;
+  } finally {
+    releaseGitSlot();
+  }
 }
 
 function toCommandResult(error: unknown): GitCommandResult {
@@ -1202,40 +1245,55 @@ export async function getGitStatus(dirPath: string): Promise<GitStatusResult> {
     return cached.result;
   }
 
-  if (!isGitRepo(resolved)) {
-    const empty: GitStatusResult = {
-      repo: {
-        isRepo: false,
-        branch: null,
-        upstream: null,
-        ahead: 0,
-        behind: 0,
-        detached: false,
-      },
-      staged: [],
-      unstaged: [],
-      untracked: [],
+  const existing = statusInFlight.get(resolved);
+
+  if (existing) {
+    return existing;
+  }
+
+  const request = (async (): Promise<GitStatusResult> => {
+    if (!isGitRepo(resolved)) {
+      return {
+        repo: {
+          isRepo: false,
+          branch: null,
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+          detached: false,
+        },
+        staged: [],
+        unstaged: [],
+        untracked: [],
+      };
+    }
+
+    const generation = cacheGenerations.get(resolved) ?? 0;
+    const output = await runGit(resolved, buildGitStatusArgs(), {
+      timeoutMs: GIT_STATUS_TIMEOUT_MS,
+    });
+    const parsed = parseStatusOutput(output, resolved);
+    const expandedUntracked = {
+      ...parsed,
+      untracked: expandUntrackedDirectoryEntries(resolved, parsed.untracked),
     };
+    const pathFiltered = applyGitStatusPathExclusions(expandedUntracked);
+    const enriched = await enrichStatusWithStats(resolved, pathFiltered);
+    const result = await filterCommitRelevantStatus(resolved, enriched);
 
-    return empty;
-  }
+    if ((cacheGenerations.get(resolved) ?? 0) === generation) {
+      statusCache.set(resolved, { expiresAt: Date.now() + CACHE_TTL_MS, result });
+    }
 
-  const generation = cacheGenerations.get(resolved) ?? 0;
-  const output = await runGit(resolved, buildGitStatusArgs());
-  const parsed = parseStatusOutput(output, resolved);
-  const expandedUntracked = {
-    ...parsed,
-    untracked: expandUntrackedDirectoryEntries(resolved, parsed.untracked),
-  };
-  const pathFiltered = applyGitStatusPathExclusions(expandedUntracked);
-  const enriched = await enrichStatusWithStats(resolved, pathFiltered);
-  const result = await filterCommitRelevantStatus(resolved, enriched);
+    return result;
+  })().finally(() => {
+    if (statusInFlight.get(resolved) === request) {
+      statusInFlight.delete(resolved);
+    }
+  });
 
-  if ((cacheGenerations.get(resolved) ?? 0) === generation) {
-    statusCache.set(resolved, { expiresAt: now + CACHE_TTL_MS, result });
-  }
-
-  return result;
+  statusInFlight.set(resolved, request);
+  return request;
 }
 
 export async function stageGitPaths(dirPath: string, paths: string[]): Promise<GitCommandResult> {
@@ -1830,11 +1888,14 @@ function scheduleRepoNotify(resolved: string): void {
     clearTimeout(state.debounceTimer);
   }
 
-  state.debounceTimer = setTimeout(() => {
-    invalidateCache(resolved);
-    discoveryCache.delete(resolved);
-    notifyRepoChanged(resolved);
-  }, WATCH_DEBOUNCE_MS);
+  state.debounceTimer = setTimeout(
+    () => {
+      invalidateCache(resolved);
+      discoveryCache.delete(resolved);
+      notifyRepoChanged(resolved);
+    },
+    gitPowerSave ? WATCH_DEBOUNCE_POWER_SAVE_MS : WATCH_DEBOUNCE_MS,
+  );
 }
 
 export function notifyGitWatchersOfProjectChange(projectPath: string, changedPath?: string): void {

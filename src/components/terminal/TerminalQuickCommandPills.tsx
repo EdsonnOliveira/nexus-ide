@@ -2,7 +2,6 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pencil, Plus, Terminal, Trash2, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { AnimatedModal } from '@/components/overlay/AnimatedModal';
-import { ProjectPromptDialog } from '@/components/sidebar/ProjectPromptDialog';
 import {
   positionDropdownAtPointer,
   useAnchoredDropdownMenu,
@@ -29,12 +28,12 @@ interface QuickCommandContextMenuState {
   y: number;
 }
 
-interface QuickCommandContextMenuProps {
+export interface QuickCommandContextMenuProps {
   x: number;
   y: number;
   onClose: () => void;
-  onRename: () => void;
-  onDelete: () => void;
+  onEdit: () => void;
+  onDelete?: () => void;
 }
 
 function normalizeQuickCommand(command: string): string {
@@ -61,11 +60,32 @@ function suggestionLabel(suggestion: SuggestedQuickCommand): string {
   return suggestion.name ?? suggestion.command;
 }
 
-function QuickCommandContextMenu({
+function buildQuickCommandEntry(
+  id: string,
+  draftCommand: string,
+  draftName: string,
+): ProjectTerminalQuickCommand | null {
+  const command = ensureCommandNewline(draftCommand);
+  const normalized = normalizeQuickCommand(command);
+  const name = normalizeQuickCommand(draftName);
+
+  if (!normalized) {
+    return null;
+  }
+
+  return {
+    id,
+    label: name || shortenCommandLabel(command),
+    command,
+    ...(name ? { name } : {}),
+  };
+}
+
+export function QuickCommandContextMenu({
   x,
   y,
   onClose,
-  onRename,
+  onEdit,
   onDelete,
 }: QuickCommandContextMenuProps) {
   const { menuRef, requestClose, animationClass } = useAnchoredDropdownMenu(
@@ -121,21 +141,25 @@ function QuickCommandContextMenu({
         type='button'
         className='context-menu__item'
         role='menuitem'
-        onMouseDown={runAction(onRename)}
+        onMouseDown={runAction(onEdit)}
       >
         <Pencil size={14} strokeWidth={2} aria-hidden />
-        <span>Renomear</span>
+        <span>Editar</span>
       </button>
-      <div className='context-menu__separator' />
-      <button
-        type='button'
-        className='context-menu__item context-menu__item--danger'
-        role='menuitem'
-        onMouseDown={runAction(onDelete)}
-      >
-        <Trash2 size={14} strokeWidth={2} aria-hidden />
-        <span>Excluir</span>
-      </button>
+      {onDelete ? (
+        <>
+          <div className='context-menu__separator' />
+          <button
+            type='button'
+            className='context-menu__item context-menu__item--danger'
+            role='menuitem'
+            onMouseDown={runAction(onDelete)}
+          >
+            <Trash2 size={14} strokeWidth={2} aria-hidden />
+            <span>Excluir</span>
+          </button>
+        </>
+      ) : null}
     </div>,
     document.body,
   );
@@ -159,11 +183,14 @@ function TerminalQuickCommandPillsComponent({
   const [draftCommand, setDraftCommand] = useState('');
   const [draftName, setDraftName] = useState('');
   const [contextMenu, setContextMenu] = useState<QuickCommandContextMenuState | null>(null);
-  const [renameCommandId, setRenameCommandId] = useState<string | null>(null);
+  const [editCommandId, setEditCommandId] = useState<string | null>(null);
+  const [editDraftCommand, setEditDraftCommand] = useState('');
+  const [editDraftName, setEditDraftName] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
-  const renameCommand = useMemo(
-    () => configuredCommands.find((entry) => entry.id === renameCommandId) ?? null,
-    [configuredCommands, renameCommandId],
+  const editCommandInputRef = useRef<HTMLInputElement>(null);
+  const editCommand = useMemo(
+    () => configuredCommands.find((entry) => entry.id === editCommandId) ?? null,
+    [configuredCommands, editCommandId],
   );
 
   const canAddCommand = configuredCommands.length < MAX_TERMINAL_QUICK_COMMANDS;
@@ -233,6 +260,14 @@ function TerminalQuickCommandPillsComponent({
   const draftAlreadyConfigured = configuredCommandKeys.has(normalizeQuickCommand(draftCommand));
   const canSaveCommand = Boolean(normalizeQuickCommand(draftCommand)) && !draftAlreadyConfigured;
 
+  const editOriginalCommand = editCommand ? normalizeQuickCommand(editCommand.command) : '';
+  const editNormalizedCommand = normalizeQuickCommand(editDraftCommand);
+  const editCommandTaken =
+    Boolean(editNormalizedCommand) &&
+    editNormalizedCommand !== editOriginalCommand &&
+    configuredCommandKeys.has(editNormalizedCommand);
+  const canSaveEdit = Boolean(editNormalizedCommand) && !editCommandTaken;
+
   useEffect(() => {
     if (!dialogOpen) {
       return;
@@ -241,6 +276,15 @@ function TerminalQuickCommandPillsComponent({
     inputRef.current?.focus();
     inputRef.current?.select();
   }, [dialogOpen]);
+
+  useEffect(() => {
+    if (!editCommand) {
+      return;
+    }
+
+    editCommandInputRef.current?.focus();
+    editCommandInputRef.current?.select();
+  }, [editCommand]);
 
   const handleOpenDialog = useCallback(() => {
     if (!canAddCommand) {
@@ -262,20 +306,12 @@ function TerminalQuickCommandPillsComponent({
     (requestClose: () => void) => (event: React.FormEvent<HTMLFormElement>) => {
       event.preventDefault();
 
-      const command = ensureCommandNewline(draftCommand);
-      const normalized = normalizeQuickCommand(command);
-      const name = normalizeQuickCommand(draftName);
+      const nextCommand = buildQuickCommandEntry(crypto.randomUUID(), draftCommand, draftName);
+      const normalized = nextCommand ? normalizeQuickCommand(nextCommand.command) : '';
 
-      if (!command || !canAddCommand || configuredCommandKeys.has(normalized)) {
+      if (!nextCommand || !canAddCommand || configuredCommandKeys.has(normalized)) {
         return;
       }
-
-      const nextCommand: ProjectTerminalQuickCommand = {
-        id: crypto.randomUUID(),
-        label: name || shortenCommandLabel(command),
-        command,
-        ...(name ? { name } : {}),
-      };
 
       void updateProject(projectId, {
         terminalQuickCommands: [...configuredCommands, nextCommand],
@@ -305,23 +341,57 @@ function TerminalQuickCommandPillsComponent({
     setContextMenu({ commandId, x: event.clientX, y: event.clientY });
   }, []);
 
-  const handleRenameConfirm = useCallback(
-    (name: string) => {
-      const trimmed = normalizeQuickCommand(name);
+  const handleOpenEdit = useCallback(
+    (commandId: string) => {
+      const entry = configuredCommands.find((item) => item.id === commandId);
 
-      if (!renameCommandId || !trimmed) {
-        setRenameCommandId(null);
+      if (!entry) {
+        return;
+      }
+
+      setEditDraftCommand(normalizeQuickCommand(entry.command));
+      setEditDraftName(normalizeQuickCommand(entry.name ?? '') || '');
+      setEditCommandId(commandId);
+    },
+    [configuredCommands],
+  );
+
+  const handleCloseEdit = useCallback(() => {
+    setEditCommandId(null);
+    setEditDraftCommand('');
+    setEditDraftName('');
+  }, []);
+
+  const handleEditConfirm = useCallback(
+    (requestClose: () => void) => (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+
+      if (!editCommandId || !canSaveEdit) {
+        return;
+      }
+
+      const nextCommand = buildQuickCommandEntry(editCommandId, editDraftCommand, editDraftName);
+
+      if (!nextCommand) {
         return;
       }
 
       void updateProject(projectId, {
         terminalQuickCommands: configuredCommands.map((entry) =>
-          entry.id === renameCommandId ? { ...entry, name: trimmed, label: trimmed } : entry,
+          entry.id === editCommandId ? nextCommand : entry,
         ),
       });
-      setRenameCommandId(null);
+      requestClose();
     },
-    [configuredCommands, projectId, renameCommandId, updateProject],
+    [
+      canSaveEdit,
+      configuredCommands,
+      editCommandId,
+      editDraftCommand,
+      editDraftName,
+      projectId,
+      updateProject,
+    ],
   );
 
   const handleRemoveCommand = useCallback(
@@ -400,19 +470,55 @@ function TerminalQuickCommandPillsComponent({
           x={contextMenu.x}
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
-          onRename={() => setRenameCommandId(contextMenu.commandId)}
+          onEdit={() => handleOpenEdit(contextMenu.commandId)}
           onDelete={() => handleRemoveCommand(contextMenu.commandId)}
         />
       ) : null}
-      {renameCommand ? (
-        <ProjectPromptDialog
-          mode='rename'
-          initialValue={renameCommand.name || renameCommand.label}
-          dialogTitle='Renomear comando'
-          dialogLabel='Nome'
-          onConfirm={handleRenameConfirm}
-          onClose={() => setRenameCommandId(null)}
-        />
+      {editCommand ? (
+        <AnimatedModal panelClassName='project-dialog' onClose={handleCloseEdit}>
+          {(requestClose) => (
+            <form onSubmit={handleEditConfirm(requestClose)}>
+              <span className='project-dialog__title'>Editar comando</span>
+              <label className='project-dialog__label'>
+                Comando
+                <input
+                  ref={editCommandInputRef}
+                  className='project-dialog__input'
+                  value={editDraftCommand}
+                  maxLength={200}
+                  placeholder='ex.: npm run dev'
+                  onChange={(event) => setEditDraftCommand(event.target.value)}
+                />
+              </label>
+              <label className='project-dialog__label terminal-quick-command-dialog__name'>
+                Nomear comando
+                <input
+                  className='project-dialog__input'
+                  value={editDraftName}
+                  maxLength={MAX_TERMINAL_QUICK_COMMAND_NAME}
+                  placeholder='opcional'
+                  onChange={(event) => setEditDraftName(event.target.value)}
+                />
+              </label>
+              <div className='project-dialog__actions'>
+                <button
+                  type='button'
+                  className='project-dialog__btn project-dialog__btn--ghost'
+                  onClick={requestClose}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type='submit'
+                  className='project-dialog__btn project-dialog__btn--primary'
+                  disabled={!canSaveEdit}
+                >
+                  Salvar
+                </button>
+              </div>
+            </form>
+          )}
+        </AnimatedModal>
       ) : null}
       {dialogOpen ? (
         <AnimatedModal panelClassName='project-dialog' onClose={handleCloseDialog}>

@@ -1,11 +1,12 @@
 import { app, type BrowserWindow } from 'electron';
+import { setGitPowerSave } from './git';
 
 const SAMPLE_MS = 2000;
-const SPIKE_SAMPLES = 3;
-const RECOVER_SAMPLES = 5;
-const GPU_SPIKE_PERCENT = 35;
-const RENDERER_SPIKE_PERCENT = 45;
-const RECOVER_PERCENT = 20;
+const SPIKE_SAMPLES = 2;
+const RECOVER_SAMPLES = 6;
+const GPU_SPIKE_PERCENT = 25;
+const RENDERER_SPIKE_PERCENT = 28;
+const RECOVER_PERCENT = 15;
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let getWindow: () => BrowserWindow | null = () => null;
@@ -23,7 +24,7 @@ function readHotCpu(): { gpu: number; renderer: number } {
     const cpu = metric.cpu?.percentCPUUsage ?? 0;
     const type = String(metric.type ?? '').toLowerCase();
 
-    if (type === 'browser' || type === 'utility') {
+    if (type === 'browser') {
       continue;
     }
 
@@ -32,7 +33,12 @@ function readHotCpu(): { gpu: number; renderer: number } {
       continue;
     }
 
-    if (metric.pid === rendererPid || type === 'tab') {
+    if (
+      metric.pid === rendererPid ||
+      type === 'tab' ||
+      type.includes('render') ||
+      type === 'utility'
+    ) {
       renderer = Math.max(renderer, cpu);
     }
   }
@@ -41,6 +47,8 @@ function readHotCpu(): { gpu: number; renderer: number } {
 }
 
 function publish(enabled: boolean): void {
+  setGitPowerSave(enabled);
+
   const win = getWindow();
 
   if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {

@@ -1417,7 +1417,9 @@ function ProjectSidebarComponent() {
     [colorProjectId, updateProject],
   );
 
-  const hasDeployDock = Boolean(vercelActiveDeployment || renderActiveDeployment);
+  const hasDeployDock = Boolean(
+    vercelActiveDeployment || renderActiveDeployment || visibleMobileReleases.length > 0,
+  );
   const deployDockContent = hasDeployDock ? (
     <>
       {vercelActiveDeployment ? (
@@ -1434,6 +1436,13 @@ function ProjectSidebarComponent() {
           onConfigure={handleRenderConfigure}
         />
       ) : null}
+      {visibleMobileReleases.map((release) => (
+        <SidebarMobileReleaseCard
+          key={release.uid}
+          release={release}
+          onDismiss={() => dismissMobileRelease(release.uid)}
+        />
+      ))}
     </>
   ) : null;
 
@@ -1536,14 +1545,6 @@ function ProjectSidebarComponent() {
             pane={entry.pane}
             notifiedAt={entry.notifiedAt}
             onDismiss={() => clearProjectNotification(entry.project.id)}
-          />
-        ))}
-
-        {visibleMobileReleases.map((release) => (
-          <SidebarMobileReleaseCard
-            key={release.uid}
-            release={release}
-            onDismiss={() => dismissMobileRelease(release.uid)}
           />
         ))}
 

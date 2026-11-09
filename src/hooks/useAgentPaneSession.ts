@@ -60,6 +60,7 @@ import {
 } from '@/utils/agentShellToolTerminal';
 import {
   cliAgentToAiProvider,
+  DEFAULT_CURSOR_MODEL,
   DEFAULT_OPENCODE_MODEL,
   preferredAiProviderToCli,
   resolveAiProviderForPromptAttachments,
@@ -182,7 +183,8 @@ const STREAM_JSON_HUNG_IDLE_MS = 1_800_000;
 const STREAM_JSON_ACTIVE_TOOL_HUNG_IDLE_MS = 7_200_000;
 const STREAM_JSON_EMPTY_HUNG_IDLE_MS = 600_000;
 const STREAM_JSON_DEAD_PROCESS_FINALIZE_MS = 2_000;
-const STREAM_JSON_IDLE_CHECK_MS = 500;
+const STREAM_JSON_IDLE_CHECK_MS = 1_500;
+const STREAM_JSON_IDLE_CHECK_HIDDEN_MS = 4_000;
 const STREAM_JSON_RESPONSE_IDLE_FINALIZE_MS = 400;
 const STREAM_JSON_STALL_UI_MS = 4_000;
 const STREAM_JSON_READY_SHELL_HANDOFF_MS = 8_000;
@@ -199,6 +201,7 @@ const STREAM_JSON_MAX_INCOMPLETE_CONTINUES = 4;
 const STREAM_JSON_INCOMPLETE_CONTINUE_PROMPT =
   'Continue from where you left off. Finish the incomplete response.';
 const STREAMING_TURNS_UI_MS = 80;
+const STREAMING_TURNS_UI_HIDDEN_MS = 400;
 const PERSIST_TURNS_DEBOUNCE_MS = 1200;
 const CONTEXT_USAGE_REPORT_DELAY_MS = 700;
 const AGENT_OUTPUT_TAIL_SIZE = 8192;
@@ -374,11 +377,16 @@ function persistPaneAgentModel(paneId: string, modelId: string): void {
 
 function resolveStreamJsonModel(paneId: string, cliAgent: string): string | null {
   const stored = useTerminalSessionStore.getState().agentModelByPane[paneId]?.trim() || null;
-  const isOpenCode = extractCliAgentCommand(cliAgent) === 'opencode';
+  const cli = extractCliAgentCommand(cliAgent);
 
-  if (isOpenCode && (!stored || stored === 'auto')) {
+  if (cli === 'opencode' && (!stored || stored === 'auto')) {
     persistPaneAgentModel(paneId, DEFAULT_OPENCODE_MODEL);
     return DEFAULT_OPENCODE_MODEL;
+  }
+
+  if (cli === 'cursor-agent' && !stored) {
+    persistPaneAgentModel(paneId, DEFAULT_CURSOR_MODEL);
+    return DEFAULT_CURSOR_MODEL;
   }
 
   return stored;
@@ -910,10 +918,19 @@ export function useAgentPaneSession({
       return;
     }
 
+    const powerSave =
+      typeof document !== 'undefined' &&
+      document.documentElement.classList.contains('nexus-power-save');
+    const delay = powerSave
+      ? STREAMING_TURNS_UI_HIDDEN_MS * 2
+      : isVisibleRef.current
+        ? STREAMING_TURNS_UI_MS
+        : STREAMING_TURNS_UI_HIDDEN_MS;
+
     streamingTurnsUiRef.current = window.setTimeout(() => {
       streamingTurnsUiRef.current = null;
       onTurnsChangeRef.current(turnsRef.current, { persist: false });
-    }, STREAMING_TURNS_UI_MS);
+    }, delay);
   }, []);
 
   const persistTurns = useCallback(
@@ -2328,6 +2345,8 @@ export function useAgentPaneSession({
 
         if (provider === 'opencode') {
           persistPaneAgentModel(paneId, DEFAULT_OPENCODE_MODEL);
+        } else if (provider === 'cursor') {
+          persistPaneAgentModel(paneId, DEFAULT_CURSOR_MODEL);
         } else {
           useTerminalSessionStore.setState((state) => {
             if (!(paneId in state.agentModelByPane)) {
@@ -4366,6 +4385,7 @@ export function useAgentPaneSession({
       return;
     }
 
+    const intervalMs = isVisible ? STREAM_JSON_IDLE_CHECK_MS : STREAM_JSON_IDLE_CHECK_HIDDEN_MS;
     const intervalId = window.setInterval(() => {
       if (!turnsRef.current.some((turn) => turn.running)) {
         return;
@@ -4625,6 +4645,7 @@ export function useAgentPaneSession({
     finalizeStreamJsonTurnFromEvent,
     isTurnRunning,
     isRuntimeActive,
+    isVisible,
     syncStreamJsonStallLiveStatus,
     tryFinalizeCompleteStreamJsonResponse,
     tryFinalizeSettledStreamJsonTurn,

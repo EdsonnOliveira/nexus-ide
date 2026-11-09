@@ -52,7 +52,9 @@ function HomeDashboardDailyProjectRowComponent({
   const [transcriptionsLoading, setTranscriptionsLoading] = useState(true);
   const generateButtonRef = useRef<HTMLButtonElement>(null);
   const groups = useAgentGitGroupsForProject(project.id);
-  const { changes: gitChanges, loading: gitLoading } = useProjectGitFlatChanges(project.path);
+  const { changes: gitChanges, loading: gitLoading } = useProjectGitFlatChanges(project.path, {
+    watch: false,
+  });
 
   const visibleGroups = useMemo(
     () => groups.filter((group) => group.files.length > 0),

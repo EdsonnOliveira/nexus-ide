@@ -97,6 +97,10 @@ function getReleaseAssetName(): string {
   }
 
   if (process.platform === 'darwin') {
+    if (arch === 'x64') {
+      return 'opencode-darwin-x64-baseline.zip';
+    }
+
     return `opencode-darwin-${arch}.zip`;
   }
 

@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import { createDecipheriv, pbkdf2Sync } from 'node:crypto';
 import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -52,11 +54,20 @@ const CURSOR_CONNECT_PLAN_URL = 'https://api2.cursor.sh/aiserver.v1.DashboardSer
 const CURSOR_DASHBOARD_USAGE_URL = 'https://cursor.com/api/dashboard/get-current-period-usage';
 const CURSOR_STRIPE_URL = 'https://cursor.com/api/auth/stripe';
 
+const CURSOR_SAFE_STORAGE_PREFIX = 'cursor-safe-storage:v1:';
+const CHROMIUM_SAFE_STORAGE_PREFIX = 'v10';
+const CURSOR_KEYCHAIN_SERVICE = 'Cursor Safe Storage';
+const CURSOR_KEYCHAIN_ACCOUNT = 'Cursor Key';
+const CHROMIUM_KEYCHAIN_SALT = 'saltysalt';
+const CHROMIUM_KEYCHAIN_ITERATIONS = 1003;
+const CHROMIUM_KEYCHAIN_IV = Buffer.alloc(16, 0x20);
+
 const REQUEST_TIMEOUT_MS = 15_000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 let cachedSnapshot: CursorPeriodUsageSnapshot | null = null;
 let cacheExpiresAt = 0;
+let cachedCursorKeychainPassword: string | null | undefined;
 
 function resolveCursorStateDbPath(): string | null {
   const home = homedir();
@@ -124,6 +135,77 @@ function buildSessionToken(accessToken: string): string | null {
   return `${sub}::${accessToken}`;
 }
 
+function looksLikeJwt(value: string): boolean {
+  const parts = value.split('.');
+  return parts.length >= 3 && parts.every((part) => part.length > 0);
+}
+
+function readCursorSafeStoragePassword(): string | null {
+  if (cachedCursorKeychainPassword !== undefined) {
+    return cachedCursorKeychainPassword;
+  }
+
+  if (platform() !== 'darwin') {
+    cachedCursorKeychainPassword = null;
+    return null;
+  }
+
+  try {
+    const password = execFileSync(
+      '/usr/bin/security',
+      ['find-generic-password', '-s', CURSOR_KEYCHAIN_SERVICE, '-a', CURSOR_KEYCHAIN_ACCOUNT, '-w'],
+      {
+        encoding: 'utf8',
+        timeout: 4000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    ).trim();
+
+    cachedCursorKeychainPassword = password || null;
+    return cachedCursorKeychainPassword;
+  } catch {
+    cachedCursorKeychainPassword = null;
+    return null;
+  }
+}
+
+function decryptCursorSafeStorageToken(sealed: string): string | null {
+  if (!sealed.startsWith(CURSOR_SAFE_STORAGE_PREFIX)) {
+    return looksLikeJwt(sealed) ? sealed : null;
+  }
+
+  const password = readCursorSafeStoragePassword();
+
+  if (!password) {
+    return null;
+  }
+
+  try {
+    const encrypted = Buffer.from(sealed.slice(CURSOR_SAFE_STORAGE_PREFIX.length), 'base64');
+
+    if (
+      encrypted.length <= CHROMIUM_SAFE_STORAGE_PREFIX.length ||
+      encrypted.subarray(0, CHROMIUM_SAFE_STORAGE_PREFIX.length).toString('utf8') !==
+        CHROMIUM_SAFE_STORAGE_PREFIX
+    ) {
+      return null;
+    }
+
+    const key = pbkdf2Sync(password, CHROMIUM_KEYCHAIN_SALT, CHROMIUM_KEYCHAIN_ITERATIONS, 16, 'sha1');
+    const decipher = createDecipheriv('aes-128-cbc', key, CHROMIUM_KEYCHAIN_IV);
+    const plain = Buffer.concat([
+      decipher.update(encrypted.subarray(CHROMIUM_SAFE_STORAGE_PREFIX.length)),
+      decipher.final(),
+    ])
+      .toString('utf8')
+      .trim();
+
+    return looksLikeJwt(plain) ? plain : null;
+  } catch {
+    return null;
+  }
+}
+
 function readCursorAccessToken(): string | null {
   const dbPath = resolveCursorStateDbPath();
 
@@ -133,7 +215,11 @@ function readCursorAccessToken(): string | null {
 
   const accessToken = readStateValue(dbPath, 'cursorAuth/accessToken');
 
-  return accessToken && accessToken.length > 0 ? accessToken : null;
+  if (!accessToken || accessToken.length === 0) {
+    return null;
+  }
+
+  return decryptCursorSafeStorageToken(accessToken);
 }
 
 function readCachedMembershipType(): string | null {
@@ -330,7 +416,7 @@ function parseUsageSnapshot(
 
   return {
     available: true,
-    percent: Math.max(0, Math.min(100, Math.max(autoPercentUsed, apiPercentUsed, totalPercentUsed))),
+    percent: Math.max(0, Math.min(100, totalPercentUsed)),
     autoPercentUsed,
     apiPercentUsed,
     totalPercentUsed,

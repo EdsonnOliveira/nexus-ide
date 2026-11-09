@@ -43,6 +43,7 @@ export function aiProviderLabel(provider: Exclude<AiProviderId, 'nexus'>): strin
 }
 
 export const DEFAULT_OPENCODE_MODEL = 'opencode/big-pickle';
+export const DEFAULT_CURSOR_MODEL = 'auto';
 
 export function isAiProviderId(value: string): value is AiProviderId {
   return (

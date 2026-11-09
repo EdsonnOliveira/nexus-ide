@@ -1,4 +1,14 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type TouchEvent,
+  type WheelEvent,
+} from 'react';
 import { ArrowDown, Bot, Maximize2, Pin, Terminal } from 'lucide-react';
 import { AgentComposer } from '@/components/agent/AgentComposer';
 import { AgentFollowUpQueue } from '@/components/agent/AgentFollowUpQueue';
@@ -558,6 +568,30 @@ function AgentPipAppComponent() {
     });
   }, [snapshot?.paneId]);
 
+  const scrollAckLatchRef = useRef(false);
+
+  const stopPingOnUserScroll = useCallback(
+    (event: WheelEvent<HTMLElement> | TouchEvent<HTMLElement>) => {
+      if (!snapshot?.pinging || !snapshot.paneId || scrollAckLatchRef.current) {
+        return;
+      }
+
+      if ('deltaY' in event && Math.abs(event.deltaY) < 1 && Math.abs(event.deltaX) < 1) {
+        return;
+      }
+
+      scrollAckLatchRef.current = true;
+      ackViewed();
+    },
+    [ackViewed, snapshot?.paneId, snapshot?.pinging],
+  );
+
+  useEffect(() => {
+    if (!snapshot?.pinging) {
+      scrollAckLatchRef.current = false;
+    }
+  }, [snapshot?.pinging]);
+
   useEffect(() => {
     const onFocus = () => {
       ackViewed();
@@ -573,6 +607,8 @@ function AgentPipAppComponent() {
       aria-label={`PiP ${title}`}
       style={{ ['--agent-accent' as string]: snapshot?.projectColor ?? agentConfig.promptColor }}
       onPointerDown={ackViewed}
+      onWheel={stopPingOnUserScroll}
+      onTouchMove={stopPingOnUserScroll}
     >
       <header className='agent-pip-window__header'>
         <span className='agent-pip-window__thumb'>

@@ -1095,7 +1095,7 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
 
     const terminal = new Terminal({
       allowProposedApi: true,
-      cursorBlink: true,
+      cursorBlink: isVisibleRef.current && isFocusedRef.current,
       cursorStyle: 'bar',
       cursorWidth: 1,
       fontFamily:
@@ -1455,6 +1455,10 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
         }
       }
 
+      if (!isVisibleRef.current) {
+        return;
+      }
+
       writeTerminalOutput(activeTerminal, cleaned, stickToBottomRef, () => {
         if (!canUseTerminal(terminalRef.current, disposedRef) || commandEvents.length === 0) {
           return;
@@ -1721,6 +1725,32 @@ const XTermViewComponent = forwardRef<XTermViewHandle, XTermViewProps>(function 
       }
     })();
   }, [isRuntimeActive, ptyId]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+
+    if (!terminal) {
+      return;
+    }
+
+    const syncCursorBlink = () => {
+      const powerSave = document.documentElement.classList.contains('nexus-power-save');
+      terminal.options.cursorBlink = isVisible && isFocused && !powerSave && !document.hidden;
+    };
+
+    syncCursorBlink();
+    document.addEventListener('visibilitychange', syncCursorBlink);
+    const observer = new MutationObserver(syncCursorBlink);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class'],
+    });
+
+    return () => {
+      document.removeEventListener('visibilitychange', syncCursorBlink);
+      observer.disconnect();
+    };
+  }, [isFocused, isVisible]);
 
   useEffect(() => {
     if (isVisible) {

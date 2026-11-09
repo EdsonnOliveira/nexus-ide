@@ -401,9 +401,7 @@ async function getCursorUsageItem(): Promise<AiProviderUsageItem> {
       id: 'cursor',
       label: 'Cursor',
       available: true,
-      percent: clampPercent(
-        Math.max(snapshot.autoPercentUsed, snapshot.apiPercentUsed, snapshot.percent),
-      ),
+      percent: clampPercent(snapshot.totalPercentUsed),
       detail: parts.join(' · '),
     };
   } catch {

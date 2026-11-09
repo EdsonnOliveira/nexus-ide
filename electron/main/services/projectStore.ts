@@ -13,6 +13,10 @@ import type {
 } from '../../types';
 import type { ProjectTask, ProjectTaskLocalMeta } from '../../types/task';
 import { agentTurnHistoryChanged, sanitizeAgentTurnHistory } from './trimAgentTurnHistory';
+import {
+  measureProjectsDiffPayloadBytes,
+  resolvePersistedDiffFields,
+} from './persistFileDiff';
 import { ensureNexusGitignore, hasNexusProjectDir } from './nexusProjectGitignore';
 
 import type { ProjectTestEntry } from '../../types/test';
@@ -217,8 +221,7 @@ function normalizePane(tab: Tab, projectPath?: string): Tab {
       type: 'file',
       filePath: tab.filePath,
       viewMode: tab.viewMode ?? 'code',
-      ...(tab.diffBefore !== undefined ? { diffBefore: tab.diffBefore } : {}),
-      ...(tab.diffAfter !== undefined ? { diffAfter: tab.diffAfter } : {}),
+      ...resolvePersistedDiffFields(tab),
       ...(tab.diffStaged !== undefined ? { diffStaged: tab.diffStaged } : {}),
       ...(tab.diffUntracked !== undefined ? { diffUntracked: tab.diffUntracked } : {}),
       ...(tab.diffRepoPath !== undefined ? { diffRepoPath: tab.diffRepoPath } : {}),
@@ -597,8 +600,12 @@ class ProjectStoreService {
 
     if (!this.historyTrimChecked) {
       const rawProjects = this.getStore().get('projects');
+      const historyChanged = agentTurnHistoryChanged(rawProjects, state.projects);
+      const diffPayloadChanged =
+        measureProjectsDiffPayloadBytes(rawProjects) !==
+        measureProjectsDiffPayloadBytes(state.projects);
 
-      if (agentTurnHistoryChanged(rawProjects, state.projects)) {
+      if (historyChanged || diffPayloadChanged) {
         this.writeState(state);
       }
 
